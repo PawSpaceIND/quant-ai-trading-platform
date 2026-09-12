@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
+from quant_ai.marketdata.ticker_stream import LiveTick
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,10 @@ class SpecialistAgent:
         rationale: tuple[str, ...],
         observed_at: datetime,
         source_freshness_seconds: int,
+        market_tick: LiveTick | None = None,
     ) -> AgentEvidence:
+        if self.domain is AgentDomain.TECHNICAL and market_tick is not None:
+            rationale = rationale + _tick_rationale(market_tick)
         if source_freshness_seconds > self.stale_after_seconds:
             return AgentEvidence(
                 self.agent_id,
@@ -49,6 +53,16 @@ class SpecialistAgent:
             observed_at,
             source_freshness_seconds,
         )
+
+
+def _tick_rationale(tick: LiveTick) -> tuple[str, ...]:
+    spread = "unknown" if tick.spread is None else str(tick.spread)
+    return (
+        f"live_ltp={tick.ltp}",
+        f"live_volume={tick.volume}",
+        f"live_bid_ask_spread={spread}",
+        f"live_market_source={tick.source}",
+    )
 
 
 DEFAULT_SPECIALISTS = (
