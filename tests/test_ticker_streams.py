@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Self
 
 from quant_ai.agents.contracts import AgentDomain, Stance
 from quant_ai.agents.specialists import SpecialistAgent
@@ -85,7 +84,7 @@ class _FakeEvent:
     def __init__(self) -> None:
         self.handlers: list[object] = []
 
-    def __iadd__(self, handler: object) -> Self:
+    def __iadd__(self, handler: object) -> _FakeEvent:  # noqa: PYI034
         self.handlers.append(handler)
         return self
 

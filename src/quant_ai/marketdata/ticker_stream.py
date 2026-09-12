@@ -63,6 +63,7 @@ class TickBuffer:
 class AbstractTickerStream(ABC):
     def __init__(self, buffer: TickBuffer | None = None) -> None:
         self.buffer = buffer or TickBuffer()
+        self._connection_errors: asyncio.Queue[Exception] | None = None
 
     async def on_tick(self, tick: LiveTick) -> None:
         self.buffer.put(tick)
@@ -71,7 +72,18 @@ class AbstractTickerStream(ABC):
         _ = update
 
     async def on_connection_error(self, error: Exception) -> None:
-        _ = error
+        queue = self._error_queue()
+        if queue.full():
+            queue.get_nowait()
+        queue.put_nowait(error)
+
+    async def wait_for_connection_error(self) -> Exception:
+        return await self._error_queue().get()
+
+    def _error_queue(self) -> asyncio.Queue[Exception]:
+        if self._connection_errors is None:
+            self._connection_errors = asyncio.Queue(maxsize=1)
+        return self._connection_errors
 
     @abstractmethod
     async def start(self) -> None:
@@ -107,6 +119,7 @@ class ZerodhaKiteTicker(AbstractTickerStream):
         self._ticker.on_connect = self._on_connect
         self._ticker.on_ticks = self._on_ticks
         self._ticker.on_error = self._on_error
+        self._ticker.on_close = self._on_close
         await asyncio.to_thread(self._ticker.connect, threaded=True)
 
     async def stop(self) -> None:
@@ -154,6 +167,12 @@ class ZerodhaKiteTicker(AbstractTickerStream):
             error = ConnectionError(f"KiteTicker error {code}: {reason}")
             asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
 
+    def _on_close(self, ws: Any, code: Any, reason: Any) -> None:
+        _ = ws
+        if self._loop is not None:
+            error = ConnectionError(f"KiteTicker closed {code}: {reason}")
+            asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
+
 
 class IBKRAsyncTicker(AbstractTickerStream):
     def __init__(self, ib: Any, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> None:
@@ -161,6 +180,7 @@ class IBKRAsyncTicker(AbstractTickerStream):
         self.ib = ib
         self.contracts = tuple(contracts)
         self._subscriptions: list[Any] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @classmethod
     def with_client(cls, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> IBKRAsyncTicker:
@@ -168,6 +188,10 @@ class IBKRAsyncTicker(AbstractTickerStream):
         return cls(module.IB(), contracts, buffer)
 
     async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        disconnected = getattr(self.ib, "disconnectedEvent", None)
+        if disconnected is not None:
+            disconnected += self._on_disconnect
         for contract in self.contracts:
             ticker = self.ib.reqMktData(contract, "", False, False)
             ticker.updateEvent += self._on_quote
@@ -215,6 +239,12 @@ class IBKRAsyncTicker(AbstractTickerStream):
             source="ibkr",
         )
         self._dispatch_orderbook(update)
+
+    def _on_disconnect(self, *args: Any) -> None:
+        _ = args
+        if self._loop is not None:
+            error = ConnectionError("IBKR market-data connection dropped")
+            asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
 
     def _dispatch_orderbook(self, update: OrderBookUpdate) -> None:
         try:
