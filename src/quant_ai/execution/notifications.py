@@ -7,7 +7,7 @@ import urllib.request
 from decimal import Decimal
 from typing import Callable, Protocol
 
-from quant_ai.execution.scheduler import FounderExecutionBrief
+from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.notifications.trading import (
     AlertPriority,
     TradingAlertCode,
@@ -92,6 +92,9 @@ def format_founder_execution_brief(
             f"Allocation stance: {brief.mode}",
             f"Swarm: {consensus}",
             f"Risk: {brief.risk_decision}",
+            f"Regime: {brief.market_regime} | Stress: {brief.stress_verdict}",
+            f"Sharpe: {brief.sharpe_ratio} | Sortino: {brief.sortino_ratio}",
+            f"XAI: {'; '.join(brief.xai_rationales) or 'none'}",
             f"Trades: {trades}",
             f"Equity: {total_equity} | Realized P&L: {realized_pnl}",
             f"Unrealized P&L: {unrealized_pnl} | Drawdown: {drawdown_fraction}",

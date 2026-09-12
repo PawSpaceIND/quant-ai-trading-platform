@@ -10,9 +10,10 @@ from typing import Callable
 
 from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.domain.models import Instrument, Market
+from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
-from quant_ai.execution.scheduler import AutonomousCadenceScheduler, FounderExecutionBrief
+from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.planning.capital import CapitalPlan
 
 
@@ -74,6 +75,7 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         self._in_flight = True
         try:
+            pre_metrics = self.tracker.metrics(timestamp)
             before = self.tracker.get_snapshot(timestamp)
             brief = self.scheduler.run_tick(
                 self.instrument,
@@ -85,6 +87,12 @@ class AutonomousTradingDaemon:
                 tenant_id=self.tenant_id,
             )
             metrics = self.tracker.metrics(timestamp)
+            realized_delta = metrics.realized_pnl - pre_metrics.realized_pnl
+            if realized_delta != 0:
+                traces = self.scheduler.pipeline.runtime.xai_logger.traces()
+                if traces:
+                    agent_ids = tuple(row["agent_id"] for row in traces[-1].input_matrix)
+                    self.scheduler.pipeline.runtime.attribution.record(agent_ids, realized_delta)
             self.notifications.dispatch_brief(
                 brief,
                 total_equity=metrics.total_equity,
