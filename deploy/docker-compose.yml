@@ -10,6 +10,7 @@ services:
       PRAMANA_XAI_DIR: /data/xai
       PRAMANA_GHOST_LOG: /data/pramana-ghost.log
       PRAMANA_TENANT_ID: ghost
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}
       ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
       ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
       PRAMANA_ZERODHA_TOKENS_JSON: ${PRAMANA_ZERODHA_TOKENS_JSON:-}
