@@ -13,6 +13,8 @@ from quant_ai.agents.swarm import AgentAnalysisRequest, TradeProposal
 from quant_ai.intelligence.adversarial import StressVerdict
 from quant_ai.risk.warden import WardenDecision
 
+PRAMANA_PROOF_DIRECTORY = Path("pramana-proofs")
+
 
 @dataclass(frozen=True)
 class XAITrace:
@@ -112,7 +114,7 @@ class XAITraceLogger:
 
     def to_markdown(self, trace: XAITrace) -> str:
         lines = [
-            f"# XAI Decision Report {trace.decision_id}",
+            f"# PRAMANA XAI Decision Report {trace.decision_id}",
             "",
             f"- Subject: {trace.subject}",
             f"- Generated: {trace.generated_at.isoformat()}",

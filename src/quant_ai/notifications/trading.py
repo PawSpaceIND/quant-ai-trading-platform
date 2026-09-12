@@ -74,7 +74,7 @@ class TradingNotificationDispatcher:
             tenant_id,
             code,
             priority,
-            message,
+            message if message.startswith("[PRAMANA]") else f"[PRAMANA] {message}",
             datetime.now(timezone.utc),
             metadata or {},
         )

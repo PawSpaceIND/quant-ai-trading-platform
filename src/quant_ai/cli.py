@@ -5,6 +5,7 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
@@ -16,7 +17,7 @@ from quant_ai.backtesting.replay import (
 )
 from quant_ai.backtesting.tearsheet import build_tearsheet
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode, Side
-from quant_ai.execution.audit import XAITraceLogger
+from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
 from quant_ai.execution.notifications import (
     ConsoleNotificationAdapter,
@@ -40,7 +41,10 @@ def build_runtime() -> AutonomousTradingDaemon:
     tenant_id = os.environ.get("QUANT_AI_TENANT_ID", "default")
     broker = PaperBrokerService(database, starting_capital=Decimal(100000))
     feed = UsaSandboxMarketDataFeed()
-    xai_dir = os.environ.get("QUANT_AI_XAI_DIR", "quant-ai-xai")
+    xai_dir = os.environ.get(
+        "PRAMANA_XAI_DIR",
+        os.environ.get("QUANT_AI_XAI_DIR", str(PRAMANA_PROOF_DIRECTORY)),
+    )
     runtime = SwarmPaperTradingService(broker=broker, xai_logger=XAITraceLogger(xai_dir))
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -194,11 +198,17 @@ def _backtest(args: argparse.Namespace) -> None:
     result = HistoricalReplayHarness(
         broker, plan, quantity=10, country="India" if market == Market.INDIA else "USA"
     ).run(dataset)
-    print(build_tearsheet(result, broker).to_json())
+    tearsheet_json = build_tearsheet(result, broker).to_json()
+    proof_dir = Path(
+        os.environ.get("PRAMANA_PROOF_DIR", str(PRAMANA_PROOF_DIRECTORY))
+    )
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    (proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
+    print(tearsheet_json)
     broker.flush()
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="quant-ai")
+    parser = argparse.ArgumentParser(prog="pramana")
     parser.add_argument(
         "command",
         choices=(
