@@ -18,6 +18,8 @@ class PaperLedgerEntry:
     order_id: str
     tenant_id: str
     symbol: str
+    market: Market
+    asset_class: AssetClass
     side: Side
     quantity: int
     fill_price: Decimal
@@ -244,7 +246,7 @@ class PaperBrokerService(BrokerAdapter):
 
     def ledger_entries(self, tenant_id: str = "default") -> tuple[PaperLedgerEntry, ...]:
         rows = self._connection.execute(
-            """SELECT order_id, tenant_id, symbol, side, quantity, fill_price,
+            """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity, fill_price,
             notional, status, created_at FROM paper_ledger
             WHERE tenant_id = ? ORDER BY id""",
             (tenant_id,),
@@ -254,6 +256,8 @@ class PaperBrokerService(BrokerAdapter):
                 row["order_id"],
                 row["tenant_id"],
                 row["symbol"],
+                Market(row["market"]),
+                AssetClass(row["asset_class"]),
                 Side(row["side"]),
                 int(row["quantity"]),
                 Decimal(row["fill_price"]),
@@ -263,3 +267,12 @@ class PaperBrokerService(BrokerAdapter):
             )
             for row in rows
         )
+    def flush(self) -> None:
+        with self._lock:
+            self._connection.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.commit()
+            self._connection.close()
+
