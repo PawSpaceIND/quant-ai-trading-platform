@@ -1,23 +1,32 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 from quant_ai.marketdata.models import Candle
 
 
 def aggregate_bars(bars: tuple[Candle, ...]) -> Candle:
     if not bars:
         raise ValueError("bars are required")
-    instrument = bars[0].instrument
-    if any(bar.instrument != instrument for bar in bars):
-        raise ValueError("all bars must share instrument")
-    ordered = tuple(sorted(bars, key=lambda item: item.timestamp))
+    first, last = bars[0], bars[-1]
+    if any(bar.instrument != first.instrument for bar in bars):
+        raise ValueError("all bars must use the same instrument")
     return Candle(
-        instrument,
-        ordered[-1].timestamp,
-        ordered[0].open,
-        max(bar.high for bar in ordered),
-        min(bar.low for bar in ordered),
-        ordered[-1].close,
-        sum((bar.volume for bar in ordered), Decimal(0)),
+        first.instrument,
+        last.timestamp,
+        first.open,
+        max(bar.high for bar in bars),
+        min(bar.low for bar in bars),
+        last.close,
+        sum(bar.volume for bar in bars),
     )
+
+
+def aggregate_windows(bars: tuple[Candle, ...], bucket_size: int) -> tuple[Candle, ...]:
+    if bucket_size <= 0:
+        raise ValueError("bucket_size must be positive")
+    output: list[Candle] = []
+    for start in range(0, len(bars), bucket_size):
+        chunk = bars[start : start + bucket_size]
+        if len(chunk) < bucket_size:
+            break
+        output.append(aggregate_bars(chunk))
+    return tuple(output)
