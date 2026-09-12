@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+import asyncio
+from abc import ABC, abstractmethod
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from importlib import import_module
+from threading import RLock
+from typing import Any
+
+
+@dataclass(frozen=True)
+class LiveTick:
+    symbol: str
+    ltp: Decimal
+    volume: Decimal
+    bid: Decimal | None
+    ask: Decimal | None
+    observed_at: datetime
+    source: str
+
+    @property
+    def spread(self) -> Decimal | None:
+        if self.bid is None or self.ask is None:
+            return None
+        return self.ask - self.bid
+
+
+@dataclass(frozen=True)
+class OrderBookUpdate:
+    symbol: str
+    bids: tuple[tuple[Decimal, Decimal], ...]
+    asks: tuple[tuple[Decimal, Decimal], ...]
+    observed_at: datetime
+    source: str
+
+
+class TickBuffer:
+    def __init__(self, maxlen: int = 10_000) -> None:
+        if maxlen < 1:
+            raise ValueError("maxlen must be positive")
+        self._ticks: deque[LiveTick] = deque(maxlen=maxlen)
+        self._latest: dict[str, LiveTick] = {}
+        self._lock = RLock()
+
+    def put(self, tick: LiveTick) -> None:
+        with self._lock:
+            self._ticks.append(tick)
+            self._latest[tick.symbol] = tick
+
+    def latest(self, symbol: str) -> LiveTick | None:
+        with self._lock:
+            return self._latest.get(symbol)
+
+    def snapshot(self) -> dict[str, LiveTick]:
+        with self._lock:
+            return dict(self._latest)
+
+
+class AbstractTickerStream(ABC):
+    def __init__(self, buffer: TickBuffer | None = None) -> None:
+        self.buffer = buffer or TickBuffer()
+
+    async def on_tick(self, tick: LiveTick) -> None:
+        self.buffer.put(tick)
+
+    async def on_orderbook_update(self, update: OrderBookUpdate) -> None:
+        _ = update
+
+    async def on_connection_error(self, error: Exception) -> None:
+        _ = error
+
+    @abstractmethod
+    async def start(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stop(self) -> None:
+        raise NotImplementedError
+
+
+class ZerodhaKiteTicker(AbstractTickerStream):
+    def __init__(
+        self,
+        api_key: str,
+        access_token: str,
+        instrument_tokens: Iterable[int],
+        symbol_by_token: dict[int, str],
+        buffer: TickBuffer | None = None,
+    ) -> None:
+        super().__init__(buffer)
+        self.api_key = api_key
+        self.access_token = access_token
+        self.instrument_tokens = tuple(instrument_tokens)
+        self.symbol_by_token = dict(symbol_by_token)
+        self._ticker: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def start(self) -> None:
+        module = import_module("kiteconnect")
+        ticker_type = module.KiteTicker
+        self._loop = asyncio.get_running_loop()
+        self._ticker = ticker_type(self.api_key, self.access_token)
+        self._ticker.on_connect = self._on_connect
+        self._ticker.on_ticks = self._on_ticks
+        self._ticker.on_error = self._on_error
+        await asyncio.to_thread(self._ticker.connect, threaded=True)
+
+    async def stop(self) -> None:
+        if self._ticker is not None:
+            await asyncio.to_thread(self._ticker.close)
+
+    def _on_connect(self, ws: Any, response: Any) -> None:
+        _ = response
+        ws.subscribe(list(self.instrument_tokens))
+        ws.set_mode(ws.MODE_FULL, list(self.instrument_tokens))
+
+    def _on_ticks(self, ws: Any, ticks: list[dict[str, Any]]) -> None:
+        _ = ws
+        if self._loop is None:
+            return
+        for payload in ticks:
+            token = int(payload["instrument_token"])
+            symbol = self.symbol_by_token.get(token, str(token))
+            depth = payload.get("depth") or {}
+            bids = depth.get("buy") or []
+            asks = depth.get("sell") or []
+            tick = LiveTick(
+                symbol=symbol,
+                ltp=Decimal(str(payload.get("last_price", 0))),
+                volume=Decimal(str(payload.get("volume_traded", payload.get("volume", 0)))),
+                bid=_depth_price(bids),
+                ask=_depth_price(asks),
+                observed_at=_coerce_time(payload.get("timestamp")),
+                source="zerodha",
+            )
+            asyncio.run_coroutine_threadsafe(self.on_tick(tick), self._loop)
+            if bids or asks:
+                book = OrderBookUpdate(
+                    symbol=symbol,
+                    bids=_depth_levels(bids),
+                    asks=_depth_levels(asks),
+                    observed_at=tick.observed_at,
+                    source="zerodha",
+                )
+                asyncio.run_coroutine_threadsafe(self.on_orderbook_update(book), self._loop)
+
+    def _on_error(self, ws: Any, code: Any, reason: Any) -> None:
+        _ = ws
+        if self._loop is not None:
+            error = ConnectionError(f"KiteTicker error {code}: {reason}")
+            asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
+
+
+class IBKRAsyncTicker(AbstractTickerStream):
+    def __init__(self, ib: Any, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> None:
+        super().__init__(buffer)
+        self.ib = ib
+        self.contracts = tuple(contracts)
+        self._subscriptions: list[Any] = []
+
+    @classmethod
+    def with_client(cls, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> IBKRAsyncTicker:
+        module = import_module("ib_async")
+        return cls(module.IB(), contracts, buffer)
+
+    async def start(self) -> None:
+        for contract in self.contracts:
+            ticker = self.ib.reqMktData(contract, "", False, False)
+            ticker.updateEvent += self._on_quote
+            self._subscriptions.append(ticker)
+            if hasattr(self.ib, "reqMktDepth"):
+                depth = self.ib.reqMktDepth(contract)
+                if hasattr(depth, "updateEvent"):
+                    depth.updateEvent += self._on_depth
+
+    async def stop(self) -> None:
+        for contract in self.contracts:
+            self.ib.cancelMktData(contract)
+            if hasattr(self.ib, "cancelMktDepth"):
+                self.ib.cancelMktDepth(contract)
+        self._subscriptions.clear()
+
+    def _on_quote(self, ticker: Any) -> None:
+        symbol = _contract_symbol(ticker.contract)
+        tick = LiveTick(
+            symbol=symbol,
+            ltp=_decimal_or_zero(getattr(ticker, "last", None)),
+            volume=_decimal_or_zero(getattr(ticker, "volume", None)),
+            bid=_decimal_or_none(getattr(ticker, "bid", None)),
+            ask=_decimal_or_none(getattr(ticker, "ask", None)),
+            observed_at=datetime.now(timezone.utc),
+            source="ibkr",
+        )
+        self.buffer.put(tick)
+
+    def _on_depth(self, ticker: Any) -> None:
+        symbol = _contract_symbol(ticker.contract)
+        bids = tuple(
+            (Decimal(str(level.price)), Decimal(str(level.size)))
+            for level in getattr(ticker, "domBids", ())
+        )
+        asks = tuple(
+            (Decimal(str(level.price)), Decimal(str(level.size)))
+            for level in getattr(ticker, "domAsks", ())
+        )
+        update = OrderBookUpdate(
+            symbol=symbol,
+            bids=bids,
+            asks=asks,
+            observed_at=datetime.now(timezone.utc),
+            source="ibkr",
+        )
+        self._dispatch_orderbook(update)
+
+    def _dispatch_orderbook(self, update: OrderBookUpdate) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.on_orderbook_update(update))
+
+
+def _depth_price(levels: list[dict[str, Any]]) -> Decimal | None:
+    if not levels:
+        return None
+    return Decimal(str(levels[0].get("price", 0)))
+
+
+def _depth_levels(levels: list[dict[str, Any]]) -> tuple[tuple[Decimal, Decimal], ...]:
+    return tuple(
+        (Decimal(str(level.get("price", 0))), Decimal(str(level.get("quantity", 0))))
+        for level in levels
+    )
+
+
+def _coerce_time(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not result.is_finite():
+        return None
+    return result
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    return _decimal_or_none(value) or Decimal(0)
+
+
+def _contract_symbol(contract: Any) -> str:
+    symbol = getattr(contract, "localSymbol", None) or getattr(contract, "symbol", None)
+    return str(symbol or "UNKNOWN")
