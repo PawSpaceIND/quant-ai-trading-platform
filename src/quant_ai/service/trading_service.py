@@ -42,4 +42,5 @@ class TradingService:
             request.symbol, request.market, request.asset_class, request.side, request.quantity,
             request.entry, request.stop, request.take_profit, request.probability,
             request.expected_value, request.risk_amount, request.strategy_id, request.nonce,
+            request.tenant_id,
         ), portfolio)

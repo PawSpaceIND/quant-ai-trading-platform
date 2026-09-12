@@ -7,7 +7,7 @@ from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.decision.engine import DecisionEngine, DecisionInput
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, PortfolioSnapshot, Side
-from quant_ai.execution.paper_broker import PaperBroker
+from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.operations.idempotency import IdempotencyRegistry, order_idempotency_key
 from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.risk.policy import RiskFirewall
@@ -28,6 +28,7 @@ class PaperTradeRequest:
     risk_amount: Decimal
     strategy_id: str
     nonce: str
+    tenant_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -38,10 +39,10 @@ class PaperTradeResult:
 
 
 class PaperTradeOrchestrator:
-    def __init__(self) -> None:
+    def __init__(self, broker: PaperBrokerService | None = None) -> None:
         self.decision_engine = DecisionEngine()
         self.risk = RiskFirewall()
-        self.broker = PaperBroker()
+        self.broker = broker
         self.idempotency = IdempotencyRegistry()
         self.kill_switch = KillSwitch()
         self.audit = InMemoryAuditJournal()
@@ -69,7 +70,7 @@ class PaperTradeOrchestrator:
             request.entry,
             request.strategy_id,
             request.asset_class,
-            "default",
+            request.tenant_id,
             request.stop,
             request.take_profit,
         )
@@ -81,6 +82,8 @@ class PaperTradeOrchestrator:
         self.audit.append("RISK", {"symbol": request.symbol, "approved": risk.approved, "reason": risk.reason})
         if not risk.approved:
             return PaperTradeResult(False, risk.reason)
+        if self.broker is None:
+            self.broker = PaperBrokerService(starting_capital=portfolio.equity)
         fill = self.broker.submit(order)
         self.audit.append("FILL", {"symbol": request.symbol, "order_id": fill.order_id, "price": str(fill.average_price)})
         return PaperTradeResult(True, "filled", fill)

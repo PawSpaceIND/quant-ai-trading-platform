@@ -21,6 +21,8 @@ def test_orchestrator_fills_and_audits() -> None:
     result = orchestrator.execute(request(), portfolio())
     assert result.approved
     assert result.fill and result.fill.status == "FILLED"
+    assert orchestrator.broker is not None
+    assert len(orchestrator.broker.ledger_entries()) == 1
     assert [event.event_type for event in orchestrator.audit.events()] == ["DECISION", "RISK", "FILL"]
     assert orchestrator.audit.verify_chain()
 
