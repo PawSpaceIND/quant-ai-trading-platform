@@ -8,6 +8,7 @@ from uuid import uuid4
 from quant_ai.agents.contracts import AgentEvidence, AtlasDecision, Stance
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
+from quant_ai.marketdata.ticker_stream import LiveTick
 
 STANCE_SCORE = {
     Stance.STRONG_BUY: Decimal(2),
@@ -39,20 +40,21 @@ class AtlasInvestmentAgent:
         now: datetime,
         country_opportunities: tuple[CountryOpportunity, ...] = (),
         incumbent_country: str = "India",
+        market_tick: LiveTick | None = None,
     ) -> AtlasDecision:
         relevant = tuple(item for item in evidence if item.subject == subject)
         if len(relevant) < self.policy.min_evidence_agents:
-            return self._hold(subject, now, relevant, "insufficient_agent_coverage")
+            return self._hold(subject, now, relevant, "insufficient_agent_coverage", market_tick)
         stale = tuple(item for item in relevant if item.source_freshness_seconds > self.policy.stale_evidence_seconds)
         if stale:
-            return self._hold(subject, now, relevant, "stale_specialist_evidence")
+            return self._hold(subject, now, relevant, "stale_specialist_evidence", market_tick)
         risk_veto = tuple(item for item in relevant if item.stance == Stance.AVOID)
         if risk_veto:
-            return self._hold(subject, now, relevant, "specialist_veto")
+            return self._hold(subject, now, relevant, "specialist_veto", market_tick)
 
         total_weight = sum((item.confidence for item in relevant), Decimal(0))
         if total_weight <= 0:
-            return self._hold(subject, now, relevant, "zero_confidence")
+            return self._hold(subject, now, relevant, "zero_confidence", market_tick)
         weighted_score = sum((STANCE_SCORE[item.stance] * item.confidence for item in relevant), Decimal(0)) / total_weight
         confidence = sum((item.confidence for item in relevant), Decimal(0)) / Decimal(len(relevant))
         expected_return = sum((item.expected_return * item.confidence for item in relevant), Decimal(0)) / total_weight
@@ -85,7 +87,7 @@ class AtlasInvestmentAgent:
             f"average_confidence={confidence}",
             f"expected_return={expected_return}",
             f"expected_risk={expected_risk}",
-        )
+        ) + _market_rationale(market_tick)
         return AtlasDecision(
             uuid4().hex,
             now,
@@ -108,6 +110,7 @@ class AtlasInvestmentAgent:
         now: datetime,
         evidence: tuple[AgentEvidence, ...],
         reason: str,
+        market_tick: LiveTick | None = None,
     ) -> AtlasDecision:
         return AtlasDecision(
             uuid4().hex,
@@ -119,8 +122,20 @@ class AtlasInvestmentAgent:
             Decimal(0),
             (),
             tuple(item.agent_id for item in evidence),
-            (reason,),
+            (reason,) + _market_rationale(market_tick),
             (),
             (),
             False,
         )
+
+
+def _market_rationale(tick: LiveTick | None) -> tuple[str, ...]:
+    if tick is None:
+        return ()
+    spread = "unknown" if tick.spread is None else str(tick.spread)
+    return (
+        f"live_ltp={tick.ltp}",
+        f"live_volume={tick.volume}",
+        f"live_bid_ask_spread={spread}",
+        f"live_market_source={tick.source}",
+    )
