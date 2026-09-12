@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Self
 
 from quant_ai.agents.contracts import AgentDomain, Stance
 from quant_ai.agents.specialists import SpecialistAgent
@@ -15,7 +16,7 @@ def _tick(symbol: str = "NIFTY") -> LiveTick:
     return LiveTick(
         symbol=symbol,
         ltp=Decimal("25000.25"),
-        volume=Decimal("12345"),
+        volume=Decimal(12345),
         bid=Decimal("25000.20"),
         ask=Decimal("25000.30"),
         observed_at=datetime.now(timezone.utc),
@@ -28,8 +29,8 @@ def test_tick_buffer_returns_latest_and_spread() -> None:
     first = _tick()
     second = LiveTick(
         symbol="NIFTY",
-        ltp=Decimal("25001"),
-        volume=Decimal("13000"),
+        ltp=Decimal(25001),
+        volume=Decimal(13000),
         bid=Decimal("25000.90"),
         ask=Decimal("25001.10"),
         observed_at=datetime.now(timezone.utc),
@@ -40,7 +41,7 @@ def test_tick_buffer_returns_latest_and_spread() -> None:
 
     assert buffer.latest("NIFTY") == second
     assert second.spread == Decimal("0.20")
-    assert buffer.snapshot()["NIFTY"].ltp == Decimal("25001")
+    assert buffer.snapshot()["NIFTY"].ltp == Decimal(25001)
 
 
 def test_cadence_reader_rejects_stale_ticks() -> None:
@@ -48,8 +49,8 @@ def test_cadence_reader_rejects_stale_ticks() -> None:
     now = datetime.now(timezone.utc)
     stale = LiveTick(
         symbol="AAPL",
-        ltp=Decimal("220"),
-        volume=Decimal("10"),
+        ltp=Decimal(220),
+        volume=Decimal(10),
         bid=Decimal("219.9"),
         ask=Decimal("220.1"),
         observed_at=now - timedelta(minutes=5),
@@ -84,7 +85,7 @@ class _FakeEvent:
     def __init__(self) -> None:
         self.handlers: list[object] = []
 
-    def __iadd__(self, handler: object) -> "_FakeEvent":
+    def __iadd__(self, handler: object) -> Self:
         self.handlers.append(handler)
         return self
 
