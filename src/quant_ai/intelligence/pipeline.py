@@ -29,6 +29,8 @@ from quant_ai.intelligence.providers import (
 )
 from quant_ai.intelligence.regime import MarketRegimeDetector, RegimeAssessment
 from quant_ai.marketdata.feed import MarketDataFeed
+from quant_ai.marketdata.ticker_stream import LiveTick
+from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalPlan
 
 
@@ -63,6 +65,7 @@ class SwarmMarketAnalysisPipeline:
         runtime: SwarmPaperTradingService | None = None,
         freshness: FreshnessValidator | None = None,
         regime_detector: MarketRegimeDetector | None = None,
+        tick_reader: CadenceMarketReader | None = None,
     ) -> None:
         self.market_feed = market_feed
         self.news = news
@@ -71,6 +74,7 @@ class SwarmMarketAnalysisPipeline:
         self.runtime = runtime or SwarmPaperTradingService()
         self.freshness = freshness or FreshnessValidator()
         self.regime_detector = regime_detector or MarketRegimeDetector()
+        self.tick_reader = tick_reader
         self.cache = IntelligenceDataCache()
         self.agents = (
             GeopoliticalAnalystAgent(), CommodityYieldAgent(),
@@ -166,6 +170,111 @@ class SwarmMarketAnalysisPipeline:
         return MarketAnalysisResult(
             evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
         )
+
+    async def run_async(
+        self,
+        instrument: Instrument,
+        now: datetime,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        *,
+        quantity: int,
+        country: str,
+        tenant_id: str = "default",
+        country_exposure: dict[str, Decimal] | None = None,
+    ) -> MarketAnalysisResult:
+        candles = self.market_feed.fetch_ohlcv(
+            instrument, now - timedelta(minutes=60), now, "1m"
+        )
+        news = self.news.fetch(instrument.symbol, now)
+        geopolitical = self.news.fetch("GEOPOLITICAL", now)
+        fundamentals = self.fundamentals.fetch(instrument.symbol, now)
+        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
+
+        last_price_at = candles[-1].timestamp if candles else None
+        latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
+        macro_at = macro.observed_at if required_macro <= macro.indicators.keys() else None
+        fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
+        states = PipelineFreshness(
+            self.freshness.validate(DataCategory.PRICE, last_price_at, now),
+            self.freshness.validate(DataCategory.NEWS, latest_news_at, now),
+            self.freshness.validate(DataCategory.MACRO, macro_at, now),
+            self.freshness.validate(DataCategory.FUNDAMENTAL, fundamentals_at, now),
+        )
+        closes = tuple(c.close for c in candles)
+        regime = self.regime_detector.detect(candles)
+        effective_plan = self.regime_detector.apply_to_plan(plan, regime)
+        returns = tuple(
+            (after - before) / before
+            for before, after in zip(closes, closes[1:])
+            if before > 0
+        )
+        curve = [Decimal(100)]
+        for item in returns:
+            curve.append(curve[-1] * (Decimal(1) + item))
+        analytics = summarize_performance(returns, tuple(curve), returns)
+        technical = self._technical_metrics(closes)
+        common = dict(fundamentals.metrics)
+        common.update(technical)
+        common.update(self._macro_metrics(macro.indicators))
+        common["equity_news_sentiment"] = self._mean(tuple(item.sentiment for item in news))
+        geo_sentiment = self._mean(tuple(item.sentiment for item in geopolitical))
+        common["news_sentiment"] = geo_sentiment
+        common["conflict_risk"] = max(Decimal(0), -geo_sentiment)
+        common["sanctions_risk"] = max(Decimal(0), -geo_sentiment / Decimal(2))
+
+        market_tick = self._latest_tick(instrument.symbol, now)
+        if market_tick is not None:
+            common["live_ltp"] = market_tick.ltp
+            common["live_volume"] = market_tick.volume
+            if market_tick.spread is not None:
+                common["live_bid_ask_spread"] = market_tick.spread
+
+        max_age = max(
+            item.age_seconds or 0
+            for item in (states.price, states.news, states.macro, states.fundamentals)
+        )
+        requests = []
+        for agent in self.agents:
+            required = self._required_freshness(agent.agent_id, states)
+            metrics = dict(common)
+            metrics["freshness_multiplier"] = required
+            requests.append(
+                AgentAnalysisRequest(
+                    instrument.symbol, instrument.market, instrument.asset_class, now, metrics, max_age
+                )
+            )
+        evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
+        conflict = self._conflict_ratio(evidence)
+        effective_quantity = max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
+        root_request = requests[-1]
+        reference_price = (
+            market_tick.ltp if market_tick is not None and market_tick.ltp > 0
+            else (closes[-1] if closes else Decimal(0))
+        )
+        stop = (
+            reference_price * (Decimal(1) - plan.stop_loss_fraction)
+            if reference_price > 0 else None
+        )
+        take_profit = (
+            reference_price * (Decimal(1) + plan.take_profit_fraction)
+            if reference_price > 0 else None
+        )
+        execution = await self.runtime.execute_async(
+            root_request, evidence, effective_plan, portfolio,
+            quantity=effective_quantity, reference_price=reference_price,
+            stop_price=stop, take_profit_price=take_profit, country=country,
+            market_tick=market_tick, country_exposure=country_exposure, tenant_id=tenant_id,
+        )
+        return MarketAnalysisResult(
+            evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
+        )
+
+    def _latest_tick(self, symbol: str, now: datetime) -> LiveTick | None:
+        if self.tick_reader is None:
+            return None
+        return self.tick_reader.latest_for_consensus(symbol, now)
 
     @staticmethod
     def _required_freshness(agent_id: str, states: PipelineFreshness) -> Decimal:

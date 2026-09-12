@@ -8,6 +8,7 @@ from uuid import uuid4
 from quant_ai.agents.contracts import AgentEvidence, AtlasDecision, Stance
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
+from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.marketdata.ticker_stream import LiveTick
 
 STANCE_SCORE = {
@@ -29,9 +30,15 @@ class AtlasPolicy:
 
 
 class AtlasInvestmentAgent:
-    def __init__(self, policy: AtlasPolicy | None = None, founder_policy: FounderPolicy | None = None) -> None:
+    def __init__(
+        self,
+        policy: AtlasPolicy | None = None,
+        founder_policy: FounderPolicy | None = None,
+        llm_client: AnthropicSwarmClient | None = None,
+    ) -> None:
         self.policy = policy or AtlasPolicy()
         self.founder_policy = founder_policy or FounderPolicy()
+        self.llm_client = llm_client
 
     def decide(
         self,
@@ -104,6 +111,59 @@ class AtlasInvestmentAgent:
             False,
         )
 
+    async def decide_with_llm(
+        self,
+        subject: str,
+        evidence: tuple[AgentEvidence, ...],
+        now: datetime,
+        market_tick: LiveTick | None = None,
+    ) -> AtlasDecision:
+        deterministic = self.decide(subject, evidence, now, market_tick=market_tick)
+        hard_holds = {
+            "insufficient_agent_coverage",
+            "stale_specialist_evidence",
+            "specialist_veto",
+            "zero_confidence",
+        }
+        if self.llm_client is None or any(item in hard_holds for item in deterministic.rationale):
+            return deterministic
+        payload = await self.llm_client.generate_trading_consensus(
+            _atlas_prompt(subject, evidence, market_tick)
+        )
+        signal, proof = self.llm_client.parse_consensus(payload)
+        action = signal.stance
+        if signal.expected_risk > self.policy.max_expected_risk:
+            action = Stance.NEUTRAL
+        supporting = tuple(
+            item.agent_id for item in evidence
+            if STANCE_SCORE[item.stance] * STANCE_SCORE[action] > 0
+        )
+        dissenting = tuple(
+            item.agent_id for item in evidence
+            if STANCE_SCORE[item.stance] * STANCE_SCORE[action] < 0
+        )
+        rationale = signal.rationale + (
+            f"anthropic_model={proof.model}",
+            f"xai_summary={proof.summary}",
+            *(f"xai_support={item}" for item in proof.supporting_factors),
+            *(f"xai_risk={item}" for item in proof.risk_factors),
+        ) + _market_rationale(market_tick)
+        return AtlasDecision(
+            deterministic.cycle_id,
+            now,
+            action,
+            subject,
+            signal.confidence,
+            signal.expected_return,
+            signal.expected_risk,
+            supporting,
+            dissenting,
+            rationale,
+            deterministic.country_recommendations,
+            deterministic.founder_escalations,
+            False,
+        )
+
     def _hold(
         self,
         subject: str,
@@ -127,6 +187,24 @@ class AtlasInvestmentAgent:
             (),
             False,
         )
+
+
+def _atlas_prompt(
+    subject: str, evidence: tuple[AgentEvidence, ...], tick: LiveTick | None
+) -> str:
+    lines = [
+        f"subject={subject}",
+        "execution_mode=PAPER_ONLY",
+    ]
+    for item in evidence:
+        lines.append(
+            f"agent={item.agent_id};domain={item.domain.value};stance={item.stance.value};"
+            f"confidence={item.confidence};expected_return={item.expected_return};"
+            f"expected_risk={item.expected_risk};freshness={item.source_freshness_seconds}"
+        )
+    lines.extend(_market_rationale(tick) if tick is not None else ("live_tick=unavailable",))
+    lines.append("Return the structured trading consensus and concise XAI proof.")
+    return "\n".join(lines)
 
 
 def _market_rationale(tick: LiveTick | None) -> tuple[str, ...]:

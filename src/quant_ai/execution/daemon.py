@@ -77,15 +77,26 @@ class AutonomousTradingDaemon:
         try:
             pre_metrics = self.tracker.metrics(timestamp)
             before = self.tracker.get_snapshot(timestamp)
-            brief = self.scheduler.run_tick(
-                self.instrument,
-                timestamp,
-                self.plan,
-                before,
-                quantity=self.quantity,
-                country=self.country,
-                tenant_id=self.tenant_id,
-            )
+            if self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None:
+                brief = await self.scheduler.run_tick_async(
+                    self.instrument,
+                    timestamp,
+                    self.plan,
+                    before,
+                    quantity=self.quantity,
+                    country=self.country,
+                    tenant_id=self.tenant_id,
+                )
+            else:
+                brief = self.scheduler.run_tick(
+                    self.instrument,
+                    timestamp,
+                    self.plan,
+                    before,
+                    quantity=self.quantity,
+                    country=self.country,
+                    tenant_id=self.tenant_id,
+                )
             metrics = self.tracker.metrics(timestamp)
             realized_delta = metrics.realized_pnl - pre_metrics.realized_pnl
             if realized_delta != 0:

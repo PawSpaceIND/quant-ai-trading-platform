@@ -179,6 +179,26 @@ class AtlasCIOAgent:
     def __init__(self, atlas: AtlasInvestmentAgent | None = None) -> None:
         self.atlas = atlas or AtlasInvestmentAgent()
 
+    async def propose_async(
+        self,
+        request: AgentAnalysisRequest,
+        evidence: tuple[AgentEvidence, ...],
+        *,
+        quantity: int,
+        reference_price: Decimal,
+        stop_price: Decimal | None,
+        take_profit_price: Decimal | None,
+        country: str,
+        market_tick: object | None = None,
+    ) -> TradeProposal:
+        decision = await self.atlas.decide_with_llm(
+            request.subject, evidence, request.observed_at, market_tick=market_tick
+        )
+        return self._proposal_from_decision(
+            request, decision, quantity=quantity, reference_price=reference_price,
+            stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+        )
+
     def propose(
         self,
         request: AgentAnalysisRequest,
@@ -191,24 +211,32 @@ class AtlasCIOAgent:
         country: str,
     ) -> TradeProposal:
         decision = self.atlas.decide(request.subject, evidence, request.observed_at)
+        return self._proposal_from_decision(
+            request, decision, quantity=quantity, reference_price=reference_price,
+            stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+        )
+
+    @staticmethod
+    def _proposal_from_decision(
+        request: AgentAnalysisRequest,
+        decision: object,
+        *,
+        quantity: int,
+        reference_price: Decimal,
+        stop_price: Decimal | None,
+        take_profit_price: Decimal | None,
+        country: str,
+    ) -> TradeProposal:
         side = None
-        if decision.action in {Stance.BUY, Stance.STRONG_BUY}:
+        action = decision.action
+        if action in {Stance.BUY, Stance.STRONG_BUY}:
             side = Side.BUY
-        elif decision.action in {Stance.SELL, Stance.STRONG_SELL}:
+        elif action in {Stance.SELL, Stance.STRONG_SELL}:
             side = Side.SELL
         return TradeProposal(
-            decision.cycle_id,
-            request.subject,
-            request.market,
-            country,
-            request.asset_class,
-            side,
-            quantity,
-            reference_price,
-            stop_price,
-            take_profit_price,
-            decision.confidence,
-            decision.expected_return,
-            decision.expected_risk,
+            decision.cycle_id, request.subject, request.market, country,
+            request.asset_class, side, quantity, reference_price, stop_price,
+            take_profit_price, decision.confidence,
+            decision.expected_return, decision.expected_risk,
             decision.rationale,
         )
