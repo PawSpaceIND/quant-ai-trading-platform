@@ -14,3 +14,6 @@ htmlcov/
 secrets/
 
 *.egg-info/
+
+node_modules/
+dist/
