@@ -58,6 +58,16 @@ class PortfolioTracker:
         positions = tuple(self._mark_position(item) for item in self.broker.get_positions(self.tenant_id))
         unrealized = sum((item.unrealized_pnl for item in positions), Decimal(0))
         realized, daily_realized = self._realized_pnl(self.broker.ledger_entries(self.tenant_id), observed_at)
+        cash_costs = tuple(
+            item for item in self.broker.cost_entries(self.tenant_id) if item.cash_debit
+        )
+        realized -= sum((item.amount for item in cash_costs), Decimal(0))
+        daily_realized -= sum(
+            (item.amount for item in cash_costs
+             if item.created_at.astimezone(timezone.utc).date()
+             == observed_at.astimezone(timezone.utc).date()),
+            Decimal(0),
+        )
         market_value = sum((item.market_value for item in positions), Decimal(0))
         equity = margin.cash_balance + market_value
         self._high_water_mark = max(self._high_water_mark, equity)
