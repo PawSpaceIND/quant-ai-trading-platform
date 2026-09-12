@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from importlib import import_module
 from threading import RLock
-from typing import Any, Iterable
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,7 @@ class IBKRAsyncTicker(AbstractTickerStream):
         self._subscriptions: list[Any] = []
 
     @classmethod
-    def with_client(cls, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> "IBKRAsyncTicker":
+    def with_client(cls, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> IBKRAsyncTicker:
         module = import_module("ib_async")
         return cls(module.IB(), contracts, buffer)
 
@@ -249,7 +250,7 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return None
     try:
         result = Decimal(str(value))
-    except Exception:
+    except (InvalidOperation, ValueError):
         return None
     if not result.is_finite():
         return None
