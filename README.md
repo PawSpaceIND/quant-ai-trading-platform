@@ -1,19 +1,19 @@
 # Quant AI Trading Platform
 
-Standalone AI-assisted quantitative research and automated trading platform for India and US markets.
+Global multi-asset AI-assisted quantitative research, portfolio intelligence, paper trading, and eventually gated automated execution.
+
+## Design goals
+- India + US first, international adapter architecture from day one.
+- Equities, ETFs, indices, derivatives, FX, commodities, metals/gold, fixed income, funds, and digital-asset-ready domain models.
+- Probability and expected-value driven opportunity ranking.
+- Risk-based position sizing, mandatory protective stops, daily-loss and drawdown circuit breakers.
+- Multi-tenant architecture suitable for a future commercial SaaS product.
 
 ## Safety posture
-- Paper trading only in the initial phases.
+- Paper trading only in the current phase.
 - Live-money execution is disabled in code until explicit promotion gates are satisfied.
 - Prediction and risk approval are separate systems.
-- No strategy is allowed to bypass the risk firewall.
+- No AI or strategy may bypass the risk firewall.
+- No forced trades and no guaranteed-return objective.
 
-## Initial scope
-- Unified market/instrument models.
-- Broker abstraction.
-- Deterministic paper broker.
-- Immutable risk policy.
-- Historical replay foundation.
-- CI gates for risk and execution logic.
-
-See `docs/ARCHITECTURE.md` and `docs/LIVE_MONEY_GATES.md`.
+See `docs/ARCHITECTURE.md`, `docs/LIVE_MONEY_GATES.md`, `docs/PRODUCT_VISION.md`, `docs/AI_ROADMAP.md`, and `docs/GLOBAL_ASSET_PLAN.md`.
