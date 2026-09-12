@@ -52,6 +52,7 @@ class CapitalPlan:
     max_drawdown_amount: Decimal
     max_position_fraction: Decimal
     max_position_amount: Decimal
+    max_country_allocation_fraction: Decimal
     max_gross_exposure_fraction: Decimal
     cash_reserve_fraction: Decimal
     stop_loss_fraction: Decimal
@@ -94,6 +95,11 @@ class CapitalGoalEngine:
         RiskMode.BALANCED: Decimal("0.10"),
         RiskMode.AGGRESSIVE: Decimal("0.12"),
     }
+    _COUNTRY: ClassVar[dict[RiskMode, Decimal]] = {
+        RiskMode.CONSERVATIVE: Decimal("0.35"),
+        RiskMode.BALANCED: Decimal("0.50"),
+        RiskMode.AGGRESSIVE: Decimal("0.60"),
+    }
     _GROSS: ClassVar[dict[RiskMode, Decimal]] = {
         RiskMode.CONSERVATIVE: Decimal("0.35"),
         RiskMode.BALANCED: Decimal("0.60"),
@@ -116,6 +122,7 @@ class CapitalGoalEngine:
         daily_loss = self._DAILY_LOSS[mode]
         drawdown_limit = self._MAX_DRAWDOWN[mode]
         max_position = self._MAX_POSITION[mode]
+        country = self._COUNTRY[mode]
         gross = self._GROSS[mode]
         cash = self._CASH[mode]
         reward_risk = self._REWARD_RISK[mode]
@@ -142,6 +149,7 @@ class CapitalGoalEngine:
             capital * drawdown_limit,
             max_position,
             capital * max_position,
+            country,
             gross,
             cash,
             stop_fraction,

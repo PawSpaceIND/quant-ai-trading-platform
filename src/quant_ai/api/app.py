@@ -287,6 +287,7 @@ def create_app(state: ApiState | None = None) -> FastAPI:
             "max_drawdown_amount": str(plan.max_drawdown_amount),
             "max_position_fraction": str(plan.max_position_fraction),
             "max_position_amount": str(plan.max_position_amount),
+            "max_country_allocation_fraction": str(plan.max_country_allocation_fraction),
             "max_gross_exposure_fraction": str(plan.max_gross_exposure_fraction),
             "cash_reserve_fraction": str(plan.cash_reserve_fraction),
             "stop_loss_fraction": str(plan.stop_loss_fraction),

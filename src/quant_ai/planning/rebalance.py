@@ -77,6 +77,9 @@ class AdaptiveCapitalPlanner:
             max_drawdown_amount=min(candidate.max_drawdown_amount, prior.max_drawdown_amount),
             max_position_fraction=min(candidate.max_position_fraction, prior.max_position_fraction),
             max_position_amount=min(candidate.max_position_amount, prior.max_position_amount),
+            max_country_allocation_fraction=min(
+                candidate.max_country_allocation_fraction, prior.max_country_allocation_fraction
+            ),
             max_gross_exposure_fraction=min(candidate.max_gross_exposure_fraction, prior.max_gross_exposure_fraction),
             cash_reserve_fraction=max(candidate.cash_reserve_fraction, prior.cash_reserve_fraction),
             stop_loss_fraction=candidate.stop_loss_fraction,
