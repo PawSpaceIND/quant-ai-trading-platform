@@ -1,0 +1,36 @@
+[Unit]
+Description=Pramana Ghost Quant Daemon (paper execution only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pramana
+Group=pramana
+WorkingDirectory=/opt/pramana
+EnvironmentFile=-/etc/pramana/pramana.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TRADING_LIVE_MONEY_ACTIVE=false
+Environment=PRAMANA_PAPER_DB=/var/lib/pramana/pramana.db
+Environment=PRAMANA_XAI_DIR=/var/lib/pramana/xai
+Environment=PRAMANA_GHOST_LOG=/var/log/pramana/pramana-ghost.log
+ExecStart=/opt/pramana/.venv/bin/python -m quant_ai.daemon
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+MemoryAccounting=true
+MemoryHigh=768M
+MemoryMax=1G
+StateDirectory=pramana
+LogsDirectory=pramana
+StandardOutput=append:/var/log/pramana/pramana-ghost.stdout.log
+StandardError=append:/var/log/pramana/pramana-ghost.stderr.log
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pramana /var/log/pramana
+
+[Install]
+WantedBy=multi-user.target
