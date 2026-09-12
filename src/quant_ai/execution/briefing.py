@@ -7,6 +7,8 @@ from decimal import Decimal
 
 from quant_ai.execution.session import MarketState
 
+FOUNDER_EXECUTION_BRIEF_HEADER = "PRAMANA CORE: Execution & Risk Digest"
+
 
 @dataclass(frozen=True)
 class FounderExecutionBrief:
@@ -26,6 +28,7 @@ class FounderExecutionBrief:
 
     def to_json(self) -> str:
         payload = asdict(self)
+        payload["header"] = FOUNDER_EXECUTION_BRIEF_HEADER
         payload["generated_at"] = self.generated_at.isoformat()
         payload["market_state"] = self.market_state.value
         payload["sharpe_ratio"] = str(self.sharpe_ratio)

@@ -7,7 +7,10 @@ import urllib.request
 from decimal import Decimal
 from typing import Callable, Protocol
 
-from quant_ai.execution.briefing import FounderExecutionBrief
+from quant_ai.execution.briefing import (
+    FOUNDER_EXECUTION_BRIEF_HEADER,
+    FounderExecutionBrief,
+)
 from quant_ai.notifications.trading import (
     AlertPriority,
     TradingAlertCode,
@@ -16,6 +19,12 @@ from quant_ai.notifications.trading import (
 from quant_ai.notifications.trading import (
     TradingNotificationDispatcher as BaseTradingNotificationDispatcher,
 )
+
+PRAMANA_ALERT_PREFIX = "[PRAMANA]"
+
+
+def _pramana_message(message: str) -> str:
+    return message if message.startswith(PRAMANA_ALERT_PREFIX) else f"{PRAMANA_ALERT_PREFIX} {message}"
 
 
 class NotificationChannel(Protocol):
@@ -31,7 +40,7 @@ class ConsoleNotificationAdapter:
             json.dumps(
                 {
                     "code": notification.code.value,
-                    "message": notification.message,
+                    "message": _pramana_message(notification.message),
                     "tenant_id": notification.tenant_id,
                     "metadata": notification.metadata,
                 },
@@ -62,7 +71,7 @@ class TelegramNotificationAdapter:
 
     def send(self, notification: TradingNotification) -> None:
         payload = urllib.parse.urlencode(
-            {"chat_id": self.chat_id, "text": notification.message}
+            {"chat_id": self.chat_id, "text": _pramana_message(notification.message)}
         ).encode()
         request = urllib.request.Request(
             f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
@@ -87,7 +96,8 @@ def format_founder_execution_brief(
     trades = ", ".join(brief.paper_order_ids) or "none"
     return "\n".join(
         (
-            f"Atlas Cadence Brief | {brief.generated_at.isoformat()}",
+            FOUNDER_EXECUTION_BRIEF_HEADER,
+            f"Generated: {brief.generated_at.isoformat()}",
             f"Market: {brief.market_state.value} | {brief.subject}",
             f"Allocation stance: {brief.mode}",
             f"Swarm: {consensus}",
