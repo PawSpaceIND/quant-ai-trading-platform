@@ -58,27 +58,58 @@ class SwarmPaperTradingService:
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
     ) -> SwarmExecutionResult:
-        weighted_evidence = self.attribution.weight_evidence(evidence)
+        weighted = self.attribution.weight_evidence(evidence)
         proposal = self.cio.propose(
-            request,
-            weighted_evidence,
-            quantity=quantity,
-            reference_price=reference_price,
-            stop_price=stop_price,
-            take_profit_price=take_profit_price,
-            country=country,
+            request, weighted, quantity=quantity, reference_price=reference_price,
+            stop_price=stop_price, take_profit_price=take_profit_price, country=country,
         )
+        return self._execute_proposal(
+            request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
+        )
+
+    async def execute_async(
+        self,
+        request: AgentAnalysisRequest,
+        evidence: tuple[AgentEvidence, ...],
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        *,
+        quantity: int,
+        reference_price: Decimal,
+        stop_price: Decimal | None,
+        take_profit_price: Decimal | None,
+        country: str,
+        market_tick: object | None = None,
+        country_exposure: dict[str, Decimal] | None = None,
+        tenant_id: str = "default",
+    ) -> SwarmExecutionResult:
+        weighted = self.attribution.weight_evidence(evidence)
+        proposal = await self.cio.propose_async(
+            request, weighted, quantity=quantity, reference_price=reference_price,
+            stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+            market_tick=market_tick,
+        )
+        return self._execute_proposal(
+            request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
+        )
+
+    def _execute_proposal(
+        self,
+        request: AgentAnalysisRequest,
+        weighted_evidence: tuple[AgentEvidence, ...],
+        proposal: TradeProposal,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        country_exposure: dict[str, Decimal] | None,
+        tenant_id: str,
+    ) -> SwarmExecutionResult:
         stress = self.stress_agent.evaluate(proposal, portfolio)
         if not stress.passed:
             risk = self.warden.reject("STRESS_VETO", proposal, tenant_id)
             trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
             return SwarmExecutionResult(proposal, risk, None, stress, trace)
         risk = self.warden.evaluate(
-            proposal,
-            plan,
-            portfolio,
-            country_exposure=country_exposure,
-            tenant_id=tenant_id,
+            proposal, plan, portfolio, country_exposure=country_exposure, tenant_id=tenant_id
         )
         if risk.approved and risk.order is not None and risk.order.side.value == "SELL":
             held = sum(

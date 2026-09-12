@@ -11,6 +11,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode
@@ -25,6 +26,7 @@ from quant_ai.intelligence.sandbox import (
     SandboxMacroIndicatorProvider,
     SandboxNewsSentimentProvider,
 )
+from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
@@ -32,6 +34,7 @@ from quant_ai.marketdata.ticker_stream import (
     TickBuffer,
     ZerodhaKiteTicker,
 )
+from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 
 Clock = Callable[[], datetime]
@@ -169,12 +172,14 @@ def build_ghost_runner(
     tenant_id: str = "ghost",
     log_path: str | Path = "pramana-ghost.log",
     xai_directory: str | Path = PRAMANA_PROOF_DIRECTORY,
+    llm_client: AnthropicSwarmClient | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
     broker = PaperBrokerService(database, starting_capital=Decimal(100000))
     feed = UsaSandboxMarketDataFeed()
-    cio = AtlasCIOAgent()
+    buffer = TickBuffer()
+    cio = AtlasCIOAgent(AtlasInvestmentAgent(llm_client=llm_client))
     runtime = SwarmPaperTradingService(
         cio=cio,
         broker=broker,
@@ -186,6 +191,7 @@ def build_ghost_runner(
         SandboxFundamentalDataProvider(),
         SandboxMacroIndicatorProvider(),
         runtime=runtime,
+        tick_reader=CadenceMarketReader(buffer),
     )
     scheduler = AutonomousCadenceScheduler(pipeline, cadence=timedelta(minutes=10))
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
@@ -208,7 +214,6 @@ def build_ghost_runner(
         country="USA",
         tenant_id=tenant_id,
     )
-    buffer = TickBuffer()
     streams = (
         ZerodhaKiteTicker(
             zerodha_api_key,
@@ -295,6 +300,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         tenant_id=os.getenv("PRAMANA_TENANT_ID", "ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=os.getenv("PRAMANA_XAI_DIR", "/var/lib/pramana/xai"),
+        llm_client=AnthropicSwarmClient(),
     )
 
 

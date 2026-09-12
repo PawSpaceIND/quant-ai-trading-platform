@@ -57,6 +57,28 @@ class AutonomousCadenceScheduler:
         )
         return self._market_brief(instrument, now, state, result)
 
+    async def run_tick_async(
+        self,
+        instrument: Instrument,
+        now: datetime,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        *,
+        quantity: int,
+        country: str,
+        tenant_id: str = "default",
+        country_exposure: dict[str, Decimal] | None = None,
+    ) -> FounderExecutionBrief:
+        state = self.calendar.state(instrument.market, now)
+        self.last_run_at = now
+        if state != MarketState.REGULAR_HOURS:
+            return self._off_hours_brief(instrument, now, state)
+        result = await self.pipeline.run_async(
+            instrument, now, plan, portfolio, quantity=quantity, country=country,
+            tenant_id=tenant_id, country_exposure=country_exposure,
+        )
+        return self._market_brief(instrument, now, state, result)
+
     def _off_hours_brief(
         self, instrument: Instrument, now: datetime, state: MarketState
     ) -> FounderExecutionBrief:
