@@ -14,3 +14,5 @@ htmlcov/
 secrets/
 
 *.egg-info/
+
+.venv-api/
