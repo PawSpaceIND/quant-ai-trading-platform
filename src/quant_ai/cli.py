@@ -9,6 +9,12 @@ from decimal import Decimal
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.analytics.metrics import summarize_performance
+from quant_ai.backtesting.replay import (
+    HistoricalReplayDataset,
+    HistoricalReplayHarness,
+    load_replay_dataset,
+)
+from quant_ai.backtesting.tearsheet import build_tearsheet
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode, Side
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
@@ -136,12 +142,78 @@ def _stress_test(daemon: AutonomousTradingDaemon) -> None:
         )
 
 
+
+def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
+    broker = daemon.tracker.broker
+    totals = broker.friction_totals(daemon.tenant_id)
+    statutory_codes = {"STT", "EXCHANGE", "SEBI", "GST", "STAMP", "SEC", "FINRA_TAF"}
+    statutory = sum((amount for code, amount in totals.items() if code in statutory_codes), Decimal(0))
+    print(f"brokerage={totals.get('BROKERAGE', Decimal(0))}")
+    print(f"statutory_fees={statutory}")
+    print(f"slippage={totals.get('SLIPPAGE', Decimal(0))}")
+    print(f"spread={totals.get('SPREAD', Decimal(0))}")
+    for code in sorted(totals):
+        print(f"{code.lower()}={totals[code]}")
+
+
+def _backtest(args: argparse.Namespace) -> None:
+    if not args.data:
+        raise SystemExit("backtest requires --data")
+    market = Market.INDIA if args.market == "india" else Market.USA
+    instrument = (
+        Instrument("RELIANCE", market, AssetClass.EQUITY, "INR", "NSE")
+        if market == Market.INDIA
+        else Instrument("AAPL", market, AssetClass.EQUITY, "USD", "NASDAQ")
+    )
+    dataset = load_replay_dataset(args.data, instrument)
+    start_date = datetime.fromisoformat(args.start).date() if args.start else None
+    end_date = datetime.fromisoformat(args.end).date() if args.end else None
+    bars = tuple(
+        bar for bar in dataset.bars
+        if (start_date is None or bar.timestamp.date() >= start_date)
+        and (end_date is None or bar.timestamp.date() <= end_date)
+    )
+    if not bars:
+        raise SystemExit("no bars in requested backtest range")
+    end_time = bars[-1].timestamp
+    dataset = HistoricalReplayDataset(
+        bars,
+        tuple(item for item in dataset.macro if item.observed_at <= end_time),
+        tuple(item for item in dataset.news if item.published_at <= end_time),
+        tuple(item for item in dataset.fundamentals if item.observed_at <= end_time),
+        dataset.benchmark_closes,
+    )
+    database = os.environ.get("QUANT_AI_BACKTEST_DB", ":memory:")
+    broker = PaperBrokerService(database, starting_capital=Decimal(100000))
+    plan = CapitalGoalEngine().recommend(
+        CapitalPlanRequest(
+            Decimal(100000), Decimal("0.80"), Decimal("0.20"),
+            expected_edge=Decimal("0.02"), requested_mode=RiskMode.BALANCED,
+        )
+    )
+    result = HistoricalReplayHarness(
+        broker, plan, quantity=10, country="India" if market == Market.INDIA else "USA"
+    ).run(dataset)
+    print(build_tearsheet(result, broker).to_json())
+    broker.flush()
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="quant-ai")
     parser.add_argument(
-        "command", choices=("run-once", "daemon", "portfolio", "analytics", "stress-test")
+        "command",
+        choices=(
+            "run-once", "daemon", "portfolio", "analytics", "stress-test",
+            "backtest", "friction-audit",
+        ),
     )
+    parser.add_argument("--data")
+    parser.add_argument("--start")
+    parser.add_argument("--end")
+    parser.add_argument("--market", choices=("india", "us"), default="us")
     args = parser.parse_args(argv)
+    if args.command == "backtest":
+        _backtest(args)
+        return 0
     daemon = build_runtime()
     if args.command == "run-once":
         brief = asyncio.run(daemon.run_once())
@@ -158,6 +230,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "stress-test":
         _stress_test(daemon)
+        daemon.tracker.broker.flush()
+        return 0
+    if args.command == "friction-audit":
+        _friction_audit(daemon)
         daemon.tracker.broker.flush()
         return 0
     asyncio.run(daemon.run())
