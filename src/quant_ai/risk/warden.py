@@ -80,6 +80,11 @@ class RiskWarden:
             return self._reject(decision.reason, proposal, tenant_id)
         return WardenDecision(True, "approved", order)
 
+    def reject(
+        self, reason: str, proposal: TradeProposal, tenant_id: str = "default"
+    ) -> WardenDecision:
+        return self._reject(reason, proposal, tenant_id)
+
     def _reject(
         self, reason: str, proposal: TradeProposal, tenant_id: str
     ) -> WardenDecision:

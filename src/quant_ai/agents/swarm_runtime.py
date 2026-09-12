@@ -65,4 +65,15 @@ class SwarmPaperTradingService:
         )
         if not risk.approved or risk.order is None:
             return SwarmExecutionResult(proposal, risk, None)
+        if risk.order.side.value == "SELL":
+            held = sum(
+                position.quantity
+                for position in self.broker.get_positions(tenant_id)
+                if position.symbol == risk.order.symbol
+                and position.market == risk.order.market
+                and position.asset_class == risk.order.asset_class
+            )
+            if held < risk.order.quantity:
+                rejected = self.warden.reject("paper_naked_sell_disabled", proposal, tenant_id)
+                return SwarmExecutionResult(proposal, rejected, None)
         return SwarmExecutionResult(proposal, risk, self.broker.submit(risk.order))
