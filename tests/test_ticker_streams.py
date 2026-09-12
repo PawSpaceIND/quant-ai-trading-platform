@@ -127,3 +127,35 @@ def test_ibkr_stream_updates_memory_without_orders() -> None:
         assert ib.cancelled == [contract]
 
     asyncio.run(scenario())
+
+
+def test_ibkr_stream_connects_when_configured() -> None:
+    class ConnectableIB(_FakeIB):
+        def __init__(self) -> None:
+            super().__init__()
+            self.connected = False
+            self.connect_calls: list[tuple[str, int, int]] = []
+            self.disconnectedEvent = _FakeEvent()
+
+        def isConnected(self) -> bool:
+            return self.connected
+
+        async def connectAsync(self, host: str, port: int, *, clientId: int) -> None:
+            self.connect_calls.append((host, port, clientId))
+            self.connected = True
+
+    async def scenario() -> None:
+        contract = SimpleNamespace(localSymbol="AAPL")
+        ib = ConnectableIB()
+        stream = IBKRAsyncTicker(
+            ib,
+            [contract],
+            connect_host="127.0.0.1",
+            connect_port=7497,
+            client_id=23,
+        )
+        await stream.start()
+        assert ib.connect_calls == [("127.0.0.1", 7497, 23)]
+        await stream.stop()
+
+    asyncio.run(scenario())

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -161,9 +162,13 @@ def build_ghost_runner(
     zerodha_symbol_by_token: dict[int, str],
     ib_client: Any,
     ib_contracts: Iterable[Any],
+    ib_host: str | None = None,
+    ib_port: int = 7497,
+    ib_client_id: int = 17,
     database: str | Path = "quant-ai-paper.db",
     tenant_id: str = "ghost",
     log_path: str | Path = "pramana-ghost.log",
+    xai_directory: str | Path = PRAMANA_PROOF_DIRECTORY,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -173,7 +178,7 @@ def build_ghost_runner(
     runtime = SwarmPaperTradingService(
         cio=cio,
         broker=broker,
-        xai_logger=XAITraceLogger(PRAMANA_PROOF_DIRECTORY),
+        xai_logger=XAITraceLogger(xai_directory),
     )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -212,7 +217,14 @@ def build_ghost_runner(
             zerodha_symbol_by_token,
             buffer,
         ),
-        IBKRAsyncTicker(ib_client, ib_contracts, buffer),
+        IBKRAsyncTicker(
+            ib_client,
+            ib_contracts,
+            buffer,
+            connect_host=ib_host,
+            connect_port=ib_port,
+            client_id=ib_client_id,
+        ),
     )
     return DaemonRunner(daemon, streams, cadence=timedelta(minutes=10), log_path=log_path)
 
@@ -241,3 +253,56 @@ async def _safe_stop(stream: AbstractTickerStream) -> None:
         await stream.stop()
     except (ConnectionError, OSError, TimeoutError):
         return
+
+
+def _env_json(name: str, default: Any) -> Any:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return json.loads(raw)
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"missing required environment variable: {name}")
+    return value
+
+
+def build_ghost_runner_from_env() -> DaemonRunner:
+    """Build the headless ghost runner from deployment environment variables."""
+    _assert_ghost_mode()
+    ib_module = import_module("ib_async")
+    ib = ib_module.IB()
+    contracts = tuple(
+        ib_module.Contract(**item)
+        for item in _env_json("PRAMANA_IB_CONTRACTS_JSON", [])
+    )
+    tokens = tuple(int(item) for item in _env_json("PRAMANA_ZERODHA_TOKENS_JSON", []))
+    raw_symbols = _env_json("PRAMANA_ZERODHA_SYMBOLS_JSON", {})
+    symbols = {int(key): str(value) for key, value in raw_symbols.items()}
+    return build_ghost_runner(
+        zerodha_api_key=_required_env("ZERODHA_API_KEY"),
+        zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
+        zerodha_instrument_tokens=tokens,
+        zerodha_symbol_by_token=symbols,
+        ib_client=ib,
+        ib_contracts=contracts,
+        ib_host=os.getenv("PRAMANA_IB_HOST", "127.0.0.1"),
+        ib_port=int(os.getenv("PRAMANA_IB_PORT", "7497")),
+        ib_client_id=int(os.getenv("PRAMANA_IB_CLIENT_ID", "17")),
+        database=os.getenv("PRAMANA_PAPER_DB", "/var/lib/pramana/pramana.db"),
+        tenant_id=os.getenv("PRAMANA_TENANT_ID", "ghost"),
+        log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
+        xai_directory=os.getenv("PRAMANA_XAI_DIR", "/var/lib/pramana/xai"),
+    )
+
+
+def main() -> int:
+    runner = build_ghost_runner_from_env()
+    asyncio.run(runner.start())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

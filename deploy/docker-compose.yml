@@ -1,0 +1,28 @@
+services:
+  pramana-ghost:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      TRADING_LIVE_MONEY_ACTIVE: "false"
+      PRAMANA_PAPER_DB: /data/pramana.db
+      PRAMANA_XAI_DIR: /data/xai
+      PRAMANA_GHOST_LOG: /data/pramana-ghost.log
+      PRAMANA_TENANT_ID: ghost
+      ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
+      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
+      PRAMANA_ZERODHA_TOKENS_JSON: ${PRAMANA_ZERODHA_TOKENS_JSON:-}
+      PRAMANA_ZERODHA_SYMBOLS_JSON: ${PRAMANA_ZERODHA_SYMBOLS_JSON:-}
+      PRAMANA_IB_HOST: ${PRAMANA_IB_HOST:-127.0.0.1}
+      PRAMANA_IB_PORT: ${PRAMANA_IB_PORT:-7497}
+      PRAMANA_IB_CLIENT_ID: ${PRAMANA_IB_CLIENT_ID:-17}
+      PRAMANA_IB_CONTRACTS_JSON: ${PRAMANA_IB_CONTRACTS_JSON:-}
+    volumes:
+      - pramana-data:/data
+    mem_limit: 1g
+    mem_reservation: 768m
+    stop_grace_period: 30s
+
+volumes:
+  pramana-data:

@@ -175,10 +175,22 @@ class ZerodhaKiteTicker(AbstractTickerStream):
 
 
 class IBKRAsyncTicker(AbstractTickerStream):
-    def __init__(self, ib: Any, contracts: Iterable[Any], buffer: TickBuffer | None = None) -> None:
+    def __init__(
+        self,
+        ib: Any,
+        contracts: Iterable[Any],
+        buffer: TickBuffer | None = None,
+        *,
+        connect_host: str | None = None,
+        connect_port: int = 7497,
+        client_id: int = 17,
+    ) -> None:
         super().__init__(buffer)
         self.ib = ib
         self.contracts = tuple(contracts)
+        self.connect_host = connect_host
+        self.connect_port = connect_port
+        self.client_id = client_id
         self._subscriptions: list[Any] = []
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -189,6 +201,11 @@ class IBKRAsyncTicker(AbstractTickerStream):
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
+        if self.connect_host is not None and not self._is_connected():
+            connect_async = getattr(self.ib, "connectAsync", None)
+            if connect_async is None:
+                raise ConnectionError("IBKR client does not support async connection")
+            await connect_async(self.connect_host, self.connect_port, clientId=self.client_id)
         disconnected = getattr(self.ib, "disconnectedEvent", None)
         if disconnected is not None:
             disconnected += self._on_disconnect
@@ -202,11 +219,22 @@ class IBKRAsyncTicker(AbstractTickerStream):
                     depth.updateEvent += self._on_depth
 
     async def stop(self) -> None:
-        for contract in self.contracts:
-            self.ib.cancelMktData(contract)
-            if hasattr(self.ib, "cancelMktDepth"):
-                self.ib.cancelMktDepth(contract)
+        if self._is_connected():
+            for contract in self.contracts:
+                self.ib.cancelMktData(contract)
+                if hasattr(self.ib, "cancelMktDepth"):
+                    self.ib.cancelMktDepth(contract)
+        disconnected = getattr(self.ib, "disconnectedEvent", None)
+        if disconnected is not None:
+            try:
+                disconnected -= self._on_disconnect
+            except (TypeError, ValueError):
+                pass
         self._subscriptions.clear()
+
+    def _is_connected(self) -> bool:
+        probe = getattr(self.ib, "isConnected", None)
+        return True if probe is None else bool(probe())
 
     def _on_quote(self, ticker: Any) -> None:
         symbol = _contract_symbol(ticker.contract)
