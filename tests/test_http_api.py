@@ -1,0 +1,73 @@
+from datetime import timedelta
+
+from fastapi.testclient import TestClient
+
+from quant_ai.api.app import ApiState, create_app
+from quant_ai.security.api_keys import ApiKeyRegistry
+from quant_ai.security.rate_limit import SlidingWindowRateLimiter
+from quant_ai.service.portfolio_service import TenantPortfolioStore
+from quant_ai.service.trading_service import TradingService
+
+
+def client_with_key() -> tuple[TestClient, str]:
+    keys = ApiKeyRegistry()
+    raw, _ = keys.issue("tenant-a")
+    state = ApiState(
+        keys,
+        SlidingWindowRateLimiter(100, timedelta(minutes=1)),
+        TradingService(),
+        TenantPortfolioStore(),
+        {"primary_market_data", "paper_broker"},
+    )
+    return TestClient(create_app(state)), raw
+
+
+def test_health_is_public_and_live_is_unavailable() -> None:
+    client, _ = client_with_key()
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["live_execution_available"] is False
+
+
+def test_private_endpoints_require_api_key() -> None:
+    client, _ = client_with_key()
+    assert client.get("/v1/usage").status_code == 401
+
+
+def test_readiness_and_paper_trade() -> None:
+    client, key = client_with_key()
+    headers = {"X-API-Key": key}
+    readiness = client.get("/v1/readiness", headers=headers)
+    assert readiness.status_code == 200
+    assert readiness.json()["ready"] is True
+    payload = {
+        "symbol": "AAPL",
+        "market": "USA",
+        "asset_class": "EQUITY",
+        "side": "BUY",
+        "quantity": 10,
+        "entry": "100",
+        "stop": "95",
+        "take_profit": "110",
+        "probability": "0.70",
+        "expected_value": "25",
+        "risk_amount": "500",
+        "strategy_id": "momentum",
+        "nonce": "api-1",
+        "portfolio_equity": "100000",
+        "daily_realized_pnl": "0",
+        "gross_exposure": "0"
+    }
+    response = client.post("/v1/paper/trades", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approved"] is True
+    assert body["order_id"].startswith("PAPER-")
+    usage = client.get("/v1/usage", headers=headers).json()
+    assert usage["usage"][0]["count"] == 1
+
+
+def test_no_live_trade_route_exists() -> None:
+    client, key = client_with_key()
+    response = client.post("/v1/live/trades", headers={"X-API-Key": key}, json={})
+    assert response.status_code == 404

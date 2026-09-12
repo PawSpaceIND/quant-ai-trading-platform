@@ -17,3 +17,5 @@ secrets/
 
 node_modules/
 dist/
+*.tsbuildinfo
+.venv-api/
