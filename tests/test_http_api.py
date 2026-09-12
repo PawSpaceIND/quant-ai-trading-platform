@@ -129,3 +129,40 @@ def test_atlas_control_plane_and_founder_brief() -> None:
     brief = client.post("/v1/founder/brief", headers=headers, json=brief_payload)
     assert brief.status_code == 200
     assert brief.json()["period"] == "DAILY"
+
+
+def test_dynamic_capital_recommendation_endpoint() -> None:
+    client, key = client_with_key()
+    headers = {"X-API-Key": key}
+    payload = {
+        "starting_capital": "100000",
+        "confidence": "0.70",
+        "annualized_volatility": "0.20",
+        "expected_edge": "0.01",
+        "current_drawdown": "0.01",
+        "liquidity_score": "0.90",
+        "reference_price": "1000",
+    }
+    response = client.post("/v1/capital/recommendation", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["recommended_mode"] == "BALANCED"
+    assert body["recommended_quantity"] > 0
+    assert body["goals"]["daily"]["mandatory"] is False
+    assert float(body["take_profit_fraction"]) > float(body["stop_loss_fraction"])
+
+
+def test_capital_recommendation_can_refuse_trading() -> None:
+    client, key = client_with_key()
+    headers = {"X-API-Key": key}
+    response = client.post("/v1/capital/recommendation", headers=headers, json={
+        "starting_capital": "50000",
+        "confidence": "0.30",
+        "annualized_volatility": "0.60",
+        "current_drawdown": "0.08",
+        "liquidity_score": "0.40"
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trading_allowed"] is False
+    assert body["goals"]["yearly"]["target"] == "0"

@@ -17,6 +17,7 @@ from quant_ai.config.runtime import RuntimeMode
 from quant_ai.domain.models import AssetClass, Market, PortfolioSnapshot, Side
 from quant_ai.geography.opportunity import CountryOpportunity
 from quant_ai.integrations.readiness import blockers, readiness_for_mode
+from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.security.api_keys import ApiCredential, ApiKeyRegistry
 from quant_ai.security.rate_limit import SlidingWindowRateLimiter
 from quant_ai.service.portfolio_service import TenantPortfolioStore
@@ -87,6 +88,19 @@ class FounderGoalsPayload(BaseModel):
     max_drawdown: Decimal = Field(gt=0)
     max_daily_loss: Decimal = Field(gt=0)
     minimum_cash_reserve: Decimal = Field(ge=0, le=1)
+
+
+
+
+class CapitalRecommendationPayload(BaseModel):
+    starting_capital: Decimal = Field(gt=0)
+    confidence: Decimal = Field(ge=0, le=1)
+    annualized_volatility: Decimal = Field(ge=0)
+    expected_edge: Decimal = Decimal(0)
+    current_drawdown: Decimal = Field(default=Decimal(0), ge=0)
+    liquidity_score: Decimal = Field(default=Decimal(1), ge=0, le=1)
+    requested_mode: str | None = None
+    reference_price: Decimal | None = Field(default=None, gt=0)
 
 
 class FounderBriefPayload(BaseModel):
@@ -234,6 +248,62 @@ def create_app(state: ApiState | None = None) -> FastAPI:
             agent_health=health_snapshot,
         )
         return json.loads(brief.to_json())
+
+
+    @app.post("/v1/capital/recommendation")
+    def capital_recommendation(
+        payload: CapitalRecommendationPayload,
+        credential: ApiCredential = Depends(authenticated_tenant),
+    ) -> dict[str, object]:
+        del credential
+        requested_mode = None
+        if payload.requested_mode is not None:
+            try:
+                from quant_ai.domain.models import RiskMode
+
+                requested_mode = RiskMode(payload.requested_mode)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="invalid_requested_mode",
+                ) from exc
+        plan = CapitalGoalEngine().recommend(CapitalPlanRequest(
+            payload.starting_capital,
+            payload.confidence,
+            payload.annualized_volatility,
+            payload.expected_edge,
+            payload.current_drawdown,
+            payload.liquidity_score,
+            requested_mode,
+        ))
+        result: dict[str, object] = {
+            "starting_capital": str(plan.starting_capital),
+            "recommended_mode": plan.recommended_mode.value,
+            "per_trade_risk_fraction": str(plan.per_trade_risk_fraction),
+            "per_trade_risk_amount": str(plan.per_trade_risk_amount),
+            "max_daily_loss_fraction": str(plan.max_daily_loss_fraction),
+            "max_daily_loss_amount": str(plan.max_daily_loss_amount),
+            "max_drawdown_fraction": str(plan.max_drawdown_fraction),
+            "max_drawdown_amount": str(plan.max_drawdown_amount),
+            "max_position_fraction": str(plan.max_position_fraction),
+            "max_position_amount": str(plan.max_position_amount),
+            "max_gross_exposure_fraction": str(plan.max_gross_exposure_fraction),
+            "cash_reserve_fraction": str(plan.cash_reserve_fraction),
+            "stop_loss_fraction": str(plan.stop_loss_fraction),
+            "take_profit_fraction": str(plan.take_profit_fraction),
+            "reward_risk_ratio": str(plan.reward_risk_ratio),
+            "trading_allowed": plan.trading_allowed,
+            "rationale": list(plan.rationale),
+            "goals": {
+                "daily": {"floor": str(plan.daily_goal.floor), "target": str(plan.daily_goal.target), "stretch": str(plan.daily_goal.stretch), "mandatory": False},
+                "weekly": {"floor": str(plan.weekly_goal.floor), "target": str(plan.weekly_goal.target), "stretch": str(plan.weekly_goal.stretch), "mandatory": False},
+                "monthly": {"floor": str(plan.monthly_goal.floor), "target": str(plan.monthly_goal.target), "stretch": str(plan.monthly_goal.stretch), "mandatory": False},
+                "yearly": {"floor": str(plan.yearly_goal.floor), "target": str(plan.yearly_goal.target), "stretch": str(plan.yearly_goal.stretch), "mandatory": False},
+            },
+        }
+        if payload.reference_price is not None:
+            result["recommended_quantity"] = plan.quantity_for_price(payload.reference_price)
+        return result
 
     @app.post("/v1/paper/trades", response_model=PaperTradeResponse)
     def submit_paper_trade(
