@@ -44,15 +44,23 @@ class SwarmAgent(ABC):
         self, request: AgentAnalysisRequest, score: Decimal, confidence: Decimal, rationale: str
     ) -> AgentEvidence:
         clamped = max(Decimal(-1), min(Decimal(1), score))
+        freshness = request.metrics.get("freshness_multiplier", Decimal(1))
+        adjusted_confidence = max(Decimal(0), min(Decimal(1), confidence * freshness))
+        stance = self._stance(clamped) if freshness > Decimal("0.25") else Stance.NEUTRAL
+        reasons = [rationale]
+        if freshness < 1:
+            reasons.append(f"freshness_penalty={freshness}")
+        if freshness <= Decimal("0.25"):
+            reasons.append("capital_preservation_stale_or_missing_data")
         return AgentEvidence(
             self.agent_id,
             self.domain,
             request.subject,
-            self._stance(clamped),
-            max(Decimal(0), min(Decimal(1), confidence)),
+            stance,
+            adjusted_confidence,
             clamped * Decimal("0.04"),
             abs(clamped) * Decimal("0.03"),
-            (rationale,),
+            tuple(reasons),
             request.observed_at,
             request.source_freshness_seconds,
         )
@@ -64,10 +72,12 @@ class GeopoliticalAnalystAgent(SwarmAgent):
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
         sentiment = request.metrics.get("news_sentiment", Decimal(0))
-        geopolitical_risk = request.metrics.get("geopolitical_risk", Decimal(0))
-        return self._evidence(
-            request, sentiment - geopolitical_risk, Decimal("0.70"), "news_and_geopolitical_risk"
-        )
+        sanctions = request.metrics.get("sanctions_risk", Decimal(0))
+        conflict = request.metrics.get("conflict_risk", Decimal(0))
+        score = sentiment - (sanctions + conflict) / Decimal(2)
+        if sentiment <= Decimal("-0.50") or conflict >= Decimal("0.65"):
+            score = min(score, Decimal("-0.70"))
+        return self._evidence(request, score, Decimal("0.76"), "conflict_trade_and_sanctions_sentiment")
 
 
 class CommodityYieldAgent(SwarmAgent):
@@ -75,11 +85,14 @@ class CommodityYieldAgent(SwarmAgent):
     domain = AgentDomain.MACRO
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
-        commodity = request.metrics.get("commodity_momentum", Decimal(0))
-        yield_pressure = request.metrics.get("yield_pressure", Decimal(0))
-        return self._evidence(
-            request, commodity - yield_pressure, Decimal("0.68"), "commodities_and_bond_yields"
-        )
+        crude = request.metrics.get("brent_change", Decimal(0))
+        gold = request.metrics.get("gold_change", Decimal(0))
+        yields = request.metrics.get("yield_change", Decimal(0))
+        dxy = request.metrics.get("dxy_change", Decimal(0))
+        inflation_headwind = max(Decimal(0), crude) + max(Decimal(0), yields)
+        defensive_support = max(Decimal(0), gold) / Decimal(2)
+        score = defensive_support - inflation_headwind - max(Decimal(0), dxy) / Decimal(2)
+        return self._evidence(request, score, Decimal("0.74"), "crude_gold_yield_and_dollar_regime")
 
 
 class IndianEquitiesAgent(SwarmAgent):
@@ -87,10 +100,20 @@ class IndianEquitiesAgent(SwarmAgent):
     domain = AgentDomain.COUNTRY
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
-        market_score = request.metrics.get("india_equity_score", Decimal(0))
         if request.market != Market.INDIA:
-            market_score *= Decimal("0.25")
-        return self._evidence(request, market_score, Decimal("0.72"), "nse_and_india_equity_context")
+            return self._evidence(request, Decimal(0), Decimal("0.30"), "non_india_market")
+        pe = request.metrics.get("pe", Decimal(0))
+        debt = request.metrics.get("debt_equity", Decimal(0))
+        margin = request.metrics.get("operating_margin", Decimal(0))
+        fcf = request.metrics.get("fcf_yield", Decimal(0))
+        news = request.metrics.get("equity_news_sentiment", Decimal(0))
+        score = Decimal(0)
+        score += Decimal("0.30") if 0 < pe <= 30 else Decimal("-0.15")
+        score += Decimal("0.20") if debt <= Decimal("0.75") else Decimal("-0.20")
+        score += Decimal("0.25") if margin >= Decimal("0.15") else Decimal("-0.10")
+        score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
+        score += news * Decimal("0.30")
+        return self._evidence(request, score, Decimal("0.80"), "india_valuation_balance_sheet_margin_and_news")
 
 
 class USEquitiesAgent(SwarmAgent):
@@ -98,10 +121,20 @@ class USEquitiesAgent(SwarmAgent):
     domain = AgentDomain.PORTFOLIO
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
-        market_score = request.metrics.get("us_equity_score", Decimal(0))
         if request.market != Market.USA:
-            market_score *= Decimal("0.25")
-        return self._evidence(request, market_score, Decimal("0.72"), "us_equity_and_sec_context")
+            return self._evidence(request, Decimal(0), Decimal("0.30"), "non_us_market")
+        pe = request.metrics.get("pe", Decimal(0))
+        margin = request.metrics.get("operating_margin", Decimal(0))
+        fcf = request.metrics.get("fcf_yield", Decimal(0))
+        us10y = request.metrics.get("us10y", Decimal(0))
+        news = request.metrics.get("equity_news_sentiment", Decimal(0))
+        score = Decimal(0)
+        score += Decimal("0.25") if 0 < pe <= 35 else Decimal("-0.20")
+        score += Decimal("0.30") if margin >= Decimal("0.20") else Decimal("-0.10")
+        score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
+        score += Decimal("0.15") if us10y <= Decimal("4.5") else Decimal("-0.20")
+        score += news * Decimal("0.30")
+        return self._evidence(request, score, Decimal("0.80"), "us_tech_valuation_margin_fcf_and_rates")
 
 
 class TechnicalQuantAgent(SwarmAgent):
@@ -109,10 +142,17 @@ class TechnicalQuantAgent(SwarmAgent):
     domain = AgentDomain.TECHNICAL
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        spread = request.metrics.get("sma_spread", Decimal(0))
+        rsi = request.metrics.get("rsi", Decimal(50))
         momentum = request.metrics.get("momentum", Decimal(0))
-        trend = request.metrics.get("trend", Decimal(0))
-        score = (momentum + trend) / Decimal(2)
-        return self._evidence(request, score, Decimal("0.78"), "price_action_and_momentum")
+        score = spread * Decimal(4) + momentum * Decimal(3)
+        if rsi >= 75:
+            score -= Decimal("0.45")
+        elif rsi <= 25:
+            score += Decimal("0.35")
+        elif Decimal(45) <= rsi <= Decimal(65):
+            score += Decimal("0.10") if momentum > 0 else Decimal(0)
+        return self._evidence(request, score, Decimal("0.84"), "sma20_sma50_rsi_and_momentum")
 
 
 @dataclass(frozen=True)
