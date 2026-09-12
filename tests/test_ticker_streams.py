@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-
-import pytest
 
 from quant_ai.agents.contracts import AgentDomain, Stance
 from quant_ai.agents.specialists import SpecialistAgent
@@ -109,20 +108,22 @@ class _FakeIB:
         self.cancelled.append(contract)
 
 
-@pytest.mark.asyncio
-async def test_ibkr_stream_updates_memory_without_orders() -> None:
-    contract = SimpleNamespace(localSymbol="AAPL")
-    ib = _FakeIB()
-    stream = IBKRAsyncTicker(ib, [contract])
+def test_ibkr_stream_updates_memory_without_orders() -> None:
+    async def scenario() -> None:
+        contract = SimpleNamespace(localSymbol="AAPL")
+        ib = _FakeIB()
+        stream = IBKRAsyncTicker(ib, [contract])
 
-    await stream.start()
-    assert len(ib.quote.updateEvent.handlers) == 1
-    ib.quote.updateEvent.handlers[0](ib.quote)
-    latest = stream.buffer.latest("AAPL")
+        await stream.start()
+        assert len(ib.quote.updateEvent.handlers) == 1
+        ib.quote.updateEvent.handlers[0](ib.quote)
+        latest = stream.buffer.latest("AAPL")
 
-    assert latest is not None
-    assert latest.ltp == Decimal("220.5")
-    assert latest.spread == Decimal("0.2")
+        assert latest is not None
+        assert latest.ltp == Decimal("220.5")
+        assert latest.spread == Decimal("0.2")
 
-    await stream.stop()
-    assert ib.cancelled == [contract]
+        await stream.stop()
+        assert ib.cancelled == [contract]
+
+    asyncio.run(scenario())
