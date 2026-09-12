@@ -12,3 +12,5 @@ htmlcov/
 *.db
 *.sqlite3
 secrets/
+
+*.egg-info/
