@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import timedelta
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
+from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
+from quant_ai.agents.health import assess_agent_health
+from quant_ai.agents.runtime import AtlasRuntimeCoordinator
+from quant_ai.briefing.founder import build_founder_brief
+from quant_ai.briefing.models import BriefPeriod, FounderGoals
 from quant_ai.config.runtime import RuntimeMode
 from quant_ai.domain.models import AssetClass, Market, PortfolioSnapshot, Side
+from quant_ai.geography.opportunity import CountryOpportunity
 from quant_ai.integrations.readiness import blockers, readiness_for_mode
 from quant_ai.security.api_keys import ApiCredential, ApiKeyRegistry
 from quant_ai.security.rate_limit import SlidingWindowRateLimiter
@@ -47,6 +54,50 @@ class PaperTradeResponse(BaseModel):
     average_price: Decimal | None = None
 
 
+class AgentEvidencePayload(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=128)
+    domain: AgentDomain
+    subject: str = Field(min_length=1, max_length=128)
+    stance: Stance
+    confidence: Decimal = Field(ge=0, le=1)
+    expected_return: Decimal
+    expected_risk: Decimal = Field(ge=0)
+    rationale: list[str] = Field(default_factory=list)
+    source_freshness_seconds: int = Field(ge=0)
+
+
+class CountryOpportunityPayload(BaseModel):
+    country: str = Field(min_length=1, max_length=128)
+    expected_return: Decimal
+    expected_volatility: Decimal = Field(gt=0)
+    liquidity_score: Decimal = Field(ge=0, le=1)
+    accessibility_score: Decimal = Field(ge=0, le=1)
+    regulatory_score: Decimal = Field(ge=0, le=1)
+
+
+class AtlasCyclePayload(BaseModel):
+    subject: str = Field(min_length=1, max_length=128)
+    evidence: list[AgentEvidencePayload] = Field(min_length=1)
+    country_opportunities: list[CountryOpportunityPayload] = Field(default_factory=list)
+    incumbent_country: str = Field(default="India", min_length=1, max_length=128)
+
+
+class FounderGoalsPayload(BaseModel):
+    target_return: Decimal
+    max_drawdown: Decimal = Field(gt=0)
+    max_daily_loss: Decimal = Field(gt=0)
+    minimum_cash_reserve: Decimal = Field(ge=0, le=1)
+
+
+class FounderBriefPayload(BaseModel):
+    period: BriefPeriod
+    nav: Decimal = Field(gt=0)
+    pnl: Decimal
+    drawdown: Decimal = Field(ge=0)
+    cash_fraction: Decimal = Field(ge=0, le=1)
+    goals: FounderGoalsPayload
+
+
 @dataclass
 class ApiState:
     keys: ApiKeyRegistry
@@ -54,6 +105,8 @@ class ApiState:
     trading: TradingService
     portfolios: TenantPortfolioStore
     configured_integrations: set[str]
+    atlas_runtimes: dict[str, AtlasRuntimeCoordinator] = field(default_factory=dict)
+    latest_evidence: dict[str, tuple[AgentEvidence, ...]] = field(default_factory=dict)
 
 
 def create_app(state: ApiState | None = None) -> FastAPI:
@@ -100,6 +153,87 @@ def create_app(state: ApiState | None = None) -> FastAPI:
     def portfolio(credential: ApiCredential = Depends(authenticated_tenant)) -> dict[str, object]:
         rows = runtime.portfolios.list_for_tenant(credential.tenant_id)
         return {"tenant_id": credential.tenant_id, "positions": [row.__dict__ for row in rows]}
+
+    def atlas_runtime(tenant_id: str) -> AtlasRuntimeCoordinator:
+        return runtime.atlas_runtimes.setdefault(tenant_id, AtlasRuntimeCoordinator())
+
+    @app.get("/v1/atlas/status")
+    def atlas_status(credential: ApiCredential = Depends(authenticated_tenant)) -> dict[str, object]:
+        coordinator = atlas_runtime(credential.tenant_id)
+        status_snapshot = coordinator.status(runtime.latest_evidence.get(credential.tenant_id, ()))
+        return {
+            "ready": status_snapshot.ready,
+            "missing_domains": [item.value for item in status_snapshot.missing_domains],
+            "next_cycle_at": status_snapshot.next_cycle_at,
+            "cycle_count": status_snapshot.cycle_count,
+            "consensus_stability": coordinator.consensus_stability(),
+        }
+
+    @app.post("/v1/atlas/cycle")
+    def atlas_cycle(
+        payload: AtlasCyclePayload,
+        credential: ApiCredential = Depends(authenticated_tenant),
+    ) -> dict[str, object]:
+        observed_at = datetime.now(timezone.utc)
+        evidence = tuple(
+            AgentEvidence(
+                item.agent_id, item.domain, item.subject, item.stance, item.confidence,
+                item.expected_return, item.expected_risk, tuple(item.rationale), observed_at,
+                item.source_freshness_seconds,
+            )
+            for item in payload.evidence
+        )
+        if any(item.subject != payload.subject for item in evidence):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="mixed_subject_evidence")
+        countries = tuple(
+            CountryOpportunity(
+                item.country, item.expected_return, item.expected_volatility, item.liquidity_score,
+                item.accessibility_score, item.regulatory_score,
+            )
+            for item in payload.country_opportunities
+        )
+        runtime.latest_evidence[credential.tenant_id] = evidence
+        coordinator = atlas_runtime(credential.tenant_id)
+        try:
+            decision = coordinator.run_cycle(
+                payload.subject, evidence, observed_at, country_opportunities=countries,
+                incumbent_country=payload.incumbent_country,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return json.loads(decision.to_json())
+
+    @app.get("/v1/atlas/history")
+    def atlas_history(credential: ApiCredential = Depends(authenticated_tenant)) -> dict[str, object]:
+        decisions = atlas_runtime(credential.tenant_id).recent_decisions()
+        return {"decisions": [json.loads(item.to_json()) for item in decisions]}
+
+    @app.post("/v1/founder/brief")
+    def founder_brief(
+        payload: FounderBriefPayload,
+        credential: ApiCredential = Depends(authenticated_tenant),
+    ) -> dict[str, object]:
+        coordinator = atlas_runtime(credential.tenant_id)
+        history = coordinator.recent_decisions(1)
+        evidence = runtime.latest_evidence.get(credential.tenant_id, ())
+        if not history:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="atlas_cycle_required")
+        health_snapshot = assess_agent_health(evidence)
+        brief = build_founder_brief(
+            now=datetime.now(timezone.utc),
+            period=payload.period,
+            nav=payload.nav,
+            pnl=payload.pnl,
+            drawdown=payload.drawdown,
+            cash_fraction=payload.cash_fraction,
+            goals=FounderGoals(
+                payload.goals.target_return, payload.goals.max_drawdown,
+                payload.goals.max_daily_loss, payload.goals.minimum_cash_reserve,
+            ),
+            atlas_decision=history[-1],
+            agent_health=health_snapshot,
+        )
+        return json.loads(brief.to_json())
 
     @app.post("/v1/paper/trades", response_model=PaperTradeResponse)
     def submit_paper_trade(
