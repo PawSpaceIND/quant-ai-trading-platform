@@ -71,3 +71,61 @@ def test_no_live_trade_route_exists() -> None:
     client, key = client_with_key()
     response = client.post("/v1/live/trades", headers={"X-API-Key": key}, json={})
     assert response.status_code == 404
+
+
+def atlas_cycle_payload() -> dict[str, object]:
+    domains = [
+        "TECHNICAL", "NEWS", "MACRO", "COUNTRY", "DERIVATIVES", "LIQUIDITY", "RISK", "PORTFOLIO"
+    ]
+    return {
+        "subject": "AAPL",
+        "evidence": [
+            {
+                "agent_id": domain.lower(),
+                "domain": domain,
+                "subject": "AAPL",
+                "stance": "BUY",
+                "confidence": "0.75",
+                "expected_return": "0.03",
+                "expected_risk": "0.02",
+                "rationale": ["signal"],
+                "source_freshness_seconds": 60,
+            }
+            for domain in domains
+        ],
+        "country_opportunities": [],
+        "incumbent_country": "India",
+    }
+
+
+def test_atlas_control_plane_and_founder_brief() -> None:
+    client, key = client_with_key()
+    headers = {"X-API-Key": key}
+    before = client.get("/v1/atlas/status", headers=headers).json()
+    assert before["ready"] is False
+    cycle = client.post("/v1/atlas/cycle", headers=headers, json=atlas_cycle_payload())
+    assert cycle.status_code == 200
+    assert cycle.json()["subject"] == "AAPL"
+    after = client.get("/v1/atlas/status", headers=headers).json()
+    assert after["ready"] is True
+    assert after["cycle_count"] == 1
+    repeated = client.post("/v1/atlas/cycle", headers=headers, json=atlas_cycle_payload())
+    assert repeated.status_code == 409
+    history = client.get("/v1/atlas/history", headers=headers).json()
+    assert len(history["decisions"]) == 1
+    brief_payload = {
+        "period": "DAILY",
+        "nav": "100000",
+        "pnl": "1500",
+        "drawdown": "0.02",
+        "cash_fraction": "0.20",
+        "goals": {
+            "target_return": "0.01",
+            "max_drawdown": "0.10",
+            "max_daily_loss": "0.02",
+            "minimum_cash_reserve": "0.10",
+        },
+    }
+    brief = client.post("/v1/founder/brief", headers=headers, json=brief_payload)
+    assert brief.status_code == 200
+    assert brief.json()["period"] == "DAILY"
