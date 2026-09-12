@@ -14,6 +14,7 @@ from quant_ai.agents.swarm import (
     USEquitiesAgent,
 )
 from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradingService
+from quant_ai.analytics.metrics import PerformanceMetrics, summarize_performance
 from quant_ai.domain.models import Instrument, PortfolioSnapshot
 from quant_ai.intelligence.freshness import (
     DataCategory,
@@ -26,6 +27,7 @@ from quant_ai.intelligence.providers import (
     MacroIndicatorProvider,
     NewsSentimentProvider,
 )
+from quant_ai.intelligence.regime import MarketRegimeDetector, RegimeAssessment
 from quant_ai.marketdata.feed import MarketDataFeed
 from quant_ai.planning.capital import CapitalPlan
 
@@ -46,6 +48,8 @@ class MarketAnalysisResult:
     effective_quantity: int
     conflict_ratio: Decimal
     execution: SwarmExecutionResult
+    regime: RegimeAssessment
+    analytics: PerformanceMetrics
 
 
 class SwarmMarketAnalysisPipeline:
@@ -58,6 +62,7 @@ class SwarmMarketAnalysisPipeline:
         *,
         runtime: SwarmPaperTradingService | None = None,
         freshness: FreshnessValidator | None = None,
+        regime_detector: MarketRegimeDetector | None = None,
     ) -> None:
         self.market_feed = market_feed
         self.news = news
@@ -65,6 +70,7 @@ class SwarmMarketAnalysisPipeline:
         self.macro = macro
         self.runtime = runtime or SwarmPaperTradingService()
         self.freshness = freshness or FreshnessValidator()
+        self.regime_detector = regime_detector or MarketRegimeDetector()
         self.cache = IntelligenceDataCache()
         self.agents = (
             GeopoliticalAnalystAgent(), CommodityYieldAgent(),
@@ -111,6 +117,17 @@ class SwarmMarketAnalysisPipeline:
         if fundamentals_at is not None:
             self.cache.put(f"fundamentals:{instrument.symbol}", fundamentals, fundamentals_at)
         closes = tuple(c.close for c in candles)
+        regime = self.regime_detector.detect(candles)
+        effective_plan = self.regime_detector.apply_to_plan(plan, regime)
+        returns = tuple(
+            (after - before) / before
+            for before, after in zip(closes, closes[1:])
+            if before > 0
+        )
+        curve = [Decimal(100)]
+        for item in returns:
+            curve.append(curve[-1] * (Decimal(1) + item))
+        analytics = summarize_performance(returns, tuple(curve), returns)
         technical = self._technical_metrics(closes)
         equity_news = self._mean(tuple(item.sentiment for item in news))
         geopolitical_sentiment = self._mean(tuple(item.sentiment for item in geopolitical))
@@ -141,13 +158,13 @@ class SwarmMarketAnalysisPipeline:
         stop = reference_price * (Decimal(1) - plan.stop_loss_fraction) if reference_price > 0 else None
         take_profit = reference_price * (Decimal(1) + plan.take_profit_fraction) if reference_price > 0 else None
         execution = self.runtime.execute(
-            root_request, evidence, plan, portfolio,
+            root_request, evidence, effective_plan, portfolio,
             quantity=effective_quantity, reference_price=reference_price,
             stop_price=stop, take_profit_price=take_profit, country=country,
             country_exposure=country_exposure, tenant_id=tenant_id,
         )
         return MarketAnalysisResult(
-            evidence, states, quantity, effective_quantity, conflict, execution
+            evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
         )
 
     @staticmethod

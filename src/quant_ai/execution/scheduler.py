@@ -1,33 +1,14 @@
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from quant_ai.agents.contracts import Stance
 from quant_ai.domain.models import Instrument, PortfolioSnapshot
+from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.session import MarketCalendar, MarketState
 from quant_ai.intelligence.pipeline import MarketAnalysisResult, SwarmMarketAnalysisPipeline
 from quant_ai.planning.capital import CapitalPlan
-
-
-@dataclass(frozen=True)
-class FounderExecutionBrief:
-    generated_at: datetime
-    market_state: MarketState
-    subject: str
-    mode: str
-    swarm_consensus: tuple[str, ...]
-    risk_decision: str
-    paper_order_ids: tuple[str, ...]
-    provider_status: tuple[str, ...]
-
-    def to_json(self) -> str:
-        payload = asdict(self)
-        payload["generated_at"] = self.generated_at.isoformat()
-        payload["market_state"] = self.market_state.value
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class AutonomousCadenceScheduler:
@@ -126,6 +107,8 @@ class AutonomousCadenceScheduler:
         mode = "PAPER_TRADE" if fill is not None else "PRESERVE_CAPITAL"
         if side is None or all(item.stance == Stance.NEUTRAL for item in result.evidence):
             mode = "PRESERVE_CAPITAL"
+        stress = result.execution.stress_verdict
+        trace = result.execution.xai_trace
         return FounderExecutionBrief(
             now,
             state,
@@ -135,4 +118,12 @@ class AutonomousCadenceScheduler:
             result.execution.risk_decision.reason,
             orders,
             provider_status,
+            result.regime.regime.value,
+            "PASS" if stress.passed else "STRESS_VETO",
+            result.analytics.sharpe,
+            result.analytics.sortino,
+            trace.declared_rationales + (
+                f"stress={stress.passed}:{stress.worst_scenario}",
+                f"risk={result.execution.risk_decision.approved}:{result.execution.risk_decision.reason}",
+            ),
         )

@@ -89,6 +89,7 @@ class UrllibTransport:
 
 
 class TokenBucketRateLimiter:
+    MAX_OPS = 10.0
     def __init__(
         self,
         rate_per_second: float,
@@ -99,11 +100,11 @@ class TokenBucketRateLimiter:
     ) -> None:
         if rate_per_second <= 0 or capacity <= 0:
             raise ValueError("rate and capacity must be positive")
-        self.rate = rate_per_second
-        self.capacity = capacity
+        self.rate = min(rate_per_second, self.MAX_OPS)
+        self.capacity = min(capacity, 1.0)
         self.clock = clock
         self.sleeper = sleeper
-        self._tokens = capacity
+        self._tokens = self.capacity
         self._updated_at = clock()
         self._lock = Lock()
 
