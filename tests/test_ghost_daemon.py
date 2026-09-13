@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from quant_ai.daemon import DaemonRunner, ReconnectPolicy, build_ghost_runner
+from quant_ai.daemon import (
+    DaemonRunner,
+    ReconnectPolicy,
+    build_ghost_runner,
+    build_ghost_runner_from_env,
+)
 from quant_ai.marketdata.ticker_stream import AbstractTickerStream
 
 
@@ -144,3 +149,38 @@ def test_build_ghost_runner_wires_paper_broker_and_both_streams(tmp_path, monkey
         "IBKRAsyncTicker",
     ]
     assert runner.cadence.total_seconds() == 600
+
+
+def test_env_runner_can_boot_zerodha_only_with_explicit_india_target(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TRADING_LIVE_MONEY_ACTIVE", "false")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic")
+    monkeypatch.setenv("ZERODHA_API_KEY", "test-key")
+    monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("PRAMANA_ZERODHA_TOKENS_JSON", "[256265]")
+    monkeypatch.setenv("PRAMANA_ZERODHA_SYMBOLS_JSON", '{"256265":"NIFTY"}')
+    monkeypatch.setenv("PRAMANA_TARGET_SYMBOL", "NIFTY")
+    monkeypatch.setenv("PRAMANA_TARGET_MARKET", "INDIA")
+    monkeypatch.setenv("PRAMANA_TARGET_ASSET_CLASS", "INDEX")
+    monkeypatch.setenv("PRAMANA_TARGET_CURRENCY", "INR")
+    monkeypatch.setenv("PRAMANA_TARGET_EXCHANGE", "NSE")
+    monkeypatch.setenv("PRAMANA_IBKR_ENABLED", "false")
+    monkeypatch.setenv("PRAMANA_PAPER_DB", str(tmp_path / "paper.db"))
+    monkeypatch.setenv("PRAMANA_GHOST_LOG", str(tmp_path / "ghost.log"))
+    monkeypatch.setenv("PRAMANA_XAI_DIR", str(tmp_path / "xai"))
+
+    class FakeAnthropicClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeIB:
+        pass
+
+    monkeypatch.setattr("quant_ai.daemon.AnthropicSwarmClient", FakeAnthropicClient)
+    monkeypatch.setattr("quant_ai.daemon.import_module", lambda name: SimpleNamespace(IB=FakeIB))
+
+    runner = build_ghost_runner_from_env()
+
+    assert runner.daemon.instrument.symbol == "NIFTY"
+    assert runner.daemon.instrument.market.value == "INDIA"
+    assert runner.daemon.instrument.currency == "INR"
+    assert [type(stream).__name__ for stream in runner.streams] == ["ZerodhaKiteTicker"]

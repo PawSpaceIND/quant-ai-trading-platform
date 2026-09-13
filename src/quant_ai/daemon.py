@@ -173,6 +173,8 @@ def build_ghost_runner(
     log_path: str | Path = "pramana-ghost.log",
     xai_directory: str | Path = PRAMANA_PROOF_DIRECTORY,
     llm_client: AnthropicSwarmClient | None = None,
+    instrument: Instrument | None = None,
+    include_ibkr: bool = True,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -204,7 +206,7 @@ def build_ghost_runner(
             requested_mode=RiskMode.BALANCED,
         )
     )
-    instrument = Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
+    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     daemon = AutonomousTradingDaemon(
         scheduler,
         tracker,
@@ -214,23 +216,26 @@ def build_ghost_runner(
         country="USA",
         tenant_id=tenant_id,
     )
-    streams = (
+    streams: list[AbstractTickerStream] = [
         ZerodhaKiteTicker(
             zerodha_api_key,
             zerodha_access_token,
             zerodha_instrument_tokens,
             zerodha_symbol_by_token,
             buffer,
-        ),
-        IBKRAsyncTicker(
-            ib_client,
-            ib_contracts,
-            buffer,
-            connect_host=ib_host,
-            connect_port=ib_port,
-            client_id=ib_client_id,
-        ),
-    )
+        )
+    ]
+    if include_ibkr:
+        streams.append(
+            IBKRAsyncTicker(
+                ib_client,
+                ib_contracts,
+                buffer,
+                connect_host=ib_host,
+                connect_port=ib_port,
+                client_id=ib_client_id,
+            )
+        )
     return DaemonRunner(daemon, streams, cadence=timedelta(minutes=10), log_path=log_path)
 
 def _assert_ghost_mode() -> None:
@@ -267,6 +272,13 @@ def _env_json(name: str, default: Any) -> Any:
     return json.loads(raw)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -286,6 +298,13 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     tokens = tuple(int(item) for item in _env_json("PRAMANA_ZERODHA_TOKENS_JSON", []))
     raw_symbols = _env_json("PRAMANA_ZERODHA_SYMBOLS_JSON", {})
     symbols = {int(key): str(value) for key, value in raw_symbols.items()}
+    instrument = Instrument(
+        os.getenv("PRAMANA_TARGET_SYMBOL", "AAPL").strip() or "AAPL",
+        Market(os.getenv("PRAMANA_TARGET_MARKET", "USA").strip().upper()),
+        AssetClass(os.getenv("PRAMANA_TARGET_ASSET_CLASS", "EQUITY").strip().upper()),
+        os.getenv("PRAMANA_TARGET_CURRENCY", "USD").strip().upper(),
+        os.getenv("PRAMANA_TARGET_EXCHANGE", "NASDAQ").strip().upper(),
+    )
     return build_ghost_runner(
         zerodha_api_key=_required_env("ZERODHA_API_KEY"),
         zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
@@ -301,6 +320,8 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=os.getenv("PRAMANA_XAI_DIR", "/var/lib/pramana/xai"),
         llm_client=AnthropicSwarmClient(),
+        instrument=instrument,
+        include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
     )
 
 
