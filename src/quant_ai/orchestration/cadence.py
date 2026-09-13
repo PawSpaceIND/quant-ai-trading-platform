@@ -28,10 +28,12 @@ class CadenceMarketReader:
         self.buffer = buffer
         self.max_tick_age = max_tick_age
 
-    def latest_for_consensus(self, symbol: str, now: datetime | None = None) -> LiveTick | None:
+    def market_data_status(
+        self, symbol: str, now: datetime | None = None
+    ) -> tuple[LiveTick | None, str | None]:
         tick = self.buffer.latest(symbol)
         if tick is None:
-            return None
+            return None, "Missing Market Data"
         current = now or datetime.now(timezone.utc)
         observed = tick.observed_at
         if observed.tzinfo is None:
@@ -39,5 +41,9 @@ class CadenceMarketReader:
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         if current - observed > self.max_tick_age:
-            return None
+            return None, "Stale Market Data"
+        return tick, None
+
+    def latest_for_consensus(self, symbol: str, now: datetime | None = None) -> LiveTick | None:
+        tick, _ = self.market_data_status(symbol, now)
         return tick

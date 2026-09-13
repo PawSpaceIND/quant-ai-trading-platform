@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import random
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from threading import RLock
+from typing import Callable
 from uuid import uuid4
 
 from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
-from quant_ai.execution.friction import FrictionContext, MarketFrictionModel
+from quant_ai.execution.friction import FrictionContext, FrictionResult, MarketFrictionModel
+
+
+class PaperBrokerDatabaseLockedError(RuntimeError):
+    """Paper broker exhausted bounded retries while SQLite remained locked."""
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,10 @@ class PaperBrokerService(BrokerAdapter):
         starting_capital: Decimal = Decimal(100000),
         slippage_bps: Decimal | None = None,
         friction_model: MarketFrictionModel | None = None,
+        lock_retries: int = 3,
+        lock_backoff_seconds: float = 0.05,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        jitter_fn: Callable[[float, float], float] = random.uniform,
     ) -> None:
         if starting_capital <= 0:
             raise ValueError("starting_capital must be positive")
@@ -56,6 +67,10 @@ class PaperBrokerService(BrokerAdapter):
             raise ValueError("slippage_bps cannot be negative")
         if slippage_bps is not None and friction_model is not None:
             raise ValueError("choose slippage_bps compatibility mode or friction_model")
+        if lock_retries < 0:
+            raise ValueError("lock_retries cannot be negative")
+        if lock_backoff_seconds < 0:
+            raise ValueError("lock_backoff_seconds cannot be negative")
         self.starting_capital = starting_capital
         self.slippage_bps = slippage_bps or Decimal(0)
         self.friction_model = friction_model or (
@@ -65,6 +80,10 @@ class PaperBrokerService(BrokerAdapter):
         )
         self._friction_context: FrictionContext | None = None
         self._execution_time: datetime | None = None
+        self.lock_retries = lock_retries
+        self.lock_backoff_seconds = lock_backoff_seconds
+        self._sleep = sleep_fn
+        self._jitter = jitter_fn
         self._lock = RLock()
         self._connection = sqlite3.connect(str(database), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
@@ -152,13 +171,40 @@ class PaperBrokerService(BrokerAdapter):
     def _execute(self, order: OrderIntent) -> ExecutionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")
-        tenant_id = order.tenant_id
         friction = self.friction_model.evaluate(order, self._context_for(order))
         fill_price = friction.execution_price
         notional = fill_price * order.quantity
-        statutory_fees = friction.statutory_fees
         order_id = f"PAPER-{uuid4().hex[:16].upper()}"
         now = self._execution_time or datetime.now(timezone.utc)
+        for attempt in range(self.lock_retries + 1):
+            try:
+                return self._execute_once(
+                    order, friction, fill_price, notional, order_id, now
+                )
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).lower():
+                    raise
+                self._connection.rollback()
+                if attempt >= self.lock_retries:
+                    raise PaperBrokerDatabaseLockedError(
+                        f"sqlite database remained locked after {self.lock_retries} retries"
+                    ) from error
+                base = self.lock_backoff_seconds * (2**attempt)
+                delay = base + self._jitter(0.0, self.lock_backoff_seconds)
+                self._sleep(delay)
+        raise AssertionError("unreachable sqlite retry state")
+
+    def _execute_once(
+        self,
+        order: OrderIntent,
+        friction: FrictionResult,
+        fill_price: Decimal,
+        notional: Decimal,
+        order_id: str,
+        now: datetime,
+    ) -> ExecutionResult:
+        tenant_id = order.tenant_id
+        statutory_fees = friction.statutory_fees
         with self._lock, self._connection:
             self._ensure_account(tenant_id)
             account = self._connection.execute(
@@ -228,7 +274,10 @@ class PaperBrokerService(BrokerAdapter):
                     now.isoformat(),
                 ),
             )
-            cost_rows = [("SPREAD", friction.spread_drag, False), ("SLIPPAGE", friction.slippage_drag, False)]
+            cost_rows = [
+                ("SPREAD", friction.spread_drag, False),
+                ("SLIPPAGE", friction.slippage_drag, False),
+            ]
             cost_rows.extend((item.code, item.amount, True) for item in friction.charges)
             self._connection.executemany(
                 """INSERT INTO paper_cost_ledger

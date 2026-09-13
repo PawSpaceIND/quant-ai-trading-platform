@@ -224,7 +224,7 @@ class SwarmMarketAnalysisPipeline:
         common["conflict_risk"] = max(Decimal(0), -geo_sentiment)
         common["sanctions_risk"] = max(Decimal(0), -geo_sentiment / Decimal(2))
 
-        market_tick = self._latest_tick(instrument.symbol, now)
+        market_tick, market_data_veto = self._market_tick_status(instrument.symbol, now)
         if market_tick is not None:
             common["live_ltp"] = market_tick.ltp
             common["live_volume"] = market_tick.volume
@@ -265,16 +265,23 @@ class SwarmMarketAnalysisPipeline:
             root_request, evidence, effective_plan, portfolio,
             quantity=effective_quantity, reference_price=reference_price,
             stop_price=stop, take_profit_price=take_profit, country=country,
-            market_tick=market_tick, country_exposure=country_exposure, tenant_id=tenant_id,
+            market_tick=market_tick, preflight_veto_reason=market_data_veto,
+            country_exposure=country_exposure, tenant_id=tenant_id,
         )
         return MarketAnalysisResult(
             evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
         )
 
-    def _latest_tick(self, symbol: str, now: datetime) -> LiveTick | None:
+    def _market_tick_status(
+        self, symbol: str, now: datetime
+    ) -> tuple[LiveTick | None, str | None]:
         if self.tick_reader is None:
-            return None
-        return self.tick_reader.latest_for_consensus(symbol, now)
+            return None, None
+        return self.tick_reader.market_data_status(symbol, now)
+
+    def _latest_tick(self, symbol: str, now: datetime) -> LiveTick | None:
+        tick, _ = self._market_tick_status(symbol, now)
+        return tick
 
     @staticmethod
     def _required_freshness(agent_id: str, states: PipelineFreshness) -> Decimal:

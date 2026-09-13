@@ -9,7 +9,7 @@ from quant_ai.analytics.attribution import AgentAttributionEngine
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import PortfolioSnapshot
 from quant_ai.execution.audit import XAITrace, XAITraceLogger
-from quant_ai.execution.paper_ledger import PaperBrokerService
+from quant_ai.execution.paper_ledger import PaperBrokerDatabaseLockedError, PaperBrokerService
 from quant_ai.intelligence.adversarial import AdversarialStressAgent, StressVerdict
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.risk.warden import RiskWarden, WardenDecision
@@ -80,10 +80,20 @@ class SwarmPaperTradingService:
         take_profit_price: Decimal | None,
         country: str,
         market_tick: object | None = None,
+        preflight_veto_reason: str | None = None,
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
     ) -> SwarmExecutionResult:
         weighted = self.attribution.weight_evidence(evidence)
+        if preflight_veto_reason is not None:
+            proposal = self.cio.propose(
+                request, weighted, quantity=quantity, reference_price=reference_price,
+                stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+            )
+            stress = self.stress_agent.evaluate(proposal, portfolio)
+            risk = self.warden.reject(preflight_veto_reason, proposal, tenant_id)
+            trace = self.xai_logger.log(request, weighted, proposal, stress, risk)
+            return SwarmExecutionResult(proposal, risk, None, stress, trace)
         proposal = await self.cio.propose_async(
             request, weighted, quantity=quantity, reference_price=reference_price,
             stop_price=stop_price, take_profit_price=take_profit_price, country=country,
@@ -121,9 +131,14 @@ class SwarmPaperTradingService:
             )
             if held < risk.order.quantity:
                 risk = self.warden.reject("paper_naked_sell_disabled", proposal, tenant_id)
-        trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
         if not risk.approved or risk.order is None:
+            trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
             return SwarmExecutionResult(proposal, risk, None, stress, trace)
-        return SwarmExecutionResult(
-            proposal, risk, self.broker.submit(risk.order), stress, trace
-        )
+        try:
+            fill = self.broker.submit(risk.order)
+        except PaperBrokerDatabaseLockedError:
+            risk = self.warden.reject("paper_broker_database_locked", proposal, tenant_id)
+            trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
+            return SwarmExecutionResult(proposal, risk, None, stress, trace)
+        trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
+        return SwarmExecutionResult(proposal, risk, fill, stress, trace)
