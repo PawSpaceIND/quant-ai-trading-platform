@@ -8,7 +8,7 @@ from uuid import uuid4
 from quant_ai.agents.contracts import AgentEvidence, AtlasDecision, Stance
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
-from quant_ai.llm.anthropic_client import AnthropicSwarmClient
+from quant_ai.llm.anthropic_client import AnthropicSwarmClient, ConsensusSchemaError
 from quant_ai.marketdata.ticker_stream import LiveTick
 
 STANCE_SCORE = {
@@ -127,10 +127,15 @@ class AtlasInvestmentAgent:
         }
         if self.llm_client is None or any(item in hard_holds for item in deterministic.rationale):
             return deterministic
-        payload = await self.llm_client.generate_trading_consensus(
-            _atlas_prompt(subject, evidence, market_tick)
-        )
-        signal, proof = self.llm_client.parse_consensus(payload)
+        try:
+            payload = await self.llm_client.generate_trading_consensus(
+                _atlas_prompt(subject, evidence, market_tick)
+            )
+            signal, proof = self.llm_client.parse_consensus(payload)
+        except ConsensusSchemaError:
+            return self._hold(
+                subject, now, evidence, "Consensus Skipped: Invalid Schema", market_tick
+            )
         action = signal.stance
         if signal.expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
