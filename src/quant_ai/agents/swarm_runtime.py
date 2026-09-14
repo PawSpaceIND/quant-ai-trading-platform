@@ -140,6 +140,9 @@ class SwarmPaperTradingService:
             exit_quantity = min(proposal.quantity, held) if proposal.quantity > 0 else held
             if exit_quantity != proposal.quantity:
                 proposal = replace(proposal, quantity=exit_quantity)
+        pure_de_risking_sell = (
+            proposal.side == Side.SELL and held > 0 and proposal.quantity <= held
+        )
         stress = self.stress_agent.evaluate(proposal, portfolio)
 
         def refuse(reason: str) -> SwarmExecutionResult:
@@ -151,15 +154,16 @@ class SwarmPaperTradingService:
                 proposal, rejected, None, stress, trace, lifecycle.state
             )
 
-        # C5: an engaged kill switch halts the daemon before anything else is evaluated.
-        if self.kill_switch.engaged:
+        # A halt freezes new risk. It must never trap a position: covered SELLs are allowed
+        # through the same governed paper path while every risk-adding order stays blocked.
+        if self.kill_switch.engaged and not pure_de_risking_sell:
             return refuse(f"kill_switch_engaged:{self.kill_switch.reason}")
         if proposal.side == Side.SELL and held <= 0:
             return refuse("paper_naked_sell_disabled")
         if proposal.side == Side.BUY and proposal.quantity <= 0:
             # The sizer found no risk budget, trade cap or deployable capital for an entry.
             return refuse("position_sizer_no_capacity")
-        if not stress.passed:
+        if not stress.passed and not pure_de_risking_sell:
             return refuse("STRESS_VETO")
 
         risk = self.warden.evaluate(
