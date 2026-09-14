@@ -56,6 +56,8 @@ Desktop sorting, correlation selection, scenario pagination, private download an
 
 **522 Python, 58 dashboard and 13 Worker tests** pass, plus CI-scope Ruff, changed collector/publisher Ruff, TypeScript, webpack production build and static cloud export. Existing Starlette warnings remain. Separate real-source observations, exact revision and remote CI are recorded in the closure artifacts; synthetic results are not real-account performance or production qualification.
 
+The first CI run exposed a test-isolation issue: the mocked collector test imported the optional `kiteconnect` pilot dependency before substituting its fake. The test now supplies that fake module before loading the collector, so base CI exercises the same assertions without installing or calling a broker SDK. No test was skipped; the separate real SDK capture remains integration evidence.
+
 ## Real-source observation and calendar correction
 
 A separate read-only Zerodha capture returned 173 closes for each of 13 instruments, through 11 September. All included 1 February 2026, which the earlier regular-session calendar omitted. The strict reader rejected that mismatch. NSE confirms the Sunday cash session in [circular NSE/CMTR/72349](https://nsearchives.nseindia.com/content/circulars/CMTR72349.pdf). The shared `MarketCalendar` now includes this specific normal-hours session; explicit holiday overrides still close it. Its special-session configuration is included in the strategy fingerprint, with a drift regression test.

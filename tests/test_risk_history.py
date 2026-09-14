@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import sys
 from datetime import date, datetime
 from pathlib import Path
+from types import ModuleType
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -55,9 +57,6 @@ def test_risk_producer_preserves_bad_data_but_excludes_current_and_future_dates(
 
 
 def test_market_collector_publishes_risk_identity_and_long_history_without_external_calls(monkeypatch, tmp_path):
-    spec = importlib.util.spec_from_file_location("risk_collector_test", Path(__file__).parents[1] / "scripts/market_monitor.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     moment = datetime(2026, 9, 14, 12, tzinfo=ZoneInfo("Asia/Kolkata"))
 
     class Clock(datetime):
@@ -81,9 +80,17 @@ def test_market_collector_publishes_risk_identity_and_long_history_without_exter
             calls.append((token, str(start), str(end), interval))
             return [{"date": moment.replace(day=11), "close": 99}, {"date": moment, "close": 100}]
 
+    # The broker SDK is an optional pilot dependency. This no-network collector
+    # test supplies its fake before loading the script, including in base CI.
+    sdk = ModuleType("kiteconnect")
+    sdk.KiteConnect = Kite
+    monkeypatch.setitem(sys.modules, "kiteconnect", sdk)
+    spec = importlib.util.spec_from_file_location("risk_collector_test", Path(__file__).parents[1] / "scripts/market_monitor.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
     monkeypatch.setenv("ZERODHA_API_KEY", "synthetic")
     monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", "synthetic")
-    monkeypatch.setattr(module, "KiteConnect", Kite)
     monkeypatch.setattr(module, "datetime", Clock)
     monkeypatch.setattr(module, "CONFIG", tmp_path)
     monkeypatch.setattr("quant_ai.intelligence.external.rss.RssNewsSentimentAdapter.fetch", lambda *args: ())
