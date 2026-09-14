@@ -188,6 +188,40 @@ class HistoricalReplayHarness:
             if result.execution.fill is not None:
                 order_ids.append(result.execution.fill.order_id)
             after = tracker.get_snapshot(bar.timestamp)
+            metrics = tracker.metrics(bar.timestamp)
+            payload = {
+                "status": "ok",
+                "tenantId": self.tenant_id,
+                "markMode": "historical_replay",
+                "markDisclaimer": "Historical/synthetic replay valuations; not live market prices.",
+                "cash": float(metrics.cash_balance),
+                "totalEquity": float(metrics.total_equity),
+                "startingCapital": float(self.broker.get_margin(self.tenant_id).starting_capital),
+                "realizedPnl": float(metrics.realized_pnl),
+                "unrealizedPnl": float(metrics.unrealized_pnl),
+                "highWaterMark": float(metrics.high_water_mark),
+                "drawdown": float(metrics.drawdown_fraction),
+                "holdings": [
+                    {
+                        "symbol": p.symbol,
+                        "market": p.market.value,
+                        "assetClass": p.asset_class.value,
+                        "quantity": p.quantity,
+                        "averageEntry": float(p.average_entry_price),
+                        "markPrice": float(p.current_price),
+                        "markSource": "replay_bar_close",
+                        "marketValue": float(p.market_value),
+                        "unrealizedPnl": float(p.unrealized_pnl),
+                    }
+                    for p in metrics.positions
+                ],
+                "updatedAt": bar.timestamp.isoformat(),
+            }
+            self.broker.record_replay_valuation(
+                bar.timestamp.isoformat(),
+                json.dumps(payload, allow_nan=False),
+                self.tenant_id,
+            )
             curve.append(after.equity)
             timestamps.append(bar.timestamp)
             if index == len(dataset.bars) - 1:
