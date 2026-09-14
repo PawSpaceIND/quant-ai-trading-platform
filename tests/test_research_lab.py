@@ -202,3 +202,88 @@ def test_missing_and_pending_evidence_remains_visible(setup):
     report = lab.report("test")["candidates"]
     assert report["astra"]["pending_buy_outcomes"] == 1
     assert report["claude"]["missing_decisions"] == 1
+
+
+def test_export_reopens_readonly_and_hashes_same_evidence(setup):
+    lab, _, _, decision, outcome = setup
+    record_all(lab, decision)
+    lab.record_outcome("test", "one", outcome)
+    evidence = lab.export_evidence("test")
+    assert evidence["sha256"] == hashlib.sha256(canonical(evidence["body"]).encode()).hexdigest()
+    path = lab.db.execute("PRAGMA database_list").fetchone()[2]
+    reader = ResearchLab(path, readonly=True)
+    try:
+        assert reader.export_evidence("test") == evidence
+        assert reader.report("test") == lab.report("test")
+        with pytest.raises(sqlite3.OperationalError):
+            reader.db.execute("DELETE FROM decisions")
+    finally:
+        reader.close()
+
+
+def test_wrong_database_is_never_modified(tmp_path):
+    path = tmp_path / "paper.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE paper_accounts (cash TEXT)")
+    db.commit()
+    db.close()
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="not_a_research_database"):
+        ResearchLab(path)
+    assert path.read_bytes() == original
+
+
+def test_missing_readonly_database_not_created(tmp_path):
+    path = tmp_path / "missing.sqlite"
+    with pytest.raises(sqlite3.OperationalError):
+        ResearchLab(path, readonly=True)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("target", ["packet", "config", "decision"])
+def test_evidence_tampering_detected(setup, target):
+    lab, _, _, decision, _ = setup
+    lab.record_decision("test", "one", "astra", decision)
+    with lab.db:
+        if target == "packet":
+            lab.db.execute("UPDATE cases SET packet='{}'")
+        elif target == "config":
+            lab.db.execute("UPDATE experiments SET config='{}'")
+        else:
+            lab.db.execute(
+                "UPDATE decisions SET body=?", (canonical(dict(decision, input_digest="bad")),)
+            )
+    with pytest.raises(ValueError, match="integrity_failure"):
+        lab.report("test")
+
+
+def test_html_escapes_untrusted_candidate_and_omits_raw_inputs(setup):
+    from quant_ai.research.reporting import diagnostics, render_html
+
+    lab, _, _, _, _ = setup
+    report = lab.report("test")
+    report["experiment"] = "<script>alert(1)</script>"
+    report["candidates"]["<img src=x onerror=alert(1)>"] = report["candidates"].pop("astra")
+    page = render_html(report)
+    assert "<script>" not in page
+    assert "<img" not in page
+    assert "&lt;script&gt;" in page
+    assert "synthetic-test-only" not in page
+    assert "default-src 'none'" in page
+    assert diagnostics(report)["winner"] is None
+    assert "case_collection_incomplete" in diagnostics(report)["comparison_blockers"]
+
+
+def test_cost_stress_adverse_and_no_fake_exit(setup):
+    from decimal import Decimal
+
+    from quant_ai.research.reporting import cost_stress
+
+    _, config, _, decision, outcome = setup
+    results = cost_stress(config, decision, outcome)
+    assert [r["multiplier"] for r in results] == ["1", "2", "3"]
+    assert Decimal(results[0]["net_pnl_inr"]) > Decimal(results[-1]["net_pnl_inr"])
+    outcome["exit_available_quantity"] = 0
+    assert all(r["net_pnl_inr"] is None for r in cost_stress(config, decision, outcome))
+    with pytest.raises(ValueError, match="stress_must_not_reduce_costs"):
+        cost_stress(config, decision, outcome, [0.5])

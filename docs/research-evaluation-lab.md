@@ -75,3 +75,29 @@ same canonical packet from the orchestrator. Store secrets outside these packets
 The report deliberately always says `insufficient_evidence`. Defining and validating
 an acceptance protocol is a later reviewed change; a high historical P&L alone
 must not unlock execution.
+
+
+## Review exports and execution stress
+
+Read-only commands (never create a missing database):
+
+~~~bash
+PYTHONPATH=src python -m quant_ai.research.lab /tmp/pramana-research-demo.sqlite html demo > /tmp/pramana-research-review.html
+PYTHONPATH=src python -m quant_ai.research.lab /tmp/pramana-research-demo.sqlite export demo > /tmp/pramana-research-evidence.json
+~~~
+
+The HTML view is escaped, script-free and does not include raw source packets or
+prompts. It shows comparison blockers, missing evidence and case-level results.
+The JSON export includes private input packets, decisions and outcomes; store it
+privately. Retain its SHA-256 independently if you need later change detection.
+A hash in the same editable file is NOT a digital signature or proof of capture time.
+
+reporting.cost_stress(config, decision, outcome) recomputes each independent
+round trip at 1x/2x/3x declared fees and slippage. It recalculates cash-limited
+quantity and preserves unresolved exits. This is sensitivity analysis, not
+out-of-sample evidence or a complete market-impact model.
+
+The lab refuses databases with unrelated tables, guarding against accidental use
+of the running paper ledger. Existing experiment/packet hashes and decision input
+links are checked during export and reporting. These detect inconsistency, not
+malicious rewriting of every stored hash.

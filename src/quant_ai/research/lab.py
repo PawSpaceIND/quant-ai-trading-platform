@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import quote
 
 
 def canonical(value):
@@ -51,8 +52,25 @@ class ResearchLab:
     common starting cash allocation. It is NOT a continuous portfolio simulator.
     """
 
-    def __init__(self, path):
-        self.db = sqlite3.connect(path)
+    def __init__(self, path, *, readonly=False):
+        if readonly:
+            uri = "file:" + quote(str(Path(path).resolve()), safe="/") + "?mode=ro"
+            self.db = sqlite3.connect(uri, uri=True)
+        else:
+            self.db = sqlite3.connect(path)
+        tables = {
+            r[0]
+            for r in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        expected = {"experiments", "cases", "decisions", "outcomes"}
+        if (tables and tables != expected) or (readonly and tables != expected):
+            self.db.close()
+            raise ValueError("not_a_research_database")
+        if readonly:
+            self.db.execute("PRAGMA query_only=ON")
+            return
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS experiments (
@@ -104,9 +122,13 @@ class ResearchLab:
             )
 
     def config(self, experiment):
-        row = self.db.execute("SELECT config FROM experiments WHERE id=?", (experiment,)).fetchone()
+        row = self.db.execute(
+            "SELECT config,digest FROM experiments WHERE id=?", (experiment,)
+        ).fetchone()
         if row is None:
             raise ValueError("unknown_experiment")
+        if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:
+            raise ValueError("experiment_integrity_failure")
         return json.loads(row[0])
 
     def add_case(self, experiment, case_id, packet):
@@ -160,6 +182,8 @@ class ResearchLab:
         ).fetchone()
         if row is None:
             raise ValueError("unknown_case")
+        if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:
+            raise ValueError("packet_integrity_failure")
         packet = json.loads(row[0])
         if body["input_digest"] != row[1]:
             raise ValueError("input_mismatch")
@@ -231,7 +255,53 @@ class ResearchLab:
                 "INSERT INTO outcomes VALUES (?,?,?)", (experiment, case_id, canonical(body))
             )
 
+    def export_evidence(self, experiment):
+        """Consistent private evidence snapshot; retain its hash independently."""
+        self.db.execute("SAVEPOINT research_export")
+        try:
+            config = self.config(experiment)
+            cases = []
+            for case_id, packet, digest in self.db.execute(
+                "SELECT id,packet,digest FROM cases WHERE experiment=? ORDER BY id", (experiment,)
+            ).fetchall():
+                if hashlib.sha256(packet.encode()).hexdigest() != digest:
+                    raise ValueError("packet_integrity_failure")
+                decisions = {
+                    name: json.loads(body)
+                    for name, body in self.db.execute(
+                        "SELECT candidate,body FROM decisions WHERE experiment=? AND case_id=?",
+                        (experiment, case_id),
+                    ).fetchall()
+                }
+                if any(d["input_digest"] != digest for d in decisions.values()):
+                    raise ValueError("decision_integrity_failure")
+                outcome = self.db.execute(
+                    "SELECT body FROM outcomes WHERE experiment=? AND case_id=?",
+                    (experiment, case_id),
+                ).fetchone()
+                cases.append(
+                    {
+                        "case_id": case_id,
+                        "packet": json.loads(packet),
+                        "input_digest": digest,
+                        "decisions": decisions,
+                        "outcome": json.loads(outcome[0]) if outcome else None,
+                    }
+                )
+            body = {"schema_version": 1, "experiment": experiment, "config": config, "cases": cases}
+            return {"sha256": hashlib.sha256(canonical(body).encode()).hexdigest(), "body": body}
+        finally:
+            self.db.execute("RELEASE research_export")
+
     def report(self, experiment):
+        self.db.execute("SAVEPOINT research_report")
+        try:
+            self.export_evidence(experiment)
+            return self._report(experiment)
+        finally:
+            self.db.execute("RELEASE research_report")
+
+    def _report(self, experiment):
         config = self.config(experiment)
         rows = self.db.execute(
             "SELECT c.id,c.packet,o.body FROM cases c LEFT JOIN outcomes o "
@@ -340,14 +410,24 @@ def simulate(config, decision, outcome):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("database", type=Path)
-    parser.add_argument("operation", choices=("create", "case", "decision", "outcome", "report"))
+    parser.add_argument(
+        "operation", choices=("create", "case", "decision", "outcome", "report", "html", "export")
+    )
     parser.add_argument("experiment")
     parser.add_argument("--file", type=Path, help="JSON body; never credentials")
     parser.add_argument("--case-id")
     parser.add_argument("--candidate")
     args = parser.parse_args()
-    lab = ResearchLab(args.database)
+    lab = ResearchLab(args.database, readonly=args.operation in ("report", "html", "export"))
     try:
+        if args.operation == "export":
+            print(json.dumps(lab.export_evidence(args.experiment), indent=2))
+            return
+        if args.operation == "html":
+            from quant_ai.research.reporting import render_html
+
+            print(render_html(lab.report(args.experiment)))
+            return
         if args.operation == "report":
             print(json.dumps(lab.report(args.experiment), indent=2))
             return
