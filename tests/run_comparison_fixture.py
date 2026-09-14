@@ -127,7 +127,38 @@ def dataset():
     return HistoricalReplayDataset(tuple(bars), macro, tuple(news), fundamentals)
 
 
-def fixture(folder):
+def add_mature_history(database, count=43200):
+    """Thirty days of recorded minutes; never qualifying live-session evidence."""
+    import sqlite3
+
+    with closing(sqlite3.connect(database)) as db:
+        template = json.loads(
+            db.execute(
+                "SELECT payload FROM paper_live_valuations WHERE tenant_id='default' ORDER BY timestamp LIMIT 1"
+            ).fetchone()[0]
+        )
+
+        def rows():
+            for i in range(count):
+                at = START - timedelta(minutes=count - i)
+                p = {
+                    **template,
+                    "updatedAt": at.isoformat(),
+                    "allMarksFresh": False,
+                    "qualifyingSession": False,
+                    "status": "degraded",
+                    "sessionDate": (at + timedelta(minutes=330)).date().isoformat(),
+                }
+                yield "default", at.isoformat(), 0, json.dumps(p)
+
+        db.executemany(
+            "INSERT INTO paper_live_valuations (tenant_id,timestamp,ledger_id,payload) VALUES (?,?,?,?)",
+            rows(),
+        )
+        db.commit()
+
+
+def fixture(folder, mature_history=False):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     plan = CapitalGoalEngine().recommend(
@@ -228,12 +259,21 @@ def fixture(folder):
                 tick.last_price = bar.close
                 tick.timestamp = bar.timestamp
                 telemetry.publish(bar.timestamp)
-            paper = capture(folder / "paper.sqlite", "default", "paper")
+            if mature_history:
+                add_mature_history(folder / "paper.sqlite")
+            paper = capture(
+                folder / "paper.sqlite",
+                "default",
+                "paper",
+                start=START.isoformat(),
+                end=END.isoformat(),
+            )
             replay = capture(folder / "replay.sqlite", "replay", "replay", result.replay_run_id)
             clean = build(paper, replay, START.isoformat(), END.isoformat())
             # Preserve one invalid minute, one absent observation and one late observation.
             rows = broker._connection.execute(
-                "SELECT timestamp,payload FROM paper_live_valuations WHERE tenant_id='default' ORDER BY timestamp"
+                "SELECT timestamp,payload FROM paper_live_valuations WHERE tenant_id='default' AND timestamp>=? ORDER BY timestamp",
+                (START.isoformat(),),
             ).fetchall()
             p = json.loads(rows[20]["payload"])
             p["status"] = "invalid"
@@ -254,7 +294,13 @@ def fixture(folder):
             )
             broker._connection.commit()
         gapped = build(
-            capture(folder / "paper.sqlite", "default", "paper"),
+            capture(
+                folder / "paper.sqlite",
+                "default",
+                "paper",
+                start=START.isoformat(),
+                end=END.isoformat(),
+            ),
             replay,
             START.isoformat(),
             END.isoformat(),
@@ -279,7 +325,13 @@ def restore_fixture(folder):
     after = inspect(folder / "replay-restored.sqlite", "replay_ledger")
     assert before == after
     report = build(
-        capture(folder / "paper.sqlite", "default", "paper"),
+        capture(
+            folder / "paper.sqlite",
+            "default",
+            "paper",
+            start=START.isoformat(),
+            end=END.isoformat(),
+        ),
         capture(
             folder / "replay-restored.sqlite",
             "replay",
@@ -304,13 +356,14 @@ def restore_fixture(folder):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mature-history", action="store_true")
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--restore", action="store_true")
     args = parser.parse_args()
     if args.restore:
         print(json.dumps(restore_fixture(args.directory)))
         raise SystemExit(0)
-    r = fixture(args.directory)
+    r = fixture(args.directory, mature_history=args.mature_history)
     print(
         json.dumps(
             {

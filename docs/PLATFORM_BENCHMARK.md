@@ -239,3 +239,7 @@ The private Activity workspace now retains and replays selected Kite daily-book 
 ## Implementation delta — paired paper/replay diagnostics
 
 Research now displays a selected recorded-paper/historical-replay equity comparison with fill markers, explicit missing-minute/skew diagnostics and configuration differences. Retained run provenance, private export/Atlas and replay-ledger recovery are connected. [Precise contract](RUN_COMPARISON.md). This partially advances QuantConnect's equity/fill reconciliation workflow; it does not establish a parallel same-strategy OOS backtest, authentic provider inputs or real broker reconciliation. IBKR multi-asset/Greeks/margin, Bloomberg sector/factor attribution and TradingView-qualified real intrabar inputs remain separate open capabilities.
+
+### Mature-history diagnostic and qualification correction
+
+Recent paper/replay comparisons no longer require every retained paper valuation to fit the selected report's point limit. Windowed source selection preserves carry-in fills, original gaps and explicit counts; the UI/export/Atlas expose the selection. Account/strategy qualification streams observations and rejects duplicated or inconsistent minute evidence. [Scope, evidence and remaining bounds](OBSERVATION_HISTORY.md). This strengthens the existing QuantConnect-related diagnostic and pilot observation workflow without establishing same-strategy OOS parity or qualified returns.

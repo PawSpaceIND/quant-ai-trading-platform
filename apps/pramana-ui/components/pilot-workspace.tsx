@@ -514,6 +514,9 @@ export function PilotWorkspace() {
                           Export evidence ↓
                         </button>
                       </div>
+                      {data.performance.status === "invalid_observations" ? (
+                        <p className="footnote" role="status">Performance unavailable: retained observations contain invalid clocks, payloads or starting balances, or exceed the supported history bounds. Review the source history before using these metrics.</p>
+                      ) : null}
                       <div className="metric-grid research-metrics">
                         <Metric
                           label="Observed days"

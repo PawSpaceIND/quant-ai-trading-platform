@@ -19,6 +19,8 @@ python -m quant_ai.validation.run_comparison \
 
 This reads each source in its own consistent SQLite transaction. It writes a new mode-0600 report and refuses to replace an existing output. No model, broker or market-provider call is made by the comparison command. `PRAMANA_RUN_COMPARISON` selects the report in the private dashboard and is forwarded by Compose. The report is account-bound and excluded by both the hosted snapshot publisher and Worker ingestion.
 
+Paper capture selects the requested session grid even when the account has more than 10,000 retained observations. It includes all recorded fills/fees needed for historical balance reconstruction, loads only referenced strategy manifests and discloses selected/retained/excluded observation counts in the report, Source and method and Atlas context. Invalid selected records remain gaps or rejection; unlocatable stored timestamps fail capture. [History bounds, qualification readers and verification](OBSERVATION_HISTORY.md).
+
 ## Clock, accounting and interpretation
 
 The requested range is half-open: start included, end excluded; both boundaries must be minute-aligned and in the past. The current calendar scope is regular NSE cash sessions in 2026, including the explicitly documented Budget Sunday. Window size is at most 45 calendar days and 10,000 expected session minutes. All expected minutes remain represented. Missing, invalid, duplicate or mismatched evidence is not forward-filled or silently dropped. Observation skew defaults to zero; an explicitly chosen 0–59 second tolerance is disclosed and does not repair missing data.

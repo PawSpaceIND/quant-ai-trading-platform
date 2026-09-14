@@ -131,3 +131,7 @@ For retained history, use `--journal` on the collector and bind `PRAMANA_BROKER_
 ## Publish a recorded paper/replay comparison
 
 Use the explicit source accounts, returned replay run ID and half-open window in [RUN_COMPARISON.md](RUN_COMPARISON.md). Set `PRAMANA_RUN_COMPARISON` to the new private report. Inspect missing minutes, skew, starting book and configuration differences before interpreting curves. The workflow never promotes the strategy. Select the separate replay database as `replay_ledger` in schema 2 recovery and include original input datasets and published reports. Replays without retained run identity cannot substitute for qualified observations.
+
+### Long-running observation history
+
+Use the explicit comparison window described in [RUN_COMPARISON.md](RUN_COMPARISON.md) for recent diagnostics on mature accounts. Check selected/retained/excluded counts in Source and method or the exported report. Old observations are retained; there is no automatic pruning. Unlocatable timestamps, selected payload bounds or current-account reconciliation failures require source review. Do not edit or delete evidence to make a qualification count pass. [Qualification-reader bounds and failure categories](OBSERVATION_HISTORY.md) describe the unavailable-performance message. Target-host storage, response time and backup inventory still require the operational drill.

@@ -18,6 +18,17 @@ const envelope=(report:RunComparisonReport)=>{const payload=JSON.stringify(repor
 const save=(name="complete")=>fs.writeFileSync(file,raw(name));
 after(()=>fs.rmSync(folder,{recursive:true,force:true}));
 
+test("window selection discloses retained history and cannot rehash inconsistent coverage",async()=>{
+ const {parseRunComparison,runComparisonContext}=await import("../lib/run-comparison");
+ const r=value("gapped");r.sources.paper.observationSelection={start:r.window.start,end:r.window.end,calendarSha256:r.window.calendarSha256,expectedMinutes:70,selectedObservations:69,totalAccountObservations:43269,excludedObservations:43200};
+ assert.equal(parseRunComparison(envelope(r),"default").report.sources.paper.observationSelection!.totalAccountObservations,43269);
+ fs.writeFileSync(file,envelope(r));assert.equal(runComparisonContext().summary!.observationSelection!.excludedObservations,43200);
+ for(const change of [{expectedMinutes:69},{selectedObservations:70},{totalAccountObservations:43270},{excludedObservations:-1},{start:"2026-09-11T04:01:00+00:00"},{calendarSha256:"f".repeat(64)}]) {
+  const changed=structuredClone(r);Object.assign(changed.sources.paper.observationSelection!,change);assert.throws(()=>parseRunComparison(envelope(changed),"default"));
+ }
+ const replay=structuredClone(r);replay.sources.replay.observationSelection=replay.sources.paper.observationSelection;assert.throws(()=>parseRunComparison(envelope(replay),"default"));
+});
+
 test("Python retained-run fixture agrees with independent browser cash-flow and fill-group arithmetic",async()=>{
  const {parseRunComparison}=await import("../lib/run-comparison");
  const r=parseRunComparison(raw(),"default").report;

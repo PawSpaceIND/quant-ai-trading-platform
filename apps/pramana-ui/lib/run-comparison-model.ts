@@ -4,9 +4,10 @@ export type RunFill={ledgerId:number;orderId:string;key:string;symbol:string;sid
 export type FillTotals={quantity:number;notional:string;cashFees:string;fillCount:number;averagePrice:string};
 export type FillGroup={minute:string;key:string;symbol:string;side:"BUY"|"SELL";paper:FillTotals|null;replay:FillTotals|null;quantityDifference:number;priceDifference:string|null};
 export type RunMetrics={paperReturn:string;replayReturn:string;returnDifference:string;endingEquityDifference:string;maxAbsoluteEquityDifference:string};
+export type ObservationSelection={start:string;end:string;calendarSha256:string;expectedMinutes:number;selectedObservations:number;totalAccountObservations:number;excludedObservations:number};
 export type RunComparisonReport={schema:"pramana.run_comparison.v1";tenantId:string;generatedAt:string;qualification:"unqualified_paper_replay_diagnostic";automaticPromotion:false;
  window:{start:string;end:string;maxSkewSeconds:number;calendarSha256:string;excludedClosedMinutes:number};
- sources:Record<"paper"|"replay",{tenant:string;startingCapital:string;sourceSha256:string}>;
+ sources:Record<"paper"|"replay",{tenant:string;startingCapital:string;sourceSha256:string;observationSelection?:ObservationSelection}>;
  configuration:{observedManifestHashes:string[];observedUnqualifiedPoints:number;replayRunId:string;replayDatasetSha256:string;sourceComparison:string;differentComponents:string[];strategyEquivalence:"unverified";replayProtectionModel:string};
  initialState:"unavailable"|"same_recorded_book"|"different_recorded_book";status:"complete_observations"|"incomplete_observations";
  metrics:RunMetrics|null;curve:RunMinute[];fills:Record<"paper"|"replay",RunFill[]>;fillGroups:FillGroup[];limitations:string[]};

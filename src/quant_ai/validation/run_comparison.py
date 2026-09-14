@@ -54,13 +54,63 @@ def key(row):
     return f"{row['market']}:{row.get('assetClass', row.get('asset_class'))}:{row['symbol']}"
 
 
-def capture(database, tenant, mode, run_id=None):
+def comparison_window(start, end, now):
+    start, end = instant(start), instant(end)
+    require(
+        start == start.replace(second=0, microsecond=0)
+        and end == end.replace(second=0, microsecond=0)
+        and start < end <= now,
+        "explicit_completed_minute_boundaries_required",
+    )
+    require(
+        (end - start).total_seconds() <= 86400 * 45 and start.year == end.year == 2026,
+        "comparison_window_exceeds_calendar_bounds",
+    )
+    calendar = MarketCalendar(holidays=default_holidays())
+    grid, excluded, at = [], 0, start
+    while at < end:
+        if calendar.state(Market.INDIA, at) == MarketState.REGULAR_HOURS:
+            grid.append(at)
+        else:
+            excluded += 1
+        at += timedelta(minutes=1)
+    require(0 < len(grid) <= MAX_POINTS, "no_eligible_or_excessive_comparison_minutes")
+    return start, end, grid, excluded, digest(stable(calendar))
+
+
+def capture(database, tenant, mode, run_id=None, *, start=None, end=None, now=None):
     require(mode in ("paper", "replay"), "invalid_source_mode")
     require(
         isinstance(tenant, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", tenant), "invalid_tenant"
     )
     database = Path(database)
     require(not database.is_symlink(), "source_symlink_unsupported")
+    selection = None
+    predicate = "tenant_id=?"
+    if start is not None or end is not None:
+        require(mode == "paper", "window_selection_requires_paper_source")
+        start, end, grid, _, calendar_hash = comparison_window(
+            start, end, now or datetime.now(timezone.utc)
+        )
+        grid_set = set(grid)
+
+        def selected_bucket(value):
+            # Compare timezone-aware instants, not lexical strings or SQLite's
+            # millisecond-rounded date conversion. Unlocatable rows fail closed.
+            try:
+                at = instant(value)
+                require(at == at.replace(second=0, microsecond=0), "invalid_minute_bucket")
+                return int(at in grid_set)
+            except (ValueError, TypeError, OverflowError):
+                return None
+
+        predicate += " AND pramana_selected_bucket(timestamp)=1"
+        selection = {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "calendarSha256": calendar_hash,
+            "expectedMinutes": len(grid),
+        }
     with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA query_only=ON")
@@ -80,8 +130,17 @@ def capture(database, tenant, mode, run_id=None):
             )
         manifests = []
         if mode == "paper":
+            if selection is not None:
+                db.create_function(
+                    "pramana_selected_bucket", 1, selected_bucket, deterministic=True
+                )
+                total, unlocatable = db.execute(
+                    "SELECT count(*),coalesce(sum(pramana_selected_bucket(timestamp) IS NULL),0) FROM paper_live_valuations WHERE tenant_id=?",
+                    (tenant,),
+                ).fetchone()
+                require(unlocatable == 0, "unlocatable_paper_observation")
             count, size = db.execute(
-                "SELECT count(*),coalesce(sum(length(cast(payload AS BLOB))),0) FROM paper_live_valuations WHERE tenant_id=?",
+                f"SELECT count(*),coalesce(sum(length(cast(payload AS BLOB))),0) FROM paper_live_valuations WHERE {predicate}",
                 (tenant,),
             ).fetchone()
             require(
@@ -91,24 +150,49 @@ def capture(database, tenant, mode, run_id=None):
             rows = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT timestamp,ledger_id,payload FROM paper_live_valuations WHERE tenant_id=? ORDER BY timestamp",
+                    f"SELECT timestamp,ledger_id,payload FROM paper_live_valuations WHERE {predicate} ORDER BY timestamp",
                     (tenant,),
                 )
             ]
+            if selection is not None:
+                selection.update(
+                    selectedObservations=count,
+                    totalAccountObservations=total,
+                    excludedObservations=total - count,
+                )
             table = db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pilot_strategy_manifests'"
             ).fetchone()
             if table:
+                manifest_predicate = "tenant_id=?"
+                manifest_args = (tenant,)
+                if selection is not None:
+                    references = set()
+                    for row in rows:
+                        observation = json.loads(row["payload"]).get("strategyObservation") or {}
+                        reference = observation.get("manifestSha256")
+                        if reference is not None:
+                            require(
+                                isinstance(reference, str)
+                                and re.fullmatch("[a-f0-9]{64}", reference),
+                                "invalid_strategy_reference",
+                            )
+                            references.add(reference)
+                    require(len(references) <= 100, "strategy_manifests_exceed_bounds")
+                    manifest_predicate += (
+                        " AND sha256 IN (" + ",".join("?" for _ in references) + ")"
+                    )
+                    manifest_args += tuple(sorted(references))
                 count, size = db.execute(
-                    "SELECT count(*),coalesce(sum(length(cast(payload AS BLOB))),0) FROM pilot_strategy_manifests WHERE tenant_id=?",
-                    (tenant,),
+                    f"SELECT count(*),coalesce(sum(length(cast(payload AS BLOB))),0) FROM pilot_strategy_manifests WHERE {manifest_predicate}",
+                    manifest_args,
                 ).fetchone()
                 require(count <= 100 and size <= MAX_BYTES, "strategy_manifests_exceed_bounds")
                 manifests = [
                     dict(r)
                     for r in db.execute(
-                        "SELECT sha256,payload FROM pilot_strategy_manifests WHERE tenant_id=?",
-                        (tenant,),
+                        f"SELECT sha256,payload FROM pilot_strategy_manifests WHERE {manifest_predicate} ORDER BY sha256",
+                        manifest_args,
                     )
                 ]
             metadata = None
@@ -232,6 +316,8 @@ def capture(database, tenant, mode, run_id=None):
         "manifests": manifests,
         "replay": metadata,
     }
+    if selection is not None:
+        source["observationSelection"] = selection
     require(len(encoded(source).encode()) <= MAX_BYTES, "source_capture_exceeds_bounds")
     return source
 
@@ -470,42 +556,40 @@ def configuration(paper, replay, points):
 
 def build(paper_source, replay_source, start, end, *, max_skew_seconds=0, now=None):
     now = now or datetime.now(timezone.utc)
-    start, end = instant(start), instant(end)
-    require(
-        start == start.replace(second=0, microsecond=0)
-        and end == end.replace(second=0, microsecond=0)
-        and start < end <= now,
-        "explicit_completed_minute_boundaries_required",
-    )
+    start, end, grid, excluded, calendar_hash = comparison_window(start, end, now)
     require(type(max_skew_seconds) is int and 0 <= max_skew_seconds <= 59, "invalid_pairing_skew")
-    require(
-        (end - start).total_seconds() <= 86400 * 45 and start.year == end.year == 2026,
-        "comparison_window_exceeds_calendar_bounds",
-    )
     require(
         paper_source["mode"] == "paper" and replay_source["mode"] == "replay",
         "source_modes_required",
     )
     paper, replay = normalize(paper_source, now), normalize(replay_source, now)
-    calendar = MarketCalendar(holidays=default_holidays())
-    grid, excluded, at = [], 0, start
-    while at < end:
-        if calendar.state(Market.INDIA, at) == MarketState.REGULAR_HOURS:
-            grid.append(at)
-        else:
-            excluded += 1
-        at += timedelta(minutes=1)
-    require(0 < len(grid) <= MAX_POINTS, "no_eligible_or_excessive_comparison_minutes")
+    selection = paper_source.get("observationSelection")
+    if selection is not None:
+        require(
+            selection["start"] == start.isoformat()
+            and selection["end"] == end.isoformat()
+            and selection["calendarSha256"] == calendar_hash
+            and selection["expectedMinutes"] == len(grid)
+            and selection["selectedObservations"] == len(paper["points"])
+            and type(selection["totalAccountObservations"]) is int
+            and selection["totalAccountObservations"] >= len(paper["points"])
+            and selection["excludedObservations"]
+            == selection["totalAccountObservations"] - len(paper["points"]),
+            "paper_capture_window_mismatch",
+        )
+    grid_set = set(grid)
     maps = []
     for source in (paper, replay):
         selected = {}
         for p in source["points"]:
             t = instant(p["at"])
             minute = t.replace(second=0, microsecond=0)
-            if start <= t < end and minute in grid:
+            if start <= t < end and minute in grid_set:
                 require(minute not in selected, "multiple_source_observations_in_minute")
                 selected[minute] = p
         maps.append(selected)
+    if selection is not None:
+        require(len(maps[0]) == len(paper["points"]), "paper_capture_window_mismatch")
     curve = []
     for t in grid:
         p, r = maps[0].get(t), maps[1].get(t)
@@ -613,11 +697,18 @@ def build(paper_source, replay_source, start, end, *, max_skew_seconds=0, now=No
             "start": start.isoformat(),
             "end": end.isoformat(),
             "maxSkewSeconds": max_skew_seconds,
-            "calendarSha256": digest(stable(calendar)),
+            "calendarSha256": calendar_hash,
             "excludedClosedMinutes": excluded,
         },
         "sources": {
-            s["mode"]: {k: s[k] for k in ("tenant", "startingCapital", "sourceSha256")}
+            s["mode"]: {
+                **{k: s[k] for k in ("tenant", "startingCapital", "sourceSha256")},
+                **(
+                    {"observationSelection": selection}
+                    if s["mode"] == "paper" and selection
+                    else {}
+                ),
+            }
             for s in (paper, replay)
         },
         "configuration": comparison,
@@ -654,7 +745,7 @@ def main():
         or args.paper_tenant != args.replay_tenant,
         "distinct_source_accounts_required",
     )
-    paper = capture(args.paper_database, args.paper_tenant, "paper")
+    paper = capture(args.paper_database, args.paper_tenant, "paper", start=args.start, end=args.end)
     replay = capture(args.replay_database, args.replay_tenant, "replay", args.replay_run)
     report = build(paper, replay, args.start, args.end, max_skew_seconds=args.max_skew_seconds)
     payload = encoded(report)

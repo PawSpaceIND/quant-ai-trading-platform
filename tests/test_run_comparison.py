@@ -6,13 +6,99 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from run_comparison_fixture import END, START, dataset, fixture
+from run_comparison_fixture import END, START, add_mature_history, dataset, fixture
 
 from quant_ai.backtesting.replay import HistoricalReplayHarness
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.governance.runtime_manifest import digest, encoded
 from quant_ai.validation.run_comparison import build, capture
+
+
+def test_windowed_capture_survives_thirty_days_and_retains_pre_window_fills(paired):
+    folder, reports = paired
+    replay = capture(folder / "replay.sqlite", "replay", "replay", reports["runId"])
+    start = (START + timedelta(minutes=5)).isoformat()
+    original = build(
+        capture(folder / "paper.sqlite", "default", "paper"), replay, start, END.isoformat()
+    )
+    add_mature_history(folder / "paper.sqlite")
+    with closing(sqlite3.connect(folder / "paper.sqlite")) as db:
+        # Unrelated old manifests do not overwhelm the requested observation window.
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS pilot_strategy_manifests(tenant_id TEXT,sha256 TEXT,payload TEXT)"
+        )
+        db.executemany(
+            "INSERT INTO pilot_strategy_manifests(tenant_id,sha256,payload) VALUES ('default',?,?)",
+            [(f"{i:064x}", "old unselected payload") for i in range(101)],
+        )
+        db.commit()
+    with pytest.raises(ValueError, match="paper_observations_exceed_capture_bounds"):
+        capture(folder / "paper.sqlite", "default", "paper")
+    paper = capture(folder / "paper.sqlite", "default", "paper", start=start, end=END.isoformat())
+    assert len(paper["rows"]) == 64
+    assert len(paper["fills"]) == 2 and paper["fills"][0]["created_at"] < start
+    assert paper["manifests"] == []
+    selected = paper["observationSelection"]
+    assert selected["totalAccountObservations"] == 43269
+    assert selected["excludedObservations"] == 43205
+    current = build(paper, replay, start, END.isoformat())
+    assert current["curve"] == original["curve"]
+    assert current["fills"] == original["fills"]
+    assert current["initialState"] == "different_recorded_book"
+    assert current["curve"][0]["paper"]["holdings"][0]["quantity"] == 8
+    with pytest.raises(ValueError, match="paper_capture_window_mismatch"):
+        build(paper, replay, START.isoformat(), END.isoformat())
+
+
+def test_windowed_capture_resolves_offsets_without_accepting_duplicate_or_unknown_buckets(paired):
+    folder, reports = paired
+    database = folder / "paper.sqlite"
+    replay = capture(folder / "replay.sqlite", "replay", "replay", reports["runId"])
+    with closing(sqlite3.connect(database)) as db:
+        db.execute(
+            "UPDATE paper_live_valuations SET timestamp=? WHERE timestamp=?",
+            ("2026-09-11T09:30:00+05:30", START.isoformat()),
+        )
+        db.commit()
+        paper = capture(database, "default", "paper", start=START.isoformat(), end=END.isoformat())
+        assert len(paper["rows"]) == 69
+        assert (
+            build(paper, replay, START.isoformat(), END.isoformat())["curve"]
+            == reports["gapped"]["curve"]
+        )
+        db.execute(
+            "INSERT INTO paper_live_valuations SELECT tenant_id,?,ledger_id,payload FROM paper_live_valuations WHERE timestamp=?",
+            (START.isoformat(), "2026-09-11T09:30:00+05:30"),
+        )
+        db.commit()
+        paper = capture(database, "default", "paper", start=START.isoformat(), end=END.isoformat())
+        with pytest.raises(ValueError, match="unordered_valuation_clock"):
+            build(paper, replay, START.isoformat(), END.isoformat())
+        db.execute(
+            "UPDATE paper_live_valuations SET timestamp='unknown' WHERE timestamp=?",
+            (START.isoformat(),),
+        )
+        db.commit()
+        with pytest.raises(ValueError, match="unlocatable_paper_observation"):
+            capture(database, "default", "paper", start=START.isoformat(), end=END.isoformat())
+
+
+def test_windowed_capture_keeps_selected_size_bounds_and_current_account_reconciliation(paired):
+    folder, _ = paired
+    database = folder / "paper.sqlite"
+    with closing(sqlite3.connect(database)) as db:
+        db.execute(
+            "UPDATE paper_live_valuations SET payload=? WHERE timestamp=?",
+            ("x" * 16_000_001, START.isoformat()),
+        )
+        db.commit()
+        with pytest.raises(ValueError, match="paper_observations_exceed_capture_bounds"):
+            capture(database, "default", "paper", start=START.isoformat(), end=END.isoformat())
+        db.execute("UPDATE paper_accounts SET cash_balance='1' WHERE tenant_id='default'")
+        db.commit()
+        with pytest.raises(ValueError, match="source_account_not_reconciled"):
+            capture(database, "default", "paper", start=START.isoformat(), end=END.isoformat())
 
 
 @pytest.fixture

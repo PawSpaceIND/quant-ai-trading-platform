@@ -1,5 +1,6 @@
 import { hasTable, openLedger, tenantId } from "./db";
 import type { Runtime } from "./pilot";
+import { observationHistory } from "./observation-history";
 
 /** Read distinct, configuration-matched minute samples; this is not a return attribution model. */
 export function strategyObservationDays(sha: string | undefined, incompatibleDates: string[] = [], coverageStartedAt?: string) {
@@ -10,18 +11,13 @@ export function strategyObservationDays(sha: string | undefined, incompatibleDat
   try {
     db = openLedger();
     if (!db || !hasTable(db,"paper_live_valuations")) return empty;
-    const rows = db.prepare("SELECT payload FROM paper_live_valuations WHERE tenant_id=? ORDER BY timestamp").all(tenantId) as {payload:string}[];
     const days = new Map<string,{minutes:Set<number>;lastMinute:number;incompatible:boolean}>();
     const today = new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
     const invalid = new Set(incompatibleDates);
-    for (const row of rows) {
-      const p = JSON.parse(row.payload);
-      if (p.status === "invalid" && p.sessionDate && Date.parse(p.updatedAt) >= coverageStart) invalid.add(p.sessionDate);
-    }
-    for (const row of rows) {
-      const p = JSON.parse(row.payload);
+    for (const {p,timestamp} of observationHistory(db,tenantId)) {
+      if (p.status === "invalid" && p.sessionDate && timestamp >= coverageStart) invalid.add(p.sessionDate);
+      if (invalid.size > 10000 || days.size > 10000) return empty;
       if (p.qualifyingSession !== true || !p.sessionDate || p.sessionDate >= today) continue;
-      const timestamp = Date.parse(p.updatedAt);
       if (!Number.isFinite(timestamp) || timestamp < coverageStart) continue;
       const local = new Date(timestamp + 330*60000);
       const date = local.toISOString().slice(0,10), minute=local.getUTCHours()*60+local.getUTCMinutes();
@@ -29,12 +25,14 @@ export function strategyObservationDays(sha: string | undefined, incompatibleDat
       const d = days.get(date) ?? {minutes:new Set<number>(),lastMinute:0,incompatible:invalid.has(date)};
       if (p.strategyObservation?.manifestSha256 !== sha) d.incompatible=true;
       else if (p.strategyObservation.eligible === true && p.allMarksFresh === true && Number.isFinite(p.totalEquity) && p.totalEquity>0) {
+        if (d.minutes.has(Math.floor(timestamp/60000))) d.incompatible=true;
         d.minutes.add(Math.floor(timestamp/60000)); d.lastMinute=Math.max(d.lastMinute,minute);
       }
       days.set(date,d);
     }
-    const daily=[...days.entries()].filter(([,d])=>!d.incompatible && d.minutes.size>=300 && d.lastMinute>=15*60+25)
-      .map(([date,d])=>({date,minutes:d.minutes.size}));
+    if (days.size > 10000) return empty;
+    const daily=[...days.entries()].filter(([date,d])=>!invalid.has(date) && !d.incompatible && d.minutes.size>=300 && d.lastMinute>=15*60+25)
+      .map(([date,d])=>({date,minutes:d.minutes.size})).sort((a,b)=>a.date.localeCompare(b.date));
     return {...empty,days:daily.length,daily};
   } catch { return empty; }
   finally { db?.close(); }

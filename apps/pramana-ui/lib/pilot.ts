@@ -1,5 +1,6 @@
 import { hasTable, openLedger, tenantId } from "./db";
 import type {DatabaseSync} from "node:sqlite";
+import { observationHistory } from "./observation-history";
 export type LivePortfolio = {
   ledgerId?: number;
   status: string;
@@ -171,18 +172,14 @@ export function performance() {
         netReturn: null,
         source: "actual_paper_equity",
       };
-    const rows = db
-      .prepare(
-        "SELECT payload FROM paper_live_valuations WHERE tenant_id=? ORDER BY timestamp",
-      )
-      .all(tenantId) as { payload: string }[];
     const days = new Map<
       string,
       {
         date: string;
         equity: number;
-        minutes: number;
+        minutes: Set<number>;
         lastMinute: number;
+        lastAt: number;
         previousSessionDate?: string;
       }
     >();
@@ -194,35 +191,44 @@ export function performance() {
       month: "2-digit",
       day: "2-digit",
     }).format(new Date());
-    for (const row of rows) {
-      const p = JSON.parse(row.payload) as LivePortfolio;
+    for (const {p,timestamp,bucket} of observationHistory(db,tenantId)) {
       if (p.status === "invalid" && p.sessionDate) invalidDays.add(p.sessionDate);
+      if (days.size > 10000 || invalidDays.size > 10000) throw new Error("Observation history exceeds day bounds");
       if (
-        !p.allMarksFresh ||
-        !p.qualifyingSession ||
+        p.allMarksFresh !== true ||
+        p.qualifyingSession !== true ||
         !p.sessionDate ||
         p.sessionDate >= today ||
         !Number.isFinite(p.totalEquity) ||
         p.totalEquity <= 0
       )
         continue;
-      initial ??= p.startingCapital;
-      const previous = days.get(p.sessionDate);
-      const local = new Date(Date.parse(p.updatedAt) + 330 * 60000);
+      const local = new Date(timestamp + 330 * 60000);
       const lastMinute = local.getUTCHours() * 60 + local.getUTCMinutes();
+      if (local.toISOString().slice(0,10) !== p.sessionDate || lastMinute < 555 || lastMinute >= 930) continue;
+      if (!Number.isFinite(p.startingCapital) || p.startingCapital <= 0) throw new Error("Invalid starting capital");
+      initial ??= p.startingCapital;
+      if (initial !== p.startingCapital) throw new Error("Observation starting capital changed");
+      const previous = days.get(p.sessionDate);
+      const minutes = previous?.minutes ?? new Set<number>();
+      if (minutes.has(bucket)) invalidDays.add(p.sessionDate);
+      minutes.add(bucket);
+      if (previous && previous.lastAt > timestamp) continue;
       days.set(p.sessionDate, {
         date: p.sessionDate,
         equity: p.totalEquity,
-        minutes: (previous?.minutes || 0) + 1,
+        minutes,
         lastMinute,
+        lastAt: timestamp,
         previousSessionDate: p.previousSessionDate,
       });
     }
     // A full observation needs at least 300 distinct minute buckets, including the
     // final five minutes of the cash session. Partial days never count as burn-in.
+    if (days.size > 10000) throw new Error("Observation history exceeds day bounds");
     const daily = [...days.values()].filter(
-      (d) => !invalidDays.has(d.date) && d.minutes >= 300 && d.lastMinute >= 15 * 60 + 25,
-    );
+      (d) => !invalidDays.has(d.date) && d.minutes.size >= 300 && d.lastMinute >= 15 * 60 + 25,
+    ).sort((a,b)=>a.date.localeCompare(b.date)).map(({minutes,lastAt: _lastAt,...d})=>({...d,minutes:minutes.size}));
     const returns = daily
       .slice(1)
       .flatMap((r, i) =>
@@ -263,6 +269,8 @@ export function performance() {
           ? daily[daily.length - 1].equity / initial - 1
           : null,
     };
+  } catch {
+    return {status:"invalid_observations",daily:[],days:0,sharpe:null,sortino:null,netReturn:null,source:"actual_paper_equity"};
   } finally {
     db.close();
   }

@@ -116,3 +116,7 @@ P29 adds an append-only journal, independent Python/TypeScript lifecycle replay,
 ## Implementation delta — recorded paper/replay diagnostics
 
 P30 adds retained harness runs and an explicit-window comparison of independently checked paper/replay observations. Gaps and clock mismatches withhold aggregate returns; fill groups and component differences remain inspectable. Private Research, hash-bound export/Atlas and selected replay-ledger recovery are wired. [Contract, bounds and evidence](RUN_COMPARISON.md). This advances the QuantConnect comparison workflow while same-strategy parallel replay, real sources and overall acceptance remain unqualified.
+
+## Implementation delta — mature observation history
+
+P04/P30 now handle recent comparisons on accounts with longer retained histories. Windowed capture preserves pre-window fills, gaps and explicit selection counts; qualification readers stream rows, reject duplicate UTC buckets and retain invalid-day evidence. Malformed clocks or starting balances withhold current performance and show a Research explanation. [Exact scope and regression evidence](OBSERVATION_HISTORY.md). No retention deletion or expansion of qualified execution/strategy scope is implied.

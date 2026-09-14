@@ -51,7 +51,16 @@ export function parseRunComparison(raw:string,tenant:string,now=Date.now()):{rep
  check(r.status===(r.curve.some(p=>p.issues.length)?"incomplete_observations":"complete_observations"));
  const derived=metrics(r.curve);
  if(derived===null)check(r.metrics===null);else {exact(r.metrics,Object.keys(derived));for(const [k,v] of Object.entries(derived))check(near(r.metrics![k as keyof typeof derived],v,k.includes("Return")||k==="returnDifference"?1e-9:.01));}
- exact(r.sources,["paper","replay"]);for(const s of Object.values(r.sources)){exact(s,["tenant","startingCapital","sourceSha256"]);check(label(s.tenant)&&decimal(s.startingCapital)&&Number(s.startingCapital)>0&&hash(s.sourceSha256));}check(r.sources.paper.tenant===tenant);
+ exact(r.sources,["paper","replay"]);for(const [mode,s] of Object.entries(r.sources)){
+  const selection=s.observationSelection;
+  exact(s,["tenant","startingCapital","sourceSha256",...(selection!==undefined?["observationSelection"]:[])]);
+  check(label(s.tenant)&&decimal(s.startingCapital)&&Number(s.startingCapital)>0&&hash(s.sourceSha256));
+  if(selection!==undefined){
+   check(mode==="paper");exact(selection,["start","end","calendarSha256","expectedMinutes","selectedObservations","totalAccountObservations","excludedObservations"]);
+   check(selection.start===w.start&&selection.end===w.end&&selection.calendarSha256===w.calendarSha256&&selection.expectedMinutes===expected.length);
+   check(count(selection.selectedObservations)&&count(selection.totalAccountObservations)&&count(selection.excludedObservations)&&selection.selectedObservations===r.curve.filter(p=>p.paper!==null).length&&selection.totalAccountObservations===selection.selectedObservations+selection.excludedObservations);
+  }
+ }check(r.sources.paper.tenant===tenant);
  const first=r.curve[0];let initial="unavailable";
  if(first.paper&&first.replay&&!first.issues.length){const positions=(p:RunPoint)=>p.holdings.map(h=>[h.key,h.quantity,h.average]).sort((a,b)=>String(a[0])<String(b[0])?-1:1);initial=r.sources.paper.startingCapital===r.sources.replay.startingCapital&&near(first.paper.cash,first.replay.cash)&&JSON.stringify(positions(first.paper))===JSON.stringify(positions(first.replay))?"same_recorded_book":"different_recorded_book";}check(r.initialState===initial);
  const c=r.configuration;exact(c,["observedManifestHashes","observedUnqualifiedPoints","replayRunId","replayDatasetSha256","sourceComparison","differentComponents","strategyEquivalence","replayProtectionModel"]);
@@ -77,5 +86,5 @@ export function readRunComparison(expectedSha?:string):RunComparisonState {
 export function runComparisonContext(expectedSha?:string) {
  const state=readRunComparison(expectedSha);if(expectedSha&&!state.report)throw new Error("Selected run comparison is unavailable or has changed");
  const r=state.report;
- return {status:state.status,detail:state.detail,reportSha256:state.sha256,asOf:r?.window.end,summary:r?{qualification:r.qualification,window:r.window,initialState:r.initialState,configuration:{sourceComparison:r.configuration.sourceComparison,differentComponents:r.configuration.differentComponents,strategyEquivalence:r.configuration.strategyEquivalence,replayProtectionModel:r.configuration.replayProtectionModel,observedUnqualifiedPoints:r.configuration.observedUnqualifiedPoints},minutes:r.curve.length,pairedMinutes:r.curve.filter(p=>!p.issues.length).length,issueCodes:[...new Set(r.curve.flatMap(p=>p.issues))],metrics:r.metrics,fillCounts:{paper:r.fills.paper.length,replay:r.fills.replay.length},fillGroups:r.fillGroups.length}:null,limitations:"Historical diagnostic only. No same-strategy/OOS qualification, source authenticity, causal attribution or automatic promotion. Account identities, raw fills and source records are excluded."};
+ return {status:state.status,detail:state.detail,reportSha256:state.sha256,asOf:r?.window.end,summary:r?{qualification:r.qualification,window:r.window,observationSelection:r.sources.paper.observationSelection,initialState:r.initialState,configuration:{sourceComparison:r.configuration.sourceComparison,differentComponents:r.configuration.differentComponents,strategyEquivalence:r.configuration.strategyEquivalence,replayProtectionModel:r.configuration.replayProtectionModel,observedUnqualifiedPoints:r.configuration.observedUnqualifiedPoints},minutes:r.curve.length,pairedMinutes:r.curve.filter(p=>!p.issues.length).length,issueCodes:[...new Set(r.curve.flatMap(p=>p.issues))],metrics:r.metrics,fillCounts:{paper:r.fills.paper.length,replay:r.fills.replay.length},fillGroups:r.fillGroups.length}:null,limitations:"Historical diagnostic only. No same-strategy/OOS qualification, source authenticity, causal attribution or automatic promotion. Account identities, raw fills and source records are excluded."};
 }

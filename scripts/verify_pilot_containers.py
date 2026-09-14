@@ -322,7 +322,7 @@ def main():
             wait_for(lambda history_ui=history_ui: run("docker", "exec", history_ui, "node", "-e",
                 "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "broker history dashboard startup")
             report["checks"].append(json.loads(run("docker", "exec", history_ui, "node", "/qa/broker_journal_smoke.mjs")))
-        paired = json.loads(run("docker", "exec", engine, "python", "/qa/run_comparison_fixture.py", "--directory", "/data/run-comparison"))
+        paired = json.loads(run("docker", "exec", engine, "python", "/qa/run_comparison_fixture.py", "--directory", "/data/run-comparison", "--mature-history"))
         assert paired["points"] == 70 and paired["gaps"] == 3
         for phase, filename in [("run-comparison", "gapped.json"), ("run-comparison-restored", "gapped-restored.json")]:
             if phase == "run-comparison-restored":
