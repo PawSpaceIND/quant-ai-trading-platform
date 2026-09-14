@@ -73,6 +73,11 @@ class PortfolioSnapshot:
     # Held units per symbol. Lets the risk firewall tell an unwind apart from a
     # short open by quantity rather than by mark-vs-reference notional drift.
     symbol_quantity: dict[str, int] = field(default_factory=dict)
+    # Mark-to-market change from the persisted start-of-day equity baseline.
+    # This is the loss circuit breaker's authoritative intraday P&L input.
+    daily_total_pnl: Decimal = Decimal(0)
+    # Aggregate marked exposure by country, derived from current open positions.
+    country_exposure: dict[str, Decimal] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

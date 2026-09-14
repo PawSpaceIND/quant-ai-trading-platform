@@ -37,6 +37,8 @@ class RiskFirewall:
             return RiskDecision(False, "asset_class_blocked")
         if order.stop_price is not None and order.stop_price <= 0:
             return RiskDecision(False, "invalid_stop_price")
+        if order.take_profit_price is not None and order.take_profit_price <= 0:
+            return RiskDecision(False, "invalid_take_profit_price")
 
         notional = order.reference_price * order.quantity
         current_symbol = portfolio.symbol_exposure.get(order.symbol, Decimal(0))
@@ -52,8 +54,11 @@ class RiskFirewall:
 
         if self.policy.require_protective_stop and order.stop_price is None:
             return RiskDecision(False, "protective_stop_required")
+        # Use the more conservative loss signal. This preserves a realized loss even when
+        # no daily equity baseline exists yet, while also catching unrealized MTM losses.
+        intraday_pnl = min(portfolio.daily_realized_pnl, portfolio.daily_total_pnl)
         loss_limit = -(portfolio.equity * self.policy.max_daily_loss)
-        if portfolio.daily_realized_pnl <= loss_limit:
+        if intraday_pnl <= loss_limit:
             return RiskDecision(False, "daily_loss_limit_reached")
         peak = portfolio.peak_equity or portfolio.equity
         if peak > 0 and (peak - portfolio.equity) / peak >= self.policy.max_drawdown:
@@ -70,11 +75,11 @@ class RiskFirewall:
         projected_gross = portfolio.gross_exposure - reducing + adding
         if projected_gross > portfolio.equity * self.policy.max_gross_exposure:
             return RiskDecision(False, "gross_exposure_limit")
-        # An order that opens exposure must carry its stop on the losing side: below the
-        # reference for a long, above it for a short. A pure unwind returned earlier and
-        # is never held to stop geometry.
+        # Exposure-opening orders must carry protection on the correct side of entry.
         if order.stop_price is not None and not _stop_on_loss_side(order):
             return RiskDecision(False, "protective_stop_wrong_side")
+        if order.take_profit_price is not None and not _target_on_profit_side(order):
+            return RiskDecision(False, "take_profit_wrong_side")
         return RiskDecision(True, "approved")
 
     @staticmethod
@@ -110,3 +115,10 @@ def _stop_on_loss_side(order: OrderIntent) -> bool:
     if order.side == Side.BUY:
         return order.stop_price < order.reference_price
     return order.stop_price > order.reference_price
+
+
+def _target_on_profit_side(order: OrderIntent) -> bool:
+    assert order.take_profit_price is not None
+    if order.side == Side.BUY:
+        return order.take_profit_price > order.reference_price
+    return order.take_profit_price < order.reference_price

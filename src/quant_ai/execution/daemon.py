@@ -62,14 +62,11 @@ class AutonomousTradingDaemon:
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
-        # The founder's watchlist. Every instrument is evaluated on every cadence tick;
-        # the first one keeps the legacy single-instrument attributes working.
         self.instruments = tuple(instruments) if instruments else (instrument,)
         if not self.instruments:
             raise ValueError("at least one instrument is required")
         instrument = self.instruments[0]
         self.briefs: tuple[FounderExecutionBrief, ...] = ()
-        # Operator halt: a marker file an operator can create from outside the process.
         self.halt_file = Path(halt_file) if halt_file is not None else None
         self.scheduler = scheduler
         self.tracker = tracker
@@ -82,13 +79,18 @@ class AutonomousTradingDaemon:
         self.audit = audit or InMemoryAuditJournal()
         self.idle_sleep_seconds = idle_sleep_seconds
         self.clock = clock or (lambda: datetime.now(timezone.utc))
-        # C1: protective exits are checked on every tick, before any new analysis.
         self.exit_engine = exit_engine or self._default_exit_engine()
         self.protective_exits: tuple[ProtectiveExit, ...] = ()
         self._started_monotonic = monotonic()
         self._stop_requested = False
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
+
+        # Fault halts share the portfolio's durable risk-state backend. A process or host
+        # restart therefore cannot silently clear a breaker that was tripped by the runner.
+        engaged, reason = self.tracker.risk_state.kill_switch_state(self.tenant_id)
+        if engaged:
+            self.kill_switch.engage(reason or "persisted risk halt")
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
         return ProtectiveExitEngine(
@@ -109,11 +111,14 @@ class AutonomousTradingDaemon:
         return self.scheduler.pipeline.runtime.kill_switch
 
     def engage_kill_switch(self, reason: str) -> None:
-        """C3/C5: latch a halt that survives until an operator resets it."""
+        """Latch and durably persist a halt until an operator resets it."""
         if self.kill_switch.engaged:
             return
         self.kill_switch.engage(reason)
-        self.audit.append("kill_switch_engaged", {"reason": reason, "tenant_id": self.tenant_id})
+        self.tracker.risk_state.set_kill_switch(self.tenant_id, True, reason)
+        self.audit.append(
+            "kill_switch_engaged", {"reason": reason, "tenant_id": self.tenant_id}
+        )
         self.notifications.dispatch(
             TradingAlertCode.KILL_SWITCH_ENGAGED,
             f"Trading halted: {reason}",
@@ -121,13 +126,20 @@ class AutonomousTradingDaemon:
             metadata={"reason": reason},
         )
 
-    def apply_operator_halt(self) -> None:
-        """Engage the kill switch while the halt file exists; release when it is removed.
+    def reset_kill_switch(self, *, via: str = "operator_reset") -> None:
+        """Reset both the shared in-memory switch and its durable representation."""
+        self.tracker.risk_state.set_kill_switch(self.tenant_id, False, None)
+        self.kill_switch.reset()
+        self.audit.append(
+            "kill_switch_released",
+            {"tenant_id": self.tenant_id, "via": via},
+        )
 
-        Only a halt the file engaged is released by its removal: a halt latched by
-        repeated cadence failures stays until an operator restarts the daemon.
-        Protective exits keep running during a halt - a halt freezes new risk, never
-        the ability to cut it.
+    def apply_operator_halt(self) -> None:
+        """Engage while the halt file exists; release only file-originated halts on removal.
+
+        A fault halt is durable and is never cleared merely by a process restart or by the
+        absence of the operator halt marker. Protective exits keep running during every halt.
         """
         if self.halt_file is None:
             return
@@ -137,11 +149,7 @@ class AutonomousTradingDaemon:
                 note = self.halt_file.read_text(encoding="utf-8").strip() or str(self.halt_file)
                 self.engage_kill_switch(f"{OPERATOR_HALT_PREFIX}: {note}")
         elif self.kill_switch.engaged and reason.startswith(OPERATOR_HALT_PREFIX):
-            self.kill_switch.reset()
-            self.audit.append(
-                "kill_switch_released",
-                {"tenant_id": self.tenant_id, "via": "halt_file_removed"},
-            )
+            self.reset_kill_switch(via="halt_file_removed")
 
     def notify_cadence_failure(self, detail: str, consecutive: int) -> None:
         self.audit.append(
@@ -188,8 +196,12 @@ class AutonomousTradingDaemon:
             country = self.country_of(
                 self.tracker.instrument_resolver(
                     BrokerPosition(
-                        self.tenant_id, position.symbol, position.market, position.asset_class,
-                        position.quantity, position.average_entry_price,
+                        self.tenant_id,
+                        position.symbol,
+                        position.market,
+                        position.asset_class,
+                        position.quantity,
+                        position.average_entry_price,
                     )
                 )
             )
@@ -204,11 +216,15 @@ class AutonomousTradingDaemon:
         return briefs[0]
 
     @staticmethod
-    def _briefs_to_dispatch(briefs: list[FounderExecutionBrief]) -> tuple[FounderExecutionBrief, ...]:
+    def _briefs_to_dispatch(
+        briefs: list[FounderExecutionBrief],
+    ) -> tuple[FounderExecutionBrief, ...]:
         """One brief per instrument in session; a single closed-market sweep otherwise."""
         if len(briefs) == 1:
             return tuple(briefs)
-        in_session = tuple(item for item in briefs if item.market_state == MarketState.REGULAR_HOURS)
+        in_session = tuple(
+            item for item in briefs if item.market_state == MarketState.REGULAR_HOURS
+        )
         return in_session or (briefs[0],)
 
     def request_stop(self) -> None:
@@ -227,15 +243,11 @@ class AutonomousTradingDaemon:
         self._in_flight = True
         try:
             self.apply_operator_halt()
-            # C1: liquidate breached positions BEFORE new analysis, so a stop is honoured
-            # even on a tick where the swarm would otherwise want to add exposure.
             self.protective_exits = self.sweep_protective_exits(timestamp)
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []
             for instrument in self.instruments:
-                # A fresh snapshot per instrument: a fill earlier in the loop changes the
-                # exposure every later instrument is judged against.
                 before = self.tracker.get_snapshot(timestamp)
                 exposure = self.country_exposure(timestamp)
                 if use_llm:
@@ -285,7 +297,9 @@ class AutonomousTradingDaemon:
                     "market_state": brief.market_state.value,
                     "mode": brief.mode,
                     "subjects": tuple(item.subject for item in briefs),
-                    "paper_orders": tuple(oid for item in briefs for oid in item.paper_order_ids),
+                    "paper_orders": tuple(
+                        oid for item in briefs for oid in item.paper_order_ids
+                    ),
                     "equity": str(metrics.total_equity),
                     "drawdown": str(metrics.drawdown_fraction),
                 },

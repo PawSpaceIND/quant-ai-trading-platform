@@ -15,7 +15,7 @@ from quant_ai.agents.swarm import (
 )
 from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradingService
 from quant_ai.analytics.metrics import PerformanceMetrics, summarize_performance
-from quant_ai.domain.models import Instrument, PortfolioSnapshot
+from quant_ai.domain.models import Instrument, PortfolioSnapshot, Side
 from quant_ai.intelligence.freshness import (
     DataCategory,
     FreshnessResult,
@@ -25,6 +25,7 @@ from quant_ai.intelligence.freshness import (
 from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
     MacroIndicatorProvider,
+    MacroSnapshot,
     NewsSentimentProvider,
     NewsSignal,
 )
@@ -85,9 +86,15 @@ class SwarmMarketAnalysisPipeline:
         self.sizer = sizer or PositionSizer()
         self.cache = IntelligenceDataCache()
         self.agents = (
-            GeopoliticalAnalystAgent(), CommodityYieldAgent(),
-            IndianEquitiesAgent(), USEquitiesAgent(), TechnicalQuantAgent(),
+            GeopoliticalAnalystAgent(),
+            CommodityYieldAgent(),
+            IndianEquitiesAgent(),
+            USEquitiesAgent(),
+            TechnicalQuantAgent(),
         )
+        self._macro_current_at: datetime | None = None
+        self._macro_current: dict[str, Decimal] = {}
+        self._macro_previous: dict[str, Decimal] = {}
 
     def _resolve_quantity(
         self,
@@ -99,15 +106,154 @@ class SwarmMarketAnalysisPipeline:
         """An explicit quantity is honoured; None means size from risk and capital."""
         if requested is not None:
             return requested
-        return self.sizer.quantity_from_plan(plan, portfolio, reference_price)
+        worst_entry = self.runtime.broker.friction_model.worst_case_execution_price(
+            reference_price, Side.BUY
+        )
+        return self.sizer.quantity_from_plan(
+            plan,
+            portfolio,
+            reference_price,
+            worst_entry_price=worst_entry,
+        )
 
     @staticmethod
     def _apply_conflict(quantity: int, conflict: Decimal) -> int:
         if quantity <= 0:
-            return 0  # an unaffordable entry must never be rounded up to one share
+            return 0
         return max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
 
     def run(
+        self,
+        instrument: Instrument,
+        now: datetime,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        *,
+        quantity: int | None = None,
+        country: str,
+        tenant_id: str = "default",
+        country_exposure: dict[str, Decimal] | None = None,
+        reference_price_override: Decimal | None = None,
+    ) -> MarketAnalysisResult:
+        candles = self.market_feed.fetch_ohlcv(
+            instrument, now - timedelta(minutes=60), now, "1m"
+        )
+        news = self.news.fetch(instrument.symbol, now)
+        geopolitical = self.news.fetch("GEOPOLITICAL", now)
+        fundamentals = self.fundamentals.fetch(instrument.symbol, now)
+        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
+
+        last_price_at = candles[-1].timestamp if candles else None
+        latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
+        macro_at = macro.observed_at if required_macro <= macro.indicators.keys() else None
+        fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
+        states = PipelineFreshness(
+            self.freshness.validate(DataCategory.PRICE, last_price_at, now),
+            self.freshness.validate(DataCategory.NEWS, latest_news_at, now),
+            self.freshness.validate(DataCategory.MACRO, macro_at, now),
+            self.freshness.validate(DataCategory.FUNDAMENTAL, fundamentals_at, now),
+        )
+        if candles:
+            self.cache.put(f"price:{instrument.symbol}", candles, last_price_at)
+        if news or geopolitical:
+            self.cache.put(f"news:{instrument.symbol}", news + geopolitical, latest_news_at)
+        if macro_at is not None:
+            self.cache.put("macro:core", macro, macro_at)
+        if fundamentals_at is not None:
+            self.cache.put(f"fundamentals:{instrument.symbol}", fundamentals, fundamentals_at)
+
+        closes = tuple(c.close for c in candles)
+        regime = self.regime_detector.detect(candles)
+        effective_plan = self.regime_detector.apply_to_plan(plan, regime)
+        returns = tuple(
+            (after - before) / before
+            for before, after in zip(closes, closes[1:])
+            if before > 0
+        )
+        curve = [Decimal(100)]
+        for item in returns:
+            curve.append(curve[-1] * (Decimal(1) + item))
+        analytics = summarize_performance(returns, tuple(curve), returns)
+        technical = self._technical_metrics(closes)
+        equity_news = self._recent_sentiment(news, now)
+        geopolitical_sentiment = self._recent_sentiment(geopolitical, now)
+        macro_metrics = self._macro_metrics(macro)
+
+        common = dict(fundamentals.metrics)
+        common.update(technical)
+        common.update(macro_metrics)
+        common["equity_news_sentiment"] = equity_news
+        common["news_sentiment"] = geopolitical_sentiment
+        common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
+        common["sanctions_risk"] = max(Decimal(0), -geopolitical_sentiment / Decimal(2))
+
+        max_age = max(
+            item.age_seconds or 0
+            for item in (states.price, states.news, states.macro, states.fundamentals)
+        )
+        requests = []
+        for agent in self.agents:
+            required = self._required_freshness(agent.agent_id, states)
+            metrics = dict(common)
+            metrics["freshness_multiplier"] = required
+            requests.append(
+                AgentAnalysisRequest(
+                    instrument.symbol,
+                    instrument.market,
+                    instrument.asset_class,
+                    now,
+                    metrics,
+                    max_age,
+                )
+            )
+        evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
+        conflict = self._conflict_ratio(evidence)
+        root_request = requests[-1]
+        reference_price = (
+            reference_price_override
+            if reference_price_override is not None and reference_price_override > 0
+            else (closes[-1] if closes else Decimal(0))
+        )
+        requested_quantity = self._resolve_quantity(
+            quantity, effective_plan, portfolio, reference_price
+        )
+        effective_quantity = self._apply_conflict(requested_quantity, conflict)
+        stop = (
+            reference_price * (Decimal(1) - effective_plan.stop_loss_fraction)
+            if reference_price > 0
+            else None
+        )
+        take_profit = (
+            reference_price * (Decimal(1) + effective_plan.take_profit_fraction)
+            if reference_price > 0
+            else None
+        )
+        execution = self.runtime.execute(
+            root_request,
+            evidence,
+            effective_plan,
+            portfolio,
+            quantity=effective_quantity,
+            reference_price=reference_price,
+            stop_price=stop,
+            take_profit_price=take_profit,
+            country=country,
+            country_exposure=country_exposure,
+            tenant_id=tenant_id,
+        )
+        return MarketAnalysisResult(
+            evidence,
+            states,
+            requested_quantity,
+            effective_quantity,
+            conflict,
+            execution,
+            regime,
+            analytics,
+        )
+
+    async def run_async(
         self,
         instrument: Instrument,
         now: datetime,
@@ -146,90 +292,7 @@ class SwarmMarketAnalysisPipeline:
             self.cache.put("macro:core", macro, macro_at)
         if fundamentals_at is not None:
             self.cache.put(f"fundamentals:{instrument.symbol}", fundamentals, fundamentals_at)
-        closes = tuple(c.close for c in candles)
-        regime = self.regime_detector.detect(candles)
-        effective_plan = self.regime_detector.apply_to_plan(plan, regime)
-        returns = tuple(
-            (after - before) / before
-            for before, after in zip(closes, closes[1:])
-            if before > 0
-        )
-        curve = [Decimal(100)]
-        for item in returns:
-            curve.append(curve[-1] * (Decimal(1) + item))
-        analytics = summarize_performance(returns, tuple(curve), returns)
-        technical = self._technical_metrics(closes)
-        equity_news = self._recent_sentiment(news, now)
-        geopolitical_sentiment = self._recent_sentiment(geopolitical, now)
-        macro_metrics = self._macro_metrics(macro.indicators)
 
-        common = dict(fundamentals.metrics)
-        common.update(technical)
-        common.update(macro_metrics)
-        common["equity_news_sentiment"] = equity_news
-        common["news_sentiment"] = geopolitical_sentiment
-        common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
-        common["sanctions_risk"] = max(Decimal(0), -geopolitical_sentiment / Decimal(2))
-
-        max_age = max(item.age_seconds or 0 for item in (states.price, states.news, states.macro, states.fundamentals))
-        requests = []
-        for agent in self.agents:
-            required = self._required_freshness(agent.agent_id, states)
-            metrics = dict(common)
-            metrics["freshness_multiplier"] = required
-            requests.append(AgentAnalysisRequest(
-                instrument.symbol, instrument.market, instrument.asset_class, now, metrics, max_age
-            ))
-        evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
-        conflict = self._conflict_ratio(evidence)
-        root_request = requests[-1]
-        reference_price = closes[-1] if closes else Decimal(0)
-        requested_quantity = self._resolve_quantity(quantity, effective_plan, portfolio, reference_price)
-        effective_quantity = self._apply_conflict(requested_quantity, conflict)
-        stop = reference_price * (Decimal(1) - plan.stop_loss_fraction) if reference_price > 0 else None
-        take_profit = reference_price * (Decimal(1) + plan.take_profit_fraction) if reference_price > 0 else None
-        execution = self.runtime.execute(
-            root_request, evidence, effective_plan, portfolio,
-            quantity=effective_quantity, reference_price=reference_price,
-            stop_price=stop, take_profit_price=take_profit, country=country,
-            country_exposure=country_exposure, tenant_id=tenant_id,
-        )
-        return MarketAnalysisResult(
-            evidence, states, requested_quantity, effective_quantity, conflict, execution,
-            regime, analytics,
-        )
-
-    async def run_async(
-        self,
-        instrument: Instrument,
-        now: datetime,
-        plan: CapitalPlan,
-        portfolio: PortfolioSnapshot,
-        *,
-        quantity: int | None = None,
-        country: str,
-        tenant_id: str = "default",
-        country_exposure: dict[str, Decimal] | None = None,
-    ) -> MarketAnalysisResult:
-        candles = self.market_feed.fetch_ohlcv(
-            instrument, now - timedelta(minutes=60), now, "1m"
-        )
-        news = self.news.fetch(instrument.symbol, now)
-        geopolitical = self.news.fetch("GEOPOLITICAL", now)
-        fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
-
-        last_price_at = candles[-1].timestamp if candles else None
-        latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
-        macro_at = macro.observed_at if required_macro <= macro.indicators.keys() else None
-        fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
-        states = PipelineFreshness(
-            self.freshness.validate(DataCategory.PRICE, last_price_at, now),
-            self.freshness.validate(DataCategory.NEWS, latest_news_at, now),
-            self.freshness.validate(DataCategory.MACRO, macro_at, now),
-            self.freshness.validate(DataCategory.FUNDAMENTAL, fundamentals_at, now),
-        )
         closes = tuple(c.close for c in candles)
         regime = self.regime_detector.detect(candles)
         effective_plan = self.regime_detector.apply_to_plan(plan, regime)
@@ -245,9 +308,9 @@ class SwarmMarketAnalysisPipeline:
         technical = self._technical_metrics(closes)
         common = dict(fundamentals.metrics)
         common.update(technical)
-        common.update(self._macro_metrics(macro.indicators))
-        common["equity_news_sentiment"] = self._mean(tuple(item.sentiment for item in news))
-        geo_sentiment = self._mean(tuple(item.sentiment for item in geopolitical))
+        common.update(self._macro_metrics(macro))
+        common["equity_news_sentiment"] = self._recent_sentiment(news, now)
+        geo_sentiment = self._recent_sentiment(geopolitical, now)
         common["news_sentiment"] = geo_sentiment
         common["conflict_risk"] = max(Decimal(0), -geo_sentiment)
         common["sanctions_risk"] = max(Decimal(0), -geo_sentiment / Decimal(2))
@@ -270,36 +333,60 @@ class SwarmMarketAnalysisPipeline:
             metrics["freshness_multiplier"] = required
             requests.append(
                 AgentAnalysisRequest(
-                    instrument.symbol, instrument.market, instrument.asset_class, now, metrics, max_age
+                    instrument.symbol,
+                    instrument.market,
+                    instrument.asset_class,
+                    now,
+                    metrics,
+                    max_age,
                 )
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
         root_request = requests[-1]
         reference_price = (
-            market_tick.ltp if market_tick is not None and market_tick.ltp > 0
+            market_tick.ltp
+            if market_tick is not None and market_tick.ltp > 0
             else (closes[-1] if closes else Decimal(0))
         )
-        requested_quantity = self._resolve_quantity(quantity, effective_plan, portfolio, reference_price)
+        requested_quantity = self._resolve_quantity(
+            quantity, effective_plan, portfolio, reference_price
+        )
         effective_quantity = self._apply_conflict(requested_quantity, conflict)
         stop = (
-            reference_price * (Decimal(1) - plan.stop_loss_fraction)
-            if reference_price > 0 else None
+            reference_price * (Decimal(1) - effective_plan.stop_loss_fraction)
+            if reference_price > 0
+            else None
         )
         take_profit = (
-            reference_price * (Decimal(1) + plan.take_profit_fraction)
-            if reference_price > 0 else None
+            reference_price * (Decimal(1) + effective_plan.take_profit_fraction)
+            if reference_price > 0
+            else None
         )
         execution = await self.runtime.execute_async(
-            root_request, evidence, effective_plan, portfolio,
-            quantity=effective_quantity, reference_price=reference_price,
-            stop_price=stop, take_profit_price=take_profit, country=country,
-            market_tick=market_tick, preflight_veto_reason=market_data_veto,
-            country_exposure=country_exposure, tenant_id=tenant_id,
+            root_request,
+            evidence,
+            effective_plan,
+            portfolio,
+            quantity=effective_quantity,
+            reference_price=reference_price,
+            stop_price=stop,
+            take_profit_price=take_profit,
+            country=country,
+            market_tick=market_tick,
+            preflight_veto_reason=market_data_veto,
+            country_exposure=country_exposure,
+            tenant_id=tenant_id,
         )
         return MarketAnalysisResult(
-            evidence, states, requested_quantity, effective_quantity, conflict, execution,
-            regime, analytics,
+            evidence,
+            states,
+            requested_quantity,
+            effective_quantity,
+            conflict,
+            execution,
+            regime,
+            analytics,
         )
 
     def _market_tick_status(
@@ -320,7 +407,11 @@ class SwarmMarketAnalysisPipeline:
         if agent_id == "commodity-yield":
             return states.macro.confidence_multiplier
         if agent_id in {"indian-equities", "us-equities"}:
-            return min(states.news.confidence_multiplier, states.macro.confidence_multiplier, states.fundamentals.confidence_multiplier)
+            return min(
+                states.news.confidence_multiplier,
+                states.macro.confidence_multiplier,
+                states.fundamentals.confidence_multiplier,
+            )
         return states.price.confidence_multiplier
 
     @staticmethod
@@ -328,43 +419,54 @@ class SwarmMarketAnalysisPipeline:
         return sum(values, Decimal(0)) / Decimal(len(values)) if values else Decimal(0)
 
     def _recent_sentiment(self, items: tuple[NewsSignal, ...], now: datetime) -> Decimal:
-        """Mean sentiment over items published inside the news window.
-
-        Providers return their whole history; without a window the mean never ages
-        out and the signal grows stiffer the longer the system runs.
-        """
         floor = now - self.news_window
         recent = tuple(item.sentiment for item in items if item.published_at >= floor)
         return self._mean(recent)
 
-    @staticmethod
-    def _macro_metrics(values: dict[str, Decimal]) -> dict[str, Decimal]:
-        us10y = values.get("US10Y", Decimal(0))
-        brent = values.get("BRENT", Decimal(0))
-        gold = values.get("GOLD", Decimal(0))
-        dxy = values.get("DXY", Decimal(0))
+    def _macro_metrics(self, snapshot: MacroSnapshot) -> dict[str, Decimal]:
+        if self._macro_current_at is None:
+            self._macro_current_at = snapshot.observed_at
+            self._macro_current = dict(snapshot.indicators)
+        elif snapshot.observed_at > self._macro_current_at:
+            self._macro_previous = self._macro_current
+            self._macro_current = dict(snapshot.indicators)
+            self._macro_current_at = snapshot.observed_at
+
+        values = snapshot.indicators
+        previous = (
+            self._macro_previous
+            if snapshot.observed_at == self._macro_current_at
+            else {}
+        )
+
+        def change(key: str) -> Decimal:
+            current = values.get(key, Decimal(0))
+            prior = previous.get(key)
+            if prior is None or prior == 0:
+                return Decimal(0)
+            return (current - prior) / prior
+
         return {
-            "us10y": us10y,
-            "yield_change": (us10y - Decimal("4.0")) / Decimal(4),
-            "brent_change": (brent - Decimal(75)) / Decimal(75),
-            "gold_change": (gold - Decimal(2400)) / Decimal(2400),
-            "dxy_change": (dxy - Decimal(102)) / Decimal(102),
+            "us10y": values.get("US10Y", Decimal(0)),
+            "yield_change": change("US10Y"),
+            "brent_change": change("BRENT"),
+            "gold_change": change("GOLD"),
+            "dxy_change": change("DXY"),
         }
 
     @staticmethod
     def _technical_metrics(closes: tuple[Decimal, ...]) -> dict[str, Decimal]:
         bars = Decimal(len(closes))
         if len(closes) < 50:
-            # Not enough history for the indicators: report that fact so the technical
-            # agent abstains instead of voting on silent neutral defaults.
             return {
-                "sma_spread": Decimal(0), "rsi": Decimal(50), "momentum": Decimal(0),
+                "sma_spread": Decimal(0),
+                "rsi": Decimal(50),
+                "momentum": Decimal(0),
                 "price_history_bars": bars,
             }
         sma20 = sum(closes[-20:], Decimal(0)) / Decimal(20)
         sma50 = sum(closes[-50:], Decimal(0)) / Decimal(50)
         spread = (sma20 - sma50) / sma50 if sma50 else Decimal(0)
-        # A 10-bar lookback compares the last close with the close ten bars earlier.
         momentum = (closes[-1] - closes[-11]) / closes[-11] if closes[-11] else Decimal(0)
         gains = Decimal(0)
         losses = Decimal(0)
@@ -379,12 +481,25 @@ class SwarmMarketAnalysisPipeline:
         else:
             rs = gains / losses
             rsi = Decimal(100) - Decimal(100) / (Decimal(1) + rs)
-        return {"sma_spread": spread, "rsi": rsi, "momentum": momentum, "price_history_bars": bars}
+        return {
+            "sma_spread": spread,
+            "rsi": rsi,
+            "momentum": momentum,
+            "price_history_bars": bars,
+        }
 
     @staticmethod
     def _conflict_ratio(evidence: tuple[AgentEvidence, ...]) -> Decimal:
-        positive = sum(item.confidence for item in evidence if item.stance in {Stance.BUY, Stance.STRONG_BUY})
-        negative = sum(item.confidence for item in evidence if item.stance in {Stance.SELL, Stance.STRONG_SELL, Stance.AVOID})
+        positive = sum(
+            item.confidence
+            for item in evidence
+            if item.stance in {Stance.BUY, Stance.STRONG_BUY}
+        )
+        negative = sum(
+            item.confidence
+            for item in evidence
+            if item.stance in {Stance.SELL, Stance.STRONG_SELL, Stance.AVOID}
+        )
         directional = positive + negative
         if directional <= 0:
             return Decimal(0)

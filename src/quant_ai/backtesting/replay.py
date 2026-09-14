@@ -132,7 +132,7 @@ class HistoricalFundamentalProvider:
 
 
 class HistoricalReplayHarness:
-    """Bar-by-bar replay. Every provider is point-in-time filtered at the simulation tick."""
+    """Point-in-time replay with next-bar execution for close-derived decisions."""
 
     def __init__(
         self,
@@ -167,72 +167,97 @@ class HistoricalReplayHarness:
         curve: list[Decimal] = []
         timestamps: list[datetime] = []
         order_ids: list[str] = []
-        for index, bar in enumerate(dataset.bars):
-            feed.set_time(bar.timestamp)
+
+        first = dataset.bars[0]
+        feed.set_time(first.timestamp)
+        self._assert_no_lookahead(feed, dataset, instrument, first.timestamp)
+        first_snapshot = tracker.get_snapshot(first.timestamp)
+        self._record_valuation(tracker, first.timestamp)
+        curve.append(first_snapshot.equity)
+        timestamps.append(first.timestamp)
+
+        for index in range(1, len(dataset.bars)):
+            decision_bar = dataset.bars[index - 1]
+            execution_bar = dataset.bars[index]
+            feed.set_time(decision_bar.timestamp)
             visible = feed.visible()
             context = self._friction_context(visible)
-            self.broker.set_friction_context(context, execution_time=bar.timestamp)
-            before = tracker.get_snapshot(bar.timestamp)
-            self._assert_no_lookahead(feed, dataset, instrument, bar.timestamp)
+            self.broker.set_friction_context(
+                context,
+                execution_time=execution_bar.timestamp,
+            )
+            before = tracker.get_snapshot(decision_bar.timestamp)
+            self._assert_no_lookahead(
+                feed,
+                dataset,
+                instrument,
+                decision_bar.timestamp,
+            )
             result = pipeline.run(
                 instrument,
-                bar.timestamp,
+                decision_bar.timestamp,
                 self.plan,
                 before,
                 quantity=self.quantity,
                 country=self.country,
                 tenant_id=self.tenant_id,
-                # Single-instrument replay: everything held is this country's exposure.
                 country_exposure={self.country: before.gross_exposure},
+                reference_price_override=execution_bar.open,
             )
             if result.execution.fill is not None:
                 order_ids.append(result.execution.fill.order_id)
-            after = tracker.get_snapshot(bar.timestamp)
-            metrics = tracker.metrics(bar.timestamp)
-            payload = {
-                "status": "ok",
-                "tenantId": self.tenant_id,
-                "markMode": "historical_replay",
-                "markDisclaimer": "Historical/synthetic replay valuations; not live market prices.",
-                "cash": float(metrics.cash_balance),
-                "totalEquity": float(metrics.total_equity),
-                "startingCapital": float(self.broker.get_margin(self.tenant_id).starting_capital),
-                "realizedPnl": float(metrics.realized_pnl),
-                "unrealizedPnl": float(metrics.unrealized_pnl),
-                "highWaterMark": float(metrics.high_water_mark),
-                "drawdown": float(metrics.drawdown_fraction),
-                "holdings": [
-                    {
-                        "symbol": p.symbol,
-                        "market": p.market.value,
-                        "assetClass": p.asset_class.value,
-                        "quantity": p.quantity,
-                        "averageEntry": float(p.average_entry_price),
-                        "markPrice": float(p.current_price),
-                        "markSource": "replay_bar_close",
-                        "marketValue": float(p.market_value),
-                        "unrealizedPnl": float(p.unrealized_pnl),
-                    }
-                    for p in metrics.positions
-                ],
-                "updatedAt": bar.timestamp.isoformat(),
-            }
-            self.broker.record_replay_valuation(
-                bar.timestamp.isoformat(),
-                json.dumps(payload, allow_nan=False),
-                self.tenant_id,
-            )
+
+            feed.set_time(execution_bar.timestamp)
+            after = tracker.get_snapshot(execution_bar.timestamp)
+            self._record_valuation(tracker, execution_bar.timestamp)
             curve.append(after.equity)
-            timestamps.append(bar.timestamp)
-            if index == len(dataset.bars) - 1:
-                self.broker.set_friction_context(None)
-        benchmark_returns = self._benchmark_returns(dataset)
+            timestamps.append(execution_bar.timestamp)
+
+        self.broker.set_friction_context(None)
         return HistoricalReplayResult(
             tuple(curve),
-            benchmark_returns,
+            self._benchmark_returns(dataset),
             tuple(timestamps),
             tuple(order_ids),
             tracker.get_snapshot(dataset.bars[-1].timestamp),
+        )
+
+    def _record_valuation(self, tracker: PortfolioTracker, timestamp: datetime) -> None:
+        metrics = tracker.metrics(timestamp)
+        payload = {
+            "status": "ok",
+            "tenantId": self.tenant_id,
+            "markMode": "historical_replay",
+            "markDisclaimer": "Historical/synthetic replay valuations; not live market prices.",
+            "cash": float(metrics.cash_balance),
+            "totalEquity": float(metrics.total_equity),
+            "startingCapital": float(
+                self.broker.get_margin(self.tenant_id).starting_capital
+            ),
+            "realizedPnl": float(metrics.realized_pnl),
+            "unrealizedPnl": float(metrics.unrealized_pnl),
+            "highWaterMark": float(metrics.high_water_mark),
+            "drawdown": float(metrics.drawdown_fraction),
+            "holdings": [
+                {
+                    "symbol": position.symbol,
+                    "market": position.market.value,
+                    "assetClass": position.asset_class.value,
+                    "quantity": position.quantity,
+                    "averageEntry": float(position.average_entry_price),
+                    "markPrice": float(position.current_price),
+                    "markSource": "replay_bar_close",
+                    "marketValue": float(position.market_value),
+                    "unrealizedPnl": float(position.unrealized_pnl),
+                }
+                for position in metrics.positions
+            ],
+            "updatedAt": timestamp.isoformat(),
+        }
+        self.broker.record_replay_valuation(
+            timestamp.isoformat(),
+            json.dumps(payload, allow_nan=False),
+            self.tenant_id,
         )
 
     @staticmethod
@@ -242,21 +267,20 @@ class HistoricalReplayHarness:
         instrument: Instrument,
         now: datetime,
     ) -> None:
-        """Check the inputs the pipeline will actually receive, not the filter that made them.
-
-        The previous guard re-tested the feed's own ``<= now`` filter and could never
-        fire. This one asks the feed and every provider for exactly what the pipeline
-        asks for at this tick and refuses to proceed if anything is dated after it.
-        """
         window = feed.fetch_ohlcv(instrument, now - timedelta(minutes=60), now, "1m")
         if window and window[-1].timestamp > now:
             raise RuntimeError("lookahead_violation: future bar served to the pipeline")
         news_at = max(
-            (item.published_at for item in HistoricalNewsProvider(dataset.news).fetch(instrument.symbol, now)),
+            (
+                item.published_at
+                for item in HistoricalNewsProvider(dataset.news).fetch(instrument.symbol, now)
+            ),
             default=now,
         )
         macro_at = HistoricalMacroProvider(dataset.macro).fetch(("US10Y",), now).observed_at
-        fundamentals_at = HistoricalFundamentalProvider(dataset.fundamentals).fetch(instrument.symbol, now).observed_at
+        fundamentals_at = HistoricalFundamentalProvider(dataset.fundamentals).fetch(
+            instrument.symbol, now
+        ).observed_at
         if max(news_at, macro_at, fundamentals_at) > now:
             raise RuntimeError("lookahead_violation: future provider event served to the pipeline")
 
