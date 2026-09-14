@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,8 +17,9 @@ def backup(source: Path, destination: Path) -> dict:
         pass
     destination.chmod(0o600)
     try:
-        with sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True) as src, sqlite3.connect(destination) as out:
+        with closing(sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)) as src, closing(sqlite3.connect(destination)) as out:
             src.backup(out)
+            out.execute("PRAGMA journal_mode=DELETE")
             if out.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise ValueError("Backup integrity check failed")
         digest = hashlib.sha256(destination.read_bytes()).hexdigest()

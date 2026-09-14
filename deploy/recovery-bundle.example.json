@@ -1,0 +1,13 @@
+{
+  "tenant": "ghost",
+  "revision": "REPLACE_WITH_EXACT_40_CHARACTER_DEPLOYED_GIT_SHA",
+  "sources": {
+    "ledger": "/data/pramana.db",
+    "console": "/data/pilot-console.sqlite",
+    "proofs": "/data/xai",
+    "reviews": "/data/reviews",
+    "directives": "/app/directives.json",
+    "halt": "/data/PRAMANA_HALT",
+    "research": "/data/research-report.json"
+  }
+}
