@@ -108,3 +108,19 @@ def test_recovery_counts_atomic_ledger_protection_evidence(tmp_path):
     assert result['proofCoverage']['filledOrders']==2
     assert result['proofCoverage']['ledgerProtectionRecords']==1
     assert result['proofCoverage']['missingCount']==0
+
+
+def test_recovery_counts_swarm_ledger_evidence_without_file_projection(tmp_path):
+    from test_swarm_fill_evidence import execute
+
+    from quant_ai.execution.audit import XAITraceLogger
+    spec = fixture(tmp_path)
+    broker = PaperBrokerService(spec['sources']['ledger'])
+    result = execute(broker, XAITraceLogger())
+    assert result.fill
+    manifest = bundle.create(spec, tmp_path / 'backup', writers_stopped=True)
+    report = bundle.restore(tmp_path / 'backup', tmp_path / 'restored', manifest_sha256=manifest['manifestSha256'])
+    assert report['status'] == 'restored'
+    assert report['proofCoverage']['ledgerDecisionRecords'] == 1
+    assert report['proofCoverage']['filledOrders'] == 2
+    assert report['proofCoverage']['missingCount'] == 0

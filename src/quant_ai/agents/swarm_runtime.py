@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import json
+import logging
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -17,6 +19,8 @@ from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.orders.state import OrderLifecycle, OrderState
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.risk.warden import RiskWarden, WardenDecision
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -206,27 +210,33 @@ class SwarmPaperTradingService:
             return refuse("re_entry_cooldown_active")
         lifecycle.transition(OrderState.RISK_APPROVED)
 
-        # C5: durable replay guard. The claim is stored in SQLite, so a restart mid-cadence
-        # cannot resubmit an order that already reached the broker.
+        # Prepare before execution. The canonical trace and replay guard must commit in
+        # the same database transaction as the fill, cash, positions and fees.
+        trace = self.xai_logger.build(request, weighted_evidence, proposal, stress, risk)
+        fill_evidence = {
+            **json.loads(self.xai_logger.to_json(trace)),
+            "schema": "pramana.swarm_fill.v1", "event_type": "swarm_fill",
+            "approved_order": self.xai_logger._normalize(asdict(risk.order)),
+        }
         key = order_idempotency_key(risk.order, proposal.decision_id)
-        if not self.broker.claim_idempotency_key(key.value, tenant_id):
-            return refuse("duplicate_order")
 
         lifecycle.transition(OrderState.SUBMITTED)
         try:
-            fill = self.broker.submit(risk.order)
+            fill = self.broker.submit_with_evidence(risk.order, fill_evidence, key.value)
         except PaperBrokerDatabaseLockedError:
             return refuse("paper_broker_database_locked")
         except ValueError as error:
             # C3: a broker-side rejection (insufficient cash/position) is a governed outcome,
             # not a daemon-killing exception.
-            return refuse(f"broker_rejected:{error}")
+            return refuse("duplicate_order" if str(error) == "duplicate_order" else f"broker_rejected:{error}")
         lifecycle.transition(OrderState.FILLED)
-        # The proof is written after the fill so it carries the broker order id: the UI
-        # joins proofs to ledger rows on that id and refuses any looser association.
-        trace = self.xai_logger.log(
-            request, weighted_evidence, proposal, stress, risk, fill=fill
-        )
+        trace = replace(trace, order_id=fill.order_id)
+        try:
+            self.xai_logger.record(trace)
+        except OSError:
+            # Files are an optional projection. The exact trace already exists in the
+            # ledger; do not turn a committed fill into a misleading execution failure.
+            LOGGER.exception("xai_file_projection_failed order_id=%s; canonical evidence retained in ledger", fill.order_id)
         return SwarmExecutionResult(proposal, risk, fill, stress, trace, lifecycle.state)
 
     def _in_exit_cooldown(

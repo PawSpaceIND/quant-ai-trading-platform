@@ -52,6 +52,20 @@ class XAITraceLogger:
         risk: WardenDecision,
         fill: ExecutionResult | None = None,
     ) -> XAITrace:
+        trace = self.build(request, evidence, proposal, stress, risk, fill)
+        self.record(trace)
+        return trace
+
+    def build(
+        self,
+        request: AgentAnalysisRequest,
+        evidence: tuple[AgentEvidence, ...],
+        proposal: TradeProposal,
+        stress: StressVerdict,
+        risk: WardenDecision,
+        fill: ExecutionResult | None = None,
+    ) -> XAITrace:
+        """Prepare evidence without a file write or a claimed fill."""
         matrix = tuple(
             {
                 "agent_id": item.agent_id,
@@ -92,12 +106,15 @@ class XAITraceLogger:
             },
             fill.order_id if fill is not None else None,
         )
+        return trace
+
+    def record(self, trace: XAITrace) -> None:
+        """Publish the in-memory/file projection of a prepared trace."""
         self._traces.append(trace)
         if self.directory is not None:
-            stem = self.directory / proposal.decision_id
+            stem = self.directory / trace.decision_id
             stem.with_suffix(".json").write_text(self.to_json(trace))
             stem.with_suffix(".md").write_text(self.to_markdown(trace))
-        return trace
 
     def traces(self) -> tuple[XAITrace, ...]:
         return tuple(self._traces)

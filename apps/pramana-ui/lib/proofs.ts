@@ -26,8 +26,9 @@ export function proofDirectory(): string {
 
 export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; proof: Proof }> {
   const directory = proofDirectory();
-  if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return [];
-  return fs.readdirSync(/* turbopackIgnore: true */ directory)
+  const canonical = ledgerProofs().filter(({ proof }) => Array.isArray(proof.input_matrix));
+  const orderIds = new Set(canonical.map(({ proof }) => proof.order_id));
+  const files = !fs.existsSync(/* turbopackIgnore: true */ directory) ? [] : fs.readdirSync(/* turbopackIgnore: true */ directory)
     .filter((file) => file.endsWith(".json") && file !== "latest-backtest-tearsheet.json")
     .map((file) => {
       const full = path.join(/* turbopackIgnore: true */ directory, file);
@@ -38,11 +39,13 @@ export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; p
     .flatMap(({ file, full, mtimeMs }) => {
       try {
         const proof = JSON.parse(fs.readFileSync(/* turbopackIgnore: true */ full, "utf8")) as Proof;
+        if (proof.order_id && orderIds.has(proof.order_id)) return [];
         return [{ file, mtimeMs, proof }];
       } catch {
         return [];
       }
     });
+  return [...canonical, ...files].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
 }
 
 export function latestSwarmIntelligence() {
@@ -83,33 +86,39 @@ export function latestSwarmIntelligence() {
   };
 }
 
-/**
- * Every persisted proof that produced a fill, keyed by broker order id.
- *
- * Scans the whole directory rather than the newest N files: a fill's proof is
- * exactly as old as the fill, so any recency cap would silently drop the link
- * for everything but the latest decisions. Files are pre-filtered on a cheap
- * substring test before being parsed.
- */
-export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
-  const index = new Map<string, { file: string; proof: Proof }>();
+/** Canonical evidence committed with a paper fill; older ledgers may lack these tables. */
+function ledgerProofs(): Array<{ file: string; mtimeMs: number; proof: Proof }> {
+  const result: Array<{ file: string; mtimeMs: number; proof: Proof }> = [];
   const db = openLedger();
   if (db) {
     try {
-      if (hasTable(db, "paper_protection_evidence")) {
-        const rows = db.prepare("SELECT order_id,payload FROM paper_protection_evidence WHERE tenant_id=?").all(tenantId) as {order_id:string;payload:string}[];
+      for (const [table, schema, event] of [
+        ["paper_protection_evidence", "pramana.protective_exit.v1", "protective_exit"],
+        ["paper_decision_evidence", "pramana.swarm_fill.v1", "swarm_fill"],
+      ]) {
+        if (!hasTable(db, table)) continue;
+        const rows = db.prepare(`SELECT order_id,payload FROM ${table} WHERE tenant_id=?`).all(tenantId) as {order_id:string;payload:string}[];
         for (const row of rows) {
           try {
             const proof = JSON.parse(row.payload) as Proof;
-            if (proof.schema === "pramana.protective_exit.v1" && proof.event_type === "protective_exit"
-                && proof.tenant_id === tenantId && proof.order_id === row.order_id) {
-              index.set(row.order_id, {file: "ledger:paper_protection_evidence", proof});
+            if (proof.schema === schema && proof.event_type === event
+                && proof.tenant_id === tenantId && proof.order_id === row.order_id
+                && (event !== "swarm_fill" || Array.isArray(proof.input_matrix))) {
+              const timestamp = Date.parse(String(proof.filled_at ?? proof.generated_at ?? ""));
+              result.push({file: `ledger:${table}`, mtimeMs: Number.isFinite(timestamp) ? timestamp : 0, proof});
             }
           } catch { /* Corrupt evidence never receives an exact-match label. */ }
         }
       }
     } finally { db.close(); }
   }
+  return result;
+}
+
+/** Exact fill links across the complete ledger and legacy file history, without a recency cap. */
+export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
+  const index = new Map<string, { file: string; proof: Proof }>();
+  for (const item of ledgerProofs()) index.set(item.proof.order_id!, item);
   const directory = proofDirectory();
   if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return index;
   for (const file of fs.readdirSync(/* turbopackIgnore: true */ directory)) {

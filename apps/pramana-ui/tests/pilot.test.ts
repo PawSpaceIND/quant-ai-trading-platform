@@ -260,3 +260,33 @@ test("protective evidence is tenant-scoped, exact-order linked and never swarm a
   assert(!index.has("PAPER-MISMATCH-QA"));
   assert.equal(latestSwarmIntelligence().status,"empty");
 });
+
+test("canonical swarm evidence survives absent/conflicting file projections and scopes tenants", async () => {
+  const { proofsByOrderId, latestSwarmIntelligence, readProofs } = await import("../lib/proofs");
+  process.env.PRAMANA_PROOF_DIR = path.join(dir, "swarm-projections");
+  const db = new DatabaseSync(process.env.PRAMANA_LEDGER_PATH!);
+  db.exec("CREATE TABLE paper_decision_evidence(order_id TEXT PRIMARY KEY,tenant_id TEXT,payload TEXT)");
+  const proof = {
+    schema: "pramana.swarm_fill.v1", event_type: "swarm_fill", tenant_id: "default",
+    order_id: "PAPER-SWARM-QA", decision_id: "synthetic-canonical", subject: "INFY",
+    generated_at: new Date().toISOString(), filled_at: new Date().toISOString(),
+    input_matrix: [{agent_id:"synthetic-agent",stance:"BUY",confidence:"0.8",domain:"TECHNICAL"}],
+    declared_rationales: ["Synthetic canonical rationale"],
+  };
+  const insert = db.prepare("INSERT INTO paper_decision_evidence VALUES (?,?,?)");
+  insert.run(proof.order_id,"default",JSON.stringify(proof));
+  insert.run("WRONG-TENANT","other",JSON.stringify({...proof,tenant_id:"other",order_id:"WRONG-TENANT"}));
+  insert.run("MISMATCH","default",JSON.stringify(proof));
+  insert.run("INVALID-MATRIX","default",JSON.stringify({...proof,order_id:"INVALID-MATRIX",input_matrix:null}));
+  db.close();
+  assert.equal(latestSwarmIntelligence().proof?.decisionId, proof.decision_id);
+  assert.equal(latestSwarmIntelligence().agents[0].agentId, "synthetic-agent");
+  const index = proofsByOrderId();
+  assert.equal(index.get(proof.order_id)?.file,"ledger:paper_decision_evidence");
+  for (const id of ["WRONG-TENANT","MISMATCH","INVALID-MATRIX"]) assert(!index.has(id));
+  fs.mkdirSync(process.env.PRAMANA_PROOF_DIR);
+  fs.writeFileSync(path.join(process.env.PRAMANA_PROOF_DIR,"conflict.json"),JSON.stringify({...proof,declared_rationales:["Incorrect projection"]}));
+  assert.deepEqual(proofsByOrderId().get(proof.order_id)?.proof.declared_rationales,proof.declared_rationales);
+  assert.deepEqual(latestSwarmIntelligence().proof?.rationale,proof.declared_rationales);
+  assert.equal(readProofs().filter(({proof:p})=>p.order_id===proof.order_id).length,1);
+});

@@ -82,3 +82,9 @@ Synthetic browser/CLI checks showed one fill, one open episode, zero completed t
 All **353 Python tests** and **16 dashboard tests** pass, with Ruff, TypeScript and local webpack production build passing. Protective paper fills now atomically persist their deterministic evidence and cooldown with the ledger transaction. Injected storage failure rolls back cash, positions, costs, fill and cooldown. Recovery coverage includes tenant/order-matched ledger records.
 
 The isolated Activity browser drill showed the protective SELL with threshold, observed mark and an explicitly unverified custom source. The unproven synthetic BUY stayed labeled Missing proof. No warning/error browser logs were observed. No real-market or deployment acceptance is implied. [Evidence fields and limits](PROTECTIVE_EXIT_EVIDENCE.md).
+
+## Governed swarm-fill durability follow-up
+
+All **359 Python tests** and **17 dashboard tests** pass, with Ruff, TypeScript and local webpack production build passing. Governed swarm fills now commit their canonical decision record and replay key with cash, positions, fees and the fill. Tests include an abrupt subprocess exit after commit, evidence-insert rollback, preparation failure and file-projection failure. The restart replay guard allows no second fill for the same key.
+
+With no file projection present, the synthetic browser drill showed the exact fill/rationale/verdicts in Activity and the saved input agent in Overview. No warning/error browser logs were observed. A subsequent stopped-writer bundle restored one decision record with matched accounting and zero missing proof references; the initial source-changing capture was rejected. [Transaction, evidence and scope limits](SWARM_FILL_EVIDENCE.md). Target-host and strategy acceptance remain pending.

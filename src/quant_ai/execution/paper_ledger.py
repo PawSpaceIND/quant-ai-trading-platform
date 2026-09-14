@@ -150,6 +150,9 @@ class PaperBrokerService(BrokerAdapter):
                 CREATE TABLE IF NOT EXISTS paper_protection_evidence (
                     order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_decision_evidence (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS paper_idempotency (
                     key TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
@@ -273,8 +276,16 @@ class PaperBrokerService(BrokerAdapter):
         json.dumps(evidence, allow_nan=False)
         return self._execute(order, evidence=evidence, cooldown_until=cooldown_until)
 
+    def submit_with_evidence(self, order: OrderIntent, evidence: dict, idempotency_key: str) -> ExecutionResult:
+        """Commit a governed paper fill, decision evidence and replay guard together."""
+        if (not idempotency_key or evidence.get("schema") != "pramana.swarm_fill.v1"
+                or evidence.get("event_type") != "swarm_fill"):
+            raise ValueError("invalid_swarm_fill_evidence")
+        json.dumps(evidence, allow_nan=False)
+        return self._execute(order, evidence=evidence, idempotency_key=idempotency_key)
+
     def _execute(self, order: OrderIntent, *, evidence: dict | None = None,
-                 cooldown_until: datetime | None = None) -> ExecutionResult:
+                 cooldown_until: datetime | None = None, idempotency_key: str | None = None) -> ExecutionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")
         friction = self.friction_model.evaluate(order, self._context_for(order))
@@ -286,7 +297,7 @@ class PaperBrokerService(BrokerAdapter):
             try:
                 return self._execute_once(
                     order, friction, fill_price, notional, order_id, now,
-                    evidence=evidence, cooldown_until=cooldown_until,
+                    evidence=evidence, cooldown_until=cooldown_until, idempotency_key=idempotency_key,
                 )
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).lower():
@@ -310,11 +321,19 @@ class PaperBrokerService(BrokerAdapter):
         order_id: str,
         now: datetime,
         *, evidence: dict | None = None, cooldown_until: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> ExecutionResult:
         tenant_id = order.tenant_id
         statutory_fees = friction.statutory_fees
         with self._lock, self._connection:
             self._assert_pilot_order(order)
+            if idempotency_key is not None:
+                inserted = self._connection.execute(
+                    "INSERT OR IGNORE INTO paper_idempotency (key,tenant_id,claimed_at) VALUES (?,?,?)",
+                    (idempotency_key, tenant_id, now.isoformat()),
+                )
+                if inserted.rowcount != 1:
+                    raise ValueError("duplicate_order")
             self._ensure_account(tenant_id)
             account = self._connection.execute(
                 "SELECT cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
@@ -427,7 +446,11 @@ class PaperBrokerService(BrokerAdapter):
                     "subject": order.symbol, "filled_at": now.isoformat(),
                     "fill": {"quantity": order.quantity, "price": str(fill_price),
                         "cash_fees": str(statutory_fees), "status": "FILLED"}}
-                self._connection.execute("INSERT INTO paper_protection_evidence VALUES (?,?,?)",
+                if idempotency_key is not None:
+                    payload["idempotency_key"] = idempotency_key
+                # Names are fixed here, never taken from the evidence or an API parameter.
+                table = "paper_decision_evidence" if evidence.get("schema") == "pramana.swarm_fill.v1" else "paper_protection_evidence"
+                self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?)",
                     (order_id, tenant_id, json.dumps(payload, allow_nan=False, sort_keys=True)))
                 if cooldown_until is not None:
                     self._connection.execute("INSERT OR REPLACE INTO paper_exit_cooldowns VALUES (?,?,?,?,?)",
@@ -651,4 +674,3 @@ class PaperBrokerService(BrokerAdapter):
         with self._lock:
             self._connection.commit()
             self._connection.close()
-
