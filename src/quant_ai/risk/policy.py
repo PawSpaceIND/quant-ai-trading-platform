@@ -54,15 +54,19 @@ class RiskFirewall:
             return RiskDecision(False, "asset_class_blocked")
         if self.policy.require_protective_stop and order.stop_price is None:
             return RiskDecision(False, "protective_stop_required")
+
+        # Portfolio drawdown is the broader hard stop, so classify it before the intraday
+        # loss breaker when both are breached by the same shock.
+        peak = portfolio.peak_equity or portfolio.equity
+        if peak > 0 and (peak - portfolio.equity) / peak >= self.policy.max_drawdown:
+            return RiskDecision(False, "max_drawdown_reached")
+
         # Use the more conservative loss signal. This preserves a realized loss even when
         # no daily equity baseline exists yet, while also catching unrealized MTM losses.
         intraday_pnl = min(portfolio.daily_realized_pnl, portfolio.daily_total_pnl)
         loss_limit = -(portfolio.equity * self.policy.max_daily_loss)
         if intraday_pnl <= loss_limit:
             return RiskDecision(False, "daily_loss_limit_reached")
-        peak = portfolio.peak_equity or portfolio.equity
-        if peak > 0 and (peak - portfolio.equity) / peak >= self.policy.max_drawdown:
-            return RiskDecision(False, "max_drawdown_reached")
         if adding > portfolio.equity * self.policy.max_single_trade_notional:
             return RiskDecision(False, "single_trade_notional_limit")
         projected_symbol = current_symbol - reducing + adding
