@@ -1001,6 +1001,24 @@ td .pill {
 .research-metrics .metric {
   background: #12202a;
 }
+.research-comparison { min-width: 0; overflow-wrap: anywhere; }
+.research-comparison details { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+.research-comparison summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.research-comparison li { margin: 8px 0; }
+.research-notice { padding: 16px; border: 1px solid #8a7439; background: #2b271b; line-height: 1.6; border-radius: 8px; }
+.research-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 16px; margin: 20px 0; }
+.research-candidate { min-width: 0; border: 1px solid var(--line); padding: 16px; border-radius: 10px; background: #12202a; }
+.research-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.research-stats dt { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.research-stats dd { margin: 6px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.research-table-scroll { max-width: 100%; overflow-x: auto; }
+.research-table-scroll table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.research-table-scroll th, .research-table-scroll td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.research-table-scroll caption { text-align: left; margin: 12px 0; color: var(--muted); }
+.research-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.research-actions button { white-space: normal; text-align: left; }
+.research-actions a { display: inline-flex; align-items: center; padding: 10px 14px; border: 1px solid var(--line); border-radius: 7px; background: #1c2b33; color: inherit; text-decoration: none; font-size: 13px; }
+.research-actions a:hover { background: #293d43; }
 .check-list > div {
   display: flex;
   align-items: start;

@@ -12,6 +12,7 @@ import {
 import { portfolioRisk } from "@/lib/portfolio-risk";
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
+import { ResearchComparison } from "./research-comparison";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -464,6 +465,7 @@ export function PilotWorkspace() {
                 {view === "research" && (
                   <>
                     <ResearchPanel data={data} />
+                    <ResearchComparison state={data.researchLab} onAsk={ask} />
                     <TradeEvidencePanel data={data} onAsk={ask} />
                     <section className="panel">
                       <div className="panel-title">

@@ -1,5 +1,10 @@
 # Private paper pilot deployment and recovery
 
+For the separate offline candidate lab, publish a sanitized report with
+`python -m quant_ai.research.workspace_report` and set `PRAMANA_RESEARCH_LAB_REPORT`
+only on this authenticated workspace. [Publication and comparison workflow](research-evaluation-lab.md#private-research-workspace-integration).
+The report remains insufficient evidence and never grants strategy acceptance.
+
 This release is scoped to a founder-only INR / NSE cash-equity and ETF account. It is not a public SaaS release or a live-money adapter. Do not reuse a ledger containing USD trades. Use a dedicated new account and volume. A dashboard observation list does not authorize engine instruments.
 
 ## Configure and start

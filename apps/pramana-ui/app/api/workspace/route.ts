@@ -1,6 +1,7 @@
 import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy-evidence";
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
+import { readResearchLab } from "@/lib/research-lab";
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -129,6 +130,7 @@ export async function GET() {
         market,
         runtime,
         research: readResearch(),
+        researchLab: readResearchLab(),
         performance: perf,
         strategyObservation,
         intelligence: latestSwarmIntelligence(),

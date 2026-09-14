@@ -22,6 +22,17 @@ test("failed snapshot is visibly unavailable",async()=>{
  assert.equal(r.status,503);
 });
 
+test("research lab and operator notes are excluded before cloud snapshot storage",async()=>{
+ const snapshots={};for(const p of ["market","portfolio/mtm","intelligence/swarm","execution/friction","execution/trades"])snapshots["/api/"+p]={};
+ snapshots["/api/portfolio/mtm"].tenantId="india-paper";
+ snapshots["/api/workspace"]={tenantId:"india-paper",researchLab:{private:"RESEARCH_SENTINEL"},audit:["NOTES_SENTINEL"],runtime:{status:"running"}};
+ let stored;const target=env();target.DB.prepare=()=>({bind(body){stored=JSON.parse(body);return this;},run:async()=>({success:true})});
+ const response=await worker.fetch(new Request("https://test/_ingest",{method:"POST",headers:{Authorization:"Bearer test-only-token"},body:JSON.stringify({sourceAt:new Date().toISOString(),snapshots})}),target);
+ assert.equal(response.status,200);assert.equal(stored["/api/workspace"].researchLab,undefined);assert.deepEqual(stored["/api/workspace"].audit,[]);
+ assert.equal(stored["/api/workspace"].runtime.status,"running");
+ assert(!JSON.stringify(stored).includes("SENTINEL"));
+});
+
 test("shared workspace keeps hosted marks and controls read-only",async()=>{
  const sourceAt=new Date().toISOString();const body={"/api/portfolio/mtm":{tenantId:"india-paper",totalEquity:100000,holdings:[{symbol:"INFY",fresh:true,markSource:"live_tick"}]},"/api/market":{rows:[],fetchedAt:sourceAt},"/api/intelligence/swarm":{agents:[]},"/api/workspace":{tenantId:"india-paper",runtime:{status:"running"},copilotConfigured:true}};
  const r=await worker.fetch(new Request("https://test/api/workspace",{headers:{Authorization:auth}}),env({body:JSON.stringify(body),source_at:sourceAt}));

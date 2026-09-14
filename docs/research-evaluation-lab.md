@@ -44,8 +44,8 @@ same canonical packet from the orchestrator. Store secrets outside these packets
 ## Integration with the existing build
 
 1. Merge this independent PR normally; it adds new paths only.
-2. PR #50 can later expose `report()` through its existing authenticated workspace.
-   No new public route or separate application is required.
+2. The integrated pilot branch exposes sanitized reports in its authenticated Research
+   screen. See the private workspace publication instructions below.
 3. Provider orchestration must freeze the input packet before calling either model,
    record failures without hiding them, and record decisions before future execution
    observations. Reject malformed responses and persist an explicit invalid result.
@@ -116,4 +116,55 @@ malicious rewriting of every stored hash.
 Integration owner: existing pilot workspace lane. Reuse the authenticated Research
 screen and provider provenance conventions. Do not expose private evidence bundles
 through the public snapshot viewer. Provider credentials, real side-by-side calls
-and UI/API wiring remain explicitly pending; no real provider verification occurred here.
+remain explicitly pending; no real provider verification occurred here. UI/API wiring
+was completed by the subsequent integration described below.
+
+## Private Research workspace integration
+
+Publish an explicit experiment from its separate research database:
+
+```bash
+PYTHONPATH=src python -m quant_ai.research.workspace_report /private/research.sqlite experiment-id \
+  --tenant india-paper --output /private/research-workspace-2026-09-14.json
+```
+
+Set `PRAMANA_RESEARCH_LAB_REPORT` on the private Next.js workspace to that absolute
+output path, using the same `PRAMANA_TENANT_ID`. Restart the workspace when changing
+its environment. Publishing refuses an existing destination, creates mode 0600,
+and opens the source SQLite database read-only. Select a new versioned output for
+each publication. Merely changing the source database does not refresh a published
+snapshot; its publication timestamp remains visible.
+
+The publisher uses one consistent SQLite snapshot and allowlists its output. It
+omits input packets, source texts, decision rationales, prompts, and arbitrary
+configuration fields. It includes the private evidence snapshot hash, candidate
+counts, reported versions/costs/latencies, case outcomes and 1x/2x/3x fee/slippage
+sensitivity. Unresolved and missing cases remain explicit. Unsupported stress
+assumptions produce unavailable values. The workspace supports at most 16 candidates,
+5,000 registered cases and a 2 MB file; oversize reports require a reviewed scaling
+change, not silent truncation.
+
+The reader verifies the exact payload digest, tenant, schema, field/count types and
+fixed `insufficient_evidence` / no-promotion state. Missing or invalid files produce
+an unavailable comparison without breaking the other dashboard panels. These hashes
+detect inconsistency; they do not authenticate the publisher or prove capture time.
+The report does not satisfy the strategy or deployment acceptance gates.
+
+Research shows candidate coverage and case details, bounded horizontal tables on
+mobile, evidence limitations, and an Atlas question action. Atlas receives and stores
+the same bounded summary, including its source evidence hash; individual case lists
+remain in the dashboard/export. No model is called just by opening a report or
+prefilling a question. This integration does not implement real Claude/Astra comparison
+or validate the reported model identity against a provider.
+
+`GET /api/research/comparison` downloads the latest validated sanitized report as a
+JSON attachment, behind the existing private-workspace session proxy. No user-selected
+file path is accepted. This endpoint and report are not available from the hosted
+snapshot viewer. The source publisher omits `researchLab` from uploads; the Worker
+also removes that field and operator notes before storage.
+
+Integration verification used synthetic loss, unresolved-exit, provider-error,
+pending and missing-decision cases. It verified desktop/mobile display, Atlas
+prefill, authenticated attachment download, workspace/export equality, rejected
+unauthenticated requests, and unchanged readiness gates after a report was damaged.
+Provider context/persistence was tested with a mocked transport, not a paid API call.

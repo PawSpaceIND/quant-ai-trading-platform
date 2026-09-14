@@ -5,6 +5,7 @@ import { readPortfolio } from "./portfolio";
 import { readRuntime, performance } from "./pilot";
 import { readMarket } from "./market";
 import { strategyObservationDays } from "./strategy-evidence";
+import { researchLabContext } from "./research-lab";
 import { latestSwarmIntelligence } from "./proofs";
 
 export type Conversation = {
@@ -61,6 +62,7 @@ export async function generateAnswer(
     portfolio,
     runtime,
     strategyObservation,
+    researchLab: researchLabContext(),
     performance: perf,
     intelligence: latestSwarmIntelligence(),
     market: {

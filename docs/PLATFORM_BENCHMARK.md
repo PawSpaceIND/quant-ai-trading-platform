@@ -151,3 +151,18 @@ Paper account state is now reconstructed from fills and recorded cash-debit fees
 ## Implementation delta — strategy evidence ownership
 
 Research now separates account totals from exact-configuration completed episodes. Canonical fill/protective proofs, runtime manifests, fees and timing must match; mixed or missing evidence remains visible and unresolved losses cannot be silently excluded from acceptance. Observation days are filtered to the same configuration, and operator reviews must match the strategy evidence hash, count and after-fee metrics. [Ownership and limits](STRATEGY_EPISODE_ATTRIBUTION.md). This improves strategy evaluation integrity; it is not Bloomberg-style factor/performance attribution, verified AI effectiveness or full benchmark parity.
+
+## Implementation delta — controlled candidate research
+
+The isolated research lab from main (#51) is incorporated. Frozen cases/candidates,
+decision-before-outcome ordering, explicit provider failures, ask/bid execution,
+cash/liquidity constraints and unresolved exits support comparable independent-case
+research. The authenticated Research screen now exposes sanitized comparisons,
+1x/2x/3x fee/slippage stress, case details, export and a matching Atlas context.
+[Research scope and publication](research-evaluation-lab.md).
+
+This adds a concrete research workflow and partial execution realism. It does not
+close continuous portfolio backtesting, queue/market-impact simulation, real provider
+comparison, point-in-time data integrity, AI calibration, live/backtest reconciliation
+or the advanced portfolio/factor attribution benchmark gaps. Summed independent-case
+P&L must not be interpreted as portfolio returns or a profitable-model selection.

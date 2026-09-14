@@ -32,6 +32,7 @@ def publish():
         if detail.get("tenantId") != "india-paper":
             raise ValueError("Workspace tenant mismatch")
         detail["audit"] = []  # Operator notes remain on the engine host.
+        detail.pop("researchLab", None)  # Experiment comparisons stay in the private engine UI.
         snapshots["/api/workspace"] = detail
     elif workspace.status_code != 404:
         workspace.raise_for_status()

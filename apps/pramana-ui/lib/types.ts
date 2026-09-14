@@ -1,4 +1,5 @@
 import type { ResearchReport } from "./research";
+import type { ResearchLabState } from "./research-lab";
 import type { MarketSnapshot } from "./market";
 import type { Runtime } from "./pilot";
 export type Holding = {
@@ -58,6 +59,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  researchLab?: ResearchLabState;
   strategyObservation?: {days:number;daily:{date:string;minutes:number}[];source:string};
   research: ResearchReport | null;
   portfolio: Portfolio;
