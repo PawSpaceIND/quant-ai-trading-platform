@@ -195,7 +195,8 @@ class ResearchLab:
         if body["status"] not in ("ok", "provider_error", "invalid"):
             raise ValueError("invalid_status")
         number(body["latency_ms"])
-        number(body["api_cost_usd"])
+        if body["api_cost_usd"] is not None:
+            number(body["api_cost_usd"])
         for key in ("input_tokens", "output_tokens"):
             integer(body[key])
         if body["status"] == "ok":
@@ -313,6 +314,7 @@ class ResearchLab:
             totals = {
                 "decisions": 0,
                 "errors": 0,
+                "unknown_cost_decisions": 0,
                 "holds": 0,
                 "completed_episodes": 0,
                 "unfilled": 0,
@@ -333,7 +335,10 @@ class ResearchLab:
                     continue
                 decision = json.loads(record[0])
                 totals["decisions"] += 1
-                cost += number(decision["api_cost_usd"])
+                if decision["api_cost_usd"] is None:
+                    totals["unknown_cost_decisions"] += 1
+                else:
+                    cost += number(decision["api_cost_usd"])
                 latency += number(decision["latency_ms"])
                 if decision["status"] != "ok":
                     totals["errors"] += 1
@@ -359,6 +364,7 @@ class ResearchLab:
                 **totals,
                 "completed_case_pnl_inr": str(pnl),
                 "api_cost_usd": str(cost),
+                "cost_total_complete": totals["unknown_cost_decisions"] == 0,
                 "total_latency_ms": str(latency),
                 "outcomes": outcomes,
             }
@@ -373,7 +379,7 @@ class ResearchLab:
                 "Independent cases; not continuous portfolio returns or drawdown",
                 "Historical model knowledge leakage cannot be ruled out",
                 "Source timestamps and costs are supplied, not independently certified",
-                "No live provider calls, broker orders or automatic strategy changes",
+                "Decision provenance is recorded; no broker orders or automatic strategy changes",
                 "API costs in USD are not deducted from INR trading P&L",
             ],
             "unverified_adjustments": sum(
