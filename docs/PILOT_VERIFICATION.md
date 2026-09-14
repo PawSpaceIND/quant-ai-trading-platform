@@ -38,3 +38,9 @@ The 100% closure goal remains active. No full-pilot, production-launch, profit o
 The Cloudflare compatibility update passes static export and Worker authentication/read-only tests. Hosted interaction is deliberately limited to observation: the full copilot, saved-watchlist edits and halt control are available on the authenticated engine workspace. This is not full cloud feature parity.
 
 Cloudflare's local Worker/D1 emulator was also exercised with isolated synthetic snapshots: ingest returned 200, unauthenticated workspace access returned 401, and authenticated access returned 200. The static dashboard rendered the hosted read-only banner, snapshot valuations and disabled mutation controls. No changes were deployed to the remote Worker or D1 database.
+
+## Intrabar execution follow-up
+
+The Python suite now passes **317 tests** (16 additional intrabar cases); Ruff and diff whitespace checks pass. The replay accepts validated lower-timeframe windows, resolves chronological protective triggers, records conservative same-bar ambiguity, uses opening prices for gap exits plus broker friction, gives existing opening protection priority, and clears historical execution context after errors. JSON import and tearsheet export are covered. See [execution rules and limitations](INTRABAR_REPLAY.md).
+
+These are synthetic engineering checks. No real intrabar dataset or AI-strategy effectiveness claim was added. Prior-close features with next-open sizing remain explicitly distinguished from orders frozen at the prior close. The broader benchmark requirements and all external evidence gates remain open where previously marked open.

@@ -8,7 +8,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
-from quant_ai.domain.models import Instrument, PortfolioSnapshot
+from quant_ai.backtesting.intrabar import IntrabarWindow, first_breach
+from quant_ai.domain.models import Instrument, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.friction import FrictionContext
 from quant_ai.execution.paper_ledger import PaperBrokerService
@@ -40,6 +41,7 @@ class HistoricalReplayDataset:
     news: tuple[NewsSignal, ...] = ()
     fundamentals: tuple[HistoricalFundamentalEvent, ...] = ()
     benchmark_closes: tuple[Decimal, ...] = ()
+    intrabar_windows: tuple[IntrabarWindow, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,8 @@ class HistoricalReplayResult:
     timestamps: tuple[datetime, ...]
     order_ids: tuple[str, ...]
     final_snapshot: PortfolioSnapshot
+    intrabar_exits: tuple[dict, ...] = ()
+    protection_model: str = "not_simulated"
 
 
 class HistoricalMarketDataFeed(MarketDataFeed):
@@ -92,9 +96,7 @@ class HistoricalNewsProvider:
 
     def fetch(self, subject: str, now: datetime) -> tuple[NewsSignal, ...]:
         return tuple(
-            item
-            for item in self.events
-            if item.published_at <= now and item.subject == subject
+            item for item in self.events if item.published_at <= now and item.subject == subject
         )
 
 
@@ -153,6 +155,14 @@ class HistoricalReplayHarness:
 
     def run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
         self._validate(dataset)
+        try:
+            return self._run(dataset)
+        finally:
+            self.broker.set_friction_context(None)
+
+    def _run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
+        windows = {w.parent_timestamp: w for w in dataset.intrabar_windows}
+        exits: list[dict] = []
         feed = HistoricalMarketDataFeed(dataset.bars)
         runtime = SwarmPaperTradingService(broker=self.broker, xai_logger=self.xai_logger)
         pipeline = SwarmMarketAnalysisPipeline(
@@ -184,7 +194,9 @@ class HistoricalReplayHarness:
             context = self._friction_context(visible)
             self.broker.set_friction_context(
                 context,
-                execution_time=execution_bar.timestamp,
+                execution_time=windows[execution_bar.timestamp].start
+                if windows
+                else execution_bar.timestamp,
             )
             before = tracker.get_snapshot(decision_bar.timestamp)
             self._assert_no_lookahead(
@@ -193,20 +205,29 @@ class HistoricalReplayHarness:
                 instrument,
                 decision_bar.timestamp,
             )
-            result = pipeline.run(
-                instrument,
-                decision_bar.timestamp,
-                self.plan,
-                before,
-                quantity=self.quantity,
-                country=self.country,
-                tenant_id=self.tenant_id,
-                country_exposure={self.country: before.gross_exposure},
-                reference_price_override=execution_bar.open,
-            )
-            if result.execution.fill is not None:
-                order_ids.append(result.execution.fill.order_id)
-
+            window = windows.get(execution_bar.timestamp)
+            # Existing protection wins over a discretionary action at an opening gap.
+            opening_exits = self._protect(window, context, opening_only=True) if window else []
+            exits.extend(opening_exits)
+            order_ids.extend(item["order_id"] for item in opening_exits)
+            if not opening_exits:
+                result = pipeline.run(
+                    instrument,
+                    decision_bar.timestamp,
+                    self.plan,
+                    before,
+                    quantity=self.quantity,
+                    country=self.country,
+                    tenant_id=self.tenant_id,
+                    country_exposure={self.country: before.gross_exposure},
+                    reference_price_override=execution_bar.open,
+                )
+                if result.execution.fill is not None:
+                    order_ids.append(result.execution.fill.order_id)
+            if window:
+                interval_exits = self._protect(window, context)
+                exits.extend(interval_exits)
+                order_ids.extend(item["order_id"] for item in interval_exits)
             feed.set_time(execution_bar.timestamp)
             after = tracker.get_snapshot(execution_bar.timestamp)
             self._record_valuation(tracker, execution_bar.timestamp)
@@ -220,7 +241,65 @@ class HistoricalReplayHarness:
             tuple(timestamps),
             tuple(order_ids),
             tracker.get_snapshot(dataset.bars[-1].timestamp),
+            tuple(exits),
+            "lower_timeframe_ohlc_stop_first" if windows else "not_simulated",
         )
+
+    def _protect(
+        self,
+        window: IntrabarWindow,
+        context: FrictionContext,
+        *,
+        opening_only: bool = False,
+    ) -> list[dict]:
+        events = []
+        instrument = window.bars[0].instrument
+        for position in self.broker.get_positions(self.tenant_id):
+            if (position.symbol, position.market, position.asset_class) != (
+                instrument.symbol,
+                instrument.market,
+                instrument.asset_class,
+            ):
+                continue
+            breach = first_breach(window, position.stop_price, position.take_profit_price)
+            if breach is None or (
+                opening_only and not (breach.gap_at_open and breach.interval_start == window.start)
+            ):
+                continue
+            observed = breach.interval_start if breach.gap_at_open else breach.interval_end
+            self.broker.set_friction_context(context, execution_time=observed)
+            fill = self.broker.sell(
+                OrderIntent(
+                    position.symbol,
+                    position.market,
+                    Side.SELL,
+                    position.quantity,
+                    breach.reference_price,
+                    "intrabar-protection",
+                    position.asset_class,
+                    self.tenant_id,
+                )
+            )
+            self.broker.record_exit_cooldown(
+                position.symbol,
+                position.market,
+                position.asset_class,
+                observed + timedelta(minutes=30),
+                self.tenant_id,
+            )
+            events.append(
+                {
+                    "order_id": fill.order_id,
+                    "trigger": breach.trigger,
+                    "reference_price": str(breach.reference_price),
+                    "interval_start": breach.interval_start.isoformat(),
+                    "interval_end": breach.interval_end.isoformat(),
+                    "gap_at_open": breach.gap_at_open,
+                    "ambiguous": breach.ambiguous,
+                    "assumption": "stop_first_if_both_touched; market_trigger_plus_broker_friction",
+                }
+            )
+        return events
 
     def _record_valuation(self, tracker: PortfolioTracker, timestamp: datetime) -> None:
         metrics = tracker.metrics(timestamp)
@@ -231,9 +310,7 @@ class HistoricalReplayHarness:
             "markDisclaimer": "Historical/synthetic replay valuations; not live market prices.",
             "cash": float(metrics.cash_balance),
             "totalEquity": float(metrics.total_equity),
-            "startingCapital": float(
-                self.broker.get_margin(self.tenant_id).starting_capital
-            ),
+            "startingCapital": float(self.broker.get_margin(self.tenant_id).starting_capital),
             "realizedPnl": float(metrics.realized_pnl),
             "unrealizedPnl": float(metrics.unrealized_pnl),
             "highWaterMark": float(metrics.high_water_mark),
@@ -278,9 +355,11 @@ class HistoricalReplayHarness:
             default=now,
         )
         macro_at = HistoricalMacroProvider(dataset.macro).fetch(("US10Y",), now).observed_at
-        fundamentals_at = HistoricalFundamentalProvider(dataset.fundamentals).fetch(
-            instrument.symbol, now
-        ).observed_at
+        fundamentals_at = (
+            HistoricalFundamentalProvider(dataset.fundamentals)
+            .fetch(instrument.symbol, now)
+            .observed_at
+        )
         if max(news_at, macro_at, fundamentals_at) > now:
             raise RuntimeError("lookahead_violation: future provider event served to the pipeline")
 
@@ -301,9 +380,7 @@ class HistoricalReplayHarness:
     def _benchmark_returns(dataset: HistoricalReplayDataset) -> tuple[Decimal, ...]:
         closes = dataset.benchmark_closes
         return tuple(
-            (after - before) / before
-            for before, after in zip(closes, closes[1:])
-            if before > 0
+            (after - before) / before for before, after in zip(closes, closes[1:]) if before > 0
         )
 
     @staticmethod
@@ -320,6 +397,18 @@ class HistoricalReplayHarness:
             for previous, current in zip(dataset.bars, dataset.bars[1:])
         ):
             raise ValueError("historical bars must be strictly ordered")
+        if any(bar.instrument != dataset.bars[0].instrument for bar in dataset.bars):
+            raise ValueError("replay requires one instrument per dataset")
+        if dataset.intrabar_windows:
+            windows = {w.parent_timestamp: w for w in dataset.intrabar_windows}
+            if len(windows) != len(dataset.intrabar_windows) or set(windows) != {
+                b.timestamp for b in dataset.bars[1:]
+            }:
+                raise ValueError(
+                    "intrabar coverage must include every execution parent exactly once"
+                )
+            for previous, parent in zip(dataset.bars, dataset.bars[1:]):
+                windows[parent.timestamp].validate(parent, previous.timestamp)
         end = dataset.bars[-1].timestamp
         for timestamps, label in (
             ((item.observed_at for item in dataset.macro), "macro"),
@@ -366,7 +455,16 @@ def load_replay_dataset(path: str | Path, instrument: Instrument) -> HistoricalR
             for item in payload.get("fundamentals", ())
         )
         benchmark = tuple(Decimal(str(item)) for item in payload.get("benchmark_closes", ()))
-        return HistoricalReplayDataset(bars, macro, news, fundamentals, benchmark)
+        windows = tuple(
+            IntrabarWindow(
+                datetime.fromisoformat(item["parent_timestamp"]),
+                datetime.fromisoformat(item["start"]),
+                item["interval_seconds"],
+                tuple(_bar_from_mapping(bar, instrument) for bar in item["bars"]),
+            )
+            for item in payload.get("intrabar_windows", ())
+        )
+        return HistoricalReplayDataset(bars, macro, news, fundamentals, benchmark, windows)
     with source.open(newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     return HistoricalReplayDataset(tuple(_bar_from_mapping(item, instrument) for item in rows))

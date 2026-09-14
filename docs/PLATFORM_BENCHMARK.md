@@ -135,3 +135,7 @@ A 24–48-hour run is an operational smoke test, not proof of profitability. Do 
 After the narrow pilot: correlation/factor exposure, portfolio stress scenarios, durable model/data version registry, drift and calibration monitoring, execution-cost attribution, realistic partial-fill models, point-in-time historical data, broker-state reconciliation, recovery exercises and secure multi-user operations. Add advanced order algorithms only when measured size/liquidity needs justify them. Matching every feature across four established products would slow launch without proving superior returns.
 
 The priority is a complete and measurable path from valid data to an auditable decision, constrained order, verified fill and reconciled portfolio.
+
+## Implementation delta — intrabar execution
+
+Historical replay now supports complete lower-timeframe OHLC windows, chronological stop/target triggers, conservative ambiguous-bar resolution, worse-price stop gaps and explicit execution assumptions in the tearsheet. [Implementation and limits](INTRABAR_REPLAY.md). This is a partial advance on the documented TradingView Bar Magnifier comparison; realistic partial fills, queue/latency behavior and real-data qualification remain unclosed. The separate deterministic SMA experiment is unchanged.

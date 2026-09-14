@@ -25,3 +25,9 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 Completion is reported separately for engineering and external evidence. Unknown or absent evidence is never green. Real-money execution, broader assets/currencies, and a public multi-tenant product are separate releases.
 
 Detailed results and limitations: [verification record](PILOT_VERIFICATION.md). Deployment and research commands: [private pilot runbook](PRIVATE_PILOT_RUNBOOK.md).
+
+## Wider capability closure remains in scope
+
+The private pilot is the first launch stage, not a replacement for the requested benchmark capability objective. Full broker lifecycle/reconciliation, multi-currency/contracts, advanced portfolio risk/attribution, execution realism, AI validation and hosted interactive parity remain tracked as unfinished work. No aggregate 100% result is implied by the narrower engineering acceptance register.
+
+Lower-timeframe protective-exit replay has now been implemented and regression-tested; [intrabar execution rules](INTRABAR_REPLAY.md) list its precise assumptions and outstanding real-data qualification. This partially advances the TradingView execution-realism comparison, without claiming complete parity.

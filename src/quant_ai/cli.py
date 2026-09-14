@@ -188,6 +188,8 @@ def _backtest(args: argparse.Namespace) -> None:
         tuple(item for item in dataset.news if item.published_at <= end_time),
         tuple(item for item in dataset.fundamentals if item.observed_at <= end_time),
         dataset.benchmark_closes,
+        tuple(w for w in dataset.intrabar_windows
+              if w.parent_timestamp in {b.timestamp for b in bars[1:]}),
     )
     database = os.environ.get("QUANT_AI_BACKTEST_DB", "").strip() or ":memory:"
     if database == "shared":
