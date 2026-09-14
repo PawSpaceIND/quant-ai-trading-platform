@@ -384,6 +384,8 @@ def build_ghost_runner(
                 client_id=ib_client_id,
             )
         )
+    if pilot_mode:
+        daemon.bind_strategy_manifest(streams)
     return DaemonRunner(daemon, streams, cadence=timedelta(minutes=10), log_path=log_path)
 
 def _assert_ghost_mode() -> None:

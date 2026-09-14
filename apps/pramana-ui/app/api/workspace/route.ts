@@ -1,4 +1,4 @@
-import { reviewedGate } from "@/lib/review";
+import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,11 +30,26 @@ export async function GET() {
     const haltedFile =
       process.env.PRAMANA_HALT_FILE ||
       path.join(path.dirname(ledgerPath()), "PRAMANA_HALT");
-    const strategyReview = reviewedGate("strategy"),
+    const haltRequested = fs.existsSync(/* turbopackIgnore: true */ haltedFile);
+    const strategyReview = reviewedGate("strategy", runtime),
       recoveryReview = reviewedGate("recovery");
     const completedTrades = runtime.tradeEvidence?.status === "ok" ? runtime.tradeEvidence.summary?.completedTrades : undefined;
     const reconciliationAge = Date.now() - Date.parse(runtime.reconciliation?.checkedAt || "");
     const checks = [
+      {
+        id: "entry_controls",
+        title: "Entry controls",
+        pass: runtime.status === "running" && runtime.halted === false && !haltRequested,
+        detail: runtime.halted ? `Entries halted: ${runtime.haltReason || "risk halt"}. Protective exits continue while the engine is running.`
+          : haltRequested ? "Operator halt requested; awaiting engine acknowledgement."
+          : runtime.status === "running" && runtime.halted === false ? "No active entry halt. Other qualification checks still apply."
+          : "Entry-control state is unverified.",
+      },
+      {
+        id: "strategy_manifest",
+        title: "Running strategy configuration",
+        ...verifiedRuntimeManifest(runtime),
+      },
       {
         id: "reconciliation",
         title: "Paper account reconciliation",
@@ -109,7 +124,7 @@ export async function GET() {
         checks,
         audit,
         tenantId,
-        haltRequested: fs.existsSync(/* turbopackIgnore: true */ haltedFile),
+        haltRequested,
         copilotConfigured: !!process.env.ANTHROPIC_API_KEY,
         release: "private-paper-pilot",
         liveEnabled: false,

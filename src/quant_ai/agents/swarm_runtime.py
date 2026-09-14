@@ -53,6 +53,7 @@ class SwarmPaperTradingService:
             raise ValueError("max_open_positions must be at least one")
         self.snapshot_provider = None
         self.pre_submit_check = None
+        self.strategy_manifest_provider = None
         self.cio = cio or AtlasCIOAgent()
         self.warden = warden or RiskWarden()
         self.broker = broker or PaperBrokerService()
@@ -171,6 +172,9 @@ class SwarmPaperTradingService:
 
         if self.pre_submit_check is not None:
             veto = self.pre_submit_check(proposal)
+            if self.strategy_manifest_provider is not None:
+                proposal = replace(proposal, provenance={**(proposal.provenance or {}),
+                    "runtime_strategy": self.strategy_manifest_provider()})
             if veto:
                 return refuse(veto)
         # A halt freezes new risk. It must never trap a position: covered SELLs are allowed

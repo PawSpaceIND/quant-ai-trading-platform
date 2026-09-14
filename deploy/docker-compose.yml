@@ -15,6 +15,7 @@ services:
     environment:
       <<: *shared
       PRAMANA_PILOT_MODE: "true"
+      PRAMANA_RELEASE_REVISION: ${PRAMANA_RELEASE_REVISION:-}
       PRAMANA_GHOST_LOG: /data/pramana-ghost.log
       PRAMANA_FOUNDER_DIRECTIVES_FILE: /app/directives.json
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}

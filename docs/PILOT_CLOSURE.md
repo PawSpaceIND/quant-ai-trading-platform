@@ -18,6 +18,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P10 | Risk/scenario and execution views | Portfolio scenarios, holdings, fill/proof linkage, costs, exports | Verified basic pilot views; broader risk parity open |
 | P11 | Evidence and promotion workflow | Reproducible evaluation, protected external gates, no manufactured readiness | Framework verified: causal baseline, hashes and release-bound review; AI evidence pending |
 | P12 | End-to-end and responsive verification | Meaningful regression suite + browser flow on populated fixtures | Local UI/build verified; target-host E2E pending |
+| P13 | Runtime strategy/review binding | Effective configuration and source fingerprints; fresh registry evidence, drift halt and canonical fill linkage | Engineering verified for built-in pilot; target-host review pending |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |

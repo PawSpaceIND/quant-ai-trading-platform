@@ -88,6 +88,7 @@ class AutonomousTradingDaemon:
         self.telemetry = None
         self.reconciliation = None
         self.trade_evidence = None
+        self.strategy_manifest = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -117,6 +118,11 @@ class AutonomousTradingDaemon:
 
     def _pilot_pre_submit(self, proposal) -> str | None:
         self.apply_operator_halt()
+        if self.strategy_manifest is not None:
+            manifest = self.strategy_manifest.check(self.clock(), force_source=True)
+            if manifest['status'] in {'changed', 'unavailable'} and proposal.side != Side.SELL:
+                self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
+                return 'pilot_strategy_manifest_unverified'
         if proposal.side != Side.SELL and not self._reconcile_pilot():
             return "pilot_reconciliation_failed"
         if self.kill_switch.engaged and proposal.side != Side.SELL:
@@ -142,6 +148,10 @@ class AutonomousTradingDaemon:
             self.apply_operator_halt()
             self.protective_exits = self.sweep_protective_exits(timestamp)
             if self.telemetry is not None:
+                if self.strategy_manifest is not None:
+                    manifest = self.strategy_manifest.check(timestamp)
+                    if manifest['status'] in {'changed', 'unavailable'}:
+                        self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
                 metrics = self.tracker.metrics(timestamp)
                 daily_limit = min(self.plan.max_daily_loss_fraction, Decimal(".02"))
                 opening = metrics.total_equity - metrics.daily_total_pnl
@@ -150,6 +160,12 @@ class AutonomousTradingDaemon:
                 elif opening > 0 and -metrics.daily_total_pnl / opening >= daily_limit:
                     self.engage_kill_switch("portfolio_daily_loss_limit")
                 self.telemetry.publish(timestamp)
+
+    def bind_strategy_manifest(self, streams=(), **options) -> None:
+        from quant_ai.governance.runtime_manifest import RuntimeManifest
+        self.strategy_manifest = RuntimeManifest(self, streams, **options)
+        self.strategy_manifest.check(self.clock())
+        self.scheduler.pipeline.runtime.strategy_manifest_provider = lambda: self.strategy_manifest.summary
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
         return ProtectiveExitEngine(
