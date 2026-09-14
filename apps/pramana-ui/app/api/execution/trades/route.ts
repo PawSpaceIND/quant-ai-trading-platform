@@ -31,6 +31,7 @@ export async function GET() {
           createdAt: trade.created_at,
           proof: match ? {
             file: match.file,
+            kind: match.proof.event_type === "protective_exit" ? "protective_exit" : "swarm_or_manual",
             decisionId: match.proof.decision_id ?? null,
             rationale: match.proof.declared_rationales ?? [],
             stress: match.proof.stress_verdict ?? {},

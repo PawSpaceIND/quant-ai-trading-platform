@@ -27,13 +27,15 @@ The output includes `manifestSha256`. Retain this value **independently** of the
   --manifest-sha256 INDEPENDENTLY_RETAINED_64_CHARACTER_SHA256
 ```
 
-The command verifies the trusted manifest hash, full inventory and each source file, refuses unsafe paths/symlinks and verifies copied hashes. It then checks both SQLite databases, reconstructs paper accounting, counts console records and compares filled order IDs with JSON proof order IDs. It preserves the halt file and database halt state. It does not connect to a broker, send a notification, restart a service or reset a halt.
+The command verifies the trusted manifest hash, full inventory and each source file, refuses unsafe paths/symlinks and verifies copied hashes. It then checks both SQLite databases, reconstructs paper accounting, counts console records and compares filled order IDs with JSON file-proof and tenant-scoped ledger protection-evidence order IDs. It preserves the halt file and database halt state. It does not connect to a broker, send a notification, restart a service or reset a halt.
 
-- Exit 0 / `status: restored`: selected files passed the checks, internal accounting matched, and each recorded filled order had an order-ID reference in a JSON proof.
+- Exit 0 / `status: restored`: selected files passed the checks, internal accounting matched, and each recorded filled order had an order-ID reference in a file proof or valid ledger protection record.
 - Exit 2 / `status: discrepancy`: the restored files are retained with a report so accounting or missing/invalid proof evidence can be investigated.
 - Structural/checksum/schema failures abort and remove only the newly created partial destination. Existing paths are never replaced.
 
 Proof coverage is an order-ID presence check, not verification of proof authenticity, tenant authorization, strategy quality or complete decision causality. Reviews are copied, not re-signed or extended; the application must still verify their release, configuration, signatures and expiry. Pending copilot requests require normal restart handling, and existing session cookies require the correct separately provisioned secret policy.
+
+The coverage report counts ledger protection rows as `ledgerProtectionRecords`. Invalid file and ledger records are combined in `invalidJsonRecords`, replacing the earlier `invalidJsonFiles` field. [Protective-exit evidence](PROTECTIVE_EXIT_EVIDENCE.md) is deterministic execution evidence, not an AI decision trace.
 
 Restored layout uses stable names `ledger`, `console`, `proofs/`, `reviews/`, `directives`, optional `halt` and `research`. Map application environment variables explicitly to these names in the isolated deployment. `restore-report.json` records the manifest digest, duration, counts, accounting result and proof gaps. Review it before activating anything.
 

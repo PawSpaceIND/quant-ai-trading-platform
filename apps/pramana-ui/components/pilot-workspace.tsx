@@ -1238,7 +1238,7 @@ function TradeRows({
         <td className="numeric mono">{money(t.fillPrice)}</td>
         <td>
           <span className={`pill ${t.proof ? "green" : "amber"}`}>
-            {t.proof ? "Exact proof" : "Missing proof"}
+            {t.proof?.kind === "protective_exit" ? "Protective exit" : t.proof ? "Exact proof" : "Missing proof"}
           </span>
         </td>
         <td>

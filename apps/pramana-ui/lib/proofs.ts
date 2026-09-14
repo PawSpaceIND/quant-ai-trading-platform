@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { projectRoot } from "@/lib/db";
+import { projectRoot, openLedger, hasTable, tenantId } from "@/lib/db";
 
 export type Proof = Record<string, unknown> & {
   decision_id?: string;
@@ -93,6 +93,23 @@ export function latestSwarmIntelligence() {
  */
 export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
   const index = new Map<string, { file: string; proof: Proof }>();
+  const db = openLedger();
+  if (db) {
+    try {
+      if (hasTable(db, "paper_protection_evidence")) {
+        const rows = db.prepare("SELECT order_id,payload FROM paper_protection_evidence WHERE tenant_id=?").all(tenantId) as {order_id:string;payload:string}[];
+        for (const row of rows) {
+          try {
+            const proof = JSON.parse(row.payload) as Proof;
+            if (proof.schema === "pramana.protective_exit.v1" && proof.event_type === "protective_exit"
+                && proof.tenant_id === tenantId && proof.order_id === row.order_id) {
+              index.set(row.order_id, {file: "ledger:paper_protection_evidence", proof});
+            }
+          } catch { /* Corrupt evidence never receives an exact-match label. */ }
+        }
+      }
+    } finally { db.close(); }
+  }
   const directory = proofDirectory();
   if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return index;
   for (const file of fs.readdirSync(/* turbopackIgnore: true */ directory)) {
@@ -106,7 +123,7 @@ export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
     if (!/"order_id"\s*:\s*"/.test(raw)) continue;
     try {
       const proof = JSON.parse(raw) as Proof;
-      if (typeof proof.order_id === "string" && proof.order_id) index.set(proof.order_id, { file, proof });
+      if (typeof proof.order_id === "string" && proof.order_id && !index.has(proof.order_id)) index.set(proof.order_id, { file, proof });
     } catch {
       // unreadable proof: leave the fill unlinked rather than guess
     }

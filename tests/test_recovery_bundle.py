@@ -91,3 +91,20 @@ def test_sources_require_stopped_writer_declaration_and_no_symlinks(tmp_path):
 def test_manifest_paths_cannot_escape_destination(path):
     with pytest.raises(ValueError):
         bundle.safe_relative(path)
+
+
+def test_recovery_counts_atomic_ledger_protection_evidence(tmp_path):
+    from quant_ai.execution.protective_exits import ProtectiveExitEngine
+    spec=fixture(tmp_path)
+    broker=PaperBrokerService(spec['sources']['ledger'])
+    # Add a stored threshold to both entry record and position in this isolated fixture.
+    broker._connection.execute("UPDATE paper_ledger SET stop_price='95'")
+    broker._connection.execute("UPDATE paper_positions SET stop_price='95'")
+    broker._connection.commit()
+    assert ProtectiveExitEngine(broker,lambda _:Decimal(90),tenant_id='pilot').evaluate()[0].filled
+    manifest=bundle.create(spec,tmp_path/'backup',writers_stopped=True)
+    result=bundle.restore(tmp_path/'backup',tmp_path/'restored',manifest_sha256=manifest['manifestSha256'])
+    assert result['status']=='restored'
+    assert result['proofCoverage']['filledOrders']==2
+    assert result['proofCoverage']['ledgerProtectionRecords']==1
+    assert result['proofCoverage']['missingCount']==0

@@ -147,6 +147,9 @@ class PaperBrokerService(BrokerAdapter):
                     cash_debit INTEGER NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_protection_evidence (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS paper_idempotency (
                     key TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
@@ -263,7 +266,15 @@ class PaperBrokerService(BrokerAdapter):
             raise ValueError("sell requires SELL side")
         return self._execute(order)
 
-    def _execute(self, order: OrderIntent) -> ExecutionResult:
+    def sell_protected(self, order: OrderIntent, evidence: dict, cooldown_until: datetime | None) -> ExecutionResult:
+        if order.side != Side.SELL or evidence.get("schema") != "pramana.protective_exit.v1":
+            raise ValueError("invalid_protective_exit")
+        # Serialize before any state mutation, with reserved fill fields added by the broker.
+        json.dumps(evidence, allow_nan=False)
+        return self._execute(order, evidence=evidence, cooldown_until=cooldown_until)
+
+    def _execute(self, order: OrderIntent, *, evidence: dict | None = None,
+                 cooldown_until: datetime | None = None) -> ExecutionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")
         friction = self.friction_model.evaluate(order, self._context_for(order))
@@ -274,7 +285,8 @@ class PaperBrokerService(BrokerAdapter):
         for attempt in range(self.lock_retries + 1):
             try:
                 return self._execute_once(
-                    order, friction, fill_price, notional, order_id, now
+                    order, friction, fill_price, notional, order_id, now,
+                    evidence=evidence, cooldown_until=cooldown_until,
                 )
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).lower():
@@ -297,6 +309,7 @@ class PaperBrokerService(BrokerAdapter):
         notional: Decimal,
         order_id: str,
         now: datetime,
+        *, evidence: dict | None = None, cooldown_until: datetime | None = None,
     ) -> ExecutionResult:
         tenant_id = order.tenant_id
         statutory_fees = friction.statutory_fees
@@ -409,6 +422,16 @@ class PaperBrokerService(BrokerAdapter):
                     if amount > 0
                 ],
             )
+            if evidence is not None:
+                payload = {**evidence, "order_id": order_id, "tenant_id": tenant_id,
+                    "subject": order.symbol, "filled_at": now.isoformat(),
+                    "fill": {"quantity": order.quantity, "price": str(fill_price),
+                        "cash_fees": str(statutory_fees), "status": "FILLED"}}
+                self._connection.execute("INSERT INTO paper_protection_evidence VALUES (?,?,?)",
+                    (order_id, tenant_id, json.dumps(payload, allow_nan=False, sort_keys=True)))
+                if cooldown_until is not None:
+                    self._connection.execute("INSERT OR REPLACE INTO paper_exit_cooldowns VALUES (?,?,?,?,?)",
+                        (tenant_id, order.symbol, order.market.value, order.asset_class.value, cooldown_until.isoformat()))
         return ExecutionResult(order_id, "FILLED", order.quantity, fill_price)
 
     def cancel(self, order_id: str, tenant_id: str = "default") -> bool:

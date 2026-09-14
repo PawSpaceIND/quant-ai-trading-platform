@@ -82,6 +82,7 @@ export type Trade = {
   createdAt: string;
   proofStatus: string;
   proof: null | {
+    kind?: string;
     rationale: string[];
     risk: Record<string, string>;
     stress: Record<string, string>;

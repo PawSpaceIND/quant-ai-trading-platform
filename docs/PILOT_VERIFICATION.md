@@ -76,3 +76,9 @@ The local synthetic QA drill restored one saved preference, two conversations, f
 All **348 Python tests** pass (seven added cases), Ruff and TypeScript pass, and all **15 dashboard tests** pass. Local webpack production build passed. Flat-to-flat paper episodes now distinguish fill count from completed trades, include recorded cash fees and disclose open episodes separately. The source-hashed CLI artifact and bounded telemetry summary are wired into Research and the evidence export. Forward observation additionally requires at least 100 ledger-derived completed episodes.
 
 Synthetic browser/CLI checks showed one fill, one open episode, zero completed trades, unavailable completed-trade mean/win rate and disclosed open fees. Phone width and document width both measured 390 pixels; no browser warnings/errors were observed. The final fee-refresh change was regression-tested afterward without UI changes. [Counting rules and qualification limits](TRADE_EPISODE_EVIDENCE.md). This does not establish AI strategy attribution, calibration, forward provenance or profitability.
+
+## Protective-exit evidence follow-up
+
+All **353 Python tests** and **16 dashboard tests** pass, with Ruff, TypeScript and local webpack production build passing. Protective paper fills now atomically persist their deterministic evidence and cooldown with the ledger transaction. Injected storage failure rolls back cash, positions, costs, fill and cooldown. Recovery coverage includes tenant/order-matched ledger records.
+
+The isolated Activity browser drill showed the protective SELL with threshold, observed mark and an explicitly unverified custom source. The unproven synthetic BUY stayed labeled Missing proof. No warning/error browser logs were observed. No real-market or deployment acceptance is implied. [Evidence fields and limits](PROTECTIVE_EXIT_EVIDENCE.md).

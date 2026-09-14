@@ -177,8 +177,17 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
                 raise ValueError("Restored ledger integrity failed")
             reconciliation = reconcile_paper(db, manifest["tenant"])
             filled_ids = {r[0] for r in db.execute("SELECT order_id FROM paper_ledger WHERE tenant_id=? AND status='FILLED'", (manifest["tenant"],))}
+            protection_rows = db.execute("SELECT order_id,payload FROM paper_protection_evidence WHERE tenant_id=?", (manifest["tenant"],)).fetchall() if db.execute("SELECT 1 FROM sqlite_master WHERE name='paper_protection_evidence'").fetchone() else []
         proof_ids = set()
         invalid_proofs = 0
+        for row in protection_rows:
+            try:
+                proof = json.loads(row["payload"])
+                if proof.get("schema") != "pramana.protective_exit.v1" or proof.get("event_type") != "protective_exit" or proof.get("tenant_id") != manifest["tenant"] or proof.get("order_id") != row["order_id"]:
+                    raise ValueError("Invalid protection evidence")
+                proof_ids.add(row["order_id"])
+            except (ValueError, TypeError, AttributeError):
+                invalid_proofs += 1
         for proof in (destination / "proofs").rglob("*.json"):
             try:
                 payload = json.loads(proof.read_text())
@@ -200,8 +209,8 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
                   "durationSeconds": round(time.monotonic() - start, 3), "fileCount": len(files),
                   "consoleCounts": counts, "reconciliation": reconciliation,
                   "proofCoverage": {"filledOrders": len(filled_ids), "missingCount": len(missing_proofs),
-                      "missingOrderIds": sorted(missing_proofs)[:50], "invalidJsonFiles": invalid_proofs,
-                      "scope": "Order-ID presence only; not proof authenticity or decision validation"},
+                      "missingOrderIds": sorted(missing_proofs)[:50], "invalidJsonRecords": invalid_proofs, "ledgerProtectionRecords": len(protection_rows),
+                      "scope": "File/ledger order-ID presence only; not proof authenticity or decision validation"},
                   "haltPresent": (destination / "halt").exists(),
                   "activation": "none; do not start against restored state without review and secrets"}
         (destination / "restore-report.json").write_text(json.dumps(result, indent=2))

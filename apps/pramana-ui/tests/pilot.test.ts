@@ -242,3 +242,21 @@ test("operator reviews reject tampering, expiration and a different release", as
   );
   assert(!reviewedGate("recovery").pass);
 });
+
+test("protective evidence is tenant-scoped, exact-order linked and never swarm analysis", async () => {
+  const { proofsByOrderId, latestSwarmIntelligence } = await import("../lib/proofs");
+  process.env.PRAMANA_PROOF_DIR = path.join(dir, "absent-proof-directory");
+  const db = new DatabaseSync(process.env.PRAMANA_LEDGER_PATH!);
+  db.exec("CREATE TABLE IF NOT EXISTS paper_protection_evidence(order_id TEXT PRIMARY KEY,tenant_id TEXT,payload TEXT)");
+  const proof = {schema:"pramana.protective_exit.v1",event_type:"protective_exit",tenant_id:"default",order_id:"PAPER-PROTECTED-QA",declared_rationales:["Deterministic stop; no AI vote"],risk_verdict:{approved:"true"},stress_verdict:{passed:"not_applicable"}};
+  const insert = db.prepare("INSERT INTO paper_protection_evidence VALUES(?,?,?)");
+  insert.run(proof.order_id,"default",JSON.stringify(proof));
+  insert.run("PAPER-OTHER-QA","other",JSON.stringify({...proof,order_id:"PAPER-OTHER-QA",tenant_id:"other"}));
+  insert.run("PAPER-MISMATCH-QA","default",JSON.stringify(proof));
+  db.close();
+  const index = proofsByOrderId();
+  assert.equal(index.get(proof.order_id)?.proof.event_type,"protective_exit");
+  assert(!index.has("PAPER-OTHER-QA"));
+  assert(!index.has("PAPER-MISMATCH-QA"));
+  assert.equal(latestSwarmIntelligence().status,"empty");
+});
