@@ -1,6 +1,6 @@
 # Pilot implementation verification — 14 September 2026
 
-Base: `83a1161` (main, PR #48). Implementation branch: `codex/pilot-readiness-closure`.
+Initial base: `83a1161` (PR #48); subsequently integrated `d3b5bb8` (PR #49) to preserve the private Cloudflare viewer. Implementation branch: `codex/pilot-readiness-closure`.
 
 ## Verified engineering behavior
 
@@ -16,7 +16,7 @@ Base: `83a1161` (main, PR #48). Implementation branch: `codex/pilot-readiness-cl
 - Real local environment initialization succeeded in an isolated ledger: INFY, RELIANCE and TCS, INR/NSE/equity, protection heartbeat persisted, zero orders. No live-order endpoint was enabled. This check did not start a websocket feed and does not prove open-session stream coverage.
 - One actual Claude request used the new persisted copilot service with a synthetic QA context. It completed, saved its answer and source context, and recorded 4,294 input / 90 output tokens. The browser displayed that saved result. Cost was not estimated because a versioned pricing table is not configured.
 - A consistent SQLite backup and non-destructive restore drill completed on the isolated runtime ledger. Backup and restored database SHA-256 matched: `39bb603f7ed5278837f942aabf60eb931d16bd45fe3f09605957417a45bd9516`. This does not constitute a complete target-host disaster-recovery drill including proofs, console, secrets, alerts and rollback.
-- Docker is not installed in this environment. Compose/Dockerfiles were prepared and reviewed but were not executed. The intended production host remains unconfirmed.
+- Docker is not installed in this environment. Compose/Dockerfiles were prepared and reviewed but were not executed. The new upstream deployment uses a Mac engine and Cloudflare read-only viewer. Always-on engine hosting remains unqualified.
 
 ## Research workflow evidence
 
@@ -34,3 +34,7 @@ This is a baseline experiment, not AI-swarm performance. Corporate-action adjust
 6. Broader benchmark parity remains open: live broker lifecycle/reconciliation, multi-currency cash accounting, asset-contract support, correlation/sector/factor/Greeks risk and Bloomberg-style attribution are separate engineering work. Current UI scenarios are basic linear shocks.
 
 The 100% closure goal remains active. No full-pilot, production-launch, profit or benchmark-parity certification is issued by this verification.
+
+The Cloudflare compatibility update passes static export and Worker authentication/read-only tests. Hosted interaction is deliberately limited to observation: the full copilot, saved-watchlist edits and halt control are available on the authenticated engine workspace. This is not full cloud feature parity.
+
+Cloudflare's local Worker/D1 emulator was also exercised with isolated synthetic snapshots: ingest returned 200, unauthenticated workspace access returned 401, and authenticated access returned 200. The static dashboard rendered the hosted read-only banner, snapshot valuations and disabled mutation controls. No changes were deployed to the remote Worker or D1 database.

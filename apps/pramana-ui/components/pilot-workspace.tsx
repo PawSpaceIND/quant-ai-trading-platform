@@ -12,6 +12,7 @@ import {
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
 import type { Workspace, Portfolio, Trade, Friction } from "@/lib/types";
+const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
   { id: "overview", name: "Overview", icon: "◫" },
   { id: "markets", name: "Markets", icon: "⌁" },
@@ -92,7 +93,8 @@ export function PilotWorkspace() {
   useEffect(() => {
     const v = new URLSearchParams(window.location.search).get("view");
     if (v && sections.some((s) => s.id === v)) setView(v);
-    if (new URLSearchParams(window.location.search).has("chat")) setChat(true);
+    if (!hosted && new URLSearchParams(window.location.search).has("chat"))
+      setChat(true);
     void refresh();
     const timer = setInterval(() => void refresh(), 15000);
     return () => clearInterval(timer);
@@ -104,10 +106,20 @@ export function PilotWorkspace() {
     window.history.replaceState(null, "", url);
   }
   function ask(q: string) {
+    if (hosted) {
+      setNotice(
+        "This hosted snapshot is read-only. Use the authenticated engine workspace for Atlas and operator controls.",
+      );
+      return;
+    }
     setDraft(q);
     setChat(true);
   }
   async function save(symbols: string[]) {
+    if (hosted)
+      throw new Error(
+        "Saved watchlist editing is available in the engine workspace.",
+      );
     const r = await api("/api/watchlist", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -202,6 +214,7 @@ export function PilotWorkspace() {
             </p>
           </div>
           <button
+            hidden={hosted}
             className="sign-out"
             onClick={async () => {
               await fetch("/api/session", { method: "DELETE" });
@@ -229,11 +242,23 @@ export function PilotWorkspace() {
             <button
               className={chat ? "selected" : ""}
               onClick={() => setChat(!chat)}
+              disabled={hosted}
+              title={
+                hosted
+                  ? "Copilot runs in the authenticated engine workspace"
+                  : undefined
+              }
               aria-expanded={chat}
             >
               ✳ Atlas copilot
             </button>
             <button
+              disabled={hosted}
+              title={
+                hosted
+                  ? "Operator controls run in the engine workspace"
+                  : undefined
+              }
               ref={haltTrigger}
               className="halt-button"
               onClick={() => setHalt(true)}
@@ -308,10 +333,9 @@ export function PilotWorkspace() {
           {data && (data.haltRequested || data.runtime.halted) && (
             <div className="banner warning">
               {data.runtime.halted
-                ? `Engine halt acknowledged: ${data.runtime.haltReason || "operator halt"}`
+                ? `${hosted ? "Last published halt" : "Engine halt acknowledged"}: ${data.runtime.haltReason || "operator halt"}`
                 : "Halt requested — waiting for engine acknowledgement."}{" "}
-              Protective exits remain enabled. Resume requires operator review
-              through the CLI.
+              {hosted ? "Current engine state is not verified by this snapshot." : "Protective exits remain enabled. Resume requires operator review through the CLI."}
             </div>
           )}
           {loading && !data ? (
@@ -404,6 +428,7 @@ export function PilotWorkspace() {
                 {view === "overview" && (
                   <>
                     <MarketWorkspace
+                      readOnly={hosted}
                       compact
                       data={data.market}
                       favorites={favorites}
@@ -419,6 +444,7 @@ export function PilotWorkspace() {
                 {view === "markets" && (
                   <>
                     <MarketWorkspace
+                      readOnly={hosted}
                       data={data.market}
                       favorites={favorites}
                       onSave={save}

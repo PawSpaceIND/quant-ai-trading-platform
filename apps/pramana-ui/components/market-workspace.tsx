@@ -20,12 +20,14 @@ export function MarketWorkspace({
   onSave,
   onAsk,
   compact = false,
+  readOnly = false,
 }: {
   data: MarketSnapshot;
   favorites: string[];
   onSave: (v: string[]) => Promise<void>;
   onAsk: (s: string) => void;
   compact?: boolean;
+  readOnly?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [savedOnly, setSavedOnly] = useState(false);
@@ -142,7 +144,7 @@ export function MarketWorkspace({
                     <td>
                       <button
                         className="star"
-                        disabled={saving}
+                        disabled={saving || readOnly}
                         aria-label={`${favorites.includes(row.symbol) ? "Remove" : "Save"} ${row.symbol}`}
                         aria-pressed={favorites.includes(row.symbol)}
                         onClick={() => void favorite(row.symbol)}

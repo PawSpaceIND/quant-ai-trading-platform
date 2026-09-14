@@ -25,3 +25,10 @@ secrets/
 *.db-shm
 pramana_ledger.sqlite
 pramana-proofs/
+
+.cloud-build/
+deploy/cloudflare/.wrangler/
+
+apps/pramana-ui/node_modules
+
+.wrangler/

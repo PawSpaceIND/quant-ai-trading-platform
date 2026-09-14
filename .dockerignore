@@ -13,3 +13,6 @@ pramana-proofs
 work
 outputs
 secrets
+
+.cloud-build
+**/.wrangler

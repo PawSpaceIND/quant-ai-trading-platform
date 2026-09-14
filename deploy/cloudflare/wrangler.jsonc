@@ -1,0 +1,19 @@
+{
+  "name": "pramana-paper-web",
+  "main": "worker.mjs",
+  "account_id": "fce626e15a9d4bebc78e9b980449153b",
+  "compatibility_date": "2026-09-14",
+  "workers_dev": true,
+  "assets": {
+    "directory": "../../.cloud-build/out",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pramana-paper-web",
+      "database_id": "4410b82f-8dc9-4230-b465-c28c72f9d9a1"
+    }
+  ]
+}
