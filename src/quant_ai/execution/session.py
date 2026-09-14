@@ -51,6 +51,51 @@ SESSIONS = {
 }
 
 
+# NYSE full-day closures for 2026, derived from the exchange's published rules
+# (fixed dates, Monday observances, and Independence Day observed on Friday 3 July
+# because 4 July falls on a Saturday).
+NYSE_HOLIDAYS_2026 = frozenset(
+    {
+        date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
+        date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
+        date(2026, 11, 26), date(2026, 12, 25),
+    }
+)
+
+# NSE 2026: only closures fixed by the civil calendar are shipped. Lunar-calendar
+# closures (Ram Navami, Mahavir Jayanti, Id, Muharram, Ganesh Chaturthi, Dussehra,
+# Diwali, Guru Nanak Jayanti) move every year and must be loaded from the NSE
+# trading-holiday circular through PRAMANA_HOLIDAYS_JSON.
+NSE_HOLIDAYS_2026 = frozenset(
+    {
+        date(2026, 1, 26),   # Republic Day
+        date(2026, 3, 4),    # Holi
+        date(2026, 4, 3),    # Good Friday
+        date(2026, 4, 14),   # Dr. Ambedkar Jayanti
+        date(2026, 5, 1),    # Maharashtra Day
+        date(2026, 10, 2),   # Gandhi Jayanti
+        date(2026, 12, 25),  # Christmas
+    }
+)
+
+
+def default_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
+    return {GlobalVenue.USA: NYSE_HOLIDAYS_2026, GlobalVenue.INDIA: NSE_HOLIDAYS_2026}
+
+
+def holidays_from_json(
+    payload: dict[str, list[str]],
+    base: dict[Market | GlobalVenue, frozenset[date]] | None = None,
+) -> dict[Market | GlobalVenue, frozenset[date]]:
+    """Merge ``{"INDIA": ["2026-11-09", ...], "USA": [...]}`` over ``base``."""
+    merged: dict[Market | GlobalVenue, frozenset[date]] = dict(base or {})
+    for key, values in payload.items():
+        venue = GlobalVenue(key.strip().upper())
+        parsed = frozenset(date.fromisoformat(str(item)) for item in values)
+        merged[venue] = merged.get(venue, frozenset()) | parsed
+    return merged
+
+
 @dataclass(frozen=True)
 class MarketCalendar:
     holidays: dict[Market | GlobalVenue, frozenset[date]] = field(default_factory=dict)

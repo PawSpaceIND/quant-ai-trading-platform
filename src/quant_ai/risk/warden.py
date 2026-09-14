@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from quant_ai.agents.swarm import TradeProposal
-from quant_ai.domain.models import OrderIntent, PortfolioSnapshot
+from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot
 from quant_ai.notifications.trading import TradingAlertCode, TradingNotificationDispatcher
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.risk.policy import RiskFirewall, RiskPolicy
@@ -20,8 +20,15 @@ class WardenDecision:
 class RiskWarden:
     """Mandatory proposal interceptor. Atlas cannot bypass this component."""
 
-    def __init__(self, dispatcher: TradingNotificationDispatcher | None = None) -> None:
+    def __init__(
+        self,
+        dispatcher: TradingNotificationDispatcher | None = None,
+        *,
+        blocked_asset_classes: tuple[AssetClass, ...] = (),
+    ) -> None:
         self.dispatcher = dispatcher or TradingNotificationDispatcher()
+        # Founder scope: asset classes the swarm may never trade, however it votes.
+        self.blocked_asset_classes = tuple(blocked_asset_classes)
 
     def evaluate(
         self,
@@ -74,6 +81,7 @@ class RiskWarden:
                 plan.max_gross_exposure_fraction, baseline.max_gross_exposure
             ),
             require_protective_stop=True,
+            blocked_asset_classes=self.blocked_asset_classes,
         )
         decision = RiskFirewall(policy).evaluate(order, portfolio)
         if not decision.approved:

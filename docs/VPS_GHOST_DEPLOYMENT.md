@@ -102,3 +102,12 @@ and reachable from inside the container. Set `PRAMANA_IBKR_ENABLED=true` plus `P
 This deployment is not authorization for live-money execution. `PaperBrokerService` remains the
 execution path and `TRADING_LIVE_MONEY_ACTIVE=false` is enforced by the image, Compose service, and
 daemon startup guard.
+
+## Founder directives, halt and holidays
+
+Mount a `founder-directives.json` (see `deploy/founder-directives.example.json`) and set
+`PRAMANA_FOUNDER_DIRECTIVES_FILE` to it: capital, risk posture, allowed markets and
+asset classes, the watchlist, the position cap and instructions all come from there.
+`pramana halt` / `pramana resume` manage the operator halt marker (`PRAMANA_HALT_FILE`,
+default next to the ledger); load NSE lunar-calendar closures with
+`PRAMANA_HOLIDAYS_JSON`. Full runbook: `docs/GATE2_BURN_IN.md`.

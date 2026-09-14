@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -173,6 +173,7 @@ class HistoricalReplayHarness:
             context = self._friction_context(visible)
             self.broker.set_friction_context(context, execution_time=bar.timestamp)
             before = tracker.get_snapshot(bar.timestamp)
+            self._assert_no_lookahead(feed, dataset, instrument, bar.timestamp)
             result = pipeline.run(
                 instrument,
                 bar.timestamp,
@@ -181,6 +182,8 @@ class HistoricalReplayHarness:
                 quantity=self.quantity,
                 country=self.country,
                 tenant_id=self.tenant_id,
+                # Single-instrument replay: everything held is this country's exposure.
+                country_exposure={self.country: before.gross_exposure},
             )
             if result.execution.fill is not None:
                 order_ids.append(result.execution.fill.order_id)
@@ -221,8 +224,6 @@ class HistoricalReplayHarness:
             )
             curve.append(after.equity)
             timestamps.append(bar.timestamp)
-            if any(item.timestamp > bar.timestamp for item in visible):
-                raise RuntimeError("lookahead_violation: future bar became visible")
             if index == len(dataset.bars) - 1:
                 self.broker.set_friction_context(None)
         benchmark_returns = self._benchmark_returns(dataset)
@@ -233,6 +234,31 @@ class HistoricalReplayHarness:
             tuple(order_ids),
             tracker.get_snapshot(dataset.bars[-1].timestamp),
         )
+
+    @staticmethod
+    def _assert_no_lookahead(
+        feed: HistoricalMarketDataFeed,
+        dataset: HistoricalReplayDataset,
+        instrument: Instrument,
+        now: datetime,
+    ) -> None:
+        """Check the inputs the pipeline will actually receive, not the filter that made them.
+
+        The previous guard re-tested the feed's own ``<= now`` filter and could never
+        fire. This one asks the feed and every provider for exactly what the pipeline
+        asks for at this tick and refuses to proceed if anything is dated after it.
+        """
+        window = feed.fetch_ohlcv(instrument, now - timedelta(minutes=60), now, "1m")
+        if window and window[-1].timestamp > now:
+            raise RuntimeError("lookahead_violation: future bar served to the pipeline")
+        news_at = max(
+            (item.published_at for item in HistoricalNewsProvider(dataset.news).fetch(instrument.symbol, now)),
+            default=now,
+        )
+        macro_at = HistoricalMacroProvider(dataset.macro).fetch(("US10Y",), now).observed_at
+        fundamentals_at = HistoricalFundamentalProvider(dataset.fundamentals).fetch(instrument.symbol, now).observed_at
+        if max(news_at, macro_at, fundamentals_at) > now:
+            raise RuntimeError("lookahead_violation: future provider event served to the pipeline")
 
     @staticmethod
     def _friction_context(visible: tuple[Candle, ...]) -> FrictionContext:

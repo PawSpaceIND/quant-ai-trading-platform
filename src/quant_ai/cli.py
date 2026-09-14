@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from quant_ai.agents.swarm import TradeProposal
+from quant_ai.agents.atlas import AtlasInvestmentAgent
+from quant_ai.agents.swarm import AtlasCIOAgent, TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.analytics.metrics import summarize_performance
 from quant_ai.backtesting.replay import (
@@ -27,6 +28,7 @@ from quant_ai.execution.notifications import (
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
+from quant_ai.governance.directives import FounderDirectives
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
@@ -35,16 +37,24 @@ from quant_ai.intelligence.sandbox import (
 )
 from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
+from quant_ai.risk.warden import RiskWarden
 
 
 def build_runtime() -> AutonomousTradingDaemon:
     database = paths.ledger_path("QUANT_AI_PAPER_DB")
     tenant_id = paths.tenant_id("QUANT_AI_TENANT_ID")
     database.parent.mkdir(parents=True, exist_ok=True)
-    broker = PaperBrokerService(str(database), starting_capital=Decimal(100000))
+    directives = FounderDirectives.from_env() or FounderDirectives()
+    broker = PaperBrokerService(str(database), starting_capital=directives.starting_capital)
     feed = UsaSandboxMarketDataFeed()
     xai_dir = str(paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR"))
-    runtime = SwarmPaperTradingService(broker=broker, xai_logger=XAITraceLogger(xai_dir))
+    runtime = SwarmPaperTradingService(
+        cio=AtlasCIOAgent(AtlasInvestmentAgent(founder_instructions=directives.instructions)),
+        warden=RiskWarden(blocked_asset_classes=directives.blocked_asset_classes()),
+        broker=broker,
+        xai_logger=XAITraceLogger(xai_dir),
+        max_open_positions=directives.max_open_positions,
+    )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
         SandboxNewsSentimentProvider(),
@@ -54,15 +64,8 @@ def build_runtime() -> AutonomousTradingDaemon:
     )
     scheduler = AutonomousCadenceScheduler(pipeline)
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
-    plan = CapitalGoalEngine().recommend(
-        CapitalPlanRequest(
-            Decimal(100000),
-            Decimal("0.80"),
-            Decimal("0.20"),
-            expected_edge=Decimal("0.02"),
-            requested_mode=RiskMode.BALANCED,
-        )
-    )
+    # The sandbox runtime is US-only; the watchlist applies to the ghost daemon.
+    plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
     instrument = Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     notifications = TradingNotificationDispatcher((ConsoleNotificationAdapter(),))
     return AutonomousTradingDaemon(
@@ -221,14 +224,29 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "friction-audit",
+            "backtest", "friction-audit", "halt", "resume",
         ),
     )
     parser.add_argument("--data")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--market", choices=("india", "us"), default="us")
+    parser.add_argument("--reason", default="operator halt")
     args = parser.parse_args(argv)
+    if args.command == "halt":
+        target = paths.halt_file()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(args.reason.strip() or "operator halt", encoding="utf-8")
+        print(f"halt engaged: {target}")
+        return 0
+    if args.command == "resume":
+        target = paths.halt_file()
+        if target.exists():
+            target.unlink()
+            print(f"halt released: {target}")
+        else:
+            print(f"no halt file present: {target}")
+        return 0
     if args.command == "backtest":
         _backtest(args)
         return 0

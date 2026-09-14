@@ -43,7 +43,10 @@ class SwarmPaperTradingService:
         kill_switch: KillSwitch | None = None,
         *,
         allow_position_scaling: bool = False,
+        max_open_positions: int | None = None,
     ) -> None:
+        if max_open_positions is not None and max_open_positions < 1:
+            raise ValueError("max_open_positions must be at least one")
         self.cio = cio or AtlasCIOAgent()
         self.warden = warden or RiskWarden()
         self.broker = broker or PaperBrokerService()
@@ -54,6 +57,8 @@ class SwarmPaperTradingService:
         self.kill_switch = kill_switch or KillSwitch()
         # C2: entering a symbol that is already held requires an explicit opt-in.
         self.allow_position_scaling = allow_position_scaling
+        # Founder scope: how many symbols may be open at once across the book.
+        self.max_open_positions = max_open_positions
 
     def execute(
         self,
@@ -168,6 +173,13 @@ class SwarmPaperTradingService:
         # C2: block a second entry into a symbol that is already open.
         if risk.order.side == Side.BUY and held > 0 and not self.allow_position_scaling:
             return refuse("position_already_open")
+        if (
+            risk.order.side == Side.BUY
+            and held == 0
+            and self.max_open_positions is not None
+            and len(self.broker.get_positions(tenant_id)) >= self.max_open_positions
+        ):
+            return refuse("max_open_positions_reached")
         # C2 (extension): and do not immediately re-enter a symbol just stopped out.
         if risk.order.side == Side.BUY and self._in_exit_cooldown(
             risk.order, tenant_id, request.observed_at

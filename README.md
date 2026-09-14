@@ -9,6 +9,11 @@ Global multi-asset AI-assisted quantitative research, portfolio intelligence, pa
 - Risk-based position sizing, mandatory protective stops, daily-loss and drawdown circuit breakers.
 - Multi-tenant architecture suitable for a future commercial SaaS product.
 
+## Runtime status
+- Ghost daemon (`python -m quant_ai.daemon`): live Zerodha/IBKR ticks → real candles and marks → five-agent swarm + Atlas consensus → risk firewall → local paper ledger. Founder directives (`deploy/founder-directives.example.json`) set capital, risk posture, allowed markets/asset classes, the India+US watchlist, the position cap and instructions.
+- Launch, operator halt, holidays and the observation checklist: `docs/GATE2_BURN_IN.md`.
+- Sandbox CLI (`pramana run-once`): deterministic US-only smoke path, synthetic prices.
+
 ## Safety posture
 - Paper trading only in the current phase.
 - Live-money execution is disabled in code until explicit promotion gates are satisfied.

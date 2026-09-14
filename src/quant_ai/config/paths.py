@@ -24,10 +24,12 @@ from pathlib import Path
 LEDGER_ENV = "PRAMANA_LEDGER_PATH"
 PROOF_ENV = "PRAMANA_PROOF_DIR"
 TENANT_ENV = "PRAMANA_TENANT_ID"
+HALT_FILE_ENV = "PRAMANA_HALT_FILE"
 
 DEFAULT_LEDGER_NAME = "pramana_ledger.sqlite"
 DEFAULT_PROOF_DIRECTORY_NAME = "pramana-proofs"
 DEFAULT_TENANT_ID = "default"
+DEFAULT_HALT_FILE_NAME = "PRAMANA_HALT"
 
 _ROOT_MARKERS = ("pyproject.toml", ".git")
 
@@ -72,3 +74,11 @@ def proof_directory(*legacy_env: str) -> Path:
 def tenant_id(*legacy_env: str, default: str = DEFAULT_TENANT_ID) -> str:
     """Tenant whose rows the CLI writes and the UI reads."""
     return _from_env(TENANT_ENV, *legacy_env) or default
+
+
+def halt_file() -> Path:
+    """Operator halt marker. Its presence engages the daemon's kill switch; removing it releases."""
+    configured = _from_env(HALT_FILE_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path().parent / DEFAULT_HALT_FILE_NAME
