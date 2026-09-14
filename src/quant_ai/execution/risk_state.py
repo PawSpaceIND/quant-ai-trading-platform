@@ -62,17 +62,23 @@ class SQLiteRiskStateStore(RiskStateStore):
         database: str | Path,
         *,
         starting_capital: Decimal = Decimal(100000),
+        connection: sqlite3.Connection | None = None,
+        lock: Any | None = None,
     ) -> None:
         self.starting_capital = starting_capital
-        self._lock = RLock()
-        self._connection = sqlite3.connect(str(database), check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA busy_timeout=2000")
+        self._owns_connection = connection is None
+        self._lock = lock or RLock()
+        if connection is None:
+            self._connection = sqlite3.connect(str(database), check_same_thread=False)
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA busy_timeout=2000")
+        else:
+            self._connection = connection
         self._create_schema()
 
     def _create_schema(self) -> None:
-        with self._connection:
+        with self._lock, self._connection:
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS risk_daily_equity (
@@ -149,6 +155,8 @@ class SQLiteRiskStateStore(RiskStateStore):
             )
 
     def close(self) -> None:
+        if not self._owns_connection:
+            return
         with self._lock:
             self._connection.commit()
             self._connection.close()
@@ -170,6 +178,8 @@ def risk_state_for_broker(
                     return SQLiteRiskStateStore(
                         database,
                         starting_capital=starting_capital,
+                        connection=connection,
+                        lock=getattr(broker, "_lock", None),
                     )
         except (sqlite3.Error, TypeError, IndexError, KeyError):
             pass
