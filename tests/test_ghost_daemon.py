@@ -157,10 +157,10 @@ def test_env_runner_can_boot_zerodha_only_with_explicit_india_target(tmp_path, m
     monkeypatch.setenv("ZERODHA_API_KEY", "test-key")
     monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", "test-token")
     monkeypatch.setenv("PRAMANA_ZERODHA_TOKENS_JSON", "[256265]")
-    monkeypatch.setenv("PRAMANA_ZERODHA_SYMBOLS_JSON", '{"256265":"NIFTY"}')
-    monkeypatch.setenv("PRAMANA_TARGET_SYMBOL", "NIFTY")
+    monkeypatch.setenv("PRAMANA_ZERODHA_SYMBOLS_JSON", '{"256265":"INFY"}')
+    monkeypatch.setenv("PRAMANA_TARGET_SYMBOL", "INFY")
     monkeypatch.setenv("PRAMANA_TARGET_MARKET", "INDIA")
-    monkeypatch.setenv("PRAMANA_TARGET_ASSET_CLASS", "INDEX")
+    monkeypatch.setenv("PRAMANA_TARGET_ASSET_CLASS", "EQUITY")
     monkeypatch.setenv("PRAMANA_TARGET_CURRENCY", "INR")
     monkeypatch.setenv("PRAMANA_TARGET_EXCHANGE", "NSE")
     monkeypatch.setenv("PRAMANA_IBKR_ENABLED", "false")
@@ -180,7 +180,7 @@ def test_env_runner_can_boot_zerodha_only_with_explicit_india_target(tmp_path, m
 
     runner = build_ghost_runner_from_env()
 
-    assert runner.daemon.instrument.symbol == "NIFTY"
+    assert runner.daemon.instrument.symbol == "INFY"
     assert runner.daemon.instrument.market.value == "INDIA"
     assert runner.daemon.instrument.currency == "INR"
     assert [type(stream).__name__ for stream in runner.streams] == ["ZerodhaKiteTicker"]

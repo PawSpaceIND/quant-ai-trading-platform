@@ -1,20 +1,25 @@
 {
   "starting_capital": 100000,
   "risk_mode": "BALANCED",
-  "confidence": 0.80,
-  "annualized_volatility": 0.20,
+  "confidence": 0.8,
+  "annualized_volatility": 0.2,
   "expected_edge": 0.02,
-  "allowed_markets": ["INDIA", "USA"],
-  "allowed_asset_classes": ["EQUITY", "ETF", "INDEX", "METAL", "COMMODITY", "FX"],
+  "allowed_markets": [
+    "INDIA"
+  ],
+  "allowed_asset_classes": [
+    "EQUITY",
+    "ETF"
+  ],
   "max_open_positions": 5,
   "watchlist": [
-    {"symbol": "NIFTY", "market": "INDIA", "asset_class": "INDEX", "currency": "INR", "exchange": "NSE"},
-    {"symbol": "RELIANCE", "market": "INDIA", "asset_class": "EQUITY", "currency": "INR", "exchange": "NSE"},
-    {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX"},
-    {"symbol": "CRUDEOIL", "market": "INDIA", "asset_class": "COMMODITY", "currency": "INR", "exchange": "MCX"},
-    {"symbol": "USDINR", "market": "INDIA", "asset_class": "FX", "currency": "INR", "exchange": "CDS"},
-    {"symbol": "AAPL", "market": "USA", "asset_class": "EQUITY", "currency": "USD", "exchange": "NASDAQ"},
-    {"symbol": "SPY", "market": "USA", "asset_class": "ETF", "currency": "USD", "exchange": "NYSE"}
+    {
+      "symbol": "INFY",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    }
   ],
   "instructions": "Preserve capital first. Take only liquid, large instruments. Never add risk after a daily loss; let protective exits work. Prefer trend-following entries with a defined stop over mean-reversion guesses."
 }

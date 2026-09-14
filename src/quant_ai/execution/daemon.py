@@ -13,7 +13,7 @@ from typing import Callable
 
 from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.brokers.adapter import BrokerPosition
-from quant_ai.domain.models import Instrument, Market
+from quant_ai.domain.models import Instrument, Market, Side
 from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
@@ -85,12 +85,54 @@ class AutonomousTradingDaemon:
         self._stop_requested = False
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
+        self.telemetry = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
         engaged, reason = self.tracker.risk_state.kill_switch_state(self.tenant_id)
         if engaged:
             self.kill_switch.engage(reason or "persisted risk halt")
+
+    def enable_pilot_monitoring(self) -> None:
+        from quant_ai.execution.telemetry import PilotTelemetry
+        self.telemetry = PilotTelemetry(self)
+        runtime = self.scheduler.pipeline.runtime
+        runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
+        runtime.pre_submit_check = self._pilot_pre_submit
+
+    def _pilot_pre_submit(self, proposal) -> str | None:
+        self.apply_operator_halt()
+        if self.kill_switch.engaged and proposal.side != Side.SELL:
+            return "pilot_halted"
+        now = self.clock()
+        instrument = next((i for i in self.instruments if i.symbol == proposal.symbol), None)
+        if instrument is None or self.scheduler.calendar.state(instrument.market, now) != MarketState.REGULAR_HOURS:
+            return "pilot_session_or_scope_blocked"
+        if not self.telemetry.fresh(instrument, now)[0]:
+            return "pilot_stale_entry_price"
+        mark = self.tracker.market_feed.latest_tick(instrument).last_price
+        if proposal.reference_price <= 0 or abs(mark / proposal.reference_price - 1) > Decimal(".002"):
+            return "pilot_price_moved_during_analysis"
+        for position in self.tracker.broker.get_positions(self.tenant_id):
+            resolved = self.tracker.instrument_resolver(position)
+            if not self.telemetry.fresh(resolved, now)[0]:
+                return "pilot_stale_portfolio_mark"
+        return None
+
+    def protection_tick(self, now: datetime | None = None) -> None:
+        timestamp = now or self.clock()
+        with self.tracker.broker._lock:
+            self.apply_operator_halt()
+            self.protective_exits = self.sweep_protective_exits(timestamp)
+            if self.telemetry is not None:
+                metrics = self.tracker.metrics(timestamp)
+                daily_limit = min(self.plan.max_daily_loss_fraction, Decimal(".02"))
+                opening = metrics.total_equity - metrics.daily_total_pnl
+                if metrics.drawdown_fraction >= min(self.plan.max_drawdown_fraction, Decimal(".10")):
+                    self.engage_kill_switch("portfolio_drawdown_limit")
+                elif opening > 0 and -metrics.daily_total_pnl / opening >= daily_limit:
+                    self.engage_kill_switch("portfolio_daily_loss_limit")
+                self.telemetry.publish(timestamp)
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
         return ProtectiveExitEngine(
@@ -245,8 +287,9 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         self._in_flight = True
         try:
-            self.apply_operator_halt()
-            self.protective_exits = self.sweep_protective_exits(timestamp)
+            with self.tracker.broker._lock:
+                self.apply_operator_halt()
+                self.protective_exits = self.sweep_protective_exits(timestamp)
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []

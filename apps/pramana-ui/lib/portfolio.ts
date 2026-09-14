@@ -1,3 +1,4 @@
+import { readLivePortfolio } from "./pilot";
 import { CostRow, hasColumn, hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
 
 type PositionState = { quantity: number; average: number; market: string; assetClass: string };
@@ -5,6 +6,8 @@ type PositionState = { quantity: number; average: number; market: string; assetC
 export type EquityPoint = { timestamp: string; equity: number };
 
 export function readPortfolio() {
+  const live = readLivePortfolio();
+  if (live) return live;
   const db = openLedger();
   if (!db) return emptyPortfolio("ledger_not_found");
   try {

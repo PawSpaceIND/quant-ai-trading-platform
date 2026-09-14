@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import sqlite3
 import time
@@ -207,6 +208,42 @@ class PaperBrokerService(BrokerAdapter):
             delivery=True,
         )
 
+    def configure_pilot(self, instruments, tenant_id: str) -> None:
+        from quant_ai.governance.pilot import validate_pilot_instruments
+        validate_pilot_instruments(tuple(instruments))
+        symbols = {item.symbol for item in instruments}
+        with self._lock, self._connection:
+            self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
+                tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
+                symbols TEXT NOT NULL)""")
+            positions = self.get_positions(tenant_id)
+            if any(p.market != Market.INDIA or p.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
+                   or p.symbol not in symbols for p in positions):
+                raise ValueError("pilot_existing_positions_out_of_scope")
+            previous = self._connection.execute(
+                "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
+            ).fetchone()
+            if previous and (previous["currency"], previous["market"]) != ("INR", "INDIA"):
+                raise ValueError("pilot_account_currency_mismatch")
+            # Legacy mixed-market accounts cannot be relabeled as INR.
+            if any(e.market != Market.INDIA for e in self.ledger_entries(tenant_id)):
+                raise ValueError("pilot_legacy_currency_ambiguous")
+            self._connection.execute("INSERT OR REPLACE INTO pilot_scope VALUES (?, 'INR', 'INDIA', ?)",
+                                     (tenant_id, json.dumps(sorted(symbols))))
+
+    def _assert_pilot_order(self, order: OrderIntent) -> None:
+        exists = self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pilot_scope'"
+        ).fetchone()
+        if not exists:
+            return
+        scope = self._connection.execute("SELECT * FROM pilot_scope WHERE tenant_id=?",
+                                         (order.tenant_id,)).fetchone()
+        if scope and (order.market.value != scope["market"]
+                      or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
+                      or order.symbol not in json.loads(scope["symbols"])):
+            raise ValueError("pilot_order_out_of_scope")
+
     def buy(self, order: OrderIntent) -> ExecutionResult:
         if order.side != Side.BUY:
             raise ValueError("buy requires BUY side")
@@ -255,6 +292,7 @@ class PaperBrokerService(BrokerAdapter):
         tenant_id = order.tenant_id
         statutory_fees = friction.statutory_fees
         with self._lock, self._connection:
+            self._assert_pilot_order(order)
             self._ensure_account(tenant_id)
             account = self._connection.execute(
                 "SELECT cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)

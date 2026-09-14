@@ -62,6 +62,10 @@ class PortfolioTracker:
         self._high_water_mark = persisted if persisted is not None else starting_capital
 
     def metrics(self, now: datetime | None = None) -> PortfolioMetrics:
+        with self.broker._lock:
+            return self._metrics_locked(now)
+
+    def _metrics_locked(self, now: datetime | None = None) -> PortfolioMetrics:
         observed_at = now or datetime.now(timezone.utc)
         margin = self.broker.get_margin(self.tenant_id)
         positions = tuple(

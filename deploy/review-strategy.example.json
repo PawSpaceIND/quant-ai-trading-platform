@@ -1,0 +1,18 @@
+{
+  "tenant_id": "ghost",
+  "release_revision": "",
+  "evidence_references": [],
+  "schema": "pramana.strategy.review.v1",
+  "strategy_id": "",
+  "holdout_reviewed": false,
+  "costs_reviewed": false,
+  "trial_register_reviewed": false,
+  "ai_calibration_reviewed": false,
+  "sample_trades": 0,
+  "expectancy": "0",
+  "max_drawdown": "0",
+  "profit_factor": "0",
+  "profitable_regimes": 0,
+  "paper_days": 0,
+  "strategy_config_sha256": ""
+}

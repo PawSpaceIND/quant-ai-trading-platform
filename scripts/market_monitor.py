@@ -13,7 +13,7 @@ from quant_ai.domain.models import Market
 from quant_ai.execution.session import MarketCalendar, default_holidays
 
 CONFIG = Path.home() / ".config/pramana"
-TARGET = CONFIG / "market-monitor.json"
+TARGET = Path(os.environ.get("PRAMANA_MARKET_SNAPSHOT", str(CONFIG / "market-monitor.json")))
 SYMBOLS = ["NIFTY 50", "NIFTY BANK", "INFY", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "ITC", "LT", "TATASTEEL", "HINDALCO", "GOLDBEES", "SILVERBEES"]
 history = {}
 
@@ -22,8 +22,8 @@ def collect():
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
     from quant_ai.intelligence.resilience import ResilientHttpClient, UrllibTransport
-    credentials = json.loads((CONFIG / "zerodha.json").read_text())
-    session = json.loads((CONFIG / "zerodha-session.json").read_text())
+    credentials = {"api_key": os.environ["ZERODHA_API_KEY"]} if os.environ.get("ZERODHA_API_KEY") else json.loads((CONFIG / "zerodha.json").read_text())
+    session = {"access_token": os.environ["ZERODHA_ACCESS_TOKEN"]} if os.environ.get("ZERODHA_ACCESS_TOKEN") else json.loads((CONFIG / "zerodha-session.json").read_text())
     kite = KiteConnect(api_key=credentials["api_key"], access_token=session["access_token"], timeout=15)
     profile = kite.profile()
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
@@ -62,10 +62,11 @@ def collect():
             "exchanges": profile.get("exchanges", []), "rows": rows,
             "commodity": "MCX enabled; contract feed not configured" if "MCX" in profile.get("exchanges", []) else "MCX access not reported by this account",
             "note": "Last available quotes; poll time is not trade time. Gold/silver ETFs follow NSE hours.",
-            "providers": {"Claude": "Authenticated; structured Sonnet 5 request verified", "Technical": "Real daily candle history", "News": "Economic Times RSS; rule-based sentiment" if news else "RSS unavailable; no fabricated opinions", "Macro": "Unavailable; FRED not configured", "Fundamentals": "Unavailable; licensed source needed", "US equities": "No IBKR connection"}}
+            "providers": {"Claude": "Availability is checked per copilot request", "Technical": "Real daily candle history", "News": "Economic Times RSS; rule-based sentiment" if news else "RSS unavailable; no fabricated opinions", "Macro": "Unavailable; FRED not configured", "Fundamentals": "Unavailable; licensed source needed", "US equities": "No IBKR connection"}}
 
 
 if __name__ == "__main__":
+    TARGET.parent.mkdir(parents=True, exist_ok=True)
     while True:
         try:
             payload = collect()

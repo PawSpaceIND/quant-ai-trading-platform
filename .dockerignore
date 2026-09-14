@@ -1,0 +1,15 @@
+.git
+.venv*
+**/node_modules
+**/.next
+**/.env
+**/.env.*
+!.env.example
+**/__pycache__
+**/.pytest_cache
+**/*.sqlite*
+**/*.db*
+pramana-proofs
+work
+outputs
+secrets

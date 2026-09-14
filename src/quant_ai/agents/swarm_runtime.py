@@ -47,6 +47,8 @@ class SwarmPaperTradingService:
     ) -> None:
         if max_open_positions is not None and max_open_positions < 1:
             raise ValueError("max_open_positions must be at least one")
+        self.snapshot_provider = None
+        self.pre_submit_check = None
         self.cio = cio or AtlasCIOAgent()
         self.warden = warden or RiskWarden()
         self.broker = broker or PaperBrokerService()
@@ -122,7 +124,16 @@ class SwarmPaperTradingService:
             request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
         )
 
-    def _execute_proposal(
+    def _execute_proposal(self, request, weighted_evidence, proposal, plan, portfolio,
+                          country_exposure, tenant_id):
+        with self.broker._lock:
+            if self.snapshot_provider is not None:
+                portfolio = self.snapshot_provider()
+                country_exposure = portfolio.country_exposure
+            return self._execute_proposal_locked(request, weighted_evidence, proposal, plan,
+                                                 portfolio, country_exposure, tenant_id)
+
+    def _execute_proposal_locked(
         self,
         request: AgentAnalysisRequest,
         weighted_evidence: tuple[AgentEvidence, ...],
@@ -154,6 +165,10 @@ class SwarmPaperTradingService:
                 proposal, rejected, None, stress, trace, lifecycle.state
             )
 
+        if self.pre_submit_check is not None:
+            veto = self.pre_submit_check(proposal)
+            if veto:
+                return refuse(veto)
         # A halt freezes new risk. It must never trap a position: covered SELLs are allowed
         # through the same governed paper path while every risk-adding order stays blocked.
         if self.kill_switch.engaged and not pure_de_risking_sell:

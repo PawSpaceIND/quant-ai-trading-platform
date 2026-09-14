@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from importlib import import_module
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent
@@ -116,10 +117,15 @@ class DaemonRunner:
         log_path: str | Path = "pramana-ghost.log",
         clock: Clock | None = None,
         sleeper: Sleeper = asyncio.sleep,
+        protection_interval: float = 1.0,
     ) -> None:
         _assert_ghost_mode()
         if cadence <= timedelta(0):
             raise ValueError("cadence must be positive")
+        if protection_interval <= 0:
+            raise ValueError("protection interval must be positive")
+        self.protection_interval = protection_interval
+        self._protection_stop = Event()
         self.daemon = daemon
         self.streams = tuple(streams)
         self.cadence = cadence
@@ -139,15 +145,34 @@ class DaemonRunner:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        self._protection_stop.set()
         self.daemon.request_stop()
 
+    def _protect(self) -> None:
+        # A dedicated thread keeps protection responsive even when synchronous provider
+        # I/O blocks the analysis event loop. Ledger operations share one RLock.
+        while not self._protection_stop.is_set():
+            try:
+                self.daemon.protection_tick(self.clock())
+            except Exception as error:
+                self._logger.exception("protection_tick_failed")
+                try:
+                    self.daemon.engage_kill_switch(f"protection_failure:{type(error).__name__}")
+                except Exception:
+                    self._logger.exception("protection_halt_persistence_failed")
+            self._protection_stop.wait(self.protection_interval)
+
     async def start(self) -> None:
+        protection = Thread(target=self._protect, name="pramana-protection", daemon=True)
+        protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
         cadence_task = asyncio.create_task(self._run_aligned_cadence())
         try:
             await cadence_task
         finally:
             self._stop_requested = True
+            self._protection_stop.set()
+            protection.join(timeout=10)
             for task in supervisors:
                 task.cancel()
             await asyncio.gather(*supervisors, return_exceptions=True)
@@ -277,6 +302,7 @@ def build_ghost_runner(
     notifications: TradingNotificationDispatcher | None = None,
     halt_file: str | Path | None = None,
     directives: FounderDirectives | None = None,
+    pilot_mode: bool = False,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -313,6 +339,8 @@ def build_ghost_runner(
     plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    if pilot_mode:
+        broker.configure_pilot(instruments, tenant_id)
     mapped = set(zerodha_symbol_by_token.values())
     if include_ibkr:
         mapped.update(_contract_symbol(contract) for contract in ib_contracts)
@@ -334,6 +362,8 @@ def build_ghost_runner(
         halt_file=halt_file,
         instruments=instruments,
     )
+    if pilot_mode:
+        daemon.enable_pilot_monitoring()
     streams: list[AbstractTickerStream] = [
         ZerodhaKiteTicker(
             zerodha_api_key,
@@ -459,15 +489,16 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     raw_symbols = _env_json("PRAMANA_ZERODHA_SYMBOLS_JSON", {})
     symbols = {int(key): str(value) for key, value in raw_symbols.items()}
     instrument = Instrument(
-        os.getenv("PRAMANA_TARGET_SYMBOL", "AAPL").strip() or "AAPL",
-        Market(os.getenv("PRAMANA_TARGET_MARKET", "USA").strip().upper()),
+        os.getenv("PRAMANA_TARGET_SYMBOL", "INFY").strip() or "INFY",
+        Market(os.getenv("PRAMANA_TARGET_MARKET", "INDIA").strip().upper()),
         AssetClass(os.getenv("PRAMANA_TARGET_ASSET_CLASS", "EQUITY").strip().upper()),
-        os.getenv("PRAMANA_TARGET_CURRENCY", "USD").strip().upper(),
-        os.getenv("PRAMANA_TARGET_EXCHANGE", "NASDAQ").strip().upper(),
+        os.getenv("PRAMANA_TARGET_CURRENCY", "INR").strip().upper(),
+        os.getenv("PRAMANA_TARGET_EXCHANGE", "NSE").strip().upper(),
     )
     news, fundamentals, macro = _env_intelligence_providers()
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
+        pilot_mode=_env_flag("PRAMANA_PILOT_MODE", True),
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,

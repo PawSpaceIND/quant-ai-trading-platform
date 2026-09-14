@@ -1,0 +1,212 @@
+"use client";
+import { FormEvent, useEffect, useState } from "react";
+import type { Conversation } from "@/lib/copilot";
+export function CopilotPanel({
+  draft,
+  onDraft,
+  configured,
+}: {
+  draft: string;
+  onDraft: (s: string) => void;
+  configured: boolean;
+}) {
+  const [history, setHistory] = useState<Conversation[]>([]);
+  const [active, setActive] = useState<Conversation | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/copilot", { signal: AbortSignal.timeout(12000) })
+      .then((r) => {
+        if (!r.ok) throw new Error("Could not load conversation history");
+        return r.json();
+      })
+      .then((d) => {
+        if (alive) setHistory(d.conversations);
+      })
+      .catch((e) => {
+        if (alive) setError(e.message);
+      });
+    const id = new URLSearchParams(window.location.search).get("chat");
+    if (id)
+      fetch(`/api/copilot/${encodeURIComponent(id)}`, {
+        signal: AbortSignal.timeout(12000),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (alive && d) setActive(d);
+        })
+        .catch(() => {
+          if (alive)
+            setError("Saved conversation could not be loaded. Try again.");
+        });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  function choose(c: Conversation) {
+    setActive(c);
+    const url = new URL(window.location.href);
+    url.searchParams.set("chat", c.id);
+    window.history.replaceState(null, "", url);
+  }
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    const prompt = draft;
+    onDraft("");
+    try {
+      const r = await fetch("/api/copilot", {
+        method: "POST",
+        signal: AbortSignal.timeout(45000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          parentId: active?.id,
+          id: crypto.randomUUID(),
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setHistory((h) => [d, ...h]);
+      choose(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+      onDraft(prompt);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="panel copilot">
+      <div className="panel-title">
+        <div>
+          <span className="eyebrow">YOUR RESEARCH PARTNER</span>
+          <h2>
+            <span className="atlas-glyph">✳</span> Atlas copilot
+          </h2>
+        </div>
+        <span className={`pill ${configured ? "green" : "amber"}`}>
+          {configured ? "Claude configured" : "Setup needed"}
+        </span>
+      </div>
+      <p className="muted">
+        Ask about your portfolio, market evidence or launch readiness.
+      </p>
+      <div className="copilot-context">
+        <span className="dot" /> Portfolio + market + decision proofs{" "}
+        <span>Read only</span>
+      </div>
+      <div className="chat-body" aria-live="polite">
+        {active ? (
+          <>
+            <div className="message user-message">
+              <small>YOU</small>
+              <p>{active.prompt}</p>
+            </div>
+            <div className="message">
+              <small>ATLAS · {active.status}</small>
+              {active.answer ? (
+                <p>{active.answer}</p>
+              ) : (
+                <p className={active.error ? "error" : "muted"}>
+                  {active.error ||
+                    "Response pending. Refresh this conversation to check its status."}
+                </p>
+              )}
+              <div className="footnote">
+                {active.model} · {new Date(active.created_at).toLocaleString()}
+              </div>
+              {active.usage && (
+                <div className="footnote">
+                  Tokens: {JSON.parse(active.usage).inputTokens ?? "—"} in /{" "}
+                  {JSON.parse(active.usage).outputTokens ?? "—"} out · Cost not
+                  estimated
+                </div>
+              )}
+              <a
+                className="text-link"
+                href={`/api/copilot/${active.id}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View saved evidence ↗
+              </a>
+            </div>
+          </>
+        ) : (
+          <div className="chat-welcome">
+            <div className="atlas-orb">✳</div>
+            <h3>Start with a better question.</h3>
+            <p>Ground your next decision in the evidence you actually have.</p>
+            {[
+              "What is preventing pilot readiness?",
+              "Explain my portfolio risk and data gaps.",
+              "Compare our current strategy evidence with a simple baseline.",
+            ].map((q) => (
+              <button key={q} onClick={() => onDraft(q)}>
+                {q}
+                <span>↗</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {busy && (
+          <div className="thinking" role="status">
+            Atlas is reviewing the saved snapshot…
+          </div>
+        )}
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <form onSubmit={send} className="chat-form">
+        <label className="sr-only" htmlFor="copilot-question">
+          Ask Atlas
+        </label>
+        <textarea
+          id="copilot-question"
+          placeholder="Ask Atlas about this workspace…"
+          value={draft}
+          maxLength={3000}
+          rows={3}
+          onChange={(e) => onDraft(e.target.value)}
+        />
+        <div>
+          <span>{draft.length}/3000 · No order execution</span>
+          <button className="primary" disabled={busy || !draft.trim()}>
+            {busy ? "Thinking…" : "Send ↑"}
+          </button>
+        </div>
+      </form>
+      {history.length > 0 && (
+        <details className="conversation-history">
+          <summary>Saved conversations ({history.length})</summary>
+          <button
+            onClick={() => {
+              setActive(null);
+              onDraft("");
+            }}
+          >
+            + New conversation
+          </button>
+          {history.map((c) => (
+            <button key={c.id} onClick={() => choose(c)}>
+              <span>{c.prompt}</span>
+              <small>{c.status}</small>
+            </button>
+          ))}
+        </details>
+      )}
+      <p className="footnote">
+        Questions and workspace context are sent to the configured Claude
+        provider. Responses are saved and may be wrong; source freshness remains
+        visible.
+      </p>
+    </section>
+  );
+}
