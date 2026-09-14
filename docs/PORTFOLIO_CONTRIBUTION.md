@@ -57,3 +57,6 @@ Bloomberg PORT documents integrated positions, data validation, performance attr
 IBKR documents performance attribution versus a benchmark and broader portfolio measurement. This implementation does not calculate benchmark allocation/selection effects or time-weighted returns with external flows. [IBKR PortfolioAnalyst capabilities](https://www.interactivebrokers.com/en/portfolioanalyst/features.php).
 
 Qualified benchmark/sector/factor inputs, corporate actions and income, FX/multi-asset accounting, actual account execution attribution, external broker reconciliation, prospective performance and target-host operations remain open. Neither this feature nor the four-product comparison establishes positive expectancy or complete vendor parity.
+
+
+The subsequent [recorded paper-account contribution workflow](PAPER_ACCOUNT_CONTRIBUTION.md) supersedes the earlier basic actual-account contribution gap above. It preserves the paper account's different immediate-fee convention and is verified on synthetic broker/telemetry evidence. Broader attribution and external qualification remain open.

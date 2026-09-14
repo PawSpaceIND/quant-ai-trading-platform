@@ -2,6 +2,7 @@ import type {CompanyEventsState} from "./company-events";
 import type { ResearchReport } from "./research";
 import type { ResearchLabState } from "./research-lab";
 import type { PortfolioResearchState } from "./research-portfolio";
+import type { PaperContributionState } from "./paper-contribution";
 import type { MarketSnapshot } from "./market";
 import type { Runtime } from "./pilot";
 export type Holding = {
@@ -15,6 +16,7 @@ export type Holding = {
   marketValue: number;
   unrealizedPnl: number;
   fresh?: boolean;
+  markTimestamp?: string | null;
   stopPrice?: number | null;
   takeProfitPrice?: number | null;
 };
@@ -61,6 +63,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  paperContribution?: PaperContributionState;
   researchLab?: ResearchLabState;
   researchPortfolio?: PortfolioResearchState;
   companyEvents?: CompanyEventsState;

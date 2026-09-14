@@ -7,7 +7,7 @@ import {readCompanyEvents} from "@/lib/company-events";
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { readPortfolio } from "@/lib/portfolio";
+import { readPortfolioSnapshot } from "@/lib/portfolio";
 import { readMarket } from "@/lib/market";
 import { latestSwarmIntelligence } from "@/lib/proofs";
 import { readRuntime, performance } from "@/lib/pilot";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const market = await readMarket();
-    const portfolio = readPortfolio();
+    const {portfolio, paperContribution} = readPortfolioSnapshot();
     const runtime = readRuntime();
     const perf = performance();
     const db = consoleDb();
@@ -129,6 +129,7 @@ export async function GET() {
     return NextResponse.json(
       {
         portfolio,
+        paperContribution,
         market,
         runtime,
         research: readResearch(),

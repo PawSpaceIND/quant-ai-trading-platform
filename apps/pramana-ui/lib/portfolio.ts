@@ -1,16 +1,32 @@
 import { readLivePortfolio } from "./pilot";
 import { CostRow, hasColumn, hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
+import type {DatabaseSync} from "node:sqlite";
+import {readPaperContribution, type PaperContributionState} from "./paper-contribution";
 
 type PositionState = { quantity: number; average: number; market: string; assetClass: string };
 
 export type EquityPoint = { timestamp: string; equity: number };
 
 export function readPortfolio() {
-  const live = readLivePortfolio();
-  if (live) return live;
+  return readPortfolioSnapshot().portfolio;
+}
+
+export function readPortfolioSnapshot() {
   const db = openLedger();
-  if (!db) return emptyPortfolio("ledger_not_found");
+  if (!db) return {portfolio: emptyPortfolio("ledger_not_found"), paperContribution: {status: "unavailable", detail: "No readable paper account is available.", report: null} as PaperContributionState};
   try {
+    // Keep engine valuation, head, account, positions, fills and charges in one SQLite snapshot.
+    db.exec("BEGIN");
+    let portfolio = readPortfolioFromDatabase(db);
+    const paperContribution = readPaperContribution(db, portfolio);
+    if (portfolio.markMode === "engine_live" && ["invalid", "outdated", "unavailable"].includes(paperContribution.status)) portfolio = {...emptyPortfolio("invalid_account_evidence"), status: "invalid", markMode: "engine_live", markDisclaimer: paperContribution.detail};
+    return {portfolio, paperContribution};
+  } finally {db.close();}
+}
+
+function readPortfolioFromDatabase(db: DatabaseSync) {
+    const live = readLivePortfolio(db);
+    if (live) return live;
     if (!["paper_accounts", "paper_positions", "paper_ledger"].every((table) => hasTable(db, table))) {
       return emptyPortfolio("ledger_schema_incomplete");
     }
@@ -110,9 +126,6 @@ export function readPortfolio() {
       equityCurve,
       updatedAt: account.updated_at,
     };
-  } finally {
-    db.close();
-  }
 }
 
 function calculateRealized(entries: LedgerRow[]): number {

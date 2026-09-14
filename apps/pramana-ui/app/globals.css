@@ -1022,7 +1022,7 @@ td .pill {
 .portfolio-replay-chart { height: 280px; min-width: 0; width: 100%; margin: 20px 0 10px; }
 .replay-selectors { display: flex; flex-wrap: wrap; gap: 16px; margin: 24px 0; }
 .replay-selectors label { display: grid; gap: 8px; min-width: 0; flex: 1; color: var(--muted); font-size: 12px; }
-.replay-selectors select { min-width: 0; width: 100%; background: #12202a; color: #e9f2ef; border: 1px solid var(--line); padding: 10px; border-radius: 7px; }
+.replay-selectors select, .replay-selectors input { min-width: 0; width: 100%; background: #12202a; color: #e9f2ef; border: 1px solid var(--line); padding: 10px; border-radius: 7px; }
 .replay-pagination { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 12px 0 20px; font-size: 12px; }
 .replay-pagination span { margin-right: auto; color: var(--muted); }
 .replay-metrics { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }

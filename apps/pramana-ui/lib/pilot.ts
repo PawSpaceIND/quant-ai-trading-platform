@@ -1,5 +1,7 @@
 import { hasTable, openLedger, tenantId } from "./db";
+import type {DatabaseSync} from "node:sqlite";
 export type LivePortfolio = {
+  ledgerId?: number;
   status: string;
   tenantId: string;
   currency: string;
@@ -75,8 +77,8 @@ export type Runtime = {
     maxPositions: number;
   };
 };
-export function readLivePortfolio(): LivePortfolio | null {
-  const db = openLedger();
+export function readLivePortfolio(connection?: DatabaseSync): LivePortfolio | null {
+  const db = connection ?? openLedger();
   if (!db) return null;
   try {
     if (!hasTable(db, "paper_live_valuations")) return null;
@@ -100,6 +102,7 @@ export function readLivePortfolio(): LivePortfolio | null {
       rows[0].ledger_id !== head.id;
     return {
       ...latest,
+      ledgerId: rows[0].ledger_id,
       status: stale ? "stale" : latest.status,
       allMarksFresh: !stale && latest.allMarksFresh,
       markDisclaimer: stale
@@ -111,7 +114,7 @@ export function readLivePortfolio(): LivePortfolio | null {
       }),
     };
   } finally {
-    db.close();
+    if (!connection) db.close();
   }
 }
 export function readRuntime(): Runtime {

@@ -86,3 +86,8 @@ Follow the [portfolio research workspace workflow](PORTFOLIO_RESEARCH_WORKSPACE.
 ## Private company announcements
 
 Configure `PRAMANA_COMPANY_EVENTS_DB` with an absolute path to the existing three-table company-event database and include it as `company_events` in the schema-2 recovery inventory. Follow [the company announcement workflow](COMPANY_EVENT_WORKSPACE.md) for Markets search/watchlist, dated revisions, capture failures, mapping review, historical export and scoped Atlas requests. Refresh only reads stored evidence; use the existing `research_extensions.py event-fetch` collector separately. The founder session can append mapping assertions at server time after reviewing the exact instrument reference. Do not share the selected database across tenants with different rights. Mapping withdrawal and later re-review are now supported; follow [the lifecycle instructions](COMPANY_MAPPING_LIFECYCLE.md). No collector scheduler is supplied by this UI. Qualify real target-host collection, coverage, instrument mappings and source rights before relying on this evidence.
+
+
+## Recorded account contribution
+
+The private Portfolio page automatically reads the matching engine valuation and account ledger for [instrument/cost contribution](PAPER_ACCOUNT_CONTRIBUTION.md). No separate publication job or migration is required. Restart the private UI after deploying this code. New fills require a matching engine valuation; missing/stale/inconsistent records remain explicit. Export the private report at `/api/portfolio/contribution` and retain it with the already selected operational ledger/valuation recovery inventory. It is excluded from cloud snapshot publication. This report does not replace strategy evidence or operator acceptance.

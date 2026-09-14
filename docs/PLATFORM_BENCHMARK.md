@@ -207,3 +207,8 @@ The private workspace and CLI now support dated mapping withdrawal and later re-
 ## Implementation delta — research contribution and execution costs
 
 The continuous research workspace now reconstructs fill accounting in Python and Node, includes closed instruments in P&L contribution, and reconciles midpoint-reference P&L less spread, slippage and fees to the simulated equity change. Missing final marks withhold totals; private export and Atlas share that state. [Method, synthetic evidence and limits](PORTFOLIO_CONTRIBUTION.md). This advances the basic instrument/cost contribution part of portfolio analytics. Actual paper-account attribution, qualified benchmark allocation/selection, sector/factor models, income/corporate actions and FX/multi-asset attribution remain open; full Bloomberg/IBKR parity is not established.
+
+
+## Implementation delta — recorded account P&L and cost contribution
+
+The actual paper account now has an independently reconstructed instrument/fee breakdown tied to one engine/ledger read snapshot. Closed losses remain visible; stale or inconsistent evidence cannot produce current contribution totals. The private Portfolio page, export and bounded Atlas context share that evidence. [Accounting convention and verification](PAPER_ACCOUNT_CONTRIBUTION.md). This supersedes the earlier basic actual-account contribution gap. Recorded spread/slippage remain model estimates; observed broker execution quality, benchmark/sector/factor effects, external flows, income/corporate actions, FX and broader vendor parity remain open.

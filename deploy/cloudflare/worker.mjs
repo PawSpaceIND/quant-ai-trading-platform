@@ -35,7 +35,7 @@ export default {
    const at=Date.parse(payload.sourceAt);if(!Number.isFinite(at)||Math.abs(Date.now()-at)>300000)return response("Invalid source time",400);
    const snapshots=Object.fromEntries(paths.map(p=>[p,payload.snapshots[p]]));
    if(payload.snapshots["/api/workspace"]?.tenantId==="india-paper") {
-    const {researchLab,researchPortfolio, companyEvents,audit,...workspace}=payload.snapshots["/api/workspace"];
+    const {researchLab,researchPortfolio,paperContribution,companyEvents,audit,...workspace}=payload.snapshots["/api/workspace"];
     snapshots["/api/workspace"]={...workspace,audit:[]};
    }
    await env.DB.prepare("INSERT INTO snapshot(id,body,source_at,received_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,source_at=excluded.source_at,received_at=excluded.received_at WHERE excluded.source_at >= snapshot.source_at").bind(JSON.stringify(snapshots),new Date(at).toISOString(),new Date().toISOString()).run();

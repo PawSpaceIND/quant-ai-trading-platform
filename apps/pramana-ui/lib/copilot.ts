@@ -2,7 +2,8 @@ import {companyEventsContext} from "./company-events";
 import { randomUUID } from "node:crypto";
 import { consoleDb } from "./console-db";
 import { tenantId } from "./db";
-import { readPortfolio } from "./portfolio";
+import { readPortfolioSnapshot } from "./portfolio";
+import {paperContributionContext} from "./paper-contribution";
 import { readRuntime, performance } from "./pilot";
 import { readMarket } from "./market";
 import { strategyObservationDays } from "./strategy-evidence";
@@ -60,7 +61,7 @@ export async function generateAnswer(
     limitations: "Only stored company evidence available by this cutoff. Current portfolio, market data and previous conversation are excluded. This does not remove historical knowledge from model weights or qualify a trading strategy.",
   } : await (async () => {
     const market = await readMarket();
-    const portfolio = readPortfolio();
+    const {portfolio, paperContribution} = readPortfolioSnapshot();
     portfolio.equityCurve = portfolio.equityCurve.slice(-60);
     const perf = performance();
     perf.daily = perf.daily.slice(-60);
@@ -71,6 +72,7 @@ export async function generateAnswer(
     return {
       asOf: new Date().toISOString(),
       portfolio,
+      paperContribution: paperContributionContext(paperContribution),
       runtime,
       strategyObservation,
       researchLab: researchLabContext(),

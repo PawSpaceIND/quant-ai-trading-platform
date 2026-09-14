@@ -15,6 +15,7 @@ import { CopilotPanel } from "./copilot-panel";
 import { ResearchComparison } from "./research-comparison";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
+import {PaperContribution} from "./paper-contribution";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -357,6 +358,7 @@ export function PilotWorkspace() {
               <div className="workspace-content">
                 {(view === "overview" || view === "portfolio") && (
                   <>
+                    {p!.status === "invalid" ? <section className="panel"><h2>Portfolio totals withheld</h2><p className="research-notice">{p!.markDisclaimer}</p><p className="muted">Current equity, P&amp;L and risk totals cannot be established from these records.</p></section> : <>
                     <div className="metric-grid">
                       <Metric
                         label="Portfolio equity"
@@ -429,6 +431,7 @@ export function PilotWorkspace() {
                         </button>
                       </section>
                     </div>
+                    </>}
                   </>
                 )}
                 {view === "overview" && (
@@ -462,8 +465,8 @@ export function PilotWorkspace() {
                 )}
                 {view === "portfolio" && (
                   <>
-                    <Holdings portfolio={p!} onAsk={ask} />
-                    <CostPanel friction={friction} />
+                    {!hosted && <PaperContribution state={data.paperContribution} onAsk={ask} />}
+                    {p!.status !== "invalid" && <><Holdings portfolio={p!} onAsk={ask} /><CostPanel friction={friction} /></>}
                   </>
                 )}
                 {view === "risk" && <RiskLab data={data} onAsk={ask} />}
