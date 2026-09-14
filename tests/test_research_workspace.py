@@ -60,6 +60,9 @@ def source(tmp_path):
                 {
                     "input_digest": hashlib.sha256(canonical(packet).encode()).hexdigest(),
                     "model_version": "fixture-model",
+                    "returned_model": "synthetic-returned-model"
+                    if name == "candidate" and case != "error"
+                    else None,
                     "prompt_version": "fixture-prompt",
                     "decided_at": "2026-01-01T04:00:01Z",
                     "status": "provider_error" if case == "error" and name == "candidate" else "ok",
@@ -70,7 +73,7 @@ def source(tmp_path):
                     "latency_ms": "12",
                     "input_tokens": 3,
                     "output_tokens": 2,
-                    "api_cost_usd": ".001",
+                    "api_cost_usd": None if case == "error" and name == "candidate" else ".001",
                 },
             )
         if case in ["loss", "unresolved", "error"]:
@@ -120,6 +123,8 @@ def test_workspace_publishes_consistent_allowlisted_evidence_without_source_writ
         )
     ] == [1, 1, 1, 1, 1]
     assert len(c["outcomes"]) == 2
+    assert c["unknown_cost_decisions"] == 1 and c["cost_total_complete"] is False
+    assert c["returned_models"] == ["synthetic-returned-model"]
     assert body["registered_cases"] == 5 and body["resolved_cases"] == 3
     assert "candidate:unresolved_exits" in body["comparison_blockers"]
 

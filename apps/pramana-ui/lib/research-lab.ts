@@ -8,6 +8,7 @@ export type LabCandidate = {
   decisions: number; errors: number; holds: number; completed_episodes: number;
   unfilled: number; partial_entries: number; unresolved_exits: number;
   missing_decisions: number; pending_buy_outcomes: number;
+  unknown_cost_decisions: number; cost_total_complete: boolean; returned_models: string[];
   completed_case_pnl_inr: string; api_cost_usd: string; total_latency_ms: string;
   model_version: string | null; prompt_version: string | null;
   outcomes: LabOutcome[]; cost_stress: LabStress[];
@@ -22,7 +23,7 @@ export type LabReport = {
   status: "insufficient_evidence"; automatic_promotion: false;
 };
 export type ResearchLabState = {status: "unavailable" | "invalid" | "published"; detail: string; report: LabReport | null};
-const counts = ["decisions", "errors", "holds", "completed_episodes", "unfilled", "partial_entries", "unresolved_exits", "missing_decisions", "pending_buy_outcomes"] as const;
+const counts = ["decisions", "errors", "holds", "completed_episodes", "unfilled", "partial_entries", "unresolved_exits", "missing_decisions", "pending_buy_outcomes", "unknown_cost_decisions"] as const;
 function check(condition: unknown): asserts condition {if (!condition) throw new Error("invalid_research_snapshot");}
 function exact(value: unknown, keys: readonly string[]): asserts value is Record<string, unknown> {
   check(value && typeof value === "object" && !Array.isArray(value));
@@ -61,11 +62,13 @@ export function parseResearchLabReport(raw: string, tenant: string): LabReport {
   check(candidates.length >= 2 && candidates.length <= 16 && Object.hasOwn(r.candidates, String(r.baseline)));
   for (const [name, c] of candidates) {
     check(label(name));
-    exact(c, [...counts, "completed_case_pnl_inr", "api_cost_usd", "total_latency_ms", "model_version", "prompt_version", "outcomes", "cost_stress"]);
+    exact(c, [...counts, "completed_case_pnl_inr", "api_cost_usd", "cost_total_complete", "total_latency_ms", "model_version", "returned_models", "prompt_version", "outcomes", "cost_stress"]);
     for (const k of counts) check(count(c[k]) && Number(c[k]) <= Number(r.registered_cases));
     check(Number(c.decisions) + Number(c.missing_decisions) === r.registered_cases);
     check(Number(c.errors) + Number(c.holds) + Number(c.completed_episodes) + Number(c.unfilled) + Number(c.unresolved_exits) + Number(c.pending_buy_outcomes) === c.decisions);
     check(decimal(c.completed_case_pnl_inr, true) && decimal(c.api_cost_usd) && decimal(c.total_latency_ms));
+    check(c.cost_total_complete === (c.unknown_cost_decisions === 0) && Number(c.unknown_cost_decisions) <= Number(c.decisions));
+    list(c.returned_models, 16); check(c.returned_models.every(label));
     check((c.model_version === null || label(c.model_version)) && (c.prompt_version === null || label(c.prompt_version)));
     list(c.outcomes, 5000);
     const caseIds = new Set<string>();

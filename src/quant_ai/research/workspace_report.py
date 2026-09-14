@@ -24,6 +24,7 @@ COUNTS = (
     "unresolved_exits",
     "missing_decisions",
     "pending_buy_outcomes",
+    "unknown_cost_decisions",
 )
 LIMITATIONS = [
     "Published offline snapshot; not a live feed or independently verified capture.",
@@ -101,8 +102,16 @@ def workspace_snapshot(lab: ResearchLab, experiment: str, tenant: str) -> dict:
             **{key: candidate[key] for key in COUNTS},
             "completed_case_pnl_inr": candidate["completed_case_pnl_inr"],
             "api_cost_usd": candidate["api_cost_usd"],
+            "cost_total_complete": candidate["cost_total_complete"],
             "total_latency_ms": candidate["total_latency_ms"],
             "model_version": versions.get("model_version"),
+            "returned_models": sorted(
+                {
+                    d["returned_model"]
+                    for d in decisions
+                    if isinstance(d.get("returned_model"), str) and d["returned_model"].strip()
+                }
+            ),
             "prompt_version": versions.get("prompt_version"),
             "outcomes": [
                 {key: row[key] for key in ("case_id", "status", "filled_quantity", "net_pnl_inr")}

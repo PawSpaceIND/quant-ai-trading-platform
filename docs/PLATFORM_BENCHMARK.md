@@ -166,3 +166,19 @@ close continuous portfolio backtesting, queue/market-impact simulation, real pro
 comparison, point-in-time data integrity, AI calibration, live/backtest reconciliation
 or the advanced portfolio/factor attribution benchmark gaps. Summed independent-case
 P&L must not be interpreted as portfolio returns or a profitable-model selection.
+
+## Implementation delta — provider and continuous research foundations
+
+Main #52 adds explicit Anthropic/OpenAI comparison adapters with durable paid-request
+receipts, a separate continuous portfolio event journal, later-quote IOC/partial fills,
+cash/exposure/drawdown controls and stale-mark handling. It also adds official NSE RSS
+capture, revision timing and reviewed symbol mappings. These are integrated CLI/API
+foundations; the candidate panel carries incomplete-cost counts and requested/returned
+model identities, while portfolio-journal curves and event mapping controls still need
+dashboard wiring. [Scope and recorded verification](research-provider-portfolios.md).
+
+The upstream record reports a real Claude connection test, missing Astra credentials
+and a timed-out NSE RSS retrieval. The merged regression suite passes, but real paired
+provider performance, forward source capture, source rights and target-host qualification
+are not established. Queue priority, market impact, corporate-action portfolio processing,
+advanced attribution/risk and external broker reconciliation still remain open.

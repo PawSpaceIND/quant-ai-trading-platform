@@ -154,8 +154,11 @@ Research shows candidate coverage and case details, bounded horizontal tables on
 mobile, evidence limitations, and an Atlas question action. Atlas receives and stores
 the same bounded summary, including its source evidence hash; individual case lists
 remain in the dashboard/export. No model is called just by opening a report or
-prefilling a question. This integration does not implement real Claude/Astra comparison
-or validate the reported model identity against a provider.
+prefilling a question. The separate provider adapters can now generate candidate
+decisions; this screen does not initiate those requests. Declared/requested identities
+are shown separately from recorded returned identities. Missing API cost is an
+explicit count and an incomplete known-cost subtotal, including in Atlas context.
+The display does not independently verify provider identities or strategy performance.
 
 `GET /api/research/comparison` downloads the latest validated sanitized report as a
 JSON attachment, behind the existing private-workspace session proxy. No user-selected
@@ -168,3 +171,10 @@ pending and missing-decision cases. It verified desktop/mobile display, Atlas
 prefill, authenticated attachment download, workspace/export equality, rejected
 unauthenticated requests, and unchanged readiness gates after a report was damaged.
 Provider context/persistence was tested with a mocked transport, not a paid API call.
+
+The combined branch also incorporates #52's [provider adapters, continuous portfolio
+journal and company-event evidence](research-provider-portfolios.md). Those modules
+are available through their separate CLI/API workflows. Continuous portfolio curves
+and company-event mapping controls are not yet wired into this comparison panel;
+real two-provider and live NSE-source qualification remain open. The original #51
+limitations above describe its independent-case lab, not absence of the later simulator.

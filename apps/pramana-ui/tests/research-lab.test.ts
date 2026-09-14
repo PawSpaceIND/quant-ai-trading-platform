@@ -18,6 +18,7 @@ function report() {
   const candidate = {
     decisions: 1, errors: 0, holds: 0, completed_episodes: 1, unfilled: 0, partial_entries: 0,
     unresolved_exits: 0, missing_decisions: 0, pending_buy_outcomes: 0,
+    unknown_cost_decisions: 1, cost_total_complete: false, returned_models: ["synthetic-returned-model"],
     completed_case_pnl_inr: "-10", api_cost_usd: "0.001", total_latency_ms: "12",
     model_version: "synthetic-model", prompt_version: "synthetic-prompt",
     outcomes: [{case_id: "loss", status: "completed", filled_quantity: 10, net_pnl_inr: "-10"}],
@@ -46,6 +47,9 @@ test("published report retains loss and coverage evidence without approving a st
   assert.equal(parsed.expected_cases, 2);
   assert.equal(parsed.status, "insufficient_evidence");
   assert.equal(parsed.automatic_promotion, false);
+  assert.equal(parsed.candidates.candidate.unknown_cost_decisions, 1);
+  assert.equal(parsed.candidates.candidate.cost_total_complete, false);
+  assert.deepEqual(parsed.candidates.candidate.returned_models, ["synthetic-returned-model"]);
 });
 
 test("tenant, digest, raw-input fields, false promotion and malformed metrics are rejected", async () => {
@@ -57,6 +61,7 @@ test("tenant, digest, raw-input fields, false promotion and malformed metrics ar
     (r: ReturnType<typeof report>) => Object.assign(r, {raw_packets: "PRIVATE_INPUT"}),
     (r: ReturnType<typeof report>) => Object.assign(r.candidates.candidate, {rationale: "PRIVATE_PROMPT"}),
     (r: ReturnType<typeof report>) => {r.automatic_promotion = true;},
+    (r: ReturnType<typeof report>) => {r.candidates.candidate.cost_total_complete = true;},
     (r: ReturnType<typeof report>) => {r.candidates.candidate.completed_case_pnl_inr = "NaN";},
     (r: ReturnType<typeof report>) => {r.candidates.candidate.missing_decisions = 1;},
     (r: ReturnType<typeof report>) => {r.candidates.candidate.outcomes = [];},
@@ -97,5 +102,6 @@ test("Atlas receives and persists identical bounded comparison context", async (
   assert.equal(context.researchLab.report.candidates.candidate.outcomes, undefined);
   assert(supplied.includes(JSON.stringify(context)));
   assert.equal(context.researchLab.report.automatic_promotion, false);
+  assert.equal(context.researchLab.report.candidates.candidate.cost_total_complete, false);
   delete process.env.ANTHROPIC_API_KEY;
 });

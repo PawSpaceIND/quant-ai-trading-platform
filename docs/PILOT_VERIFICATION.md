@@ -126,3 +126,21 @@ The synthetic browser/CLI drill showed two account trades, one linked trade and 
 - A blob-based download did not yield a browser download event and was replaced with an authenticated attachment endpoint. Final browser attachment download passed. API drill confirmed 401 without a session, 200 with identical dashboard/export content and no private sentinels, and a 503 export for a damaged report while workspace remained 200 and readiness checks were unchanged.
 - Source cloud publisher and Worker ingestion regression tests verify that `researchLab` and operator notes are omitted before transmission/storage. The hosted viewer does not expose the comparison endpoint.
 - All verification used isolated synthetic research/console storage, empty market/ledger paths and a test session key. No live broker, paid provider call, acceptance signature, deployment or strategy promotion occurred. Temporary server and browser tab were stopped/closed.
+
+
+## Further integration of main #52 — 14 September 2026
+
+Main `edeba3a` (provider comparison, continuous portfolio research and NSE event evidence)
+was merged without conflicts. The combined suite passes **474 Python tests**, **29 UI
+tests**, **13 Worker tests**, Ruff and TypeScript; local webpack production build passes.
+The case-report publisher/reader/UI now retains unknown API cost counts, marks the known
+subtotal incomplete, and separates requested from recorded returned model identities.
+The synthetic fixture and consumer tests exercise those fields. A final API drill again
+passed authenticated workspace/export equality, unauthenticated 401 and invalid-file
+isolation. Final mobile inspection showed $0.003000 as incomplete with one unknown-cost
+decision and kept the page within 390px, without console warnings/errors.
+
+#52's real-provider/feed claims are recorded in its upstream verification document;
+this integration did not repeat a paid model call or NSE retrieval. Continuous-journal
+curves and company-event management remain CLI/API workflows pending further dashboard
+integration and external qualification. This is progress toward closure, not full parity.

@@ -17,7 +17,7 @@ export function ResearchComparison({state, onAsk}: {state?: ResearchLabState; on
       </details>
       <div className="research-candidates">{Object.entries(r.candidates).map(([name, c]) => <article className="research-candidate" key={name}>
         <h3>{name}{name === r.baseline && <small> · Baseline</small>}</h3>
-        <p className="footnote">Reported model: {c.model_version || "No decision recorded"} · Prompt: {c.prompt_version || "Unavailable"}</p>
+        <p className="footnote">Declared/requested model: {c.model_version || "No decision recorded"} · Returned identities: {c.returned_models.join(", ") || "Not recorded"} · Prompt: {c.prompt_version || "Unavailable"}</p>
         <dl className="research-stats">
           <div><dt>Completed-case P&amp;L</dt><dd>{inr(c.completed_case_pnl_inr)}</dd></div>
           <div><dt>Completed cases</dt><dd>{c.completed_episodes}</dd></div>
@@ -26,7 +26,8 @@ export function ResearchComparison({state, onAsk}: {state?: ResearchLabState; on
           <div><dt>No-trade decisions</dt><dd>{c.holds}</dd></div>
           <div><dt>Pending buys / unresolved exits</dt><dd>{c.pending_buy_outcomes} / {c.unresolved_exits}</dd></div>
           <div><dt>Unfilled / partial entries</dt><dd>{c.unfilled} / {c.partial_entries}</dd></div>
-          <div><dt>Reported API cost (USD)</dt><dd>${Number(c.api_cost_usd).toFixed(6)}</dd></div>
+          <div><dt>Known API cost subtotal (USD)</dt><dd>${Number(c.api_cost_usd).toFixed(6)}{!c.cost_total_complete && " · Incomplete"}</dd></div>
+          <div><dt>Decisions with unknown cost</dt><dd>{c.unknown_cost_decisions}</dd></div>
           <div><dt>Total reported latency</dt><dd>{(Number(c.total_latency_ms) / 1000).toFixed(2)}s</dd></div>
         </dl>
         <details><summary>Cost sensitivity and execution cases</summary>
