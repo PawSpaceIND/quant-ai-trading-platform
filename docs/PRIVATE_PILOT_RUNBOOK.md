@@ -81,3 +81,8 @@ Before recording strategy acceptance, generate and retain [completed-trade episo
 ## Continuous research publication
 
 Follow the [portfolio research workspace workflow](PORTFOLIO_RESEARCH_WORKSPACE.md) to export an existing continuous journal to a new private report and configure `PRAMANA_PORTFOLIO_RESEARCH_REPORT`. This adds gap-aware candidate curves, holdings/orders, authenticated export and bounded Atlas context. List all experiment/portfolio/event journals, provider receipt directories, published reports and raw input archives in the [schema-2 recovery inventory](RECOVERY_BUNDLE.md). Generic directories do not receive SQLite backup semantics; use the explicit journal kinds. Local restoration is verified, while encrypted off-host and target-host recovery, input qualification and operator acceptance remain required.
+
+
+## Private company announcements
+
+Configure `PRAMANA_COMPANY_EVENTS_DB` with an absolute path to the existing three-table company-event database and include it as `company_events` in the schema-2 recovery inventory. Follow [the company announcement workflow](COMPANY_EVENT_WORKSPACE.md) for Markets search/watchlist, dated revisions, capture failures, mapping review, historical export and scoped Atlas requests. Refresh only reads stored evidence; use the existing `research_extensions.py event-fetch` collector separately. The founder session can append mapping assertions at server time after reviewing the exact instrument reference. Do not share the selected database across tenants with different rights. No mapping revocation or collector scheduler is supplied by this UI. Qualify real target-host collection, coverage, instrument mappings and source rights before relying on this evidence.

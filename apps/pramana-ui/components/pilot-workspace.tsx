@@ -13,6 +13,7 @@ import { portfolioRisk } from "@/lib/portfolio-risk";
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
 import { ResearchComparison } from "./research-comparison";
+import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
@@ -65,6 +66,7 @@ export function PilotWorkspace() {
   const [loading, setLoading] = useState(true);
   const [chat, setChat] = useState(false);
   const [draft, setDraft] = useState("");
+  const [companyAsOf, setCompanyAsOf] = useState<string | undefined>();
   const [halt, setHalt] = useState(false);
   const [reason, setReason] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
@@ -108,7 +110,8 @@ export function PilotWorkspace() {
     url.searchParams.set("view", id);
     window.history.replaceState(null, "", url);
   }
-  function ask(q: string) {
+  function ask(q: string, eventCutoff?: string) {
+    setCompanyAsOf(eventCutoff);
     if (hosted) {
       setNotice(
         "This hosted snapshot is read-only. Use the authenticated engine workspace for Atlas and operator controls.",
@@ -454,6 +457,7 @@ export function PilotWorkspace() {
                       onAsk={ask}
                     />
                     <News data={data} />
+                    {!hosted && <CompanyEventsPanel state={data.companyEvents} symbols={data.market.rows.map(r => r.symbol).filter(s => /^NSE:[A-Z0-9][A-Z0-9&._-]{0,35}$/.test(s))} favorites={favorites} onAsk={ask} onRefresh={refresh} />}
                   </>
                 )}
                 {view === "portfolio" && (
@@ -612,6 +616,8 @@ export function PilotWorkspace() {
                   </button>
                   <CopilotPanel
                     draft={draft}
+                    companyAsOf={companyAsOf}
+                    onFullWorkspace={() => setCompanyAsOf(undefined)}
                     onDraft={setDraft}
                     configured={data.copilotConfigured}
                   />

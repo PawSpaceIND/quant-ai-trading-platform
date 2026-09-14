@@ -165,4 +165,9 @@ Sources: [OpenAI structured output documentation](https://developers.openai.com/
 
 ## Private workspace integration in PR #50
 
-The continuous journal now has a [read-only publication and dashboard workflow](PORTFOLIO_RESEARCH_WORKSPACE.md), with candidate equity/drawdown curves, preserved gaps, holdings, fills/orders, authenticated export and bounded Atlas context. Synthetic arithmetic and desktop/mobile/API verification pass. This updates the earlier CLI-only status; company-event mapping UI and real two-provider/live-source qualification remain unfinished. [Recovery schema 2](RECOVERY_BUNDLE.md) now supports the explicitly selected research journals, published files and provider receipts; complete deployment inventory and off-host/target-host restoration remain unqualified.
+The continuous journal now has a [read-only publication and dashboard workflow](PORTFOLIO_RESEARCH_WORKSPACE.md), with candidate equity/drawdown curves, preserved gaps, holdings, fills/orders, authenticated export and bounded Atlas context. Synthetic arithmetic and desktop/mobile/API verification pass. This updates the earlier CLI-only status; the company-event UI is now connected as described below; real two-provider/live-source qualification remains unfinished. [Recovery schema 2](RECOVERY_BUNDLE.md) now supports the explicitly selected research journals, published files and provider receipts; complete deployment inventory and off-host/target-host restoration remain unqualified.
+
+
+## Private company-event workspace
+
+The [announcement workflow](COMPANY_EVENT_WORKSPACE.md) now connects the same store to Markets: search/watchlist, revision/capture history, historical cutoff, append-only mapping review, export and cutoff-scoped Atlas. Python and Node eligibility agree on synthetic cases. A newer unmapped correction suppresses the old mapped revision and equally recent conflicting revisions are withheld. The browser records mapping time on the server; it cannot backdate reviews. This closes initial UI wiring, not mapping revocation, independent source/mapping certification or real feed/provider qualification.

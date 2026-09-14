@@ -192,3 +192,8 @@ Continuous journal research now has an authenticated dashboard: separate candida
 ## Implementation delta — research-state recovery
 
 Schema 2 recovery now preserves explicitly selected research journals, raw company-event captures/mappings, provider receipts, reports and input archives alongside operational state. Supported research reports must replay identically after restore, and a pending receipt continues blocking an automatic paid retry. This improves operational continuity behind the research workflow. It does not qualify research inputs, prove target-host disaster recovery or supply missing broker, advanced risk or attribution capabilities. [Evidence and limitations](RECOVERY_BUNDLE.md). The earlier local research-state recovery gap is superseded for selected sources; deployment-wide inventory and off-host acceptance remain open.
+
+
+## Implementation delta — dated company announcement workspace
+
+Company disclosures now have search, saved-watchlist filtering, revision/capture history, cutoff views, append-only mapping review, private export and cutoff-scoped Atlas requests. A later unmapped correction cannot resurrect older mapped content, and equal-time conflicts are withheld. The initial company-event UI gap is superseded by [synthetic engineering/browser/API verification](COMPANY_EVENT_WORKSPACE.md). This adds source inspection and research interaction; it does not supply Bloomberg PORT corporate-action accounting, financial statements, factor/return attribution, complete point-in-time archives or independently qualified company facts. Mapping revocation, real NSE collection/coverage, source rights and prospective provider qualification remain open.

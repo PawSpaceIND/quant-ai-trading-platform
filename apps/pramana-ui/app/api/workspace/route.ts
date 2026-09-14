@@ -3,6 +3,7 @@ import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
 import { readResearchLab } from "@/lib/research-lab";
 import { readPortfolioResearch } from "@/lib/research-portfolio";
+import {readCompanyEvents} from "@/lib/company-events";
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -133,6 +134,7 @@ export async function GET() {
         research: readResearch(),
         researchLab: readResearchLab(),
         researchPortfolio: readPortfolioResearch(),
+        companyEvents: readCompanyEvents(),
         performance: perf,
         strategyObservation,
         intelligence: latestSwarmIntelligence(),

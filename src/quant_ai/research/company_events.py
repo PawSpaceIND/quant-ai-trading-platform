@@ -11,7 +11,8 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import quote, urlparse
 from xml.etree import ElementTree
 
 import httpx
@@ -103,14 +104,19 @@ def parse_feed(raw, observed_at):
 
 
 class CompanyEvents:
-    def __init__(self, path):
-        self.db = sqlite3.connect(path)
+    def __init__(self, path, *, readonly=False):
+        self.db = sqlite3.connect(
+            "file:" + quote(str(Path(path).resolve()), safe="/") + "?mode=ro", uri=True
+        ) if readonly else sqlite3.connect(path)
         tables = {
             r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        if tables and tables != {"event_revisions", "feed_captures", "symbol_mappings"}:
+        if (tables or readonly) and tables != {"event_revisions", "feed_captures", "symbol_mappings"}:
             self.db.close()
             raise ValueError("not_an_event_database")
+        if readonly:
+            self.db.execute("PRAGMA query_only=ON")
+            return
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS event_revisions (digest TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS feed_captures (id TEXT PRIMARY KEY, body TEXT NOT NULL, raw BLOB);
@@ -213,7 +219,7 @@ class CompanyEvents:
             when = instant(at)
             if when <= cutoff and (title not in mappings or when > mappings[title][0]):
                 mappings[title] = (when, mapped, provenance)
-        latest = {}
+        latest, ambiguous = {}, set()
         for (encoded,) in self.db.execute("SELECT body FROM event_revisions"):
             event = json.loads(encoded)
             original = {
@@ -225,18 +231,24 @@ class CompanyEvents:
             seen = instant(event["first_seen_at"])
             if seen > cutoff or instant(event["published_at"]) > cutoff:
                 continue
-            mapping = mappings.get(event["title"])
-            if mapping is None or mapping[1] != symbol:
-                continue
             key = event["guid"]
             # Corrections with the same GUID supersede only from their own first-seen time.
-            if key in latest and instant(latest[key]["first_seen_at"]) >= seen:
+            if key in latest:
+                previous = instant(latest[key]["first_seen_at"])
+                if previous == seen:
+                    ambiguous.add(key)
+                    continue
+                if previous > seen:
+                    continue
+            latest[key] = event
+            ambiguous.discard(key)
+        mapped = []
+        for key, event in latest.items():
+            mapping = mappings.get(event["title"])
+            if key in ambiguous or mapping is None or mapping[1] != symbol:
                 continue
-            latest[key] = {
-                **event,
-                "mapping_at": mapping[0].isoformat(),
-                "mapping_provenance": mapping[2],
-            }
+            mapped.append({**event, "mapping_at": mapping[0].isoformat(),
+                           "mapping_provenance": mapping[2]})
         return [
             {
                 "id": "nse-event:" + e["revision_sha256"],
@@ -247,7 +259,7 @@ class CompanyEvents:
                 "data": e,
             }
             for e in sorted(
-                latest.values(), key=lambda e: (e["first_seen_at"], e["revision_sha256"])
+                mapped, key=lambda e: (e["first_seen_at"], e["revision_sha256"])
             )
         ]
 

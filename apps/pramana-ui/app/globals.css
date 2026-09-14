@@ -1461,3 +1461,24 @@ td .pill {
     transition: none !important;
   }
 }
+
+/* Company evidence remains readable alongside its time and source qualifications. */
+.event-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 18px 0; }
+.event-controls label, .event-mapping label { display: grid; gap: 8px; min-width: 0; }
+.event-controls input, .event-mapping select, .event-mapping textarea { max-width: 100%; box-sizing: border-box; color: var(--text); background: #12202a; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.event-controls a, .event-detail a { color: #a5e6c4; }
+.event-workspace { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.2fr); gap: 22px; }
+.event-list { display: grid; gap: 8px; }
+.event-list button { display: grid; gap: 8px; text-align: left; white-space: normal; width: 100%; }
+.event-list button[aria-pressed="true"] { border-color: #a5e6c4; background: #234139; }
+.event-list span { font-size: 12px; color: var(--muted); }
+.event-detail, .event-detail p, .company-events-panel code { min-width: 0; overflow-wrap: anywhere; }
+.event-detail { padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
+.event-detail dl { display: grid; gap: 8px; font-size: 13px; }
+.event-detail dd { margin: 0 0 8px; }
+.event-detail dt { color: var(--muted); }
+.event-mapping form { display: grid; gap: 14px; margin: 16px 0; }
+.event-mapping textarea { min-height: 90px; resize: vertical; }
+.event-confirm { display: flex !important; flex-direction: row; align-items: center; gap: 8px; font-size: 13px; }
+.event-ask { margin-top: 20px; white-space: normal; }
+@media(max-width: 900px) { .event-workspace { grid-template-columns: minmax(0, 1fr); } .event-controls label { max-width: 100%; } }

@@ -1,0 +1,249 @@
+{
+  "event_revisions": [
+    [
+      "0ba2341f8fa010290badcd70fbd0d208d5b736fed6b4465ed4b0ac3eff1cc2a5",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 10\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:01:00+00:00\",\"guid\":\"example-10\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"0ba2341f8fa010290badcd70fbd0d208d5b736fed6b4465ed4b0ac3eff1cc2a5\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 10 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "0ca91bc7d3d093204376cc3529800d76172d02a7e07de4031513a4d390af94f0",
+      "{\"capture_kind\":\"imported\",\"description\":\"Company renamed\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:30+00:00\",\"guid\":\"one\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"0ca91bc7d3d093204376cc3529800d76172d02a7e07de4031513a4d390af94f0\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Renamed Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "3135c80f85e3311e434da1aff321ac645996eee7625b1fa36c922a9d50f64537",
+      "{\"capture_kind\":\"imported\",\"description\":\"Conflicting A\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:40+00:00\",\"guid\":\"conflict\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"3135c80f85e3311e434da1aff321ac645996eee7625b1fa36c922a9d50f64537\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Infosys Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "49d08ea0de8a3f72becea69b01e7da7cb69fabc1b27d8c83d6ee22431e23a24f",
+      "{\"capture_kind\":\"imported\",\"description\":\"Conflicting B\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:40+00:00\",\"guid\":\"conflict\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"49d08ea0de8a3f72becea69b01e7da7cb69fabc1b27d8c83d6ee22431e23a24f\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Infosys Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "4f398d0f223468b0b45b2e1fd51f99572f54e202e51fbc37afef3b0314c6ab73",
+      "{\"capture_kind\":\"imported\",\"description\":\"Corrected disclosure\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:20+00:00\",\"guid\":\"one\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"4f398d0f223468b0b45b2e1fd51f99572f54e202e51fbc37afef3b0314c6ab73\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Infosys Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "6567275be42a0ec97d257d3c487e6a53cc00b45290a0cf2f9d255a900d92cd18",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 11\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:01:01+00:00\",\"guid\":\"example-11\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"6567275be42a0ec97d257d3c487e6a53cc00b45290a0cf2f9d255a900d92cd18\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 11 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "705b73c84f69b9cbb2b48aba00bc4281742c46bf9b821246a5516045196eb206",
+      "{\"capture_kind\":\"imported\",\"description\":\"Unicode \\u20b9 \\u0ba4\\u0bae\\u0bbf\\u0bb4\\u0bcd \\ud83e\\uddea\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:01:10+00:00\",\"guid\":\"unicode\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"705b73c84f69b9cbb2b48aba00bc4281742c46bf9b821246a5516045196eb206\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Infosys Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "732bd3dac905d6fb05609f91505e0d260c8b1092165ae4da5084f55ab8152044",
+      "{\"capture_kind\":\"imported\",\"description\":\"Original disclosure\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:10+00:00\",\"guid\":\"one\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"732bd3dac905d6fb05609f91505e0d260c8b1092165ae4da5084f55ab8152044\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Infosys Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "7454ac05a89a7aa6d6275a1c04857cfcce503f09218fc2da679f64b105c8f683",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 0\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:50+00:00\",\"guid\":\"example-0\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"7454ac05a89a7aa6d6275a1c04857cfcce503f09218fc2da679f64b105c8f683\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 00 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "74569b5cb1a8039190d91e9bd8d8452bb52b37edb3ff8a62e5bc05f8efaeaf3e",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 4\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:54+00:00\",\"guid\":\"example-4\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"74569b5cb1a8039190d91e9bd8d8452bb52b37edb3ff8a62e5bc05f8efaeaf3e\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 04 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "7ddbf96d7694f255f49229dbbe71ca6688bc0ad311d17a18008136986228f870",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 5\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:55+00:00\",\"guid\":\"example-5\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"7ddbf96d7694f255f49229dbbe71ca6688bc0ad311d17a18008136986228f870\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 05 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "a3c92d85105a2be11568d4a4d8b895377f6c802c904341bcc455aa55d302202d",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 1\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:51+00:00\",\"guid\":\"example-1\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"a3c92d85105a2be11568d4a4d8b895377f6c802c904341bcc455aa55d302202d\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 01 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "a502c58147bd887e6ba109b16addda479c7a045d22dbd32012924b24adf251cb",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 8\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:58+00:00\",\"guid\":\"example-8\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"a502c58147bd887e6ba109b16addda479c7a045d22dbd32012924b24adf251cb\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 08 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "aaa4c16e620e55655272c9db9a5c0b6f92af08e4e2e9e38fa7924df494a4522a",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 9\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:59+00:00\",\"guid\":\"example-9\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"aaa4c16e620e55655272c9db9a5c0b6f92af08e4e2e9e38fa7924df494a4522a\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 09 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "c57f72d371e8b75f9391c7702f758f26c1451caa5fe21043b38e83e9c0e83bc8",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 3\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:53+00:00\",\"guid\":\"example-3\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"c57f72d371e8b75f9391c7702f758f26c1451caa5fe21043b38e83e9c0e83bc8\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 03 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "c9af0a00dfced7a8c52be4b441ae198da4e822f313bd28ec6e7119a1993ddc91",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 7\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:57+00:00\",\"guid\":\"example-7\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"c9af0a00dfced7a8c52be4b441ae198da4e822f313bd28ec6e7119a1993ddc91\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 07 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "e6ad905f33165accd24a454cbeb299912ed5dbcb0b6bfdd24e54000a1d6a9c6d",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 2\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:52+00:00\",\"guid\":\"example-2\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"e6ad905f33165accd24a454cbeb299912ed5dbcb0b6bfdd24e54000a1d6a9c6d\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 02 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ],
+    [
+      "f1b8cd9d15e84722125d0d702a66f3d95b2cf46ecf9addfecd4f703dbc6784cf",
+      "{\"capture_kind\":\"imported\",\"description\":\"Synthetic company statement 6\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"first_seen_at\":\"2026-01-01T04:00:56+00:00\",\"guid\":\"example-6\",\"published_at\":\"2026-01-01T04:00:00+00:00\",\"revision_sha256\":\"f1b8cd9d15e84722125d0d702a66f3d95b2cf46ecf9addfecd4f703dbc6784cf\",\"source_url\":\"https://nsearchives.nseindia.com/a.pdf\",\"title\":\"Example 06 Limited\",\"verification\":\"official_feed_disclosure_unverified_content\"}"
+    ]
+  ],
+  "feed_captures": [
+    [
+      "09dda0890076e08f1a4288d1887fea266c1dff554314d103cf26618b5a4b996e",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:40+00:00\",\"raw_sha256\":\"9c556b647510743610f76c6c9477c0cf41d09372435baaa0d8043fa01eea8ff9\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+SW5mb3N5cyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5jb25mbGljdDwvZ3VpZD48cHViRGF0ZT5UaHUsIDAxIEphbiAyMDI2IDA0OjAwOjAwICswMDAwPC9wdWJEYXRlPjxkZXNjcmlwdGlvbj5Db25mbGljdGluZyBCPC9kZXNjcmlwdGlvbj48L2l0ZW0+PC9jaGFubmVsPjwvcnNzPg=="
+    ],
+    [
+      "119534f5404292667712716b1414cd34c19c6533ca7767572e705967e885ca37",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:10+00:00\",\"raw_sha256\":\"ab12df45349511651c08c9eed7d47992170cc2231fe2da190af3c2ae70a7027e\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+SW5mb3N5cyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5vbmU8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+T3JpZ2luYWwgZGlzY2xvc3VyZTwvZGVzY3JpcHRpb24+PC9pdGVtPjwvY2hhbm5lbD48L3Jzcz4="
+    ],
+    [
+      "144d14fd817110046841af4df2792e37bef566c8fb70453f0257f468ac54c897",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:59+00:00\",\"raw_sha256\":\"28911551537784de7be7bc9c0be57a8b53710af3ced75fde5de23335185a2858\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwOSBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTk8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDk8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "14ef49b84dc36d250da96004c26cf640f194668af9752e0279d2fbeb1f9a78cb",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:40+00:00\",\"raw_sha256\":\"c9d48e5f1dac07258d404a1d8b9995eaea031595f059cac9f22b941334e74065\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+SW5mb3N5cyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5jb25mbGljdDwvZ3VpZD48cHViRGF0ZT5UaHUsIDAxIEphbiAyMDI2IDA0OjAwOjAwICswMDAwPC9wdWJEYXRlPjxkZXNjcmlwdGlvbj5Db25mbGljdGluZyBBPC9kZXNjcmlwdGlvbj48L2l0ZW0+PC9jaGFubmVsPjwvcnNzPg=="
+    ],
+    [
+      "52c87bec875acd752761f856e9ef6206bb86c753e8d47871dbd41122babd0026",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:54+00:00\",\"raw_sha256\":\"de9cf70196ab501e6b5841826eb84c24d90ff2f406d9594c1029cd6ae7b45096\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwNCBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTQ8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDQ8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "65dccd701ecc8d72d3340fd46c4fb016d6b4d6cf5bb40eb54074967f3494975e",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:53+00:00\",\"raw_sha256\":\"011f2359a717a4108ac2bf8b4c283e0ff8fedfb690166c7b9d652fad17f609ba\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwMyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTM8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDM8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "6d92ad9ec24969cda9545e048ccb22702ce9498fcf85b11cf59d09ee335278fc",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:52+00:00\",\"raw_sha256\":\"970253e4a6510b1bf82f1398cebb3e8253d96ace456ec8f4729be1f70445df01\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwMiBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTI8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDI8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "7c595713fdceddb40fcbaf515e9a2d8303323b712fd85ab81ee49bfa1d18c5ab",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:01:01+00:00\",\"raw_sha256\":\"d3307f548c412201069904d5c9bb1eed74b96c52299d71b67ef677ac0d284667\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAxMSBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTExPC9ndWlkPjxwdWJEYXRlPlRodSwgMDEgSmFuIDIwMjYgMDQ6MDA6MDAgKzAwMDA8L3B1YkRhdGU+PGRlc2NyaXB0aW9uPlN5bnRoZXRpYyBjb21wYW55IHN0YXRlbWVudCAxMTwvZGVzY3JpcHRpb24+PC9pdGVtPjwvY2hhbm5lbD48L3Jzcz4="
+    ],
+    [
+      "8361c9dae7a22ebf9dc62685f619a6979ba355b784d08029996112f1f9b119d4",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:57+00:00\",\"raw_sha256\":\"db5613808729cdaab15b9d40f17d352b33972a8c4b67db65da6e5512a776f451\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwNyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTc8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDc8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "867bfd85797f712c4935903a9f605410150e67670b76017d73d19ea7a2af6902",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:30+00:00\",\"raw_sha256\":\"74c929220721ef77c4be5804097fac7062c9754f3619330b73473f3695967a20\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+UmVuYW1lZCBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5vbmU8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+Q29tcGFueSByZW5hbWVkPC9kZXNjcmlwdGlvbj48L2l0ZW0+PC9jaGFubmVsPjwvcnNzPg=="
+    ],
+    [
+      "890608822644a66b12383eed54b839cff6f224568e8d97810bf5891dde57f8ac",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:55+00:00\",\"raw_sha256\":\"8f5203956f3373239798b5ad606efc45a4f17fbc78941fd1a3965591efbf5b51\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwNSBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTU8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDU8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "8e202f57af242f6b9cd26c44752bc6df570a9889b8058c8d6fa9e2fd0b9021cb",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:56+00:00\",\"raw_sha256\":\"a061642dac83ac02b500e6de7183a81ee89d4203e7b690ebfc8239480f61feec\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwNiBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTY8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDY8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "b3af4db8149fc547fe8215833bc051d5b145eaea95f2fec4de298d66c57cb3ec",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:51+00:00\",\"raw_sha256\":\"4a6e53938013731c3a3fff7bd6692a22b11cf09514538c4e597c3d000e22f81c\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwMSBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTE8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDE8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "cbdd036d307d06368405f77de608d9346112402bde313c5aae346609a818beaf",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:50+00:00\",\"raw_sha256\":\"5e4bfaa59f16b46ba476a0e864487379ea8eaae7c915d5d8308f20c94aa9bd7e\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwMCBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTA8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDA8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "cbe2c127423c5c3093da07b91aacbc5611e8baffa74a6e66820d5f87567bed75",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:20+00:00\",\"raw_sha256\":\"ef6678dcfc933df98070aa2589a990e83473c9ce76431309f15c43f3ad12d910\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+SW5mb3N5cyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5vbmU8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+Q29ycmVjdGVkIGRpc2Nsb3N1cmU8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ],
+    [
+      "d9d66ff84aa13eea03541a04a8a499f3f307452e10ff153c07244ea830236c5f",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:01:00+00:00\",\"raw_sha256\":\"4c6e0f8111a7b955ddec519f30bbb63db7f9b725b1003afa27d4430414085cf6\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAxMCBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTEwPC9ndWlkPjxwdWJEYXRlPlRodSwgMDEgSmFuIDIwMjYgMDQ6MDA6MDAgKzAwMDA8L3B1YkRhdGU+PGRlc2NyaXB0aW9uPlN5bnRoZXRpYyBjb21wYW55IHN0YXRlbWVudCAxMDwvZGVzY3JpcHRpb24+PC9pdGVtPjwvY2hhbm5lbD48L3Jzcz4="
+    ],
+    [
+      "e43ef288eaf3bb47cc14b3164383a4eb4f58f923dea24527604152251bef934e",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:01:10+00:00\",\"raw_sha256\":\"10375fc3650e2af84d5bd4fa47e919789ad68a77d9d23c263809db4dc7af9b63\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+SW5mb3N5cyBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD51bmljb2RlPC9ndWlkPjxwdWJEYXRlPlRodSwgMDEgSmFuIDIwMjYgMDQ6MDA6MDAgKzAwMDA8L3B1YkRhdGU+PGRlc2NyaXB0aW9uPlVuaWNvZGUg4oK5IOCupOCuruCuv+CutOCvjSDwn6eqPC9kZXNjcmlwdGlvbj48L2l0ZW0+PC9jaGFubmVsPjwvcnNzPg=="
+    ],
+    [
+      "f09f8a3244567360807dd8d995059c146042360f7a1703b1bf132a8cc749675a",
+      "{\"capture_kind\":\"direct_https\",\"error_type\":\"ReadTimeout\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:01:20+00:00\",\"status\":\"error\"}",
+      null
+    ],
+    [
+      "ff3aabd8dabedb211ccb09c0564c08c542c3ed265bcb7c6f83cc3647e7edd721",
+      "{\"accepted\":1,\"capture_kind\":\"imported\",\"feed_url\":\"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml\",\"observed_at\":\"2026-01-01T04:00:58+00:00\",\"raw_sha256\":\"4fbfc835cfeaf2067860b747354c40985ebabc45ebb623cc0a6d0ae54c815a10\",\"rejected\":[],\"status\":\"ok\"}",
+      "PHJzcz48Y2hhbm5lbD48aXRlbT48dGl0bGU+RXhhbXBsZSAwOCBMaW1pdGVkPC90aXRsZT48bGluaz5odHRwczovL25zZWFyY2hpdmVzLm5zZWluZGlhLmNvbS9hLnBkZjwvbGluaz48Z3VpZD5leGFtcGxlLTg8L2d1aWQ+PHB1YkRhdGU+VGh1LCAwMSBKYW4gMjAyNiAwNDowMDowMCArMDAwMDwvcHViRGF0ZT48ZGVzY3JpcHRpb24+U3ludGhldGljIGNvbXBhbnkgc3RhdGVtZW50IDg8L2Rlc2NyaXB0aW9uPjwvaXRlbT48L2NoYW5uZWw+PC9yc3M+"
+    ]
+  ],
+  "symbol_mappings": [
+    [
+      "Infosys Limited",
+      "2026-01-01T04:00:11+00:00",
+      "NSE:INFY",
+      "SYNTHETIC_REFERENCE"
+    ]
+  ],
+  "pythonAsOfSources": {
+    "2026-01-01T04:00:10+00:00": [],
+    "2026-01-01T04:00:12+00:00": [
+      {
+        "id": "nse-event:732bd3dac905d6fb05609f91505e0d260c8b1092165ae4da5084f55ab8152044",
+        "available_at": "2026-01-01T04:00:11+00:00",
+        "provenance": "https://nsearchives.nseindia.com/a.pdf",
+        "data": {
+          "capture_kind": "imported",
+          "description": "Original disclosure",
+          "feed_url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+          "first_seen_at": "2026-01-01T04:00:10+00:00",
+          "guid": "one",
+          "published_at": "2026-01-01T04:00:00+00:00",
+          "revision_sha256": "732bd3dac905d6fb05609f91505e0d260c8b1092165ae4da5084f55ab8152044",
+          "source_url": "https://nsearchives.nseindia.com/a.pdf",
+          "title": "Infosys Limited",
+          "verification": "official_feed_disclosure_unverified_content",
+          "mapping_at": "2026-01-01T04:00:11+00:00",
+          "mapping_provenance": "SYNTHETIC_REFERENCE"
+        }
+      }
+    ],
+    "2026-01-01T04:00:25+00:00": [
+      {
+        "id": "nse-event:4f398d0f223468b0b45b2e1fd51f99572f54e202e51fbc37afef3b0314c6ab73",
+        "available_at": "2026-01-01T04:00:20+00:00",
+        "provenance": "https://nsearchives.nseindia.com/a.pdf",
+        "data": {
+          "capture_kind": "imported",
+          "description": "Corrected disclosure",
+          "feed_url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+          "first_seen_at": "2026-01-01T04:00:20+00:00",
+          "guid": "one",
+          "published_at": "2026-01-01T04:00:00+00:00",
+          "revision_sha256": "4f398d0f223468b0b45b2e1fd51f99572f54e202e51fbc37afef3b0314c6ab73",
+          "source_url": "https://nsearchives.nseindia.com/a.pdf",
+          "title": "Infosys Limited",
+          "verification": "official_feed_disclosure_unverified_content",
+          "mapping_at": "2026-01-01T04:00:11+00:00",
+          "mapping_provenance": "SYNTHETIC_REFERENCE"
+        }
+      }
+    ],
+    "2026-01-01T04:00:35+00:00": [],
+    "2026-01-01T04:00:45+00:00": [],
+    "2026-01-01T04:01:30+00:00": [
+      {
+        "id": "nse-event:705b73c84f69b9cbb2b48aba00bc4281742c46bf9b821246a5516045196eb206",
+        "available_at": "2026-01-01T04:01:10+00:00",
+        "provenance": "https://nsearchives.nseindia.com/a.pdf",
+        "data": {
+          "capture_kind": "imported",
+          "description": "Unicode \u20b9 \u0ba4\u0bae\u0bbf\u0bb4\u0bcd \ud83e\uddea",
+          "feed_url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+          "first_seen_at": "2026-01-01T04:01:10+00:00",
+          "guid": "unicode",
+          "published_at": "2026-01-01T04:00:00+00:00",
+          "revision_sha256": "705b73c84f69b9cbb2b48aba00bc4281742c46bf9b821246a5516045196eb206",
+          "source_url": "https://nsearchives.nseindia.com/a.pdf",
+          "title": "Infosys Limited",
+          "verification": "official_feed_disclosure_unverified_content",
+          "mapping_at": "2026-01-01T04:00:11+00:00",
+          "mapping_provenance": "SYNTHETIC_REFERENCE"
+        }
+      }
+    ]
+  }
+}

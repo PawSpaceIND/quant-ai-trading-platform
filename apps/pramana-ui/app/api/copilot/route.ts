@@ -31,10 +31,14 @@ export async function POST(req: NextRequest) {
       throw new Error("Conversation not found");
     if (body.id && !/^[\w-]{36}$/.test(body.id))
       throw new Error("Invalid request ID");
+    if (body.companyAsOf !== undefined && typeof body.companyAsOf !== "string")
+      throw new Error("Invalid company evidence cutoff");
     const row = await generateAnswer(
       body.prompt.trim(),
       body.parentId,
       body.id,
+      undefined,
+      body.companyAsOf,
     );
     return NextResponse.json(row);
   } catch (e) {

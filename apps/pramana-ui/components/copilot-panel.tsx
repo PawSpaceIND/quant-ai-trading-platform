@@ -5,10 +5,14 @@ export function CopilotPanel({
   draft,
   onDraft,
   configured,
+  companyAsOf,
+  onFullWorkspace,
 }: {
   draft: string;
   onDraft: (s: string) => void;
   configured: boolean;
+  companyAsOf?: string;
+  onFullWorkspace?: () => void;
 }) {
   const [history, setHistory] = useState<Conversation[]>([]);
   const [active, setActive] = useState<Conversation | null>(null);
@@ -66,6 +70,7 @@ export function CopilotPanel({
           prompt,
           parentId: active?.id,
           id: crypto.randomUUID(),
+          companyAsOf,
         }),
       });
       const d = await r.json();
@@ -96,9 +101,10 @@ export function CopilotPanel({
         Ask about your portfolio, market evidence or launch readiness.
       </p>
       <div className="copilot-context">
-        <span className="dot" /> Portfolio + market + decision proofs{" "}
+        <span className="dot" /> {companyAsOf ? "Company disclosures at selected cutoff" : "Portfolio + market + decision proofs"}{" "}
         <span>Read only</span>
       </div>
+      {companyAsOf && <div className="research-notice"><p>Company evidence through {new Date(companyAsOf).toLocaleString()}. Current workspace and earlier chat are excluded from this review.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       <div className="chat-body" aria-live="polite">
         {active ? (
           <>

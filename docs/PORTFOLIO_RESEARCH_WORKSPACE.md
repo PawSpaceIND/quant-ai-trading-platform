@@ -45,3 +45,6 @@ A synthetic 71-event browser/API drill contained 34 quote events, 35 order event
 Unauthenticated workspace/export returned 401. Authenticated export matched the workspace report. Damaging the report returned 503 for export while workspace remained 200, readiness checks unchanged. Synthetic source evidence SHA-256: `122945bcfc1f22b1f003f5e0711ec57842c7ab3ff74185af8f24045196f576a3`; replay/publisher source fingerprint: `a4dd2c1fdef91ad7434cca58b4eefde4859814b367711e247b0fb2f63d7bb2b9`.
 
 All current verification used isolated synthetic stores and an empty provider key. No paid API request, market-source fetch, real broker order, acceptance signature or deployment occurred. The temporary server and browser tab were stopped/closed. Real prospective replay qualification, company-event dashboard integration, paired-provider performance and target-host operations remain open. The subsequent schema-2 recovery implementation closes the local selected-research capture/restore gap, with external recovery qualification still required.
+
+
+The subsequent [company announcement workspace](COMPANY_EVENT_WORKSPACE.md) supersedes the company-event dashboard integration item above. It is verified on synthetic evidence; source and mapping qualification remain open.
