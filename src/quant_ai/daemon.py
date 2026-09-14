@@ -407,27 +407,28 @@ def _required_env(name: str) -> str:
 def _env_intelligence_providers() -> tuple[
     NewsSentimentProvider, FundamentalDataProvider, MacroIndicatorProvider
 ]:
-    """Real news/macro adapters when configured; sandbox otherwise, and say so loudly."""
-    logger = logging.getLogger("quant_ai.ghost_runner")
+    """Production providers return missing data when unavailable, never sandbox opinions."""
+    from quant_ai.intelligence.failover import (
+        FailoverFundamentalProvider,
+        FailoverMacroProvider,
+        FailoverNewsProvider,
+        ProviderCategory,
+        ProviderFailoverRegistry,
+    )
+
+    registry = ProviderFailoverRegistry()
     client = ResilientHttpClient(UrllibTransport())
     feeds = tuple(item.strip() for item in os.getenv("PRAMANA_NEWS_RSS_URLS", "").split(",") if item.strip())
     if feeds:
-        news: NewsSentimentProvider = RssNewsSentimentAdapter(client, feeds)
-    else:
-        news = SandboxNewsSentimentProvider()
-        logger.warning("news provider: SANDBOX constants (set PRAMANA_NEWS_RSS_URLS for real headlines)")
+        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds))
     fred_key = os.getenv("FRED_API_KEY", "").strip()
     if fred_key:
-        macro: MacroIndicatorProvider = FredMacroProvider(client, fred_key)
-    else:
-        macro = SandboxMacroIndicatorProvider()
-        logger.warning("macro provider: SANDBOX constants (set FRED_API_KEY for real indicators)")
-    fundamentals: FundamentalDataProvider = SandboxFundamentalDataProvider()
-    logger.warning(
-        "fundamentals provider: SANDBOX constants (no licensed fundamentals adapter is configured; "
-        "valuation agents abstain on symbols the sandbox does not know)"
+        registry.register(ProviderCategory.MACRO, FredMacroProvider(client, fred_key))
+    return (
+        FailoverNewsProvider(registry),
+        FailoverFundamentalProvider(registry),
+        FailoverMacroProvider(registry),
     )
-    return news, fundamentals, macro
 
 
 def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
