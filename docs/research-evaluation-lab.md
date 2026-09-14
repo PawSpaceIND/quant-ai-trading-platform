@@ -175,6 +175,7 @@ Provider context/persistence was tested with a mocked transport, not a paid API 
 The combined branch also incorporates #52's [provider adapters, continuous portfolio
 journal and company-event evidence](research-provider-portfolios.md). Those modules
 are available through their separate CLI/API workflows. Continuous portfolio curves
-and company-event mapping controls are not yet wired into this comparison panel;
-real two-provider and live NSE-source qualification remain open. The original #51
+now have a separate [private Research panel](PORTFOLIO_RESEARCH_WORKSPACE.md).
+Company-event mapping controls, real two-provider and live NSE-source qualification
+remain open. The original #51
 limitations above describe its independent-case lab, not absence of the later simulator.

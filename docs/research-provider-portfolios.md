@@ -161,3 +161,8 @@ Sources: [OpenAI structured output documentation](https://developers.openai.com/
 - Temporary merge with PR #50 at 3900aa9ff70d0706ae913a6b41b1183ae53a7f5b
   was conflict-free; the combined Python suite passed all 448 tests. The temporary
   merge was discarded after verification; PR #50's branch was not modified.
+
+
+## Private workspace integration in PR #50
+
+The continuous journal now has a [read-only publication and dashboard workflow](PORTFOLIO_RESEARCH_WORKSPACE.md), with candidate equity/drawdown curves, preserved gaps, holdings, fills/orders, authenticated export and bounded Atlas context. Synthetic arithmetic and desktop/mobile/API verification pass. This updates the earlier CLI-only status; company-event mapping UI, real two-provider/live-source qualification and complete research-state recovery remain unfinished.

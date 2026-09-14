@@ -182,3 +182,8 @@ and a timed-out NSE RSS retrieval. The merged regression suite passes, but real 
 provider performance, forward source capture, source rights and target-host qualification
 are not established. Queue priority, market impact, corporate-action portfolio processing,
 advanced attribution/risk and external broker reconciliation still remain open.
+
+
+## Implementation delta — continuous portfolio research workspace
+
+Continuous journal research now has an authenticated dashboard: separate candidate portfolios, event-ordered equity/drawdown curves, visible valuation gaps, current holdings, fees, fills, outstanding orders, export and Atlas context. [Evidence and publication](PORTFOLIO_RESEARCH_WORKSPACE.md). This is a verified synthetic workflow on the simulator described above. It is not independently qualified live/backtest reconciliation, factor attribution, multi-asset risk or licensed point-in-time data. Company-event UI, real paired-provider/source qualification and recovery of all research journals remain open. Earlier sections describe their historical implementation stage; this section supersedes the outstanding continuous-curve UI item only.

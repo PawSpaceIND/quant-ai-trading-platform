@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
 import requests
 
 CONFIG = Path.home() / ".config/pramana/cloud-web.json"
@@ -33,6 +34,7 @@ def publish():
             raise ValueError("Workspace tenant mismatch")
         detail["audit"] = []  # Operator notes remain on the engine host.
         detail.pop("researchLab", None)  # Experiment comparisons stay in the private engine UI.
+        detail.pop("researchPortfolio", None)  # Portfolio journals remain private research evidence.
         snapshots["/api/workspace"] = detail
     elif workspace.status_code != 404:
         workspace.raise_for_status()
@@ -57,7 +59,7 @@ if __name__ == "__main__":
             try:
                 publish()
                 print("Paper snapshot published", flush=True)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 — Keep the publisher loop alive; log no secrets.
                 print("Snapshot unavailable:", type(error).__name__, flush=True)
             if "--once" in __import__("sys").argv:
                 break

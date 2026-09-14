@@ -7,13 +7,19 @@ import hashlib
 import json
 import sqlite3
 from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote
 
 from quant_ai.research.lab import canonical, identity, instant, integer, number
 
 
 def validate_config(config):
     candidates = config["candidates"]
-    if not candidates or len(candidates) != len(set(candidates)):
+    if (
+        not isinstance(candidates, list)
+        or not candidates
+        or len(candidates) != len(set(candidates))
+    ):
         raise ValueError("distinct_candidates_required")
     for c in candidates:
         identity(c)
@@ -26,8 +32,13 @@ def validate_config(config):
             raise ValueError("invalid_risk_limit")
     for field in ("max_quote_age_seconds", "order_ttl_seconds", "max_order_quantity"):
         integer(config[field], positive=True)
-    if not config["symbols"] or any(
-        not s.startswith("NSE:") or len(s) <= 4 for s in config["symbols"]
+    if (
+        not isinstance(config["symbols"], list)
+        or not config["symbols"]
+        or any(
+            not isinstance(s, str) or not s.startswith("NSE:") or len(s) <= 4
+            for s in config["symbols"]
+        )
     ):
         raise ValueError("nse_cash_symbols_required")
     if len(config["symbols"]) != len(set(config["symbols"])):
@@ -256,15 +267,38 @@ def replay(config, events):
 class PortfolioJournal:
     """Separate, append-only SQLite journal; deterministic replay reconstructs all state."""
 
-    def __init__(self, path, config):
-        validate_config(config)
-        self.db = sqlite3.connect(path)
+    def __init__(self, path, config=None, *, readonly=False):
+        self.readonly = readonly
+        if readonly:
+            uri = "file:" + quote(str(Path(path).resolve()), safe="/") + "?mode=ro"
+            self.db = sqlite3.connect(uri, uri=True)
+        else:
+            if config is None:
+                raise ValueError("simulation_config_required")
+            validate_config(config)
+            self.db = sqlite3.connect(path)
         tables = {
             r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        if tables and tables != {"simulation_config", "simulation_events"}:
+        expected = {"simulation_config", "simulation_events"}
+        if (tables and tables != expected) or (readonly and tables != expected):
             self.db.close()
             raise ValueError("not_a_simulation_database")
+        if readonly:
+            try:
+                self.db.execute("PRAGMA query_only=ON")
+                rows = self.db.execute("SELECT id,body FROM simulation_config").fetchall()
+                if len(rows) != 1 or rows[0][0] != 1:
+                    raise ValueError("simulation_config_missing")
+                stored = json.loads(rows[0][1])
+                validate_config(stored)
+                if config is not None and canonical(config) != canonical(stored):
+                    raise ValueError("simulation_config_changed")
+                self.config = copy.deepcopy(stored)
+                return
+            except Exception:
+                self.db.close()
+                raise
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS simulation_config (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT);
             CREATE TABLE IF NOT EXISTS simulation_events (id TEXT PRIMARY KEY, seq INTEGER UNIQUE,
@@ -282,16 +316,24 @@ class PortfolioJournal:
         self.db.close()
 
     def events(self):
+        rows = self.db.execute("SELECT id,body FROM simulation_config").fetchall()
+        if len(rows) != 1 or rows[0][0] != 1 or rows[0][1] != canonical(self.config):
+            raise ValueError("simulation_config_changed")
         result = []
-        for body, digest in self.db.execute(
-            "SELECT body,digest FROM simulation_events ORDER BY seq"
+        for event_id, seq, body, digest in self.db.execute(
+            "SELECT id,seq,body,digest FROM simulation_events ORDER BY seq"
         ):
             if hashlib.sha256(body.encode()).hexdigest() != digest:
                 raise ValueError("event_integrity_failure")
-            result.append(json.loads(body))
+            event = json.loads(body)
+            if seq != len(result) or event.get("id") != event_id:
+                raise ValueError("event_sequence_or_identity_failure")
+            result.append(event)
         return result
 
     def append(self, event):
+        if self.readonly:
+            raise ValueError("readonly_simulation")
         encoded = canonical(event)
         with self.db:
             self.db.execute("UPDATE simulation_config SET id=id WHERE id=1")
@@ -311,4 +353,18 @@ class PortfolioJournal:
             return report
 
     def report(self):
-        return replay(self.config, self.events())
+        body = self.export_evidence()["body"]
+        return replay(body["config"], body["events"])
+
+    def export_evidence(self):
+        """Consistent private snapshot; the caller must retain its hash independently."""
+        self.db.execute("SAVEPOINT portfolio_evidence")
+        try:
+            body = {
+                "schema": "pramana.portfolio_journal.v1",
+                "config": copy.deepcopy(self.config),
+                "events": self.events(),
+            }
+            return {"sha256": hashlib.sha256(canonical(body).encode()).hexdigest(), "body": body}
+        finally:
+            self.db.execute("RELEASE portfolio_evidence")

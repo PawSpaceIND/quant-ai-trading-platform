@@ -152,3 +152,13 @@ was absent after a clean install. The publisher privacy test failed before its m
 could run (473 passed / 1 failed). `requests>=2.32,<3` is now declared in the project
 runtime dependencies; the publisher regression is retained. Final CI is checked
 on the subsequent committed revision, rather than reusing the earlier local result.
+
+
+## Continuous portfolio workspace — 14 September 2026
+
+- Combined regression: **485 Python tests**, **33 UI tests**, **13 Worker tests**, Ruff and TypeScript pass. The webpack production build passed again after fixing duplicate compact Y-axis labels on a flat cash curve. Two existing Starlette deprecation warnings remain; final GitHub CI is recorded against the committed revision separately.
+- Read-only snapshot/source integrity, independent cash/fee/partial-fill/expiration arithmetic, stale gaps and gap-triggered buy halt/allowed exits pass. Consumer tests reject tenant/hash/schema/current-value/gap/chronology corruption and preserve nulls in bounded outbound and persisted mocked Atlas context. Publisher and Worker tests exclude private portfolio evidence.
+- Synthetic browser fixture: 71 events, 34 quotes, 35 orders, 32 fills, four missing valuations, one pending order and three cancellations. Active equity/return/current drawdown remained unavailable; cash-only equity was ₹1,000 with zero return. These are plumbing fixtures, not strategy outcomes.
+- Desktop 1280/1280 and mobile 390/390 viewport/document widths; mobile chart 324px. Drawdown SVG retained two separate segments across the internal gap. Fills paginated 25 then 7 rows. Candidate/chart switches, authenticated attachment download, correct selected-candidate Atlas prefill and mobile close passed. Final console: no warnings/errors. No provider message was sent.
+- API: unauthenticated workspace/export 401, authenticated attachment 200 identical to workspace report with no private sentinels; damaged report isolated as invalid with export 503 while workspace stayed 200 and readiness checks were unchanged. Original fixture restored.
+- Test server/tab stopped/closed and viewport reset. No deployment, real order, paid provider call or signed acceptance. Source hash, publication instructions and remaining research recovery limitations are in [the portfolio workspace record](PORTFOLIO_RESEARCH_WORKSPACE.md).
