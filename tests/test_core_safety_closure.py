@@ -4,7 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
-from quant_ai.agents.swarm import TradeProposal
+from quant_ai.agents.swarm import AgentAnalysisRequest, TradeProposal
+from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.backtest.costs import CostModel
 from quant_ai.backtest.replay import ReplayEngine
 from quant_ai.backtesting.replay import HistoricalReplayDataset, HistoricalReplayHarness
@@ -17,11 +18,16 @@ from quant_ai.domain.models import (
     RiskMode,
     Side,
 )
+from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.providers import MacroSnapshot
-from quant_ai.intelligence.regime import MarketRegime, MarketRegimeDetector, RegimeAssessment
+from quant_ai.intelligence.regime import (
+    MarketRegime,
+    MarketRegimeDetector,
+    RegimeAssessment,
+)
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
     SandboxMacroIndicatorProvider,
@@ -31,7 +37,7 @@ from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
 from quant_ai.marketdata.models import Candle
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.portfolio.sizing import PositionSizer
-from quant_ai.risk.policy import RiskFirewall
+from quant_ai.risk.policy import RiskFirewall, RiskPolicy
 from quant_ai.risk.warden import RiskWarden
 from quant_ai.strategies.base import StrategySignal
 
@@ -64,6 +70,20 @@ def buy_order(*, target: Decimal = Decimal(110)) -> OrderIntent:
         "default",
         Decimal(95),
         target,
+    )
+
+
+def held_portfolio(quantity: int = 10) -> PortfolioSnapshot:
+    exposure = Decimal(100 * quantity)
+    return PortfolioSnapshot(
+        Decimal(100000),
+        Decimal(0),
+        exposure,
+        Decimal(100000),
+        symbol_exposure={"AAPL": exposure},
+        asset_exposure={AssetClass.EQUITY: exposure},
+        symbol_quantity={"AAPL": quantity},
+        country_exposure={"USA": exposure},
     )
 
 
@@ -134,6 +154,61 @@ def test_country_limit_never_blocks_pure_covered_exit() -> None:
         ("add",),
     )
     assert RiskWarden().evaluate(buy, plan(), held).reason == "country_allocation_limit"
+
+
+def test_blocked_asset_class_never_traps_a_covered_exit() -> None:
+    firewall = RiskFirewall(RiskPolicy(blocked_asset_classes=(AssetClass.EQUITY,)))
+    sell = OrderIntent(
+        "AAPL",
+        Market.USA,
+        Side.SELL,
+        10,
+        Decimal(100),
+        "exit",
+        AssetClass.EQUITY,
+        "default",
+        Decimal(105),
+        Decimal(90),
+    )
+    assert firewall.evaluate(sell, held_portfolio()).approved
+    assert firewall.evaluate(buy_order(), held_portfolio()).reason == "asset_class_blocked"
+
+
+def test_kill_switch_never_traps_a_covered_exit() -> None:
+    broker = PaperBrokerService(":memory:", starting_capital=Decimal(100000))
+    broker.buy(buy_order())
+    runtime = SwarmPaperTradingService(broker=broker, xai_logger=XAITraceLogger())
+    runtime.kill_switch.engage("operator halt")
+    proposal = TradeProposal(
+        "covered-exit",
+        "AAPL",
+        Market.USA,
+        "USA",
+        AssetClass.EQUITY,
+        Side.SELL,
+        10,
+        Decimal(100),
+        Decimal(105),
+        Decimal(90),
+        Decimal(1),
+        Decimal(0),
+        Decimal(0),
+        ("de-risk",),
+    )
+    request = AgentAnalysisRequest("AAPL", Market.USA, AssetClass.EQUITY, NOW, {})
+
+    result = runtime._execute_proposal(
+        request,
+        (),
+        proposal,
+        plan(),
+        held_portfolio(),
+        {"USA": Decimal(1000)},
+        "default",
+    )
+
+    assert result.fill is not None
+    assert broker.get_positions("default") == ()
 
 
 def test_file_backed_risk_state_survives_restart_and_rolls_day(tmp_path) -> None:
