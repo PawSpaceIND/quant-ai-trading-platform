@@ -122,6 +122,22 @@ class SwarmMarketAnalysisPipeline:
             return 0
         return max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
 
+    def _protective_levels(
+        self,
+        plan: CapitalPlan,
+        reference_price: Decimal,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Price protection so bounded execution friction cannot invert reward geometry."""
+        if reference_price <= 0:
+            return None, None
+        stop = reference_price * (Decimal(1) - plan.stop_loss_fraction)
+        worst_entry = self.runtime.broker.friction_model.worst_case_execution_price(
+            reference_price, Side.BUY
+        )
+        risk_distance = max(Decimal(0), worst_entry - stop)
+        take_profit = worst_entry + risk_distance * plan.reward_risk_ratio
+        return stop, take_profit
+
     def run(
         self,
         instrument: Instrument,
@@ -219,16 +235,7 @@ class SwarmMarketAnalysisPipeline:
             quantity, effective_plan, portfolio, reference_price
         )
         effective_quantity = self._apply_conflict(requested_quantity, conflict)
-        stop = (
-            reference_price * (Decimal(1) - effective_plan.stop_loss_fraction)
-            if reference_price > 0
-            else None
-        )
-        take_profit = (
-            reference_price * (Decimal(1) + effective_plan.take_profit_fraction)
-            if reference_price > 0
-            else None
-        )
+        stop, take_profit = self._protective_levels(effective_plan, reference_price)
         execution = self.runtime.execute(
             root_request,
             evidence,
@@ -353,16 +360,7 @@ class SwarmMarketAnalysisPipeline:
             quantity, effective_plan, portfolio, reference_price
         )
         effective_quantity = self._apply_conflict(requested_quantity, conflict)
-        stop = (
-            reference_price * (Decimal(1) - effective_plan.stop_loss_fraction)
-            if reference_price > 0
-            else None
-        )
-        take_profit = (
-            reference_price * (Decimal(1) + effective_plan.take_profit_fraction)
-            if reference_price > 0
-            else None
-        )
+        stop, take_profit = self._protective_levels(effective_plan, reference_price)
         execution = await self.runtime.execute_async(
             root_request,
             evidence,
