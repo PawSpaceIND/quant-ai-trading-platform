@@ -64,6 +64,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  runComparison?: import("./run-comparison-model").RunComparisonState;
   brokerObservation?: import("./broker-observation").BrokerObservationState;
   benchmarkPerformance?: import("./benchmark-comparison").AccountBenchmarkState;
   historicalRisk?: HistoricalRiskState;

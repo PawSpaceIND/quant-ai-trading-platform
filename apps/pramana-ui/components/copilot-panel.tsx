@@ -8,6 +8,7 @@ export function CopilotPanel({
   configured,
   companyAsOf,
   brokerCapture,
+  runComparisonSha256,
   onFullWorkspace,
 }: {
   draft: string;
@@ -15,6 +16,7 @@ export function CopilotPanel({
   configured: boolean;
   companyAsOf?: string;
   brokerCapture?: BrokerSelection;
+  runComparisonSha256?:string;
   onFullWorkspace?: () => void;
 }) {
   const [history, setHistory] = useState<Conversation[]>([]);
@@ -75,6 +77,7 @@ export function CopilotPanel({
           id: crypto.randomUUID(),
           companyAsOf,
           brokerCapture,
+          runComparisonSha256,
         }),
       });
       const d = await r.json();
@@ -105,9 +108,10 @@ export function CopilotPanel({
         Ask about your portfolio, market evidence or launch readiness.
       </p>
       <div className="copilot-context">
-        <span className="dot" /> {brokerCapture ? "Selected broker capture and preceding history" : companyAsOf ? "Company disclosures at selected cutoff" : "Portfolio + market + decision proofs"}{" "}
+        <span className="dot" /> {runComparisonSha256 ? "Selected paper versus replay report" : brokerCapture ? "Selected broker capture and preceding history" : companyAsOf ? "Company disclosures at selected cutoff" : "Portfolio + market + decision proofs"}{" "}
         <span>Read only</span>
       </div>
+      {runComparisonSha256 && <div className="research-notice"><p>Only the selected historical run comparison is included. Current workspace and earlier chat are excluded.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       {brokerCapture && <div className="research-notice"><p>Broker capture #{brokerCapture.sequence}. Later captures, current workspace and earlier chat are excluded from this review.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       {companyAsOf && <div className="research-notice"><p>Company evidence through {new Date(companyAsOf).toLocaleString()}. Current workspace and earlier chat are excluded from this review.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       <div className="chat-body" aria-live="polite">

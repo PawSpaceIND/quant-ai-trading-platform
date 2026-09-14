@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       undefined,
       body.companyAsOf,
       body.brokerCapture,
+      body.runComparisonSha256,
     );
     return NextResponse.json(row);
   } catch (e) {

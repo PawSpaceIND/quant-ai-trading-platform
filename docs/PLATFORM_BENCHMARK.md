@@ -235,3 +235,7 @@ Explicit external reads now preserve account/contract identity and fractional qu
 ## Retained external observation history
 
 The private Activity workspace now retains and replays selected Kite daily-book captures, including partial completion, missing/changed executions and earlier discrepancies after recovery. Historical export and Atlas are bound to a selected capture, and selected schema 2 recovery verifies replay continuity. This improves broker evidence review but does not provide acknowledged order management, complete event delivery, cash/position reconciliation or QuantConnect live-versus-backtest parity. [Implementation and precise limits](BROKER_LIFECYCLE_HISTORY.md).
+
+## Implementation delta — paired paper/replay diagnostics
+
+Research now displays a selected recorded-paper/historical-replay equity comparison with fill markers, explicit missing-minute/skew diagnostics and configuration differences. Retained run provenance, private export/Atlas and replay-ledger recovery are connected. [Precise contract](RUN_COMPARISON.md). This partially advances QuantConnect's equity/fill reconciliation workflow; it does not establish a parallel same-strategy OOS backtest, authentic provider inputs or real broker reconciliation. IBKR multi-asset/Greeks/margin, Bloomberg sector/factor attribution and TradingView-qualified real intrabar inputs remain separate open capabilities.

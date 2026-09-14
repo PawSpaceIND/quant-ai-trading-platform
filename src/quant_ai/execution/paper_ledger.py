@@ -716,7 +716,7 @@ class PaperBrokerService(BrokerAdapter):
         for entry in self.cost_entries(tenant_id):
             totals[entry.code] = totals.get(entry.code, Decimal(0)) + entry.amount
         return totals
-    def record_replay_valuation(self, timestamp: str, payload: str, tenant_id: str) -> None:
+    def record_replay_valuation(self, timestamp: str, payload: str, tenant_id: str, run_id: str | None = None) -> None:
         """Persist one complete replay valuation without altering trading state."""
         with self._lock, self._connection:
             self._connection.execute(
@@ -739,6 +739,12 @@ class PaperBrokerService(BrokerAdapter):
                    ledger_id=excluded.ledger_id, payload=excluded.payload""",
                 (tenant_id, timestamp, ledger_id, payload),
             )
+            if run_id is not None:
+                run = self._connection.execute("SELECT tenant_id,status FROM paper_replay_runs WHERE run_id=?", (run_id,)).fetchone()
+                if run is None or tuple(run) != (tenant_id, "running"):
+                    raise ValueError("replay_run_not_active_for_tenant")
+                sequence = self._connection.execute("SELECT coalesce(max(sequence),0)+1 FROM paper_replay_run_points WHERE run_id=?", (run_id,)).fetchone()[0]
+                self._connection.execute("INSERT INTO paper_replay_run_points VALUES (?,?,?,?)", (run_id, sequence, ledger_id, payload))
 
     def flush(self) -> None:
         with self._lock:

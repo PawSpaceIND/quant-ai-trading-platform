@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -53,6 +53,7 @@ class HistoricalReplayResult:
     final_snapshot: PortfolioSnapshot
     intrabar_exits: tuple[dict, ...] = ()
     protection_model: str = "not_simulated"
+    replay_run_id: str | None = None
 
 
 class HistoricalMarketDataFeed(MarketDataFeed):
@@ -155,8 +156,15 @@ class HistoricalReplayHarness:
 
     def run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
         self._validate(dataset)
+        self._run_evidence = None
         try:
-            return self._run(dataset)
+            result = self._run(dataset)
+            self._run_evidence.finish("complete")
+            return replace(result, replay_run_id=self._run_evidence.run_id)
+        except BaseException:
+            if self._run_evidence is not None:
+                self._run_evidence.finish("failed")
+            raise
         finally:
             self.broker.set_friction_context(None)
 
@@ -172,6 +180,8 @@ class HistoricalReplayHarness:
             HistoricalMacroProvider(dataset.macro),
             runtime=runtime,
         )
+        from quant_ai.backtesting.run_evidence import ReplayRunEvidence
+        self._run_evidence = ReplayRunEvidence(self, dataset, pipeline)
         instrument = dataset.bars[0].instrument
         tracker = PortfolioTracker(self.broker, feed, tenant_id=self.tenant_id)
         curve: list[Decimal] = []
@@ -335,6 +345,7 @@ class HistoricalReplayHarness:
             timestamp.isoformat(),
             json.dumps(payload, allow_nan=False),
             self.tenant_id,
+            self._run_evidence.run_id,
         )
 
     @staticmethod

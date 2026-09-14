@@ -80,3 +80,7 @@ Company mapping withdrawals use a reserved empty-symbol journal row without chan
 
 
 The deployment example now explicitly selects the source market snapshot as a schema-2 generic file, preserving the history behind private risk reports. Custom dashboard/report/event paths must be reflected in the selected inventory, and the collector must be stopped for capture. This does not add automatic inventory discovery or qualify off-host recovery. [Feature/source configuration](DEPLOYMENT_WIRING.md).
+
+## Retained historical harness runs
+
+The additional `replay_ledger` kind snapshots a separate historical paper-broker database, verifies its fixed pilot table inventory, all-row hashes, retained run hashes and completed INR/NSE cash source capture. Failed/running/invalid runs remain distinguishable and unqualified. Select the published comparison and original datasets separately as `file`/`directory` entries. This preserves committed WAL evidence through SQLite backup and rejects changed run metadata/points or original fill/fee prefixes. It does not qualify source authenticity, strategy equivalence or off-host operational readiness. [Publication and scope](RUN_COMPARISON.md).

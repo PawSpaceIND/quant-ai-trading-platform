@@ -18,6 +18,7 @@ import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
 import type {BrokerSelection} from "@/lib/broker-lifecycle";
 import {BrokerObservation} from "./broker-observation";
+import {RunComparison} from "./run-comparison";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
@@ -72,6 +73,7 @@ export function PilotWorkspace() {
   const [chat, setChat] = useState(false);
   const [draft, setDraft] = useState("");
   const [brokerCapture,setBrokerCapture]=useState<BrokerSelection|undefined>(undefined);
+  const [runComparisonSha256,setRunComparisonSha256]=useState<string|undefined>(undefined);
   const [companyAsOf, setCompanyAsOf] = useState<string | undefined>();
   const [halt, setHalt] = useState(false);
   const [reason, setReason] = useState("");
@@ -116,7 +118,8 @@ export function PilotWorkspace() {
     url.searchParams.set("view", id);
     window.history.replaceState(null, "", url);
   }
-  function ask(q: string, eventCutoff?: string, broker?:BrokerSelection) {
+  function ask(q: string, eventCutoff?: string, broker?:BrokerSelection, comparisonSha?:string) {
+    setRunComparisonSha256(comparisonSha);
     setCompanyAsOf(eventCutoff);
     setBrokerCapture(broker);
     if (hosted) {
@@ -483,6 +486,7 @@ export function PilotWorkspace() {
                     <ResearchPanel data={data} />
                     <ResearchComparison state={data.researchLab} onAsk={ask} />
                     <ResearchPortfolio state={data.researchPortfolio} onAsk={ask} />
+                    {!hosted && <RunComparison key={data.runComparison?.sha256} state={data.runComparison} onAsk={(prompt,sha)=>ask(prompt,undefined,undefined,sha)} />}
                     <TradeEvidencePanel data={data} onAsk={ask} />
                     <section className="panel">
                       <div className="panel-title">
@@ -630,7 +634,8 @@ export function PilotWorkspace() {
                     draft={draft}
                     companyAsOf={companyAsOf}
                     brokerCapture={brokerCapture}
-                    onFullWorkspace={() => {setCompanyAsOf(undefined);setBrokerCapture(undefined);}}
+                    runComparisonSha256={runComparisonSha256}
+                    onFullWorkspace={() => {setCompanyAsOf(undefined);setBrokerCapture(undefined);setRunComparisonSha256(undefined);}}
                     onDraft={setDraft}
                     configured={data.copilotConfigured}
                   />

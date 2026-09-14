@@ -1,3 +1,4 @@
+import {runComparisonContext} from "./run-comparison";
 import {validBrokerSelection,type BrokerSelection} from "./broker-lifecycle";
 import {brokerObservationContext} from "./broker-observation";
 import {companyEventsContext} from "./company-events";
@@ -54,14 +55,17 @@ export async function generateAnswer(
   transport: typeof fetch = fetch,
   companyAsOf?: string,
   brokerCapture?: BrokerSelection,
+  runComparisonSha256?:string,
 ) {
+  if(runComparisonSha256!==undefined&&(typeof runComparisonSha256!=="string"||!/^[a-f0-9]{64}$/.test(runComparisonSha256)||companyAsOf!==undefined||brokerCapture!==undefined))throw new Error("Select one valid run comparison");
   if(brokerCapture!==undefined&&(!validBrokerSelection(brokerCapture)||companyAsOf!==undefined))throw new Error("Select one valid broker capture or company cutoff");
   if (companyAsOf !== undefined && (companyAsOf.length > 50 || !/(Z|[+-]\d\d:\d\d)$/.test(companyAsOf) || !Number.isFinite(Date.parse(companyAsOf)) || Date.parse(companyAsOf) > Date.now() + 1000))
     throw new Error("Invalid company evidence cutoff");
   const existing = conversations(id)[0];
   if (existing) return existing;
   const selectedBroker=brokerCapture?brokerObservationContext(brokerCapture):undefined;
-  const context = companyAsOf ? {
+  const selectedRun=runComparisonSha256?runComparisonContext(runComparisonSha256):undefined;
+  const context = runComparisonSha256 ? {asOf:selectedRun!.asOf,mode:"run_comparison_review",runComparison:selectedRun,limitations:"Only the bound historical diagnostic. Current workspace and earlier conversations are excluded; same-strategy and OOS qualification are unverified."} : companyAsOf ? {
     asOf: companyAsOf,
     mode: "company_disclosure_review",
     companyEvents: companyEventsContext(companyAsOf),
@@ -92,6 +96,7 @@ export async function generateAnswer(
       strategyObservation,
       researchLab: researchLabContext(),
       researchPortfolio: portfolioResearchContext(),
+      runComparison: runComparisonContext(),
       companyEvents: companyEventsContext(),
       performance: perf,
       intelligence: latestSwarmIntelligence(),
@@ -129,7 +134,7 @@ export async function generateAnswer(
       throw new Error(
         "Claude is not configured. Add the API key on the server to enable conversation.",
       );
-    const parent = !companyAsOf && !brokerCapture && parentId ? conversations(parentId)[0] : undefined;
+    const parent = !companyAsOf && !brokerCapture && !runComparisonSha256 && parentId ? conversations(parentId)[0] : undefined;
     const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
     if (parent?.status === "complete" && parent.answer) {
       messages.push(

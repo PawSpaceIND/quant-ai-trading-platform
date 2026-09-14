@@ -22,6 +22,7 @@ class TearSheet:
     trades: int
     protection_model: str = "not_simulated"
     intrabar_exits: tuple[dict, ...] = ()
+    replay_run_id: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -62,6 +63,7 @@ def build_tearsheet(
         len(result.order_ids),
         result.protection_model,
         result.intrabar_exits,
+        result.replay_run_id,
     )
 
 

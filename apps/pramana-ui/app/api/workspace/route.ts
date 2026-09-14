@@ -1,3 +1,4 @@
+import {readRunComparison} from "@/lib/run-comparison";
 import {readBrokerObservation} from "@/lib/broker-observation";
 import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy-evidence";
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
@@ -143,6 +144,7 @@ export async function GET() {
         research: readResearch(),
         researchLab: readResearchLab(),
         researchPortfolio: readPortfolioResearch(),
+        runComparison: readRunComparison(),
         companyEvents: readCompanyEvents(),
         performance: perf,
         strategyObservation,

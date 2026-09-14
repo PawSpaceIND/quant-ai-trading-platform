@@ -322,6 +322,23 @@ def main():
             wait_for(lambda history_ui=history_ui: run("docker", "exec", history_ui, "node", "-e",
                 "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "broker history dashboard startup")
             report["checks"].append(json.loads(run("docker", "exec", history_ui, "node", "/qa/broker_journal_smoke.mjs")))
+        paired = json.loads(run("docker", "exec", engine, "python", "/qa/run_comparison_fixture.py", "--directory", "/data/run-comparison"))
+        assert paired["points"] == 70 and paired["gaps"] == 3
+        for phase, filename in [("run-comparison", "gapped.json"), ("run-comparison-restored", "gapped-restored.json")]:
+            if phase == "run-comparison-restored":
+                report["checks"].append(json.loads(run("docker", "exec", engine, "python", "/qa/run_comparison_fixture.py", "--directory", "/data/run-comparison", "--restore")))
+            paired_ui = name + "-" + phase
+            run("docker", "run", "-d", "--name", paired_ui, *shared,
+                *environment("dashboard", PRAMANA_TENANT_ID="default",
+                    PRAMANA_LEDGER_PATH="/data/run-comparison/paper.sqlite",
+                    PRAMANA_MARKET_SNAPSHOT="/data/run-comparison/no-market.json",
+                    PRAMANA_CONSOLE_DB="/data/run-comparison/console.sqlite",
+                    PRAMANA_RUN_COMPARISON="/data/run-comparison/" + filename,
+                    RUN_COMPARISON_PHASE=phase), image_ui)
+            created_containers.append(paired_ui)
+            wait_for(lambda paired_ui=paired_ui: run("docker", "exec", paired_ui, "node", "-e",
+                "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "run comparison dashboard startup")
+            report["checks"].append(json.loads(run("docker", "exec", paired_ui, "node", "/qa/run_comparison_smoke.mjs")))
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"
