@@ -124,3 +124,5 @@ P04/P30 now handle recent comparisons on accounts with longer retained histories
 ## Implementation delta — current-state freshness
 
 Current runtime, feed, portfolio, manifest, reconciliation and market-collector evidence is now aged at read time. Engine ticks require a current paper heartbeat, accepted source timestamp and unique instrument identity; held marks and cached workspace claims expire independently. Markets shows per-instrument age and rejection reasons, while expired current claims fail closed and historical reports remain dated. [Freshness contract and bounds](FRESHNESS.md). This closes stale-flag and stale-cache ambiguity in the pilot UI; real-session continuity, host-clock and target-host acceptance remain open.
+
+The external launch gates now have a fail-closed evidence preflight. X01 real-feed observation, X02 target-host burn-in/recovery and X03 AI strategy effectiveness each require attached evidence, reviewer, release revision, target host and timezone-aware observation time; missing evidence cannot be interpreted as acceptance. [Runbook command](PRIVATE_PILOT_RUNBOOK.md). This adds accountability without enabling live execution.

@@ -141,3 +141,11 @@ Use the explicit comparison window described in [RUN_COMPARISON.md](RUN_COMPARIS
 Open Markets and review the **Engine feed observations** panel. Every instrument must show a current engine heartbeat, an accepted source timestamp no older than 120 seconds and a unique identity. `Unrecorded`, `Future timestamp`, `Tick expired`, `Engine did not accept this tick` and `Duplicate instrument` are blocking evidence reasons. Collector rows do not qualify engine ticks. Review the portfolio mark timestamps separately; any stale or degraded held mark blocks a current valuation claim. [Freshness bounds and UI behavior](FRESHNESS.md).
 
 The workspace refreshes every five seconds, but polling does not revive old evidence. If the expired-workspace banner appears, stop current readiness or P&L interpretation, refresh the authenticated source and recheck the engine heartbeat, manifest, protection and reconciliation clocks. Historical research may still be reviewed with its original date. The pilot remains paper-only until the open-session, independent-alert, target-host, soak and strategy gates are signed.
+
+Record those external gates in a reviewed JSON document and run the fail-closed preflight before acceptance:
+
+```sh
+python scripts/pilot_ops.py pilot-check --evidence /data/reviews/external-gates.json
+```
+
+The command requires X01/X02/X03 evidence, a target host, exact release revision, reviewer, timezone-aware observation time and non-empty evidence attachments. It reports `liveExecutionEnabled: false` and exits non-zero for any missing or invalid item. This records acceptance evidence; it does not enable live orders.
