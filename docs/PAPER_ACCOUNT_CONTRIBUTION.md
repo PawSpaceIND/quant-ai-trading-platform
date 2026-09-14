@@ -63,6 +63,8 @@ Full verification passes **517 Python**, **52 UI** and **13 Worker** tests, CI-s
 
 The final compiled browser run observed a successful contribution download and no console warnings/errors. Atlas conversation `eab48f19-3873-4110-a7a4-2098e730a134` persisted the partial-mark report: 50 rows, five explicitly omitted rows, one unavailable row placed first, and all-account totals with current net P&L null. An intentionally empty provider key produced the expected visible configuration error and zero provider calls. The temporary browser tab and isolated server were stopped after verification.
 
+The first hosted CI build exposed a deployment-copy issue: private tests still imported API routes deliberately removed from the static viewer. The cloud packaging script now omits the test directory from that copy, while the separate full UI CI job retains test type-checking and execution. The local static export passes with this packaging correction; no runtime authentication or test source was removed.
+
 ## Benchmark boundary
 
 IBKR documents integrated holdings, performance/activity reporting and benchmark attribution. This increment advances the account-consistency and instrument/cost contribution part of that comparison. [IBKR PortfolioAnalyst features](https://www.interactivebrokers.com/en/portfolioanalyst/features.php).
