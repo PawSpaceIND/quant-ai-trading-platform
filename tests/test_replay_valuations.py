@@ -3,12 +3,12 @@ import sqlite3
 from decimal import Decimal
 
 import pytest
-
 from test_friction_replay import _dataset
+
 from quant_ai.backtesting.replay import HistoricalReplayHarness
+from quant_ai.domain.models import RiskMode
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
-from quant_ai.domain.models import RiskMode
 
 
 def test_replay_valuations_survive_close_and_match_every_bar(tmp_path):
