@@ -30,6 +30,7 @@ class PilotTelemetry:
     def publish(self, now: datetime) -> dict:
         daemon = self.daemon
         with self.broker._lock, self.broker._connection:
+            daemon.check_protection_coverage(now)
             metrics = daemon.tracker.metrics(now)
             positions = self.broker.get_positions(daemon.tenant_id)
             instruments = {item.symbol: item for item in daemon.instruments}
@@ -100,6 +101,7 @@ class PilotTelemetry:
                 "watchlist": watchlist, "protectionIntervalSeconds": 1,
                 "strategyManifest": daemon.strategy_manifest.summary if daemon.strategy_manifest else None,
                 "strategyEvidence": strategy_evidence,
+                "protectionCoverage": daemon.protection_coverage,
                 "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
                     if key not in {"episodes", "openPositions", "strategyAttribution"}}
                     if daemon.trade_evidence and daemon.trade_evidence["ledgerId"] == ledger_id else None),

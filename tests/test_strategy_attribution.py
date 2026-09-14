@@ -47,7 +47,8 @@ def governed(broker, config, side=Side.BUY, quantity=1, price=100, *, protective
         "sourceCheckAgeSeconds": 0,
     }
     order = OrderIntent(
-        "INFY", Market.INDIA, side, quantity, D(price), "synthetic-attribution", tenant_id="pilot"
+        "INFY", Market.INDIA, side, quantity, D(price), "synthetic-attribution", tenant_id="pilot",
+        stop_price=D(95) if side == Side.BUY else None
     )
     if protective:
         return broker.sell_protected(

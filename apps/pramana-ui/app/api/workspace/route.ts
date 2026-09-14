@@ -12,6 +12,7 @@ import { readMarket } from "@/lib/market";
 import {historicalRisk} from "@/lib/historical-risk";
 import { latestSwarmIntelligence } from "@/lib/proofs";
 import { readRuntime, performance } from "@/lib/pilot";
+import {protectionCoverageCheck} from "@/lib/protection-coverage";
 import { consoleDb } from "@/lib/console-db";
 import { ledgerPath, tenantId } from "@/lib/db";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,7 @@ export async function GET() {
           ? `${runtime.reconciliation.status}; ledger ${runtime.reconciliation.ledgerId}; ${runtime.reconciliation.issueCount} issues; checked ${runtime.reconciliation.checkedAt}. Internal paper consistency only. Checked at startup and before entries; later fills require a new check.`
           : "No paper account reconciliation recorded. External broker reconciliation is separate.",
       },
+      protectionCoverageCheck(runtime, portfolio, tenantId),
       {
         id: "engine",
         title: "Protection heartbeat",

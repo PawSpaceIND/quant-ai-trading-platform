@@ -194,6 +194,36 @@ def main():
         run("docker", "exec", engine, "python", "-c",
             "from pathlib import Path; Path('/data/fixture-mode').write_text('fresh')")
         report["checks"].append({"recoveredHeartbeat":wait_for(health, "fresh observation recovery")})
+        # A healthy heartbeat is not protection coverage. Exercise legacy missing
+        # protection, its durable fault halt, and explicit fixture repair on real images.
+        def set_stop(value):
+            run("docker", "exec", engine, "python", "-c",
+                "import sqlite3,os,json,sys; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+                "db.execute('UPDATE paper_positions SET stop_price=? WHERE tenant_id=?', "
+                "(json.loads(sys.argv[1]),os.environ['PRAMANA_TENANT_ID'])); db.commit(); db.close()", json.dumps(value))
+
+        def protection_state(expected):
+            state = json.loads(run("docker", "exec", engine, "python", "-c",
+                "import sqlite3,os; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+                "print(db.execute('SELECT payload FROM pilot_runtime WHERE tenant_id=?', "
+                "(os.environ['PRAMANA_TENANT_ID'],)).fetchone()[0]); db.close()"))
+            if (state["protectionCoverage"]["status"] != expected or not state["halted"]
+                    or state["haltReason"] != "paper_position_protection_incomplete"):
+                raise ValueError("Waiting for protection coverage and durable halt")
+            return {"coverage":state["protectionCoverage"], "health":halt_health()}
+
+        set_stop(None)
+        report["checks"].append({"missingProtection":wait_for(lambda: protection_state("incomplete"), "missing protection halt")})
+        dashboard("missing-protection")
+        run("docker", "restart", engine)
+        started_at = run("docker", "inspect", "--format", "{{.State.StartedAt}}", engine)
+        new_heartbeat = wait_for(restarted_halt, "new protection-fault heartbeat after restart")
+        report["checks"].append({"protectionHaltAfterRestart":protection_state("incomplete"),
+                                 "restartHeartbeat":new_heartbeat, "restartedContainerStartedAt":started_at})
+        dashboard("protection-restarted")
+        set_stop("95")
+        report["checks"].append({"restoredProtectionHalted":wait_for(lambda: protection_state("complete"), "restored coverage without auto-resume")})
+        dashboard("protection-restored")
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

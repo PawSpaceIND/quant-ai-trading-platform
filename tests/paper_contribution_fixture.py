@@ -46,6 +46,16 @@ def account(directory: Path, now=BASE):
         scheduler=scheduler, strategy_manifest=None, trade_evidence=None, reconciliation=None,
         kill_switch=SimpleNamespace(engaged=False, reason=None), plan=SimpleNamespace(
             max_daily_loss_fraction=Decimal(".02"), max_gross_exposure_fraction=Decimal(".6"), max_drawdown_fraction=Decimal(".1")))
+    # This accounting-only fixture supplies the same read-only protection report to
+    # telemetry; daemon fault/restart behavior is exercised by the real-factory tests.
+    def check_protection(now):
+        daemon.protection_coverage = broker.protection_coverage("default", now)
+        complete = daemon.protection_coverage["status"] == "complete"
+        if not complete:
+            daemon.kill_switch.engaged = True
+            daemon.kill_switch.reason = "paper_position_protection_incomplete"
+        return complete
+    daemon.check_protection_coverage = check_protection
     return broker, PilotTelemetry(daemon), ticks
 
 

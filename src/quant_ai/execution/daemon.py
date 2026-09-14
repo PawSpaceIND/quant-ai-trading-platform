@@ -87,6 +87,7 @@ class AutonomousTradingDaemon:
         self._logger = logging.getLogger("quant_ai.daemon")
         self.telemetry = None
         self.reconciliation = None
+        self.protection_coverage = None
         self.trade_evidence = None
         self.strategy_manifest = None
 
@@ -103,7 +104,15 @@ class AutonomousTradingDaemon:
         runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
         runtime.pre_submit_check = self._pilot_pre_submit
         self.tracker.broker.get_margin(self.tenant_id)
+        self.check_protection_coverage(self.clock())
         self._reconcile_pilot()
+
+    def check_protection_coverage(self, now: datetime) -> bool:
+        self.protection_coverage = self.tracker.broker.protection_coverage(self.tenant_id, now)
+        complete = self.protection_coverage["status"] == "complete"
+        if not complete:
+            self.engage_kill_switch("paper_position_protection_incomplete")
+        return complete
 
     def _reconcile_pilot(self) -> bool:
         self.reconciliation = self.tracker.broker.reconcile(self.tenant_id)
@@ -118,6 +127,8 @@ class AutonomousTradingDaemon:
 
     def _pilot_pre_submit(self, proposal) -> str | None:
         self.apply_operator_halt()
+        if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
+            return "pilot_protection_incomplete"
         if self.strategy_manifest is not None:
             manifest = self.strategy_manifest.check(self.clock(), force_source=True)
             if manifest['status'] in {'changed', 'unavailable'} and proposal.side != Side.SELL:
@@ -146,7 +157,16 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         with self.tracker.broker._lock:
             self.apply_operator_halt()
-            self.protective_exits = self.sweep_protective_exits(timestamp)
+            if self.telemetry is not None:
+                self.check_protection_coverage(timestamp)
+            try:
+                self.protective_exits = self.sweep_protective_exits(timestamp)
+            except Exception:
+                # Durably halt before the runner reports/retries an unexpected failure.
+                self.engage_kill_switch("protective_exit_failed")
+                raise
+            if any(not exit.filled for exit in self.protective_exits):
+                self.engage_kill_switch("protective_exit_failed")
             if self.telemetry is not None:
                 if any(exit.filled for exit in self.protective_exits):
                     self._reconcile_pilot()

@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 const origin = process.env.SMOKE_ORIGIN || "http://localhost:3000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(origin).hostname));
 const phase = process.env.SMOKE_PHASE;
+const protectionMissing = ["missing-protection", "protection-restarted"].includes(phase);
+const faultHalted = protectionMissing || phase === "protection-restored";
 const anonymous = await fetch(`${origin}/api/workspace`);
 assert.equal(anonymous.status, 401);
 const login = await fetch(`${origin}/api/session`, {
@@ -32,6 +34,13 @@ assert.equal(workspace.portfolio.holdings[0].symbol, "INFY");
 assert.equal(workspace.portfolio.holdings[0].quantity, 2);
 assert.equal(workspace.portfolio.startingCapital, 123456);
 assert.equal(workspace.runtime.limits.maxPositions, 3);
+assert.equal(workspace.runtime.protectionCoverage.status, protectionMissing ? "incomplete" : "complete");
+assert.equal(workspace.runtime.protectionCoverage.tenantId, workspace.tenantId);
+assert.equal(workspace.runtime.protectionCoverage.positionCount, 1);
+assert.equal(workspace.runtime.protectionCoverage.ledgerId, workspace.portfolio.ledgerId);
+assert.equal(workspace.checks.find(c => c.id === "protection_coverage").pass, phase !== "stale" && !protectionMissing);
+if (protectionMissing) assert.equal(workspace.runtime.protectionCoverage.issues[0].code, "missing_stop");
+if (faultHalted) assert.equal(workspace.runtime.haltReason, "paper_position_protection_incomplete");
 const researchMissing = phase === "missing-research";
 if (researchMissing) {
   for (const name of ["researchLab", "researchPortfolio", "companyEvents"]) assert.equal(workspace[name].status, "invalid");
@@ -72,8 +81,8 @@ if (phase === "stale") {
   assert.equal(workspace.checks.find(c => c.id === "entry_controls").pass, false);
 } else {
   assert.equal(workspace.runtime.status, "running");
-  assert.equal(workspace.runtime.halted, phase === "halted");
-  assert.equal(workspace.checks.find(c => c.id === "entry_controls").pass, phase !== "halted");
+  assert.equal(workspace.runtime.halted, phase === "halted" || faultHalted);
+  assert.equal(workspace.checks.find(c => c.id === "entry_controls").pass, phase !== "halted" && !faultHalted);
   assert.equal(workspace.portfolio.status, "ok");
   assert.equal(workspace.portfolio.holdings[0].markPrice, 100);
   assert.equal(workspace.market.rows[0].symbol, "INFY");
@@ -90,6 +99,8 @@ if (phase === "initial") {
   assert.equal((await halt.json()).status, "requested");
 }
 console.log(JSON.stringify({phase, status:"pass", authenticated:true, liveEnabled:false,
+  protectionCoverage:workspace.runtime.protectionCoverage.status,
+  protectionCheck:workspace.checks.find(c => c.id === "protection_coverage").pass,
   runtime:workspace.runtime.status, halted:workspace.runtime.halted, savedWatchlist:["INFY"],
   accountQuantity:2, operatorAcceptance:false, customDirectives:{startingCapital:123456,maxPositions:3},
   research:{comparison:workspace.researchLab.status, portfolio:workspace.researchPortfolio.status,

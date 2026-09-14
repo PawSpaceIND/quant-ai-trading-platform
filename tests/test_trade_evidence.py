@@ -13,7 +13,8 @@ def account(tmp_path):
 
 
 def fill(broker, side, quantity, price):
-    return broker.submit(OrderIntent("INFY", Market.INDIA, side, quantity, D(price), "test", tenant_id="pilot"))
+    return broker.submit(OrderIntent("INFY", Market.INDIA, side, quantity, D(price), "test", tenant_id="pilot",
+                                     stop_price=D(95) if side == Side.BUY else None))
 
 
 def report(broker):

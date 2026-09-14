@@ -46,6 +46,11 @@ export type StrategyEpisodeEvidence = {
     profitFactor: string | null; profitFactorState: string; winRate: string | null; closedCashFees: string};
 };
 export type Runtime = {
+  protectionCoverage?: {
+    schema: string; tenantId: string; status: string; checkedAt: string; ledgerId: number;
+    positionCount: number; coveredCount: number; missingStopCount: number; invalidPositionCount: number;
+    issueCount: number; issues: Array<{key: string; code: string}>; scope: string;
+  } | null;
   strategyEvidence?: StrategyEpisodeEvidence | null;
   strategyManifest?: {status: string; sha256?: string; bootSha256?: string; sourceSha256?: string;
     releaseRevision?: string; checkedAt: string; sourceCheckAgeSeconds?: number; issues: string[]} | null;

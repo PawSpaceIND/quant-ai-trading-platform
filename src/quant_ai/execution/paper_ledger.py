@@ -16,6 +16,7 @@ from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
 from quant_ai.execution.friction import FrictionContext, FrictionResult, MarketFrictionModel
+from quant_ai.execution.protection_state import positive_level, protection_coverage
 
 
 class PaperBrokerDatabaseLockedError(RuntimeError):
@@ -216,15 +217,15 @@ class PaperBrokerService(BrokerAdapter):
 
     def configure_pilot(self, instruments, tenant_id: str) -> None:
         from quant_ai.governance.pilot import validate_pilot_instruments
-        validate_pilot_instruments(tuple(instruments))
-        symbols = {item.symbol for item in instruments}
+        instruments = tuple(instruments)
+        validate_pilot_instruments(instruments)
+        symbols = {item.symbol: item.asset_class.value for item in instruments}
         with self._lock, self._connection:
             self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
                 tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
                 symbols TEXT NOT NULL)""")
             positions = self.get_positions(tenant_id)
-            if any(p.market != Market.INDIA or p.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
-                   or p.symbol not in symbols for p in positions):
+            if any(p.market != Market.INDIA or symbols.get(p.symbol) != p.asset_class.value for p in positions):
                 raise ValueError("pilot_existing_positions_out_of_scope")
             previous = self._connection.execute(
                 "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
@@ -235,24 +236,47 @@ class PaperBrokerService(BrokerAdapter):
             if any(e.market != Market.INDIA for e in self.ledger_entries(tenant_id)):
                 raise ValueError("pilot_legacy_currency_ambiguous")
             self._connection.execute("INSERT OR REPLACE INTO pilot_scope VALUES (?, 'INR', 'INDIA', ?)",
-                                     (tenant_id, json.dumps(sorted(symbols))))
+                                     (tenant_id, json.dumps(symbols, sort_keys=True)))
 
-    def _assert_pilot_order(self, order: OrderIntent) -> None:
+    def _assert_pilot_order(self, order: OrderIntent) -> bool:
         exists = self._connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pilot_scope'"
         ).fetchone()
         if not exists:
-            return
+            return False
         scope = self._connection.execute("SELECT * FROM pilot_scope WHERE tenant_id=?",
                                          (order.tenant_id,)).fetchone()
+        symbols = json.loads(scope["symbols"]) if scope else {}
         if scope and (order.market.value != scope["market"]
                       or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
-                      or order.symbol not in json.loads(scope["symbols"])):
+                      or order.symbol not in symbols
+                      or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)):
             raise ValueError("pilot_order_out_of_scope")
         if scope and order.side == Side.BUY:
+            if not isinstance(symbols, dict):
+                # Older scopes recorded symbols only. The normal pilot factory refreshes
+                # this from configured instruments; never guess a contract for new risk.
+                raise ValueError("pilot_scope_requires_instrument_configuration")
+            # Acquire the SQLite write transaction before inspecting risk/account state.
+            # The final checks and fill cannot race another connection's persisted halt.
             self._ensure_account(order.tenant_id)
+            controls = self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='risk_control_state'"
+            ).fetchone()
+            state = self._connection.execute(
+                "SELECT kill_switch_engaged FROM risk_control_state WHERE tenant_id=?", (order.tenant_id,)
+            ).fetchone() if controls else None
+            if state is not None and state[0] != 0:
+                raise ValueError("pilot_halted")
+            if self.protection_coverage(order.tenant_id)["status"] != "complete":
+                raise ValueError("pilot_protection_incomplete")
             if self.reconcile(order.tenant_id)["status"] != "matched":
                 raise ValueError("pilot_reconciliation_failed")
+        return scope is not None
+
+    def protection_coverage(self, tenant_id: str = "default", now: datetime | None = None) -> dict:
+        with self._lock:
+            return protection_coverage(self._connection, tenant_id, now)
 
     def reconcile(self, tenant_id: str = "default") -> dict:
         from quant_ai.execution.reconciliation import reconcile_paper
@@ -286,10 +310,12 @@ class PaperBrokerService(BrokerAdapter):
 
     def _execute(self, order: OrderIntent, *, evidence: dict | None = None,
                  cooldown_until: datetime | None = None, idempotency_key: str | None = None) -> ExecutionResult:
-        if order.quantity <= 0 or order.reference_price <= 0:
+        if type(order.quantity) is not int or order.quantity <= 0 or positive_level(order.reference_price) is None:
             raise ValueError("positive quantity and reference_price required")
         friction = self.friction_model.evaluate(order, self._context_for(order))
         fill_price = friction.execution_price
+        if positive_level(fill_price) is None:
+            raise ValueError("positive finite fill_price required")
         notional = fill_price * order.quantity
         order_id = f"PAPER-{uuid4().hex[:16].upper()}"
         now = self._execution_time or datetime.now(timezone.utc)
@@ -326,7 +352,7 @@ class PaperBrokerService(BrokerAdapter):
         tenant_id = order.tenant_id
         statutory_fees = friction.statutory_fees
         with self._lock, self._connection:
-            self._assert_pilot_order(order)
+            pilot_order = self._assert_pilot_order(order)
             if idempotency_key is not None:
                 inserted = self._connection.execute(
                     "INSERT OR IGNORE INTO paper_idempotency (key,tenant_id,claimed_at) VALUES (?,?,?)",
@@ -360,6 +386,16 @@ class PaperBrokerService(BrokerAdapter):
                 )
             else:
                 new_stop, new_take_profit = held_stop, held_take_profit
+            if pilot_order and order.side == Side.BUY:
+                stop, target = positive_level(order.stop_price), positive_level(new_take_profit)
+                if stop is None:
+                    raise ValueError("pilot_valid_stop_required")
+                if stop >= min(order.reference_price, fill_price):
+                    raise ValueError("pilot_stop_must_be_below_entry")
+                if new_take_profit is not None and (target is None or target <= max(order.reference_price, fill_price)):
+                    raise ValueError("pilot_target_must_be_above_entry")
+                if held_stop is not None and stop < positive_level(held_stop):
+                    raise ValueError("pilot_cannot_loosen_held_stop")
             if order.side == Side.BUY:
                 if notional + statutory_fees > cash:
                     raise ValueError("insufficient_paper_cash")
@@ -487,8 +523,10 @@ class PaperBrokerService(BrokerAdapter):
                 AssetClass(row["asset_class"]),
                 int(row["quantity"]),
                 Decimal(row["average_price"]),
-                _optional_decimal(row["stop_price"]),
-                _optional_decimal(row["take_profit_price"]),
+                # Raw invalid values remain visible in protection_coverage. Exclude them
+                # from comparisons so one corrupt threshold cannot suppress other exits.
+                positive_level(row["stop_price"]),
+                positive_level(row["take_profit_price"]),
             )
             for row in rows
         )

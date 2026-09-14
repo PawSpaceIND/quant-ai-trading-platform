@@ -6,8 +6,8 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 
 | ID | Requirement | Required evidence | State |
 |---|---|---|---|
-| P01 | Enforced currency / instrument scope | Reject mixed currencies, unsupported contracts and mismatched persisted accounts | Engineering verified |
-| P02 | Independent protection and operator halt | Exit/halt while analysis is blocked; durable restart behavior | Engineering verified; live-session observation pending |
+| P01 | Enforced currency / instrument scope | Reject mixed currencies, unsupported contracts, symbol/asset-class mismatch and mismatched persisted accounts | Engineering verified; legacy symbol-only scope must be reconfigured before buys |
+| P02 | Independent protection and operator halt | Exit/halt while analysis is blocked; durable restart behavior; explicit stops and whole-book coverage at final entry boundary | Engineering verified; live-session observation pending; coverage details in P24 |
 | P03 | Shared live portfolio valuation | UI/engine parity, staleness and ledger-version checks | Engineering verified; open-session parity pending |
 | P04 | Honest strategy performance | Actual account samples, cost-aware metrics, source labels | Engineering verified; forward evidence pending |
 | P05 | Honest data/provider readiness | Missing inputs abstain; stale data blocks risk | Engineering verified; source completeness pending |
@@ -29,6 +29,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P21 | Recorded paper-account contribution | One valuation/account/fill/cost read snapshot, reconciled instrument P&L, explicit gaps, current-total withholding, private UI/export/Atlas | Engineering/browser/API verified with the real paper broker on synthetic evidence; real-source, target-host and broader attribution qualification remain open |
 | P22 | Historical portfolio-risk workspace | Complete common-session history, covariance/correlation/contributions, empirical tail losses, private UI/export/Atlas and calendar binding | Engineering/browser/API verified; real 11-instrument history alignment checked after documented Budget-session correction; adjustment, calendar completeness and forward risk qualification remain open |
 | P23 | Deployment image and heartbeat verification | Actual Dockerfile builds, private shared-state/authentication/restart checks, fail-closed local protection health | Health and local synthetic flow verified; exact Linux image verification tracked by CI; intended-host qualification pending |
+| P24 | Stored position protection and final entry boundary | Explicit valid stops, exact asset class, whole-book coverage, persisted halt, atomic rejection, independent exits and current dashboard evidence | Engineering/API/browser verified on synthetic evidence; real-session and target-host qualification pending |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -80,3 +81,7 @@ Risk lab now provides exploratory covariance, correlation, volatility contributi
 ## Implementation delta — deployment feature bindings
 
 Compose now forwards private comparison, continuous replay and company-event paths, honors selected research/review paths and a custom read-only directives file, and passes the same holiday additions to engine and collector. Risk history records unverified closure additions and preserves conflicting bars for rejection. The recovery example includes the source market snapshot. Container verification uses the resolved service environment and exercises populated private reports/exports, missing-source failures and restoration. [Contract and remaining gates](DEPLOYMENT_WIRING.md). This addresses deployment omissions under P06/P23; it does not qualify the real target host or source/strategy evidence.
+
+## Implementation delta — protection coverage
+
+The final pilot broker now enforces explicit stops, simulated-fill geometry, persisted entry halts and exact symbol/asset-class identity. Missing or corrupt held protection and failed exits durably halt new risk while valid covered exits remain available. Research and Atlas expose the bounded, current ledger-bound coverage report separately from heartbeat/reconciliation. [Behavior, migration and verification](PROTECTION_COVERAGE.md). P01/P02/P24 are strengthened; external qualification and full benchmark closure remain open.

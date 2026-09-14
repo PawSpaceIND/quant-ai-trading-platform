@@ -15,6 +15,7 @@ from quant_ai.execution.paper_ledger import (
     PaperBrokerDatabaseLockedError,
     PaperBrokerService,
 )
+from quant_ai.execution.protection_state import positive_level
 from quant_ai.notifications.trading import (
     TradingAlertCode,
     TradingNotificationDispatcher,
@@ -98,22 +99,23 @@ class ProtectiveExitEngine:
     ) -> tuple[ExitTrigger, Decimal, Decimal] | None:
         if position.quantity <= 0:
             return None
-        if position.stop_price is None and position.take_profit_price is None:
+        stop, target = positive_level(position.stop_price), positive_level(position.take_profit_price)
+        if stop is None and target is None:
             return None
         mark = self._mark(position)
-        if mark is None or mark <= 0:
+        if mark is None:
             return None
         # Long-only ledger: a stop sits below entry and a target above it. The stop is
         # evaluated first so a bar that spans both thresholds resolves conservatively.
-        if position.stop_price is not None and mark <= position.stop_price:
-            return ExitTrigger.STOP_LOSS, position.stop_price, mark
-        if position.take_profit_price is not None and mark >= position.take_profit_price:
-            return ExitTrigger.TAKE_PROFIT, position.take_profit_price, mark
+        if stop is not None and mark <= stop:
+            return ExitTrigger.STOP_LOSS, stop, mark
+        if target is not None and mark >= target:
+            return ExitTrigger.TAKE_PROFIT, target, mark
         return None
 
     def _mark(self, position: BrokerPosition) -> Decimal | None:
         try:
-            return self.mark_resolver(position)
+            return positive_level(self.mark_resolver(position))
         except (RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as error:
             # An unknown price is never treated as a safe price: skip, log, retry next tick.
             LOGGER.warning(
@@ -138,8 +140,8 @@ class ProtectiveExitEngine:
             self.strategy_id,
             position.asset_class,
             self.tenant_id,
-            stop_price=position.stop_price,
-            take_profit_price=position.take_profit_price,
+            stop_price=positive_level(position.stop_price),
+            take_profit_price=positive_level(position.take_profit_price),
         )
         observation = getattr(self.mark_resolver, "last_observation", {})
         if not isinstance(observation, dict) or observation.get("symbol") != position.symbol or observation.get("price") != str(mark):

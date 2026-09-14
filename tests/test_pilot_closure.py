@@ -101,7 +101,7 @@ def test_snapshot_freshness_tracks_stale_positions(tmp_path):
     now = datetime.now(timezone.utc)
     publish_tick(runner, "100", now - timedelta(minutes=5))
     broker = runner.daemon.tracker.broker
-    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot", stop_price=Decimal(95)))
     snapshot = runner.daemon.telemetry.publish(now)
     assert snapshot["status"] == "degraded"
     assert not snapshot["allMarksFresh"]
@@ -139,7 +139,7 @@ def test_reconciliation_failure_persists_halt_and_does_not_disable_covered_exit(
     runner.daemon.clock = lambda: now
     publish_tick(runner, "100", now)
     broker = runner.daemon.tracker.broker
-    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot", stop_price=Decimal(95)))
     broker._connection.execute("UPDATE paper_accounts SET cash_balance='1' WHERE tenant_id='pilot'")
     broker._connection.commit()
     proposal = SimpleNamespace(symbol="INFY", side=Side.BUY, reference_price=Decimal(100))
@@ -156,7 +156,7 @@ def test_reconciliation_failure_persists_halt_and_does_not_disable_covered_exit(
 def test_reconciliation_telemetry_cannot_certify_later_fill(tmp_path):
     runner = runner_for(tmp_path)
     broker = runner.daemon.tracker.broker
-    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot", stop_price=Decimal(95)))
     runner.daemon.telemetry.publish(datetime.now(timezone.utc))
     state = json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
     assert state["reconciliation"]["status"] == "outdated"
@@ -169,7 +169,7 @@ def test_reconciliation_telemetry_cannot_certify_later_fill(tmp_path):
 def test_direct_pilot_buy_cannot_bypass_reconciliation(tmp_path):
     broker = PaperBrokerService(tmp_path / "direct.db")
     broker.configure_pilot((INSTRUMENT,), "pilot")
-    buy = OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot")
+    buy = OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot", stop_price=Decimal(95))
     broker.buy(buy)
     broker._connection.execute("UPDATE paper_accounts SET cash_balance='1' WHERE tenant_id='pilot'")
     broker._connection.commit()
@@ -184,7 +184,7 @@ def test_direct_pilot_buy_cannot_bypass_reconciliation(tmp_path):
 def test_trade_evidence_follows_checked_ledger_and_never_counts_open_fill_as_trade(tmp_path):
     runner = runner_for(tmp_path)
     broker = runner.daemon.tracker.broker
-    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot", stop_price=Decimal(95)))
     runner.daemon.telemetry.publish(datetime.now(timezone.utc))
     state=json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
     assert state["tradeEvidence"] is None
@@ -199,7 +199,7 @@ def test_trade_evidence_follows_checked_ledger_and_never_counts_open_fill_as_tra
 def test_trade_evidence_refreshes_after_fee_correction_without_new_fill(tmp_path):
     runner=runner_for(tmp_path)
     broker=runner.daemon.tracker.broker
-    broker.buy(OrderIntent("INFY",Market.INDIA,Side.BUY,1,Decimal(100),"test",tenant_id="pilot"))
+    broker.buy(OrderIntent("INFY",Market.INDIA,Side.BUY,1,Decimal(100),"test",tenant_id="pilot", stop_price=Decimal(95)))
     runner.daemon._reconcile_pilot()
     before=runner.daemon.trade_evidence
     row=broker._connection.execute("SELECT id,amount FROM paper_cost_ledger WHERE tenant_id='pilot' AND cash_debit=1 ORDER BY id LIMIT 1").fetchone()

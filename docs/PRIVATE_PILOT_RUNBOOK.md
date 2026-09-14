@@ -100,3 +100,7 @@ The private Portfolio page automatically reads the matching engine valuation and
 ## Historical risk workspace
 
 Update the collector and private dashboard together. The existing `PRAMANA_MARKET_SNAPSHOT` path supplies the new risk-history dataset; old snapshots display unavailable. History now covers the maintained 2026 calendar and the documented Budget Sunday, while provider adjustments and full calendar/source qualification remain explicit gaps. Review the new special-session fingerprint in any deployment acceptance. Retain the original market snapshot in the selected recovery/input inventory if risk reports must be reproduced. Private `GET /api/portfolio/historical-risk` exports the calculated report; it does not replace that source archive. [Data contract, limits and verification](HISTORICAL_PORTFOLIO_RISK.md).
+
+## Stored protection qualification
+
+Before authorizing new pilot entries, confirm **Stored position protection** is current and complete in Research → Pilot readiness, in addition to heartbeat, marks and reconciliation. A missing/invalid level or failed protective exit latches a durable entry halt; fixing the data or restarting does not clear it. Review the raw affected records and canonical fills before using the existing controlled reset workflow. Do not invent a stop to clear a gate. Legacy symbol-only scope requires the normal pilot startup with explicit instrument configuration before buying. See [stored protection contract](PROTECTION_COVERAGE.md).
