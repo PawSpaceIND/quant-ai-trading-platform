@@ -93,3 +93,13 @@ node node_modules/typescript/bin/tsc --noEmit
   check. Its status still identifies engineHost=Mac. Full authenticated engine hosting,
   received independent alerts and recovery qualification remain with #50/deployment.
 - Real open-session and sustained strategy evidence cannot be manufactured by a merge.
+
+## Executed integration evidence — 14 September 2026
+
+- Six new exporter regression tests pass; focused Ruff passes.
+- Actual React server-render checks pass; TypeScript passes.
+- Temporary merge with PR #50 at 206aa0e837ada9c5ae6ec2679f7203125aeae55c was
+  conflict-free. All 480 combined Python tests pass, as do rendering and TypeScript checks.
+- The temporary merge was aborted and removed. PR #50 and running services were untouched.
+- The panel is not mounted or deployed yet. Authenticated route/hosted browser acceptance
+  belongs to the PR #50 owner after the documented integration.
