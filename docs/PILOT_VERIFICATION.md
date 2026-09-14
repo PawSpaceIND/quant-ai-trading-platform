@@ -50,3 +50,11 @@ These are synthetic engineering checks. No real intrabar dataset or AI-strategy 
 The Worker now exposes a separately authenticated `/healthz` endpoint. It ages the engine's original heartbeat independently of upload timestamps, fails on unknown/halted state, and returns 503 on missing or failed storage evidence. The monitor token has no portfolio or ingest access. All **12 Worker tests** pass (four added monitoring tests with multiple failure cases).
 
 The local Worker/D1 HTTP drill verified missing snapshot 503, current evidence 200, fresh publication with stale engine 503, engaged halt 503, and recovery 200. Synthetic evidence only; no external notification was sent and no remote service was changed. [Independent monitor deployment and acceptance instructions](INDEPENDENT_MONITOR.md). X02 remains open until target-host and received-alert evidence exists.
+
+## Portfolio risk workspace follow-up
+
+The risk lab now supports per-holding cash-equity/ETF shocks with reset to a common shock, scenario contribution/equity impact, largest holding/equity, gross exposure/equity, effective holding count (inverse squared invested weights), and downside to recorded stops with explicit missing/breached-stop warnings. Invalid geometry, duplicate holdings, mixed markets, contracts and shorts fail closed. Expired portfolio snapshots cannot retain fresh-mark labels.
+
+All **15 dashboard tests** pass, including five new risk-diagnostic cases. TypeScript and production build passed. Synthetic browser checks verified the individual override, reset, exact scenario handoff to the Atlas prompt and concentration/stop outputs. A phone overflow found during inspection was fixed using the existing table scroll container; document and viewport width both measured 390 pixels. No browser error/warning logs were observed. The last freshness predicate change is regression-tested; layout and prompt code were unchanged afterward.
+
+These descriptive measures do not calculate covariance, factor/sector risk, VaR, Greeks or attribution, and stop distance is not a guaranteed loss ceiling. They advance portfolio inspection and what-if capability without claiming full IBKR/Bloomberg parity. Browser verification used synthetic holdings and did not send an additional provider request.

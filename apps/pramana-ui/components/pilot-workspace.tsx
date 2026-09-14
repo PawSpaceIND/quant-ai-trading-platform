@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { portfolioRisk } from "@/lib/portfolio-risk";
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
 import type { Workspace, Portfolio, Trade, Friction } from "@/lib/types";
@@ -903,9 +904,11 @@ function RiskLab({
   onAsk: (q: string) => void;
 }) {
   const [shock, setShock] = useState(-5);
+  const [overrides, setOverrides] = useState<Record<string, number>>({});
   const p = data.portfolio;
-  const exposure = p.holdings.reduce((s, h) => s + h.marketValue, 0);
-  const pnl = (exposure * shock) / 100;
+  const risk = portfolioRisk(p, shock, overrides);
+  if (risk.status !== "ok") return <section className="panel"><h2>Portfolio risk unavailable</h2><p>{risk.reason}</p></section>;
+  const { exposure, pnl } = risk;
   return (
     <>
       <section className="panel">
@@ -914,10 +917,10 @@ function RiskLab({
             <span className="eyebrow">HYPOTHETICAL · NO ORDERS</span>
             <h2>Portfolio shock scenario</h2>
           </div>
-          <span className="pill neutral">Parallel equity shock</span>
+          <span className="pill neutral">Cash-equity scenarios</span>
         </div>
         <p className="muted">
-          Move every displayed holding by the same percentage. This linear
+          Set a common shock or override individual holdings below. This linear
           scenario excludes fills, fees, liquidity and stop execution.
         </p>
         <div className="scenario-controls">
@@ -943,6 +946,21 @@ function RiskLab({
             <span>+30%</span>
           </div>
         </div>
+        <div className="table-scroll">
+          <table>
+            <thead><tr><th>Holding</th><th>Weight of equity</th><th>Price shock %</th><th>Scenario P&amp;L</th><th>Stop status</th></tr></thead>
+            <tbody>{risk.rows.map(row => <tr key={row.key}>
+              <td><strong>{row.symbol}</strong><div className="muted">{row.fresh ? "Fresh mark" : "Stale / snapshot mark"}</div></td>
+              <td>{pct(row.weight)}</td>
+              <td><input style={{ width: "6rem" }} aria-label={`${row.symbol} price shock percent`} type="number" min={-100} max={100} step={1} value={row.shock}
+                onChange={e => { const value = Number(e.target.value); if (Number.isFinite(value)) setOverrides(old => ({...old, [row.key]: Math.max(-100, Math.min(100, value))})); }} /></td>
+              <td className={row.pnl < 0 ? "negative" : "positive"}>{money(row.pnl)}</td>
+              <td>{row.stopState === "missing" ? "Missing" : row.stopState === "at_or_breached" ? "At / beyond stop" : `Downside ${money(row.stopDownside ?? 0)}`}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {!risk.rows.length && <p className="empty">No holdings. Cash has no price-shock exposure in this scenario.</p>}
+        <button onClick={() => setOverrides({})}>Reset holdings to common shock</button>
         <div className="metric-grid research-metrics">
           <Metric
             label="Marked exposure"
@@ -969,12 +987,24 @@ function RiskLab({
         <button
           onClick={() =>
             onAsk(
-              `Explain a hypothetical ${shock}% parallel price shock to my portfolio. Discuss the limitations of this scenario and current data freshness.`,
+              `Explain this hypothetical cash-equity scenario using displayed marks. Per-holding [symbol, shock percent]: ${JSON.stringify(risk.rows.map(r => [r.symbol,r.shock]))}. Total scenario P&L ${pnl}; equity impact ${risk.equityImpact}. Missing stops: ${risk.missingStops}; at/beyond stops: ${risk.breachedStops}. These are mark-based estimates, not guaranteed exit prices. Discuss costs, gaps and data freshness.`,
             )
           }
         >
           Discuss this scenario with Atlas ↗
         </button>
+      </section>
+      <section className="panel">
+        <span className="eyebrow">CONCENTRATION &amp; RECORDED PROTECTION</span>
+        <h2>What drives the portfolio exposure</h2>
+        <div className="metric-grid research-metrics">
+          <Metric label="Largest holding / equity" value={pct(risk.largestEquityWeight)} note="Denominator includes cash" />
+          <Metric label="Gross exposure / equity" value={pct(risk.grossEquityWeight)} note="Displayed cash-equity holdings" />
+          <Metric label="Effective holding count" value={risk.effectiveHoldings?.toFixed(2) ?? "—"} note="Inverse sum of squared invested weights" />
+          <Metric label="Downside to recorded stops" value={money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
+        </div>
+        <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. Portfolio valuation status: {p.status}.</p>
+        <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector, factor, correlation and options-Greeks risk are not calculated here.</p>
       </section>
       <Holdings portfolio={p} onAsk={onAsk} />
       <ProviderPanel data={data} />

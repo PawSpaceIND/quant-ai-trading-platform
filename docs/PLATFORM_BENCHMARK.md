@@ -139,3 +139,7 @@ The priority is a complete and measurable path from valid data to an auditable d
 ## Implementation delta — intrabar execution
 
 Historical replay now supports complete lower-timeframe OHLC windows, chronological stop/target triggers, conservative ambiguous-bar resolution, worse-price stop gaps and explicit execution assumptions in the tearsheet. [Implementation and limits](INTRABAR_REPLAY.md). This is a partial advance on the documented TradingView Bar Magnifier comparison; realistic partial fills, queue/latency behavior and real-data qualification remain unclosed. The separate deterministic SMA experiment is unchanged.
+
+## Implementation delta — portfolio what-if and concentration
+
+The workspace now provides distinct shocks by holding, per-holding scenario P&L and aggregate equity impact, cash-inclusive exposure weights, largest-position concentration, effective holding count, and recorded-stop downside diagnostics. The scenario passes its actual per-holding settings into the Atlas prompt. Missing stops, breached thresholds and stale marks are visible. These cash-equity/ETF diagnostics partially advance the IBKR/Bloomberg what-if and portfolio-risk comparison. They are not correlation diversification, factor/sector risk, Greeks, broker-native protection or Bloomberg-style attribution. Those requirements remain open.
