@@ -135,3 +135,9 @@ Use the explicit source accounts, returned replay run ID and half-open window in
 ### Long-running observation history
 
 Use the explicit comparison window described in [RUN_COMPARISON.md](RUN_COMPARISON.md) for recent diagnostics on mature accounts. Check selected/retained/excluded counts in Source and method or the exported report. Old observations are retained; there is no automatic pruning. Unlocatable timestamps, selected payload bounds or current-account reconciliation failures require source review. Do not edit or delete evidence to make a qualification count pass. [Qualification-reader bounds and failure categories](OBSERVATION_HISTORY.md) describe the unavailable-performance message. Target-host storage, response time and backup inventory still require the operational drill.
+
+## Check current-state freshness before any pilot decision
+
+Open Markets and review the **Engine feed observations** panel. Every instrument must show a current engine heartbeat, an accepted source timestamp no older than 120 seconds and a unique identity. `Unrecorded`, `Future timestamp`, `Tick expired`, `Engine did not accept this tick` and `Duplicate instrument` are blocking evidence reasons. Collector rows do not qualify engine ticks. Review the portfolio mark timestamps separately; any stale or degraded held mark blocks a current valuation claim. [Freshness bounds and UI behavior](FRESHNESS.md).
+
+The workspace refreshes every five seconds, but polling does not revive old evidence. If the expired-workspace banner appears, stop current readiness or P&L interpretation, refresh the authenticated source and recheck the engine heartbeat, manifest, protection and reconciliation clocks. Historical research may still be reviewed with its original date. The pilot remains paper-only until the open-session, independent-alert, target-host, soak and strategy gates are signed.

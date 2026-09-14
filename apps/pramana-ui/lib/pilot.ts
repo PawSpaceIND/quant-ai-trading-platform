@@ -1,6 +1,7 @@
 import { hasTable, openLedger, tenantId } from "./db";
 import type {DatabaseSync} from "node:sqlite";
 import { observationHistory } from "./observation-history";
+import { agePortfolio, ageRuntime } from "./freshness";
 export type LivePortfolio = {
   ledgerId?: number;
   status: string;
@@ -66,6 +67,7 @@ export type Runtime = {
   reconciliation?: {status: string; checkedAt: string; ledgerId: number; issueCount: number; scope: string} | null;
   status: string;
   mode: string;
+  runtimeEvidenceIssue?: string;
   updatedAt?: string;
   halted?: boolean;
   haltReason?: string;
@@ -76,6 +78,9 @@ export type Runtime = {
     assetClass: string;
     exchange: string;
     fresh: boolean;
+    tickTimestamp?: string | null;
+    tickAgeSeconds?: number | null;
+    freshnessReason?: string;
   }[];
   lastAnalysisAt?: string;
   providers?: Record<string, string>;
@@ -109,7 +114,7 @@ export function readLivePortfolio(connection?: DatabaseSync): LivePortfolio | nu
       age < -5000 ||
       !Number.isFinite(age) ||
       rows[0].ledger_id !== head.id;
-    return {
+    return agePortfolio({
       ...latest,
       ledgerId: rows[0].ledger_id,
       status: latest.status === "invalid" ? "invalid" : stale ? "stale" : latest.status,
@@ -121,7 +126,7 @@ export function readLivePortfolio(connection?: DatabaseSync): LivePortfolio | nu
         const p = JSON.parse(r.payload);
         return { timestamp: p.updatedAt, equity: p.status === "invalid" || !Number.isFinite(p.totalEquity) ? null : p.totalEquity as number };
       }),
-    };
+    });
   } finally {
     if (!connection) db.close();
   }
@@ -133,18 +138,15 @@ export function readRuntime(): Runtime {
     if (!hasTable(db, "pilot_runtime"))
       return { status: "unavailable", mode: "paper" };
     const row = db
-      .prepare("SELECT payload FROM pilot_runtime WHERE tenant_id=?")
+      .prepare("SELECT CASE WHEN length(CAST(payload AS BLOB))<=1000000 THEN payload ELSE NULL END AS payload FROM pilot_runtime WHERE tenant_id=?")
       .get(tenantId) as { payload: string } | undefined;
     if (!row) return { status: "unavailable", mode: "paper" };
     const data = JSON.parse(row.payload) as Runtime;
-    const age = Date.now() - Date.parse(data.updatedAt || "");
-    return {
-      ...data,
-      status:
-        !Number.isFinite(age) || age > 10000 || age < -5000
-          ? "stale"
-          : data.status,
-    };
+    if (!data || typeof data!=="object" || Array.isArray(data) || typeof data.status!=="string" || typeof data.mode!=="string")
+      throw new Error("Invalid runtime evidence");
+    return ageRuntime(data);
+  } catch {
+    return {status:"invalid",mode:"paper",runtimeEvidenceIssue:"Engine evidence is unreadable, malformed or exceeds the supported payload bound."};
   } finally {
     db.close();
   }

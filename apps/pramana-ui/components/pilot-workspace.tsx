@@ -1,5 +1,7 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {ageWorkspace,sourceAge,within} from "@/lib/freshness";
+import {EngineFeedStatus} from "./engine-feed-status";
 import {
   Area,
   AreaChart,
@@ -64,7 +66,9 @@ function download(name: string, content: string, type = "application/json") {
 }
 export function PilotWorkspace() {
   const [view, setView] = useState("overview");
-  const [data, setData] = useState<Workspace | null>(null);
+  const [snapshot, setData] = useState<Workspace | null>(null);
+  const [clock,setClock]=useState(()=>Date.now());
+  const data=useMemo(()=>snapshot?ageWorkspace(snapshot,clock):null,[snapshot,clock]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [friction, setFriction] = useState<Friction | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -85,17 +89,19 @@ export function PilotWorkspace() {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const [w, t, f, p] = await Promise.all([
+      const results = await Promise.allSettled([
         api("/api/workspace"),
         api("/api/execution/trades"),
         api("/api/execution/friction"),
         api("/api/watchlist"),
       ]);
-      setData(w);
-      setTrades(t.trades);
-      setFriction(f);
-      setFavorites(p.symbols);
-      setError("");
+      const [w,t,f,p]=results;
+      if(w.status==="fulfilled")setData(w.value);
+      if(t.status==="fulfilled")setTrades(t.value.trades);
+      if(f.status==="fulfilled")setFriction(f.value);
+      if(p.status==="fulfilled")setFavorites(p.value.symbols);
+      const labels=["Workspace","Trade history","Execution costs","Watchlist"];
+      setError(results.flatMap((r,i)=>r.status==="rejected"?[`${labels[i]}: ${r.reason instanceof Error?r.reason.message:"refresh failed"}`]:[]).join(". "));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connection failed");
     } finally {
@@ -109,9 +115,16 @@ export function PilotWorkspace() {
     if (!hosted && new URLSearchParams(window.location.search).has("chat"))
       setChat(true);
     void refresh();
-    const timer = setInterval(() => void refresh(), 15000);
+    const timer = setInterval(() => void refresh(), 5000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(()=>{
+    const wall=Date.now(),monotonic=performance.now();
+    const advance=()=>setClock(previous=>Math.max(previous,Date.now(),wall+Math.floor(performance.now()-monotonic)));
+    const timer=setInterval(advance,1000);
+    document.addEventListener("visibilitychange",advance);
+    return ()=>{clearInterval(timer);document.removeEventListener("visibilitychange",advance);};
+  },[]);
   function navigate(id: string) {
     setView(id);
     const url = new URL(window.location.href);
@@ -335,6 +348,7 @@ export function PilotWorkspace() {
               <button onClick={() => void refresh()}>Retry</button>
             </div>
           )}
+          {snapshot&&!within(sourceAge(snapshot.generatedAt,clock),30,5)?<div className="banner warning" role="status">Workspace evidence expired. Current readiness and valuation claims are withheld until a successful refresh. Historical research remains dated evidence.</div>:null}
           {notice && (
             <div className="banner" role="status">
               {notice}
@@ -461,6 +475,7 @@ export function PilotWorkspace() {
                 )}
                 {view === "markets" && (
                   <>
+                    {!hosted && <EngineFeedStatus runtime={data.runtime} onAsk={ask} />}
                     {!hosted && <StreamIntegrity data={data} onAsk={ask} />}
                     <MarketWorkspace
                       readOnly={hosted}
@@ -901,9 +916,10 @@ function Holdings({
                   </small>
                 </td>
                 <td>
-                  <span className={`pill ${h.fresh ? "green" : "amber"}`}>
-                    {h.markSource.replaceAll("_", " ")}
+                  <span className={`pill ${h.fresh ? "green" : "amber"}`} title={h.markSource.replaceAll("_", " ")}>
+                    {h.fresh ? "Fresh tick" : "Not current"}
                   </span>
+                  <small>{h.markTimestamp ? new Date(h.markTimestamp).toLocaleString() : "Timestamp unrecorded"}</small>
                 </td>
                 <td>
                   <button

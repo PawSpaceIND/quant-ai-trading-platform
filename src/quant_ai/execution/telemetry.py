@@ -122,9 +122,12 @@ class PilotTelemetry:
 
     def _runtime_payload(self, now, ledger_id, strategy_evidence, valuation):
         daemon = self.daemon
-        watchlist = [{"symbol": i.symbol, "currency": i.currency, "market": i.market.value,
-                      "assetClass": i.asset_class.value, "exchange": i.exchange,
-                      "fresh": self.fresh(i, now)[0]} for i in daemon.instruments]
+        watchlist = []
+        for instrument in daemon.instruments:
+            fresh, timestamp = self.fresh(instrument, now)
+            watchlist.append({"symbol": instrument.symbol, "currency": instrument.currency,
+                "market": instrument.market.value, "assetClass": instrument.asset_class.value,
+                "exchange": instrument.exchange, "fresh": fresh, "tickTimestamp": timestamp})
         return {
             "status": "running", "mode": "paper", "updatedAt": now.isoformat(),
             "halted": daemon.kill_switch.engaged, "haltReason": daemon.kill_switch.reason,
@@ -188,6 +191,8 @@ class PilotTelemetry:
     def fresh(self, instrument: Instrument, now: datetime, expected_price: Decimal | None = None) -> tuple[bool, str | None]:
         try:
             tick = self.daemon.tracker.market_feed.latest_tick(instrument)
+            if tick.timestamp.utcoffset() is None:
+                return False, None
             if positive_level(tick.last_price) is None:
                 return False, None
             if expected_price is not None and tick.last_price != expected_price:

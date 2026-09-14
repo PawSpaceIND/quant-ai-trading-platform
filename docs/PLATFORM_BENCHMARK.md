@@ -243,3 +243,7 @@ Research now displays a selected recorded-paper/historical-replay equity compari
 ### Mature-history diagnostic and qualification correction
 
 Recent paper/replay comparisons no longer require every retained paper valuation to fit the selected report's point limit. Windowed source selection preserves carry-in fills, original gaps and explicit counts; the UI/export/Atlas expose the selection. Account/strategy qualification streams observations and rejects duplicated or inconsistent minute evidence. [Scope, evidence and remaining bounds](OBSERVATION_HISTORY.md). This strengthens the existing QuantConnect-related diagnostic and pilot observation workflow without establishing same-strategy OOS parity or qualified returns.
+
+### Current-state freshness and operator visibility
+
+The private workspace now ages runtime, accepted engine ticks, held marks, cached portfolio values, manifests, protection, reconciliation and collector snapshots when they are read. Markets exposes per-instrument source timestamps, ages and rejection reasons, and a bounded table keeps the evidence usable on mobile. Stored freshness flags cannot survive an expired heartbeat, future timestamp, malformed payload, duplicate identity or source-age bound. [Freshness contract](FRESHNESS.md). This is the control needed to make current readiness claims explicit; it does not create provider authenticity, broker lifecycle parity, qualified intrabar history, total-return/factor analytics or strategy effectiveness.

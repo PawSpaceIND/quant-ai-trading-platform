@@ -1,4 +1,5 @@
 import {readRunComparison} from "@/lib/run-comparison";
+import {tradingFeedCheck} from "@/lib/freshness";
 import {readBrokerObservation} from "@/lib/broker-observation";
 import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy-evidence";
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
@@ -110,15 +111,7 @@ export async function GET() {
         pass: portfolio.markMode === "engine_live" && portfolio.status === "ok",
         detail: portfolio.markDisclaimer,
       },
-      {
-        id: "ticks",
-        title: "Trading feed coverage",
-        pass:
-          !!runtime.watchlist?.length &&
-          runtime.watchlist.every((i) => i.fresh),
-        detail:
-          "Every engine watchlist instrument needs a tick within 120 seconds",
-      },
+      tradingFeedCheck(runtime),
       {
         id: "evidence",
         title: "Forward observation",

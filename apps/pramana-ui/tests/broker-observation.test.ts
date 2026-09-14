@@ -53,7 +53,7 @@ test("mismatch and changing captures are distinct; empty evidence never qualifie
 
 test("private export and saved Atlas context retain status while excluding external account details",async t=>{
   write();t.mock.method(Date,"now",()=>Date.parse(fixture.finishedAt));
-  const {GET}=await import("../app/api/broker/observation/route"), response=GET();
+  const {GET}=await import("../app/api/broker/observation/route"), request=new Request("http://localhost/api/broker/observation"), response=GET(request);
   assert.equal(response.status,200);assert.equal(response.headers.get("Cache-Control"),"no-store");assert.match(response.headers.get("Content-Disposition")!,/attachment/);
   const exported=await response.json();assert.deepEqual(exported.report,fixture);assert.equal(exported.inspection.status,"consistent");
   const {generateAnswer}=await import("../lib/copilot");
@@ -62,6 +62,6 @@ test("private export and saved Atlas context retain status while excluding exter
   assert.equal(context.brokerObservation.inspection.orderCount,14);assert.equal(context.brokerObservation.status,"available");
   for(const sentinel of [fixture.accountRef,"synthetic-1","738561","trade-1-a","ordersBefore","averagePrice"])
     assert(!JSON.stringify(context.brokerObservation).includes(sentinel),sentinel);
-  process.env.PRAMANA_BROKER_ACCOUNT_REF="f".repeat(64);assert.equal(GET().status,503);
-  delete process.env.PRAMANA_BROKER_OBSERVATION;assert.equal(GET().status,422);
+  process.env.PRAMANA_BROKER_ACCOUNT_REF="f".repeat(64);assert.equal(GET(request).status,503);
+  delete process.env.PRAMANA_BROKER_OBSERVATION;assert.equal(GET(request).status,422);
 });

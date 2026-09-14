@@ -1,8 +1,8 @@
 import {NextResponse} from "next/server";
 import {readBrokerObservation} from "@/lib/broker-observation";
 export const dynamic="force-dynamic";
-export function GET(request?:Request) {
-  const query=request?new URL(request.url).searchParams:new URLSearchParams();
+export function GET(request:Request) {
+  const query=new URL(request.url).searchParams;
   const journalId=query.get("journalId"),sequence=query.get("sequence"),captureSha256=query.get("captureSha256");
   if(captureSha256!==null&&(!journalId||!/^[a-f0-9]{64}$/.test(captureSha256)||query.getAll("captureSha256").length!==1))return NextResponse.json({error:"Invalid capture reference"},{status:400,headers:{"Cache-Control":"no-store"}});
   if((journalId!==null||sequence!==null)&&(!journalId||!/^[a-f0-9]{32}$/.test(journalId)||!sequence||!/^([1-9]\d*)$/.test(sequence)||!Number.isSafeInteger(Number(sequence))||query.getAll("journalId").length!==1||query.getAll("sequence").length!==1))

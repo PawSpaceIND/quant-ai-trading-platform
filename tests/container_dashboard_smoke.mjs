@@ -36,6 +36,17 @@ assert.equal(workspace.tenantId, process.env.PRAMANA_TENANT_ID);
 assert.equal(workspace.liveEnabled, false);
 assert.equal(workspace.copilotConfigured, false);
 assert.equal(workspace.runtime.mode, "paper");
+const feedCheck = workspace.checks.find(c => c.id === "ticks");
+assert.ok(feedCheck);
+if (phase === "stale") {
+  assert.equal(feedCheck.pass, false);
+} else {
+  assert.equal(feedCheck.pass, true);
+  assert.equal(workspace.runtime.watchlist.length, 1);
+  assert.equal(workspace.runtime.watchlist[0].fresh, true);
+  assert.equal(workspace.runtime.watchlist[0].freshnessReason, "fresh");
+  assert.ok(workspace.runtime.watchlist[0].tickTimestamp);
+}
 if (phase === "stream-rejections") {
   const integrity = workspace.runtime.marketDataIntegrity;
   assert.equal(integrity.schema, "pramana.tick_integrity.v1");
