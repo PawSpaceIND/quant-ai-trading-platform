@@ -20,7 +20,7 @@ export async function GET() {
   try {
     const market = await readMarket();
     const {riskHistory: riskHistoryInput, ...displayMarket} = market;
-    const {portfolio, paperContribution} = readPortfolioSnapshot();
+    const {portfolio, paperContribution, benchmarkPerformance} = readPortfolioSnapshot(riskHistoryInput);
     const runtime = readRuntime();
     const perf = performance();
     const db = consoleDb();
@@ -134,6 +134,7 @@ export async function GET() {
       {
         portfolio,
         paperContribution,
+        benchmarkPerformance,
         historicalRisk: historicalRisk(portfolio, riskHistoryInput),
         market: displayMarket,
         runtime,

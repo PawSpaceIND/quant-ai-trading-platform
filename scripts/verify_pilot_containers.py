@@ -100,9 +100,9 @@ def main():
         shared = ["--network", "none", "--mount", f"type=volume,src={volume},dst=/data",
                   "--mount", f"type=bind,src={ROOT / 'tests'},dst=/qa,readonly"]
 
-        def environment(service):
+        def environment(service, **overrides):
             # Exercise the rendered Compose values; suppress paid provider access in the fixture.
-            values = {**services[service]["environment"], "ANTHROPIC_API_KEY":""}
+            values = {**services[service]["environment"], "ANTHROPIC_API_KEY":"", **overrides}
             return [part for key, value in values.items() for part in ["-e", f"{key}={value or ''}"]]
 
         run("docker", "run", "-d", "--name", engine, *shared, *environment("pramana-ghost"),
@@ -274,6 +274,18 @@ def main():
             return state
         report["checks"].append({"streamIntegrityObservation":wait_for(stream_state, "stream rejection observation")})
         dashboard("stream-rejections")
+        # Separate recorded account avoids modifying the running protection/ledger drill.
+        run("docker", "exec", engine, "python", "/qa/account_benchmark_fixture.py", "--runtime-state", "/data/benchmark")
+        benchmark_ui = name + "-benchmark-ui"
+        run("docker", "run", "-d", "--name", benchmark_ui, *shared,
+            *environment("dashboard", PRAMANA_TENANT_ID="default",
+                PRAMANA_LEDGER_PATH="/data/benchmark/paper.sqlite",
+                PRAMANA_MARKET_SNAPSHOT="/data/benchmark/market.json",
+                PRAMANA_CONSOLE_DB="/data/benchmark/console.sqlite"), image_ui)
+        created_containers.append(benchmark_ui)
+        wait_for(lambda: run("docker", "exec", benchmark_ui, "node", "-e",
+            "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "benchmark dashboard startup")
+        report["checks"].append(json.loads(run("docker", "exec", benchmark_ui, "node", "/qa/account_benchmark_smoke.mjs")))
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

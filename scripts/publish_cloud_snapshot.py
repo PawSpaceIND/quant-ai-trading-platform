@@ -37,7 +37,8 @@ def publish():
         detail.pop("companyEvents", None)  # Mapping references and event research remain private.
         detail.pop("researchPortfolio", None)  # Portfolio journals remain private research evidence.
         detail.pop("paperContribution", None)  # Detailed account attribution stays on the engine host.
-        detail.pop("historicalRisk", None)  # Current-account risk diagnostics remain private.
+        detail.pop("historicalRisk", None)
+        detail.pop("benchmarkPerformance", None)  # Current-account risk diagnostics remain private.
         snapshots["/api/workspace"] = detail
     elif workspace.status_code != 404:
         workspace.raise_for_status()

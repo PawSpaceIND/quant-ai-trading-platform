@@ -16,6 +16,7 @@ import { ResearchComparison } from "./research-comparison";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
+import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
@@ -468,6 +469,7 @@ export function PilotWorkspace() {
                 {view === "portfolio" && (
                   <>
                     {!hosted && <PaperContribution state={data.paperContribution} onAsk={ask} />}
+                    {!hosted && <AccountBenchmark state={data.benchmarkPerformance} onAsk={ask} />}
                     {p!.status !== "invalid" && <><Holdings portfolio={p!} onAsk={ask} /><CostPanel friction={friction} /></>}
                   </>
                 )}

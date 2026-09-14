@@ -19,7 +19,7 @@ from quant_ai.execution.telemetry import PilotTelemetry
 BASE = datetime(2000, 1, 1, 4, 1, tzinfo=timezone.utc)
 
 
-def account(directory: Path, now=BASE):
+def account(directory: Path, now=BASE, *, execution_times=None):
     model = MarketFrictionModel(
         fee_schedule=replace(FeeSchedule.zero(), name="synthetic_fee", india_exchange_rate=Decimal(".001")),
         gamma=Decimal(0), spread_atr_multiplier=Decimal(1), max_half_spread_fraction=Decimal(".01"),
@@ -32,7 +32,7 @@ def account(directory: Path, now=BASE):
               ("TCS", Side.SELL, 3, "130"), ("INFY", Side.BUY, 2, "50"),
               ("INFY", Side.SELL, 2, "45"), ("NIFTY", Side.BUY, 1, "80")]
     for i, (symbol, side, quantity, price) in enumerate(trades):
-        broker.set_friction_context(None, execution_time=now - timedelta(seconds=20-i))
+        broker.set_friction_context(None, execution_time=execution_times[i] if execution_times else now - timedelta(seconds=20-i))
         with patch("quant_ai.execution.paper_ledger.uuid4", return_value=SimpleNamespace(hex=f"{i:016x}")):
             intent = OrderIntent(symbol, Market.INDIA, side, quantity, Decimal(price), "SYNTHETIC", AssetClass.ETF if symbol == "NIFTY" else AssetClass.EQUITY)
             (broker.buy if side == Side.BUY else broker.sell)(intent)

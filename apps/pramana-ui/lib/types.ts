@@ -64,6 +64,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  benchmarkPerformance?: import("./benchmark-comparison").AccountBenchmarkState;
   historicalRisk?: HistoricalRiskState;
   paperContribution?: PaperContributionState;
   researchLab?: ResearchLabState;

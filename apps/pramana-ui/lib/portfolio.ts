@@ -3,6 +3,8 @@ import { CostRow, hasColumn, hasTable, LedgerRow, openLedger, tenantId } from "@
 import type {DatabaseSync} from "node:sqlite";
 import {readPaperContribution, type PaperContributionState} from "./paper-contribution";
 
+import {readAccountBenchmark, benchmarkUnavailable} from "./account-benchmark";
+
 type PositionState = { quantity: number; average: number; market: string; assetClass: string };
 
 export type EquityPoint = { timestamp: string; equity: number };
@@ -11,21 +13,23 @@ export function readPortfolio() {
   return readPortfolioSnapshot().portfolio;
 }
 
-export function readPortfolioSnapshot() {
+export function readPortfolioSnapshot(riskHistory?: unknown) {
   const db = openLedger();
-  if (!db) return {portfolio: emptyPortfolio("ledger_not_found"), paperContribution: {status: "unavailable", detail: "No readable paper account is available.", report: null} as PaperContributionState};
+  if (!db) return {benchmarkPerformance: benchmarkUnavailable("No readable paper account is available."), portfolio: emptyPortfolio("ledger_not_found"), paperContribution: {status: "unavailable", detail: "No readable paper account is available.", report: null} as PaperContributionState};
   try {
     // Keep engine valuation, head, account, positions, fills and charges in one SQLite snapshot.
     db.exec("BEGIN");
     let portfolio = readPortfolioFromDatabase(db);
     if (portfolio.status === "invalid") return {
+      benchmarkPerformance: {status: "invalid" as const, detail: portfolio.markDisclaimer, report: null},
       portfolio: {...emptyPortfolio("invalid_engine_valuation"), status: "invalid", markMode: "engine_live",
         markDisclaimer: portfolio.markDisclaimer, equityCurve: portfolio.equityCurve},
       paperContribution: {status: "invalid", detail: portfolio.markDisclaimer, report: null} as PaperContributionState,
     };
     const paperContribution = readPaperContribution(db, portfolio);
     if (portfolio.markMode === "engine_live" && ["invalid", "outdated", "unavailable"].includes(paperContribution.status)) portfolio = {...emptyPortfolio("invalid_account_evidence"), status: "invalid", markMode: "engine_live", markDisclaimer: paperContribution.detail};
-    return {portfolio, paperContribution};
+    const benchmarkPerformance = readAccountBenchmark(db, paperContribution, riskHistory);
+    return {portfolio, paperContribution, benchmarkPerformance};
   } finally {db.close();}
 }
 
