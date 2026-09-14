@@ -110,3 +110,9 @@ Before authorizing new pilot entries, confirm **Stored position protection** is 
 Treat **Portfolio totals withheld** or runtime `valuation.status = unavailable` as an accounting/mark fault, even when protection heartbeat is current. Keep entries halted. Preserve the affected raw state and inspect the bounded reason, canonical fills, account/cost records and source observations. Do not round quantities, fabricate cost basis or clear the halt to make the dashboard green. Use the existing reviewed recovery workflow if authoritative repair cannot be established.
 
 Valid holdings may still exit independently, but invalid cash blocks every fill; corrupt capital/schema/scope may prevent startup entirely. After reviewed recovery, verify a fresh complete valuation, coverage and reconciliation before considering the controlled halt-reset workflow. Invalid minutes remain in the curve and their day cannot qualify as clean forward evidence. Updating both engine and private UI is required for this contract. See [ledger integrity and precise limits](LEDGER_INTEGRITY.md).
+
+## Quote timing qualification
+
+Update the engine and private dashboard together, then inspect Markets → **Engine quote integrity** alongside freshness and readiness controls. Future timestamps require checking source/host clock synchronization; malformed packets or absent exchange times require checking SDK/source configuration. Older and duplicate arrivals do not refresh the last accepted quote. Counts reset on restart and cannot establish full-session coverage. Retain source observations in the reviewed recovery/input inventory when a durable audit is required.
+
+Before open-session acceptance, verify actual exchange/receive times, eligible instrument mappings, continued fresh observations and safe reconnect behavior on the intended host. A successful offline SDK packet drill does not satisfy this gate. [Timing contract and limits](TICK_INTEGRITY.md).

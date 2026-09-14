@@ -147,6 +147,7 @@ def test_unavailable_minute_is_not_erased_by_repair_and_next_minute_can_resume_v
     broker = run.daemon.tracker.broker
     seed(broker)
     now = datetime(2026, 9, 15, 6, 0, 5, tzinfo=timezone.utc)
+    run.daemon.clock = lambda: now
     ticks(run, now)
     run.daemon.protection_tick(now)
     original = broker._connection.execute("SELECT average_price FROM paper_positions WHERE symbol='INFY'").fetchone()[0]
@@ -193,8 +194,12 @@ def test_nonfinite_buffered_price_does_not_crash_callback_or_suppress_other_symb
     run.daemon.tracker.market_feed.buffer.put(LiveTick("TCS", D(90), D(100), None, None, now, "synthetic"))
     run.daemon.protection_tick(now)
     assert [(e.symbol, e.filled) for e in run.daemon.protective_exits] == [("TCS", True)]
-    assert runtime(broker)["valuation"]["status"] == "unavailable"
-    assert runtime(broker)["halted"]
+    # The malformed tick is now rejected before it reaches the latest-price cache.
+    # No INFY quote exists; its explicit fallback is unqualified, while TCS exits.
+    state = runtime(broker)
+    assert state["marketDataIntegrity"]["rejected"]["invalid_tick_values"] == 1
+    snapshot = json.loads(broker._connection.execute("SELECT payload FROM paper_live_valuations").fetchone()[0])
+    assert snapshot["status"] == "degraded" and not snapshot["allMarksFresh"] and not snapshot["qualifyingSession"]
     assert broker.get_positions("pilot")[0].symbol == "INFY"
 
 

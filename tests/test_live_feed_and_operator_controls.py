@@ -82,7 +82,7 @@ def test_feed_is_market_agnostic_and_marks_from_the_latest_tick() -> None:
         feed.latest_tick(NIFTY)
 
 
-def test_stale_tick_is_not_a_mark_and_crossed_quotes_collapse_to_last() -> None:
+def test_stale_and_crossed_quotes_cannot_be_used_as_fresh_marks() -> None:
     buffer = TickBuffer()
     feed = LiveTickMarketDataFeed(buffer, clock=lambda: T0 + timedelta(days=2), max_tick_age=timedelta(hours=24))
     buffer.put(tick("NIFTY", T0, "100"))
@@ -90,8 +90,9 @@ def test_stale_tick_is_not_a_mark_and_crossed_quotes_collapse_to_last() -> None:
         feed.latest_tick(NIFTY)
     fresh = LiveTickMarketDataFeed(TickBuffer(), clock=lambda: T0)
     fresh.buffer.put(tick("NIFTY", T0, "100", bid="101", ask="99"))
-    mark = fresh.latest_tick(NIFTY)
-    assert (mark.bid, mark.ask) == (Decimal(100), Decimal(100))
+    with pytest.raises(ValueError, match="no_live_tick"):
+        fresh.latest_tick(NIFTY)
+    assert fresh.buffer.integrity()["rejected"] == {"crossed_tick_quotes": 1}
 
 
 def test_aggregator_ignores_late_ticks_and_bounds_history() -> None:

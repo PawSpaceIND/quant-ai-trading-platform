@@ -453,6 +453,7 @@ export function PilotWorkspace() {
                 )}
                 {view === "markets" && (
                   <>
+                    {!hosted && <StreamIntegrity data={data} onAsk={ask} />}
                     <MarketWorkspace
                       readOnly={hosted}
                       data={data.market}
@@ -1053,6 +1054,28 @@ function ProviderPanel({ data }: { data: Workspace }) {
       </p>
     </section>
   );
+}
+function StreamIntegrity({data, onAsk}: {data: Workspace; onAsk: (q: string) => void}) {
+  const report = data.runtime.marketDataIntegrity;
+  const reasons: Record<string, string> = {future_tick: "Future timestamp", out_of_order_tick: "Older than latest quote",
+    duplicate_tick: "Duplicate update", invalid_tick_values: "Invalid price or volume", crossed_tick_quotes: "Crossed bid and ask",
+    invalid_tick_timestamp: "Invalid timestamp", invalid_zerodha_payload: "Invalid Zerodha packet", unmapped_tick: "Unmapped instrument"};
+  const counts = report?.rejected && typeof report.rejected === "object" ? Object.entries(report.rejected) : [];
+  const valid = report?.schema === "pramana.tick_integrity.v1" && Number.isSafeInteger(report.accepted) && report.accepted >= 0
+    && counts.length <= 20 && counts.every(([key, value]) => key in reasons && Number.isSafeInteger(value) && value >= 0);
+  if (!valid || !report) return <section className="panel"><h2>Engine quote integrity</h2><p className="muted">Stream diagnostics unavailable. Quote freshness must be checked separately.</p></section>;
+  const total = counts.reduce((sum, [, count]) => sum + count, 0);
+  const last = report.lastRejection;
+  return <section className="panel">
+    <div className="panel-title"><div><span className="eyebrow">ENGINE STREAM OBSERVATIONS</span><h2>Engine quote integrity</h2></div>
+      <span className="pill neutral">{data.runtime.status === "running" ? "Current engine report" : "Last recorded report"}</span></div>
+    <dl className="details"><div><dt>Accepted updates</dt><dd>{report.accepted.toLocaleString()}</dd></div>
+      <div><dt>Ignored updates</dt><dd>{total.toLocaleString()}</dd></div></dl>
+    {counts.length > 0 && <dl className="details">{counts.map(([reason, count]) => <div key={reason}><dt>{reasons[reason]}</dt><dd>{count.toLocaleString()}</dd></div>)}</dl>}
+    {last && <p className="footnote" style={{overflowWrap: "anywhere"}}>Last ignored: {last.symbol} · {reasons[last.reason] || "Unclassified"} · received {last.receivedAt}. Source time: {last.observedAt || "unavailable"}.</p>}
+    <p className="muted">Counts cover this engine process and reset on restart. Ignored updates never refresh the last accepted quote. Same-second distinct updates retain arrival order; exchange sequence reconstruction and complete tick capture are not established. The market-watch collector is a separate source.</p>
+    <button className="wide-button" onClick={() => onAsk("Explain the engine quote-integrity diagnostics and rejected updates. Distinguish current quote freshness, stream ordering, source coverage and whether more evidence is required before pilot entries.")}>Discuss quote quality with Atlas ↗</button>
+  </section>;
 }
 function DecisionSource({ value, compact = false }: { value?: DecisionProvenance; compact?: boolean }) {
   if (!value || value.mode === "unrecorded") return <p className="footnote">Decision source not recorded for this proof.</p>;

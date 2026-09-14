@@ -26,6 +26,7 @@ from quant_ai.domain.models import Instrument
 from quant_ai.marketdata.aggregate import aggregate_windows
 from quant_ai.marketdata.feed import MarketDataFeed, MarketTick
 from quant_ai.marketdata.models import Candle
+from quant_ai.marketdata.tick_integrity import tick_value_issue
 from quant_ai.marketdata.ticker_stream import LiveTick, TickBuffer
 
 Clock = Callable[[], datetime]
@@ -65,7 +66,8 @@ class TickBarAggregator:
     """
 
     def __init__(
-        self, bar_length: timedelta = timedelta(minutes=1), max_bars: int = 2000
+        self, bar_length: timedelta = timedelta(minutes=1), max_bars: int = 2000,
+        *, clock: Clock | None = None,
     ) -> None:
         if bar_length <= timedelta(0):
             raise ValueError("bar_length must be positive")
@@ -76,15 +78,23 @@ class TickBarAggregator:
         self._closed: dict[str, deque[_Bar]] = {}
         self._forming: dict[str, _Bar] = {}
         self._last_volume: dict[str, Decimal] = {}
+        self._last_observed: dict[str, datetime] = {}
+        self._sealed_until: dict[str, datetime] = {}
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
 
     def ingest(self, tick: LiveTick) -> None:
-        if not tick.ltp.is_finite() or tick.ltp <= 0 or not tick.volume.is_finite() or tick.volume < 0:
+        if tick_value_issue(tick):
             return
         observed = _utc(tick.observed_at)
         start = self._floor(observed)
         with self._lock:
-            delta = self._volume_delta(tick.symbol, tick.volume)
+            previous = self._last_observed.get(tick.symbol)
+            sealed = self._sealed_until.get(tick.symbol)
+            if observed > _utc(self.clock()) or (previous and observed < previous) or (sealed and observed < sealed):
+                return
+            delta = self._volume_delta(tick.symbol, tick.volume, observed, previous)
+            self._last_observed[tick.symbol] = observed
             forming = self._forming.get(tick.symbol)
             if forming is not None and forming.start < start:
                 self._close(tick.symbol)
@@ -121,6 +131,8 @@ class TickBarAggregator:
             return series[-1].close if series else None
 
     def _roll(self, symbol: str, now: datetime) -> None:
+        boundary = self._floor(now)
+        self._sealed_until[symbol] = max(self._sealed_until.get(symbol, boundary), boundary)
         forming = self._forming.get(symbol)
         if forming is not None and forming.end <= now:
             self._close(symbol)
@@ -134,10 +146,10 @@ class TickBarAggregator:
         epoch = timestamp.timestamp()
         return datetime.fromtimestamp(epoch - (epoch % seconds), tz=timezone.utc)
 
-    def _volume_delta(self, symbol: str, volume: Decimal) -> Decimal:
+    def _volume_delta(self, symbol: str, volume: Decimal, observed: datetime, previous: datetime | None) -> Decimal:
         last = self._last_volume.get(symbol)
         self._last_volume[symbol] = volume
-        if last is None or volume < last:
+        if last is None or volume < last or (previous and observed.date() != previous.date()):
             return Decimal(0)
         return volume - last
 
@@ -154,8 +166,8 @@ class LiveTickMarketDataFeed(MarketDataFeed):
         max_tick_age: timedelta | None = timedelta(hours=24),
     ) -> None:
         self.buffer = buffer
-        self.aggregator = aggregator or TickBarAggregator()
-        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock = clock or buffer.clock
+        self.aggregator = aggregator or TickBarAggregator(clock=lambda: self.clock())
         self.max_tick_age = max_tick_age
         buffer.subscribe(self.aggregator.ingest)
 
@@ -186,6 +198,10 @@ class LiveTickMarketDataFeed(MarketDataFeed):
         if tick is None:
             raise ValueError("no_live_tick")
         observed = _utc(tick.observed_at)
+        if observed > _utc(self.clock()):
+            raise ValueError("future_live_tick")
+        if tick_value_issue(tick):
+            raise ValueError("invalid_live_tick")
         if self.max_tick_age is not None and _utc(self.clock()) - observed > self.max_tick_age:
             raise ValueError("stale_live_tick")
         bid = tick.bid if tick.bid is not None and tick.bid > 0 else tick.ltp

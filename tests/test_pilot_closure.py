@@ -123,6 +123,9 @@ def test_pre_submit_rechecks_price_and_halt_after_analysis(tmp_path):
     publish_tick(runner, "101", now)
     assert runner.daemon._pilot_pre_submit(proposal) == "pilot_price_moved_during_analysis"
     publish_tick(runner, "100", now - timedelta(minutes=5))
+    assert runner.daemon._pilot_pre_submit(proposal) == "pilot_price_moved_during_analysis"
+    assert runner.daemon.tracker.market_feed.buffer.integrity()["rejected"]["out_of_order_tick"] == 1
+    now += timedelta(minutes=3)  # Age the retained newer quote; a late tick cannot replace it.
     assert runner.daemon._pilot_pre_submit(proposal) == "pilot_stale_entry_price"
     runner.daemon.halt_file.write_text("review")
     assert runner.daemon._pilot_pre_submit(proposal) == "pilot_halted"

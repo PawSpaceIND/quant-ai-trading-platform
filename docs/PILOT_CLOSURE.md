@@ -31,6 +31,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P23 | Deployment image and heartbeat verification | Actual Dockerfile builds, private shared-state/authentication/restart checks, fail-closed local protection health | Health and local synthetic flow verified; exact Linux image verification tracked by CI; intended-host qualification pending |
 | P24 | Stored position protection and final entry boundary | Explicit valid stops, exact asset class, whole-book coverage, persisted halt, atomic rejection, independent exits and current dashboard evidence | Engineering/API/browser verified on synthetic evidence; real-session and target-host qualification pending |
 | P25 | Invalid accounting and valuation isolation | Exact quantities, finite amounts, atomic rejection, independent valid exits, unavailable totals, preserved chart/day gaps and durable restart halt | Engineering/API/browser verified on synthetic evidence; source integrity and target-host recovery qualification pending |
+| P26 | Source timestamps and ordered quote observations | Actual SDK timestamp conversion, future/late/duplicate rejection, immutable closed bars, unchanged volume baseline and UI/Atlas diagnostics | Engineering/API/browser and offline SDK verified; real session/source completeness and clock qualification pending |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -90,3 +91,7 @@ The final pilot broker now enforces explicit stops, simulated-fill geometry, per
 ## Implementation delta — ledger integrity
 
 Malformed stored quantity/basis/cash can no longer be rounded, silently projected or committed into a fill. Complete valuations fail closed while valid independent protective exits remain available when account cash is usable. The engine publishes unavailable totals and retains invalid minute/day evidence across restoration; the UI preserves curve gaps and keeps the halt visible. [Exact scope, restart behavior and verification](LEDGER_INTEGRITY.md). P25 strengthens capital-accounting integrity without qualifying external sources, operations or strategy performance.
+
+## Implementation delta — source timing and bar ordering
+
+The Zerodha adapter preserves actual SDK exchange timestamps across host timezones. Future, older, duplicate and invalid updates cannot refresh the latest quote, change sealed bars or corrupt later volume baselines. Markets and persisted Atlas context expose process-scoped rejection diagnostics separately from collector prices. [Contract and verification](TICK_INTEGRITY.md). This strengthens P03/P05/P26; real open-session observation, source completeness and full broker/benchmark parity remain open.

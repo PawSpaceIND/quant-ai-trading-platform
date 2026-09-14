@@ -132,6 +132,8 @@ class PilotTelemetry:
             "strategyManifest": daemon.strategy_manifest.summary if daemon.strategy_manifest else None,
             "strategyEvidence": strategy_evidence,
             "valuation": valuation,
+            "marketDataIntegrity": (daemon.tracker.market_feed.buffer.integrity()
+                if hasattr(daemon.tracker.market_feed, "buffer") else None),
             "protectionCoverage": daemon.protection_coverage,
             "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
                 if key not in {"episodes", "openPositions", "strategyAttribution"}}

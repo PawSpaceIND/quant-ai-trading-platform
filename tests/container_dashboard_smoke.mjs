@@ -7,7 +7,7 @@ assert.ok(["localhost", "127.0.0.1"].includes(new URL(origin).hostname));
 const phase = process.env.SMOKE_PHASE;
 const protectionMissing = ["missing-protection", "protection-restarted"].includes(phase);
 const invalidLedger = ["invalid-ledger", "ledger-restarted"].includes(phase);
-const faultHalted = protectionMissing || phase === "protection-restored" || invalidLedger || phase === "ledger-restored";
+const faultHalted = protectionMissing || phase === "protection-restored" || invalidLedger || ["ledger-restored", "stream-rejections"].includes(phase);
 const anonymous = await fetch(`${origin}/api/workspace`);
 assert.equal(anonymous.status, 401);
 // Persist one test-only signed session across phases/restarts without relaxing the
@@ -36,6 +36,14 @@ assert.equal(workspace.tenantId, process.env.PRAMANA_TENANT_ID);
 assert.equal(workspace.liveEnabled, false);
 assert.equal(workspace.copilotConfigured, false);
 assert.equal(workspace.runtime.mode, "paper");
+if (phase === "stream-rejections") {
+  const integrity = workspace.runtime.marketDataIntegrity;
+  assert.equal(integrity.schema, "pramana.tick_integrity.v1");
+  assert.ok(integrity.accepted > 0);
+  for (const code of ["out_of_order_tick", "invalid_tick_values", "duplicate_tick", "future_tick"]) assert.ok(integrity.rejected[code] > 0);
+  assert.equal(integrity.lastRejection.reason, "future_tick");
+  assert.equal(workspace.portfolio.holdings[0].markPrice, 100);
+}
 assert.equal(workspace.checks.find(c => c.id === "recovery").pass, false);
 assert.equal(workspace.checks.find(c => c.id === "evidence").pass, false);
 if (invalidLedger) {
@@ -117,6 +125,7 @@ if (phase === "initial") {
   assert.equal((await halt.json()).status, "requested");
 }
 console.log(JSON.stringify({phase, status:"pass", authenticated:true, liveEnabled:false,
+  ...(phase === "stream-rejections" ? {streamIntegrity:workspace.runtime.marketDataIntegrity} : {}),
   valuationStatus:workspace.runtime.valuation?.status, portfolioStatus:workspace.portfolio.status,
   protectionCoverage:workspace.runtime.protectionCoverage.status,
   protectionCheck:workspace.checks.find(c => c.id === "protection_coverage").pass,

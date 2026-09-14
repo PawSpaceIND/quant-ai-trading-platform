@@ -46,6 +46,8 @@ export type StrategyEpisodeEvidence = {
     profitFactor: string | null; profitFactorState: string; winRate: string | null; closedCashFees: string};
 };
 export type Runtime = {
+  marketDataIntegrity?: {schema: string; accepted: number; rejected: Record<string, number>;
+    lastRejection: {reason: string; symbol: string; observedAt: string | null; receivedAt: string} | null; scope: string};
   valuation?: {status: string; reason?: string; checkedAt: string; ledgerId: number};
   protectionCoverage?: {
     schema: string; tenantId: string; status: string; checkedAt: string; ledgerId: number;

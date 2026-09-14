@@ -362,6 +362,8 @@ def build_ghost_runner(
         halt_file=halt_file,
         instruments=instruments,
     )
+    buffer.clock = lambda: daemon.clock()
+    feed.clock = lambda: daemon.clock()
     if pilot_mode:
         daemon.enable_pilot_monitoring()
     streams: list[AbstractTickerStream] = [

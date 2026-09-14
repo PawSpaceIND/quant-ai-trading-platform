@@ -122,6 +122,7 @@ def main():
                   "import kiteconnect, ib_async, certifi; from importlib.metadata import version; "
                   "import json; print(json.dumps({p:version(p) for p in ['kiteconnect','ib_async','certifi']}))")
         report["pilotDependencies"] = json.loads(sdk)
+        report["checks"].append(json.loads(run("docker", "exec", engine, "python", "/qa/kite_timestamp_smoke.py")))
         run("docker", "run", "-d", "--name", ui, *shared, *environment("dashboard"), image_ui)
         created_containers.append(ui)
 
@@ -262,6 +263,17 @@ def main():
         set_average(original_average)
         report["checks"].append({"restoredLedgerObservation":wait_for(lambda: valuation_state("available"), "restored valuation after invalid minute", seconds=75)})
         dashboard("ledger-restored")
+        run("docker", "exec", engine, "python", "-c", "from pathlib import Path; Path('/data/fixture-mode').write_text('bad-ticks')")
+        def stream_state():
+            state = json.loads(run("docker", "exec", engine, "python", "-c",
+                "import sqlite3,os,json; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+                "r=json.loads(db.execute('SELECT payload FROM pilot_runtime WHERE tenant_id=?',(os.environ['PRAMANA_TENANT_ID'],)).fetchone()[0]); "
+                "print(json.dumps(r['marketDataIntegrity'])); db.close()"))
+            if not all(state['rejected'].get(k, 0) > 0 for k in ['out_of_order_tick','invalid_tick_values','duplicate_tick','future_tick']):
+                raise ValueError("Waiting for stream rejection evidence")
+            return state
+        report["checks"].append({"streamIntegrityObservation":wait_for(stream_state, "stream rejection observation")})
+        dashboard("stream-rejections")
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

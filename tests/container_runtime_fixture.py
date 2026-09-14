@@ -7,7 +7,7 @@ import json
 import os
 import signal
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +56,11 @@ def main():
                 now = datetime.now(timezone.utc)
                 runner.daemon.tracker.market_feed.buffer.put(
                     LiveTick("INFY", Decimal(100), Decimal(100), None, None, now, "isolated_container_fixture"))
+                if mode == "bad-ticks":
+                    buffer = runner.daemon.tracker.market_feed.buffer
+                    for offset, price in [(-30, "1"), (0, "NaN"), (0, "100"), (3600, "99999")]:
+                        buffer.put(LiveTick("INFY", Decimal(price), Decimal(100), None, None,
+                                            now + timedelta(seconds=offset), "isolated_container_fixture"))
                 runner.daemon.protection_tick(now)
                 market = {"status": "ok", "source": "Synthetic container verification only",
                           "fetchedAt": now.isoformat(), "rows": [{"symbol": "INFY", "available": True,
