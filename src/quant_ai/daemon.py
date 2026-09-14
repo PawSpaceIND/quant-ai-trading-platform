@@ -286,7 +286,7 @@ def build_ghost_runner(
         tracker,
         instrument,
         plan,
-        quantity=10,
+        # quantity is intentionally unset: sized per tick from live equity and the plan.
         country="USA",
         tenant_id=tenant_id,
     )

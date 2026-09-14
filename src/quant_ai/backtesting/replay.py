@@ -139,7 +139,7 @@ class HistoricalReplayHarness:
         broker: PaperBrokerService,
         plan: CapitalPlan,
         *,
-        quantity: int = 1,
+        quantity: int | None = 1,
         country: str = "USA",
         tenant_id: str = "backtest",
         xai_logger: XAITraceLogger | None = None,

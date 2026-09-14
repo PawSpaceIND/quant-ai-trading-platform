@@ -41,7 +41,7 @@ class AutonomousTradingDaemon:
         instrument: Instrument,
         plan: CapitalPlan,
         *,
-        quantity: int,
+        quantity: int | None = None,
         country: str,
         tenant_id: str = "default",
         notifications: TradingNotificationDispatcher | None = None,

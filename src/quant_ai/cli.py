@@ -70,7 +70,8 @@ def build_runtime() -> AutonomousTradingDaemon:
         tracker,
         instrument,
         plan,
-        quantity=10,
+        # quantity is intentionally unset: each entry is sized from live equity and the
+        # capital plan (PositionSizer.quantity_from_plan), not a fixed share count.
         country="USA",
         tenant_id=tenant_id,
         notifications=notifications,
@@ -204,7 +205,7 @@ def _backtest(args: argparse.Namespace) -> None:
     result = HistoricalReplayHarness(
         broker,
         plan,
-        quantity=10,
+        quantity=None,  # dynamic: sized per bar from equity and the capital plan
         country="India" if market == Market.INDIA else "USA",
         tenant_id=tenant,
         xai_logger=XAITraceLogger(proof_dir),

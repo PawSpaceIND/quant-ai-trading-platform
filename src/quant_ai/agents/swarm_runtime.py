@@ -183,7 +183,11 @@ class SwarmPaperTradingService:
             # not a daemon-killing exception.
             return refuse(f"broker_rejected:{error}")
         lifecycle.transition(OrderState.FILLED)
-        trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
+        # The proof is written after the fill so it carries the broker order id: the UI
+        # joins proofs to ledger rows on that id and refuses any looser association.
+        trace = self.xai_logger.log(
+            request, weighted_evidence, proposal, stress, risk, fill=fill
+        )
         return SwarmExecutionResult(proposal, risk, fill, stress, trace, lifecycle.state)
 
     def _in_exit_cooldown(

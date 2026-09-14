@@ -32,6 +32,7 @@ from quant_ai.marketdata.feed import MarketDataFeed
 from quant_ai.marketdata.ticker_stream import LiveTick
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalPlan
+from quant_ai.portfolio.sizing import PositionSizer
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class SwarmMarketAnalysisPipeline:
         freshness: FreshnessValidator | None = None,
         regime_detector: MarketRegimeDetector | None = None,
         tick_reader: CadenceMarketReader | None = None,
+        sizer: PositionSizer | None = None,
     ) -> None:
         self.market_feed = market_feed
         self.news = news
@@ -75,11 +77,30 @@ class SwarmMarketAnalysisPipeline:
         self.freshness = freshness or FreshnessValidator()
         self.regime_detector = regime_detector or MarketRegimeDetector()
         self.tick_reader = tick_reader
+        self.sizer = sizer or PositionSizer()
         self.cache = IntelligenceDataCache()
         self.agents = (
             GeopoliticalAnalystAgent(), CommodityYieldAgent(),
             IndianEquitiesAgent(), USEquitiesAgent(), TechnicalQuantAgent(),
         )
+
+    def _resolve_quantity(
+        self,
+        requested: int | None,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        reference_price: Decimal,
+    ) -> int:
+        """An explicit quantity is honoured; None means size from risk and capital."""
+        if requested is not None:
+            return requested
+        return self.sizer.quantity_from_plan(plan, portfolio, reference_price)
+
+    @staticmethod
+    def _apply_conflict(quantity: int, conflict: Decimal) -> int:
+        if quantity <= 0:
+            return 0  # an unaffordable entry must never be rounded up to one share
+        return max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
 
     def run(
         self,
@@ -88,7 +109,7 @@ class SwarmMarketAnalysisPipeline:
         plan: CapitalPlan,
         portfolio: PortfolioSnapshot,
         *,
-        quantity: int,
+        quantity: int | None = None,
         country: str,
         tenant_id: str = "default",
         country_exposure: dict[str, Decimal] | None = None,
@@ -156,9 +177,10 @@ class SwarmMarketAnalysisPipeline:
             ))
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
-        effective_quantity = max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
         root_request = requests[-1]
         reference_price = closes[-1] if closes else Decimal(0)
+        requested_quantity = self._resolve_quantity(quantity, effective_plan, portfolio, reference_price)
+        effective_quantity = self._apply_conflict(requested_quantity, conflict)
         stop = reference_price * (Decimal(1) - plan.stop_loss_fraction) if reference_price > 0 else None
         take_profit = reference_price * (Decimal(1) + plan.take_profit_fraction) if reference_price > 0 else None
         execution = self.runtime.execute(
@@ -168,7 +190,8 @@ class SwarmMarketAnalysisPipeline:
             country_exposure=country_exposure, tenant_id=tenant_id,
         )
         return MarketAnalysisResult(
-            evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
+            evidence, states, requested_quantity, effective_quantity, conflict, execution,
+            regime, analytics,
         )
 
     async def run_async(
@@ -178,7 +201,7 @@ class SwarmMarketAnalysisPipeline:
         plan: CapitalPlan,
         portfolio: PortfolioSnapshot,
         *,
-        quantity: int,
+        quantity: int | None = None,
         country: str,
         tenant_id: str = "default",
         country_exposure: dict[str, Decimal] | None = None,
@@ -247,12 +270,13 @@ class SwarmMarketAnalysisPipeline:
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
-        effective_quantity = max(1, quantity // 2) if conflict >= Decimal("0.40") else quantity
         root_request = requests[-1]
         reference_price = (
             market_tick.ltp if market_tick is not None and market_tick.ltp > 0
             else (closes[-1] if closes else Decimal(0))
         )
+        requested_quantity = self._resolve_quantity(quantity, effective_plan, portfolio, reference_price)
+        effective_quantity = self._apply_conflict(requested_quantity, conflict)
         stop = (
             reference_price * (Decimal(1) - plan.stop_loss_fraction)
             if reference_price > 0 else None
@@ -269,7 +293,8 @@ class SwarmMarketAnalysisPipeline:
             country_exposure=country_exposure, tenant_id=tenant_id,
         )
         return MarketAnalysisResult(
-            evidence, states, quantity, effective_quantity, conflict, execution, regime, analytics
+            evidence, states, requested_quantity, effective_quantity, conflict, execution,
+            regime, analytics,
         )
 
     def _market_tick_status(

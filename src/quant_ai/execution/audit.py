@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_ai.agents.contracts import AgentEvidence
 from quant_ai.agents.swarm import AgentAnalysisRequest, TradeProposal
+from quant_ai.brokers.base import ExecutionResult
 from quant_ai.intelligence.adversarial import StressVerdict
 from quant_ai.risk.warden import WardenDecision
 
@@ -27,6 +28,10 @@ class XAITrace:
     declared_rationales: tuple[str, ...]
     stress_verdict: dict[str, str]
     risk_verdict: dict[str, str]
+    # Broker order id of the fill this rationale produced. None on every rejected path, so
+    # a proof can only ever be joined to the exact fill it caused - never by timestamp or
+    # symbol guesswork.
+    order_id: str | None = None
 
 
 class XAITraceLogger:
@@ -45,6 +50,7 @@ class XAITraceLogger:
         proposal: TradeProposal,
         stress: StressVerdict,
         risk: WardenDecision,
+        fill: ExecutionResult | None = None,
     ) -> XAITrace:
         matrix = tuple(
             {
@@ -84,6 +90,7 @@ class XAITraceLogger:
                 "approved": str(risk.approved).lower(),
                 "reason": risk.reason,
             },
+            fill.order_id if fill is not None else None,
         )
         self._traces.append(trace)
         if self.directory is not None:
@@ -121,6 +128,7 @@ class XAITraceLogger:
             f"- Proposal: {trace.proposal['side']} x {trace.proposal['quantity']}",
             f"- Stress: {trace.stress_verdict['passed']} ({trace.stress_verdict['worst_scenario']})",
             f"- Risk: {trace.risk_verdict['approved']} ({trace.risk_verdict['reason']})",
+            f"- Order: {trace.order_id or 'none (not filled)'}",
             "",
             "## Specialist evidence",
         ]
