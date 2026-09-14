@@ -125,7 +125,16 @@ def main():
         dashboard("halted")
         # Restart while halted: the persisted request and risk state must survive.
         run("docker", "restart", engine)
-        report["checks"].append({"haltAfterEngineRestart":wait_for(halt_health, "halt after restart")})
+        started_at = run("docker", "inspect", "--format", "{{.State.StartedAt}}", engine)
+
+        def restarted_halt():
+            result = halt_health()
+            if datetime.fromisoformat(result["observed_at"]) < datetime.fromisoformat(started_at.replace("Z", "+00:00")):
+                raise ValueError("Waiting for a heartbeat written by the restarted container")
+            return result
+
+        report["checks"].append({"haltAfterEngineRestart":wait_for(restarted_halt, "new halted heartbeat after restart"),
+                                 "restartedContainerStartedAt":started_at})
         run("docker", "exec", engine, "pramana", "resume")
         wait_for(health, "operator-file halt recovery")
         dashboard("recovered")

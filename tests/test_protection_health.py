@@ -53,6 +53,7 @@ def test_timestamp_boundaries_and_utc_equivalence(tmp_path, offset):
     result = protection_health(database, "pilot", now=NOW)
     assert result["status"] == "observation_ok"
     assert result["age_seconds"] == offset
+    assert result["observed_at"] == stamp.isoformat()
 
 
 def test_voluntary_halt_keeps_liveness_but_fails_availability_without_disclosing_reason(tmp_path):

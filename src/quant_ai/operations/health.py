@@ -89,6 +89,7 @@ def protection_health(database: Path, tenant: str, *, now: datetime | None = Non
         "reasons": reasons,
         "age_seconds": stored_age,
         "payload_age_seconds": payload_age,
+        "observed_at": stored_at.isoformat() if stored_at is not None else None,
         "halted": halted if halted is True or halted is False else None,
         "checked_at": now.isoformat(),
         "note": "Persisted paper protection observation only; not feed, execution or strategy readiness",

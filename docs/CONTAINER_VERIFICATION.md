@@ -10,7 +10,7 @@ The check covers:
 - Private unauthenticated rejection, login, CSRF rejection and no-store authenticated workspace responses.
 - Shared account/holdings/market reads and paper-only reporting. Missing strategy and recovery acceptance stays failed.
 - Saved watchlist mutation, retrieval and persistence across dashboard restart.
-- A dashboard halt request acknowledged by protection; persistence across engine restart; explicit operator-command recovery.
+- A dashboard halt request acknowledged by protection; persistence across engine restart with a heartbeat newer than the restarted container’s start time; explicit operator-command recovery.
 - Stale heartbeat rejection after fixture publication is frozen, followed by fresh-observation recovery.
 - Cleanup of the disposable containers, data volume and images, recorded in the artifact.
 
@@ -29,7 +29,7 @@ Builds require package-registry access. The script runs only the containers/volu
 - Exit 0 / `status: observation_ok`: a fresh, consistent paper protection heartbeat with no reported halt.
 - Exit 2 / `status: unhealthy`: missing, invalid, stale, stopped or halted evidence. A valid halted engine retains `heartbeat: ok` and reports `engine_halted`; its protection loop remains live.
 
-Output contains bounded reason codes, ages and halt state, never raw engine contents, balances or the operator's halt reason. The reader does not create a missing database, write application state, clear a halt or contact a provider. SQLite can manage its normal read-side WAL/SHM files.
+Output contains bounded reason codes, the original observation time, ages and halt state, never raw engine contents, balances or the operator's halt reason. The reader does not create a missing database, write application state, clear a halt or contact a provider. SQLite can manage its normal read-side WAL/SHM files.
 
 This changes the old probe's behavior: previously a fresh row timestamp alone passed and an active halt exited successfully. Monitoring should treat a halt as an availability event and handle planned maintenance explicitly. Do not connect this result to automatic resume or restart actions. Protection must continue while entries are halted. This is an observation of persisted evidence, not proof of a healthy process, source freshness, current positions or strategy effectiveness.
 
@@ -38,3 +38,5 @@ The independent hosted monitor retains its separate credential and 150-second or
 ## Verification status
 
 Local Python tests and the synthetic engine/dashboard prerequisite verify the health rejection cases, private login, shared account, saved watchlist, halt acknowledgement, engine halt persistence and dashboard restart. Exact image-build and Linux container results are recorded by CI after the job runs. A green CI artifact qualifies packaging and the listed isolated flows only; intended-host deployment, real-session observation and operational burn-in remain open.
+
+The first Linux CI run built both images and passed 11 recorded checks. Artifact review found that the restart assertion could still read the prior heartbeat; the check now requires an observation at or after Docker's recorded `StartedAt` for the new container process. This prevents pre-restart evidence from satisfying restart acceptance. Inspect the artifact's `haltAfterEngineRestart.observed_at` and `restartedContainerStartedAt` fields.

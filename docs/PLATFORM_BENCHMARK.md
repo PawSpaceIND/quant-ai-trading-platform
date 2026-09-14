@@ -217,3 +217,8 @@ The actual paper account now has an independently reconstructed instrument/fee b
 ## Implementation delta — exploratory historical cash-portfolio risk
 
 The private Risk lab now calculates aligned daily covariance/correlation, instrument volatility contributions, cash-inclusive diversification and 95% historical VaR/expected shortfall, with dated scenario inspection, private export and Atlas context. Missing exposures/dates cannot be dropped to manufacture a complete result. A real capture identified the NSE Budget Sunday omission; its official exception now reaches the shared calendar and runtime fingerprint. [Method and verification](HISTORICAL_PORTFOLIO_RISK.md). This advances IBKR-style empirical risk inspection and integrated portfolio analytics. It does not establish calibrated predictive risk, adjusted/qualified history, sector/factor/beta models, Greeks/margin, multi-asset or Bloomberg full-valuation scenario parity.
+
+
+## Implementation delta — deployment verification
+
+Local protection health now rejects a fresh database row carrying stale, malformed or stopped-engine evidence and surfaces a halt independently of protection liveness. A dedicated Linux CI job builds the actual pilot/UI images and checks isolated private authentication, shared accounting, watchlist persistence, halt/restart and stale-observation handling. [Verification contract](CONTAINER_VERIFICATION.md). This advances release packaging and operational diagnostics, while real deployment startup, source/token renewal, independently received alerts, soak and encrypted off-host recovery remain required. It does not establish broker or analytics feature parity.
