@@ -73,6 +73,7 @@ NSE_HOLIDAYS_2026 = frozenset(
         date(2026, 4, 3),    # Good Friday
         date(2026, 4, 14),   # Dr. Ambedkar Jayanti
         date(2026, 5, 1),    # Maharashtra Day
+        date(2026, 9, 14),   # Ganesh Chaturthi: confirmed Kite holiday notice
         date(2026, 10, 2),   # Gandhi Jayanti
         date(2026, 12, 25),  # Christmas
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { MarketMonitor } from "./market-monitor";
 import {
   CartesianGrid,
   Line,
@@ -177,6 +178,7 @@ export function CommandCenter() {
             <span className="rounded border border-slate-800 bg-slate-950/70 px-3 py-2">{loading ? "SYNCING" : `UPDATED ${updated?.toLocaleTimeString() ?? "—"}`}</span>
           </div>
         </header>
+        <MarketMonitor />
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Total Equity" value={money(portfolio.totalEquity)} sub={`Cash ${money(portfolio.cash)}`} accent="cyan" />

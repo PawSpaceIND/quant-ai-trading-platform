@@ -73,7 +73,6 @@ class AnthropicSwarmClient:
                 self._client.messages.create(
                     model=self.model,
                     max_tokens=1200,
-                    temperature=0,
                     system=(
                         "You are Pramana's advisory quant consensus engine. Use only the supplied "
                         "market context. Never claim execution capability. Return the structured "
