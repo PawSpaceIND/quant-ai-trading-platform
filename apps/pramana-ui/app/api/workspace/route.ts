@@ -32,7 +32,17 @@ export async function GET() {
       path.join(path.dirname(ledgerPath()), "PRAMANA_HALT");
     const strategyReview = reviewedGate("strategy"),
       recoveryReview = reviewedGate("recovery");
+    const reconciliationAge = Date.now() - Date.parse(runtime.reconciliation?.checkedAt || "");
     const checks = [
+      {
+        id: "reconciliation",
+        title: "Paper account reconciliation",
+        pass: runtime.status === "running" && runtime.reconciliation?.status === "matched"
+          && reconciliationAge >= -5000 && reconciliationAge <= 120000,
+        detail: runtime.reconciliation
+          ? `${runtime.reconciliation.status}; ledger ${runtime.reconciliation.ledgerId}; ${runtime.reconciliation.issueCount} issues; checked ${runtime.reconciliation.checkedAt}. Internal paper consistency only. Checked at startup and before entries; later fills require a new check.`
+          : "No paper account reconciliation recorded. External broker reconciliation is separate.",
+      },
       {
         id: "engine",
         title: "Protection heartbeat",

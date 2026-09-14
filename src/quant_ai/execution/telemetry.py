@@ -77,6 +77,11 @@ class PilotTelemetry:
                 "status": "running", "mode": "paper", "updatedAt": now.isoformat(),
                 "halted": daemon.kill_switch.engaged, "haltReason": daemon.kill_switch.reason,
                 "watchlist": watchlist, "protectionIntervalSeconds": 1,
+                "reconciliation": ({**daemon.reconciliation,
+                    "status": "outdated" if daemon.reconciliation["status"] == "matched"
+                        and daemon.reconciliation["ledgerId"] != ledger_id
+                        else daemon.reconciliation["status"]}
+                    if daemon.reconciliation else None),
                 "lastAnalysisAt": daemon.scheduler.last_run_at.isoformat() if daemon.scheduler.last_run_at else None,
                 "providers": {"news": type(daemon.scheduler.pipeline.news).__name__,
                               "macro": type(daemon.scheduler.pipeline.macro).__name__,

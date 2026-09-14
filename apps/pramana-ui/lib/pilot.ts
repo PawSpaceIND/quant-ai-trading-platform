@@ -37,6 +37,7 @@ export type LivePortfolio = {
   equityCurve: Array<{ timestamp: string; equity: number }>;
 };
 export type Runtime = {
+  reconciliation?: {status: string; checkedAt: string; ledgerId: number; issueCount: number; scope: string} | null;
   status: string;
   mode: string;
   updatedAt?: string;

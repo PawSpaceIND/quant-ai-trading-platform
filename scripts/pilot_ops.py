@@ -45,11 +45,18 @@ def health(database: Path, tenant: str) -> dict:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["health", "backup", "restore-drill"])
+    parser.add_argument("action", choices=["health", "reconcile", "backup", "restore-drill"])
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
     args = parser.parse_args()
+    if args.action == "reconcile":
+        from quant_ai.execution.reconciliation import reconcile_paper
+        with sqlite3.connect(f"{args.database.resolve().as_uri()}?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
+            result = reconcile_paper(db, args.tenant)
+        print(json.dumps(result, indent=2))
+        raise SystemExit(0 if result["status"] == "matched" else 2)
     if args.action == "health":
         result = health(args.database, args.tenant)
     else:

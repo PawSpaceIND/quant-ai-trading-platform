@@ -243,6 +243,15 @@ class PaperBrokerService(BrokerAdapter):
                       or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
                       or order.symbol not in json.loads(scope["symbols"])):
             raise ValueError("pilot_order_out_of_scope")
+        if scope and order.side == Side.BUY:
+            self._ensure_account(order.tenant_id)
+            if self.reconcile(order.tenant_id)["status"] != "matched":
+                raise ValueError("pilot_reconciliation_failed")
+
+    def reconcile(self, tenant_id: str = "default") -> dict:
+        from quant_ai.execution.reconciliation import reconcile_paper
+        with self._lock:
+            return reconcile_paper(self._connection, tenant_id)
 
     def buy(self, order: OrderIntent) -> ExecutionResult:
         if order.side != Side.BUY:

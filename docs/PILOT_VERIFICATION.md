@@ -58,3 +58,9 @@ The risk lab now supports per-holding cash-equity/ETF shocks with reset to a com
 All **15 dashboard tests** pass, including five new risk-diagnostic cases. TypeScript and production build passed. Synthetic browser checks verified the individual override, reset, exact scenario handoff to the Atlas prompt and concentration/stop outputs. A phone overflow found during inspection was fixed using the existing table scroll container; document and viewport width both measured 390 pixels. No browser error/warning logs were observed. The last freshness predicate change is regression-tested; layout and prompt code were unchanged afterward.
 
 These descriptive measures do not calculate covariance, factor/sector risk, VaR, Greeks or attribution, and stop distance is not a guaranteed loss ceiling. They advance portfolio inspection and what-if capability without claiming full IBKR/Bloomberg parity. Browser verification used synthetic holdings and did not send an additional provider request.
+
+## Paper-account reconciliation follow-up
+
+All **331 Python tests** pass (14 added cases), Ruff passes, and all **15 dashboard tests** pass. The default local Turbopack build hit sandbox port-binding restrictions; the supported webpack production build and TypeScript passed. Browser checks verified that a matched report is shown as observed and a synthetic mismatch report is shown as not verified, with no browser warnings/errors. A read-only CLI drill matched one synthetic ledger fill and seven cost rows.
+
+The new check independently reconstructs internal paper cash, quantities, average prices and recorded protection. Corruption tests cover non-repair, tenant isolation and persistent entry halt; direct pilot buys also enforce the check. Later fills invalidate the prior checked ledger version. [Reconciliation rules and limits](PAPER_RECONCILIATION.md). This does not close external broker lifecycle/cash/position reconciliation.

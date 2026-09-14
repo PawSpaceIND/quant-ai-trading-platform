@@ -143,3 +143,7 @@ Historical replay now supports complete lower-timeframe OHLC windows, chronologi
 ## Implementation delta — portfolio what-if and concentration
 
 The workspace now provides distinct shocks by holding, per-holding scenario P&L and aggregate equity impact, cash-inclusive exposure weights, largest-position concentration, effective holding count, and recorded-stop downside diagnostics. The scenario passes its actual per-holding settings into the Atlas prompt. Missing stops, breached thresholds and stale marks are visible. These cash-equity/ETF diagnostics partially advance the IBKR/Bloomberg what-if and portfolio-risk comparison. They are not correlation diversification, factor/sector risk, Greeks, broker-native protection or Bloomberg-style attribution. Those requirements remain open.
+
+## Implementation delta — internal accounting reconciliation
+
+Paper account state is now reconstructed from fills and recorded cash-debit fees and compared with persisted cash, quantities, average prices and protection levels. Pilot entries fail closed on discrepancies, daemon fault halts persist, and the dashboard exposes the checked ledger version and freshness. [Rules and evidence](PAPER_RECONCILIATION.md). This improves the accounting foundation but does not substitute for QuantConnect-style live/backtest reconciliation or an independent broker order/cash/position reconciliation service; those remain open.

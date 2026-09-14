@@ -131,3 +131,51 @@ def test_pre_submit_rechecks_price_and_halt_after_analysis(tmp_path):
     assert runner.daemon._pilot_pre_submit(proposal) == "pilot_stale_entry_price"
     publish_tick(runner, "100", now)
     assert runner.daemon._pilot_pre_submit(proposal) is None
+
+
+def test_reconciliation_failure_persists_halt_and_does_not_disable_covered_exit(tmp_path):
+    runner = runner_for(tmp_path)
+    now = datetime(2026, 9, 15, 6, tzinfo=timezone.utc)
+    runner.daemon.clock = lambda: now
+    publish_tick(runner, "100", now)
+    broker = runner.daemon.tracker.broker
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    broker._connection.execute("UPDATE paper_accounts SET cash_balance='1' WHERE tenant_id='pilot'")
+    broker._connection.commit()
+    proposal = SimpleNamespace(symbol="INFY", side=Side.BUY, reference_price=Decimal(100))
+    assert runner.daemon._pilot_pre_submit(proposal) == "pilot_reconciliation_failed"
+    assert runner.daemon.kill_switch.engaged
+    assert runner.daemon.reconciliation["status"] == "mismatch"
+    restarted = runner_for(tmp_path)
+    assert restarted.daemon.kill_switch.engaged
+    proposal.side = Side.SELL
+    assert runner.daemon._pilot_pre_submit(proposal) is None
+    assert broker.reconcile("pilot")["status"] == "mismatch"
+
+
+def test_reconciliation_telemetry_cannot_certify_later_fill(tmp_path):
+    runner = runner_for(tmp_path)
+    broker = runner.daemon.tracker.broker
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    runner.daemon.telemetry.publish(datetime.now(timezone.utc))
+    state = json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
+    assert state["reconciliation"]["status"] == "outdated"
+    assert runner.daemon._reconcile_pilot()
+    runner.daemon.telemetry.publish(datetime.now(timezone.utc))
+    state = json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
+    assert state["reconciliation"]["status"] == "matched"
+
+
+def test_direct_pilot_buy_cannot_bypass_reconciliation(tmp_path):
+    broker = PaperBrokerService(tmp_path / "direct.db")
+    broker.configure_pilot((INSTRUMENT,), "pilot")
+    buy = OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot")
+    broker.buy(buy)
+    broker._connection.execute("UPDATE paper_accounts SET cash_balance='1' WHERE tenant_id='pilot'")
+    broker._connection.commit()
+    before = len(broker.ledger_entries("pilot"))
+    with pytest.raises(ValueError, match="pilot_reconciliation_failed"):
+        broker.buy(buy)
+    assert len(broker.ledger_entries("pilot")) == before
+    broker.sell(OrderIntent("INFY", Market.INDIA, Side.SELL, 1, Decimal(100), "test", tenant_id="pilot"))
+    assert not broker.get_positions("pilot")

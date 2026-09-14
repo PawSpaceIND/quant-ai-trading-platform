@@ -86,6 +86,7 @@ class AutonomousTradingDaemon:
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
         self.telemetry = None
+        self.reconciliation = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -99,9 +100,20 @@ class AutonomousTradingDaemon:
         runtime = self.scheduler.pipeline.runtime
         runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
         runtime.pre_submit_check = self._pilot_pre_submit
+        self.tracker.broker.get_margin(self.tenant_id)
+        self._reconcile_pilot()
+
+    def _reconcile_pilot(self) -> bool:
+        self.reconciliation = self.tracker.broker.reconcile(self.tenant_id)
+        if self.reconciliation["status"] != "matched":
+            self.engage_kill_switch("paper_ledger_reconciliation_failed")
+            return False
+        return True
 
     def _pilot_pre_submit(self, proposal) -> str | None:
         self.apply_operator_halt()
+        if proposal.side != Side.SELL and not self._reconcile_pilot():
+            return "pilot_reconciliation_failed"
         if self.kill_switch.engaged and proposal.side != Side.SELL:
             return "pilot_halted"
         now = self.clock()
