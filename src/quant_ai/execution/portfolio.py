@@ -50,7 +50,14 @@ class PortfolioTracker:
         self.market_feed = market_feed
         self.tenant_id = tenant_id
         self.instrument_resolver = instrument_resolver or self._default_instrument
-        self._high_water_mark = broker.get_margin(tenant_id).starting_capital
+        # C4: the drawdown circuit breaker is only a breaker if its peak survives a restart.
+        # Reload the durable high-water mark; fall back to starting capital on a fresh ledger.
+        persisted = broker.get_peak_equity(tenant_id)
+        self._high_water_mark = (
+            persisted
+            if persisted is not None
+            else broker.get_margin(tenant_id).starting_capital
+        )
 
     def metrics(self, now: datetime | None = None) -> PortfolioMetrics:
         observed_at = now or datetime.now(timezone.utc)
@@ -70,7 +77,9 @@ class PortfolioTracker:
         )
         market_value = sum((item.market_value for item in positions), Decimal(0))
         equity = margin.cash_balance + market_value
-        self._high_water_mark = max(self._high_water_mark, equity)
+        if equity > self._high_water_mark:
+            # Persist immediately: a peak that only lives in memory is lost on the next crash.
+            self._high_water_mark = self.broker.record_peak_equity(equity, self.tenant_id)
         drawdown = (
             (self._high_water_mark - equity) / self._high_water_mark
             if self._high_water_mark > 0

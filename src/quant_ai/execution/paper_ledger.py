@@ -21,6 +21,10 @@ class PaperBrokerDatabaseLockedError(RuntimeError):
     """Paper broker exhausted bounded retries while SQLite remained locked."""
 
 
+def _optional_decimal(value: str | None) -> Decimal | None:
+    return None if value is None else Decimal(value)
+
+
 @dataclass(frozen=True)
 class PaperCostEntry:
     order_id: str
@@ -44,6 +48,8 @@ class PaperLedgerEntry:
     notional: Decimal
     status: str
     created_at: datetime
+    stop_price: Decimal | None = None
+    take_profit_price: Decimal | None = None
 
 
 class PaperBrokerService(BrokerAdapter):
@@ -87,6 +93,10 @@ class PaperBrokerService(BrokerAdapter):
         self._lock = RLock()
         self._connection = sqlite3.connect(str(database), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
+        # WAL lets the read-only UI and the daemon share the ledger without blocking each
+        # other; the busy timeout keeps a contended write from burning the whole cadence tick.
+        self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA busy_timeout=2000")
         self._create_schema()
 
     def _create_schema(self) -> None:
@@ -97,7 +107,8 @@ class PaperBrokerService(BrokerAdapter):
                     tenant_id TEXT PRIMARY KEY,
                     starting_capital TEXT NOT NULL,
                     cash_balance TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    peak_equity TEXT
                 );
                 CREATE TABLE IF NOT EXISTS paper_positions (
                     tenant_id TEXT NOT NULL,
@@ -106,6 +117,8 @@ class PaperBrokerService(BrokerAdapter):
                     asset_class TEXT NOT NULL,
                     quantity INTEGER NOT NULL,
                     average_price TEXT NOT NULL,
+                    stop_price TEXT,
+                    take_profit_price TEXT,
                     PRIMARY KEY (tenant_id, symbol, market, asset_class)
                 );
                 CREATE TABLE IF NOT EXISTS paper_ledger (
@@ -120,7 +133,9 @@ class PaperBrokerService(BrokerAdapter):
                     fill_price TEXT NOT NULL,
                     notional TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    stop_price TEXT,
+                    take_profit_price TEXT
                 );
                 CREATE TABLE IF NOT EXISTS paper_cost_ledger (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,8 +146,42 @@ class PaperBrokerService(BrokerAdapter):
                     cash_debit INTEGER NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_idempotency (
+                    key TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    claimed_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS paper_exit_cooldowns (
+                    tenant_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    asset_class TEXT NOT NULL,
+                    until TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, symbol, market, asset_class)
+                );
                 """
             )
+            self._migrate_columns()
+
+    _EXPECTED_COLUMNS = (
+        ("paper_accounts", "peak_equity", "TEXT"),
+        ("paper_positions", "stop_price", "TEXT"),
+        ("paper_positions", "take_profit_price", "TEXT"),
+        ("paper_ledger", "stop_price", "TEXT"),
+        ("paper_ledger", "take_profit_price", "TEXT"),
+    )
+
+    def _migrate_columns(self) -> None:
+        """Forward-migrate ledgers created before protective levels were persisted."""
+        for table, column, column_type in self._EXPECTED_COLUMNS:
+            existing = {
+                row["name"]
+                for row in self._connection.execute(f"PRAGMA table_info({table})")
+            }
+            if column not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+                )
 
     def _ensure_account(self, tenant_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -212,12 +261,26 @@ class PaperBrokerService(BrokerAdapter):
             ).fetchone()
             cash = Decimal(account["cash_balance"])
             position = self._connection.execute(
-                """SELECT quantity, average_price FROM paper_positions
+                """SELECT quantity, average_price, stop_price, take_profit_price
+                FROM paper_positions
                 WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
                 (tenant_id, order.symbol, order.market.value, order.asset_class.value),
             ).fetchone()
             current_qty = int(position["quantity"]) if position else 0
             current_avg = Decimal(position["average_price"]) if position else Decimal(0)
+            held_stop = position["stop_price"] if position else None
+            held_take_profit = position["take_profit_price"] if position else None
+            # A BUY carries the protective levels forward onto the position; a SELL that only
+            # trims the position must not erase the stop that still guards the remainder.
+            if order.side == Side.BUY:
+                new_stop = str(order.stop_price) if order.stop_price is not None else held_stop
+                new_take_profit = (
+                    str(order.take_profit_price)
+                    if order.take_profit_price is not None
+                    else held_take_profit
+                )
+            else:
+                new_stop, new_take_profit = held_stop, held_take_profit
             if order.side == Side.BUY:
                 if notional + statutory_fees > cash:
                     raise ValueError("insufficient_paper_cash")
@@ -237,10 +300,14 @@ class PaperBrokerService(BrokerAdapter):
             if new_qty:
                 self._connection.execute(
                     """INSERT INTO paper_positions
-                    (tenant_id, symbol, market, asset_class, quantity, average_price)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (tenant_id, symbol, market, asset_class, quantity, average_price,
+                     stop_price, take_profit_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(tenant_id, symbol, market, asset_class)
-                    DO UPDATE SET quantity = excluded.quantity, average_price = excluded.average_price""",
+                    DO UPDATE SET quantity = excluded.quantity,
+                                  average_price = excluded.average_price,
+                                  stop_price = excluded.stop_price,
+                                  take_profit_price = excluded.take_profit_price""",
                     (
                         tenant_id,
                         order.symbol,
@@ -248,6 +315,8 @@ class PaperBrokerService(BrokerAdapter):
                         order.asset_class.value,
                         new_qty,
                         str(new_avg),
+                        new_stop,
+                        new_take_profit,
                     ),
                 )
             else:
@@ -259,8 +328,8 @@ class PaperBrokerService(BrokerAdapter):
             self._connection.execute(
                 """INSERT INTO paper_ledger
                 (order_id, tenant_id, symbol, market, asset_class, side, quantity,
-                 fill_price, notional, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?)""",
+                 fill_price, notional, status, created_at, stop_price, take_profit_price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?, ?, ?)""",
                 (
                     order_id,
                     tenant_id,
@@ -272,6 +341,10 @@ class PaperBrokerService(BrokerAdapter):
                     str(fill_price),
                     str(notional),
                     now.isoformat(),
+                    str(order.stop_price) if order.stop_price is not None else None,
+                    str(order.take_profit_price)
+                    if order.take_profit_price is not None
+                    else None,
                 ),
             )
             cost_rows = [
@@ -306,11 +379,13 @@ class PaperBrokerService(BrokerAdapter):
             return True
 
     def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
-        rows = self._connection.execute(
-            """SELECT tenant_id, symbol, market, asset_class, quantity, average_price
-            FROM paper_positions WHERE tenant_id = ? ORDER BY symbol""",
-            (tenant_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT tenant_id, symbol, market, asset_class, quantity, average_price,
+                stop_price, take_profit_price
+                FROM paper_positions WHERE tenant_id = ? ORDER BY symbol""",
+                (tenant_id,),
+            ).fetchall()
         return tuple(
             BrokerPosition(
                 row["tenant_id"],
@@ -319,9 +394,85 @@ class PaperBrokerService(BrokerAdapter):
                 AssetClass(row["asset_class"]),
                 int(row["quantity"]),
                 Decimal(row["average_price"]),
+                _optional_decimal(row["stop_price"]),
+                _optional_decimal(row["take_profit_price"]),
             )
             for row in rows
         )
+
+    def get_peak_equity(self, tenant_id: str = "default") -> Decimal | None:
+        """Durable high-water mark. None when the tenant has never been marked."""
+        with self._lock:
+            self._ensure_account(tenant_id)
+            row = self._connection.execute(
+                "SELECT peak_equity FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
+            ).fetchone()
+        return _optional_decimal(row["peak_equity"]) if row else None
+
+    def record_peak_equity(self, equity: Decimal, tenant_id: str = "default") -> Decimal:
+        """Raise the stored high-water mark. Returns the mark in force after the write."""
+        with self._lock, self._connection:
+            self._ensure_account(tenant_id)
+            row = self._connection.execute(
+                "SELECT peak_equity FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
+            ).fetchone()
+            stored = _optional_decimal(row["peak_equity"]) if row else None
+            peak = equity if stored is None else max(stored, equity)
+            if stored is None or peak != stored:
+                self._connection.execute(
+                    "UPDATE paper_accounts SET peak_equity = ? WHERE tenant_id = ?",
+                    (str(peak), tenant_id),
+                )
+            return peak
+
+    def record_exit_cooldown(
+        self,
+        symbol: str,
+        market: Market,
+        asset_class: AssetClass,
+        until: datetime,
+        tenant_id: str = "default",
+    ) -> None:
+        """Bar re-entry into a symbol until `until`. Durable, so a restart cannot clear it."""
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO paper_exit_cooldowns
+                (tenant_id, symbol, market, asset_class, until) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, symbol, market, asset_class)
+                DO UPDATE SET until = excluded.until""",
+                (tenant_id, symbol, market.value, asset_class.value, until.isoformat()),
+            )
+
+    def exit_cooldown_until(
+        self,
+        symbol: str,
+        market: Market,
+        asset_class: AssetClass,
+        tenant_id: str = "default",
+    ) -> datetime | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT until FROM paper_exit_cooldowns
+                WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
+                (tenant_id, symbol, market.value, asset_class.value),
+            ).fetchone()
+        return datetime.fromisoformat(row["until"]) if row else None
+
+    def claim_idempotency_key(self, key: str, tenant_id: str = "default") -> bool:
+        """Durable single-claim guard. False when this key was already consumed."""
+        if not key:
+            raise ValueError("idempotency key is required")
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT 1 FROM paper_idempotency WHERE key = ?", (key,)
+            ).fetchone()
+            if existing is not None:
+                return False
+            self._connection.execute(
+                "INSERT INTO paper_idempotency (key, tenant_id, claimed_at) VALUES (?, ?, ?)",
+                (key, tenant_id, datetime.now(timezone.utc).isoformat()),
+            )
+            return True
 
     def get_margin(self, tenant_id: str = "default") -> BrokerMargin:
         with self._lock, self._connection:
@@ -348,12 +499,13 @@ class PaperBrokerService(BrokerAdapter):
         )
 
     def ledger_entries(self, tenant_id: str = "default") -> tuple[PaperLedgerEntry, ...]:
-        rows = self._connection.execute(
-            """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity, fill_price,
-            notional, status, created_at FROM paper_ledger
-            WHERE tenant_id = ? ORDER BY id""",
-            (tenant_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity,
+                fill_price, notional, status, created_at, stop_price, take_profit_price
+                FROM paper_ledger WHERE tenant_id = ? ORDER BY id""",
+                (tenant_id,),
+            ).fetchall()
         return tuple(
             PaperLedgerEntry(
                 row["order_id"],
@@ -367,16 +519,19 @@ class PaperBrokerService(BrokerAdapter):
                 Decimal(row["notional"]),
                 row["status"],
                 datetime.fromisoformat(row["created_at"]),
+                _optional_decimal(row["stop_price"]),
+                _optional_decimal(row["take_profit_price"]),
             )
             for row in rows
         )
 
     def cost_entries(self, tenant_id: str = "default") -> tuple[PaperCostEntry, ...]:
-        rows = self._connection.execute(
-            """SELECT order_id, tenant_id, code, amount, cash_debit, created_at
-            FROM paper_cost_ledger WHERE tenant_id = ? ORDER BY id""",
-            (tenant_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT order_id, tenant_id, code, amount, cash_debit, created_at
+                FROM paper_cost_ledger WHERE tenant_id = ? ORDER BY id""",
+                (tenant_id,),
+            ).fetchall()
         return tuple(
             PaperCostEntry(
                 row["order_id"],

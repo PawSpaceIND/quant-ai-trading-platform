@@ -13,7 +13,14 @@ from quant_ai.domain.models import Instrument, Market
 from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
+from quant_ai.execution.protective_exits import (
+    ProtectiveExit,
+    ProtectiveExitEngine,
+    market_feed_mark_resolver,
+)
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
+from quant_ai.notifications.trading import TradingAlertCode
+from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
 
 
@@ -41,6 +48,7 @@ class AutonomousTradingDaemon:
         audit: InMemoryAuditJournal | None = None,
         idle_sleep_seconds: float = 1.0,
         clock: Callable[[], datetime] | None = None,
+        exit_engine: ProtectiveExitEngine | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -55,10 +63,76 @@ class AutonomousTradingDaemon:
         self.audit = audit or InMemoryAuditJournal()
         self.idle_sleep_seconds = idle_sleep_seconds
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # C1: protective exits are checked on every tick, before any new analysis.
+        self.exit_engine = exit_engine or self._default_exit_engine()
+        self.protective_exits: tuple[ProtectiveExit, ...] = ()
         self._started_monotonic = monotonic()
         self._stop_requested = False
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
+
+    def _default_exit_engine(self) -> ProtectiveExitEngine:
+        return ProtectiveExitEngine(
+            self.tracker.broker,
+            market_feed_mark_resolver(
+                self.tracker.market_feed,
+                self.tracker.instrument_resolver,
+                getattr(self.scheduler.pipeline, "tick_reader", None),
+                self.clock,
+            ),
+            tenant_id=self.tenant_id,
+            dispatcher=self.notifications,
+        )
+
+    @property
+    def kill_switch(self) -> KillSwitch:
+        """The single halt control shared with the daemon's execution runtime."""
+        return self.scheduler.pipeline.runtime.kill_switch
+
+    def engage_kill_switch(self, reason: str) -> None:
+        """C3/C5: latch a halt that survives until an operator resets it."""
+        if self.kill_switch.engaged:
+            return
+        self.kill_switch.engage(reason)
+        self.audit.append("kill_switch_engaged", {"reason": reason, "tenant_id": self.tenant_id})
+        self.notifications.dispatch(
+            TradingAlertCode.KILL_SWITCH_ENGAGED,
+            f"Trading halted: {reason}",
+            tenant_id=self.tenant_id,
+            metadata={"reason": reason},
+        )
+
+    def notify_cadence_failure(self, detail: str, consecutive: int) -> None:
+        self.audit.append(
+            "cadence_tick_failed",
+            {"detail": detail, "consecutive": str(consecutive), "tenant_id": self.tenant_id},
+        )
+        self.notifications.dispatch(
+            TradingAlertCode.CADENCE_TICK_FAILED,
+            f"Cadence tick failed ({consecutive} consecutive): {detail}",
+            tenant_id=self.tenant_id,
+            metadata={"detail": detail, "consecutive": str(consecutive)},
+        )
+
+    def sweep_protective_exits(
+        self, now: datetime | None = None
+    ) -> tuple[ProtectiveExit, ...]:
+        """Mark open positions and liquidate any whose stop or target is breached."""
+        exits = self.exit_engine.evaluate(now or self.clock())
+        for item in exits:
+            self.audit.append(
+                "protective_exit",
+                {
+                    "symbol": item.symbol,
+                    "trigger": item.trigger.value,
+                    "threshold": str(item.threshold),
+                    "mark_price": str(item.mark_price),
+                    "quantity": str(item.quantity),
+                    "filled": str(item.filled),
+                    "order_id": item.order_id or "",
+                },
+            )
+        return exits
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -75,6 +149,9 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         self._in_flight = True
         try:
+            # C1: liquidate breached positions BEFORE new analysis, so a stop is honoured
+            # even on a tick where the swarm would otherwise want to add exposure.
+            self.protective_exits = self.sweep_protective_exits(timestamp)
             pre_metrics = self.tracker.metrics(timestamp)
             before = self.tracker.get_snapshot(timestamp)
             if self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None:
