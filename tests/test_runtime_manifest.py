@@ -136,7 +136,7 @@ def test_export_is_exact_hash_bound_private_and_refuses_tampering_or_overwrite(
 
 
 @pytest.mark.parametrize(
-    "field", ["stream", "fees", "model", "holiday", "session", "specialist", "protection_tenant"]
+    "field", ["stream", "fees", "model", "holiday", "special_session", "session", "specialist", "protection_tenant"]
 )
 def test_effective_strategy_fields_change_the_fingerprint(tmp_path, monkeypatch, field):
     from datetime import date, time
@@ -154,6 +154,8 @@ def test_effective_strategy_fields_change_the_fingerprint(tmp_path, monkeypatch,
         d.scheduler.pipeline.runtime.cio.atlas.founder_instructions += " synthetic changed policy"
     elif field == "holiday":
         d.scheduler.calendar.holidays[GlobalVenue.INDIA] = frozenset({date(2026, 9, 15)})
+    elif field == "special_session":
+        d.scheduler.calendar.special_sessions[GlobalVenue.INDIA] = frozenset()
     elif field == "session":
         monkeypatch.setitem(
             SESSIONS, GlobalVenue.INDIA, replace(SESSIONS[GlobalVenue.INDIA], regular_open=time(10))

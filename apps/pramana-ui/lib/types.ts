@@ -3,6 +3,7 @@ import type { ResearchReport } from "./research";
 import type { ResearchLabState } from "./research-lab";
 import type { PortfolioResearchState } from "./research-portfolio";
 import type { PaperContributionState } from "./paper-contribution";
+import type {HistoricalRiskState} from "./historical-risk";
 import type { MarketSnapshot } from "./market";
 import type { Runtime } from "./pilot";
 export type Holding = {
@@ -63,6 +64,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  historicalRisk?: HistoricalRiskState;
   paperContribution?: PaperContributionState;
   researchLab?: ResearchLabState;
   researchPortfolio?: PortfolioResearchState;

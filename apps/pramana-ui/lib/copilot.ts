@@ -4,6 +4,7 @@ import { consoleDb } from "./console-db";
 import { tenantId } from "./db";
 import { readPortfolioSnapshot } from "./portfolio";
 import {paperContributionContext} from "./paper-contribution";
+import {historicalRisk, historicalRiskContext} from "./historical-risk";
 import { readRuntime, performance } from "./pilot";
 import { readMarket } from "./market";
 import { strategyObservationDays } from "./strategy-evidence";
@@ -73,6 +74,7 @@ export async function generateAnswer(
       asOf: new Date().toISOString(),
       portfolio,
       paperContribution: paperContributionContext(paperContribution),
+      historicalRisk: historicalRiskContext(historicalRisk(portfolio,market.riskHistory)),
       runtime,
       strategyObservation,
       researchLab: researchLabContext(),
@@ -81,7 +83,7 @@ export async function generateAnswer(
       performance: perf,
       intelligence: latestSwarmIntelligence(),
       market: {
-        ...market,
+        ...Object.fromEntries(Object.entries(market).filter(([k])=>k!=="riskHistory")),
         rows: market.rows.slice(0, 20).map(({ history, ...r }) => ({
           ...r,
           dailyCloses: history?.slice(-10),

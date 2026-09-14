@@ -206,6 +206,7 @@ def test_cloud_publisher_does_not_transmit_lab_report(monkeypatch, tmp_path):
                         "researchLab": {"private": "RESEARCH_SENTINEL"},
                         "researchPortfolio": {"private": "PORTFOLIO_SENTINEL"},
                         "paperContribution": {"private": "CONTRIBUTION_SENTINEL"},
+                        "historicalRisk": {"private": "RISK_SENTINEL"},
                         "companyEvents": {"private": "EVENT_SENTINEL"},
                         "audit": ["NOTES_SENTINEL"],
                     }
@@ -226,5 +227,6 @@ def test_cloud_publisher_does_not_transmit_lab_report(monkeypatch, tmp_path):
     assert "researchLab" not in workspace and workspace["audit"] == []
     assert "researchPortfolio" not in workspace
     assert "paperContribution" not in workspace
+    assert "historicalRisk" not in workspace
     assert "companyEvents" not in workspace
     assert "SENTINEL" not in json.dumps(sent)

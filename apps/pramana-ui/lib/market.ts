@@ -12,6 +12,7 @@ export type MarketRow = {
   history?: { date: string; close: number }[];
 };
 export type MarketSnapshot = {
+  riskHistory?: unknown;
   status: string;
   fetchedAt?: string;
   session?: string;

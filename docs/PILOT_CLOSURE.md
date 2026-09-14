@@ -27,6 +27,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P19 | Company announcement workflow | Search/watchlist, dated revisions, append-only mapping review, private export and cutoff-scoped Atlas | Engineering/browser/API verified on synthetic evidence; real feed and independent mapping qualification pending |
 | P20 | Reconciled research contribution | Instrument P&L including closed positions, spread/slippage/fees bridge, independent accounting validation, UI/export/Atlas | Engineering/browser/API verified on synthetic evidence; benchmark/sector/factor attribution remains open; recorded account covered by P21 |
 | P21 | Recorded paper-account contribution | One valuation/account/fill/cost read snapshot, reconciled instrument P&L, explicit gaps, current-total withholding, private UI/export/Atlas | Engineering/browser/API verified with the real paper broker on synthetic evidence; real-source, target-host and broader attribution qualification remain open |
+| P22 | Historical portfolio-risk workspace | Complete common-session history, covariance/correlation/contributions, empirical tail losses, private UI/export/Atlas and calendar binding | Engineering/browser/API verified; real 11-instrument history alignment checked after documented Budget-session correction; adjustment, calendar completeness and forward risk qualification remain open |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -68,3 +69,8 @@ Continuous research reports now explain instrument P&L, including closed positio
 ## Implementation delta — recorded paper-account contribution
 
 The Portfolio page now joins the current engine valuation to account, positions, fills and fees in one read transaction. It reconstructs immediate fee expense, retains closed losses, exposes missing marks/cost records and withholds current totals on inconsistent/outdated evidence. Search, sorting, pagination, export and bounded Atlas context are connected. [Method and evidence](PAPER_ACCOUNT_CONTRIBUTION.md). This closes the basic recorded-account contribution workflow locally; external broker analysis, benchmark/sector/factor attribution and real pilot qualification remain open.
+
+
+## Implementation delta — historical portfolio risk
+
+Risk lab now provides exploratory covariance, correlation, volatility contribution, historical VaR/expected shortfall and dated repricing scenarios. Missing holding/session data withholds aggregate numbers; cash stays in the denominator. Desktop/mobile controls, private export and Atlas context are verified. One real source capture exposed the omitted NSE Budget Sunday; the verified exception is now included in the shared calendar and runtime fingerprint. [Method, source observation and limits](HISTORICAL_PORTFOLIO_RISK.md). This partially closes empirical cash-portfolio risk analytics; source adjustment, prospective calibration, sector/factor/Greeks and multi-asset risk remain open.

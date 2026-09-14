@@ -16,6 +16,7 @@ import { ResearchComparison } from "./research-comparison";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
+import {HistoricalRisk} from "./historical-risk";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -1018,8 +1019,9 @@ function RiskLab({
           <Metric label="Downside to recorded stops" value={money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
         </div>
         <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. Portfolio valuation status: {p.status}.</p>
-        <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector, factor, correlation and options-Greeks risk are not calculated here.</p>
+        <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector, factor and options-Greeks risk remain unavailable. The separate historical diagnostic below estimates correlations only when its data-coverage checks pass.</p>
       </section>
+      {!hosted && <HistoricalRisk state={data.historicalRisk} onAsk={onAsk} />}
       <Holdings portfolio={p} onAsk={onAsk} />
       <ProviderPanel data={data} />
     </>

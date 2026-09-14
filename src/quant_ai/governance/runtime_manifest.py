@@ -36,7 +36,7 @@ FIELDS = {
     "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": (),
     "quant_ai.agents.swarm.AtlasCIOAgent": (),
     "quant_ai.analytics.attribution.AgentAttributionEngine": (),
-    "quant_ai.execution.session.MarketCalendar": ("holidays",),
+    "quant_ai.execution.session.MarketCalendar": ("holidays", "special_sessions"),
     "quant_ai.agents.swarm_runtime.SwarmPaperTradingService": (
         "allow_position_scaling",
         "max_open_positions",

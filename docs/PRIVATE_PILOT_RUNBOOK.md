@@ -91,3 +91,8 @@ Configure `PRAMANA_COMPANY_EVENTS_DB` with an absolute path to the existing thre
 ## Recorded account contribution
 
 The private Portfolio page automatically reads the matching engine valuation and account ledger for [instrument/cost contribution](PAPER_ACCOUNT_CONTRIBUTION.md). No separate publication job or migration is required. Restart the private UI after deploying this code. New fills require a matching engine valuation; missing/stale/inconsistent records remain explicit. Export the private report at `/api/portfolio/contribution` and retain it with the already selected operational ledger/valuation recovery inventory. It is excluded from cloud snapshot publication. This report does not replace strategy evidence or operator acceptance.
+
+
+## Historical risk workspace
+
+Update the collector and private dashboard together. The existing `PRAMANA_MARKET_SNAPSHOT` path supplies the new risk-history dataset; old snapshots display unavailable. History now covers the maintained 2026 calendar and the documented Budget Sunday, while provider adjustments and full calendar/source qualification remain explicit gaps. Review the new special-session fingerprint in any deployment acceptance. Retain the original market snapshot in the selected recovery/input inventory if risk reports must be reproduced. Private `GET /api/portfolio/historical-risk` exports the calculated report; it does not replace that source archive. [Data contract, limits and verification](HISTORICAL_PORTFOLIO_RISK.md).

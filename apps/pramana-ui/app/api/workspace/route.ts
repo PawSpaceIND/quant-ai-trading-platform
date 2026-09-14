@@ -9,6 +9,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { readPortfolioSnapshot } from "@/lib/portfolio";
 import { readMarket } from "@/lib/market";
+import {historicalRisk} from "@/lib/historical-risk";
 import { latestSwarmIntelligence } from "@/lib/proofs";
 import { readRuntime, performance } from "@/lib/pilot";
 import { consoleDb } from "@/lib/console-db";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const market = await readMarket();
+    const {riskHistory: riskHistoryInput, ...displayMarket} = market;
     const {portfolio, paperContribution} = readPortfolioSnapshot();
     const runtime = readRuntime();
     const perf = performance();
@@ -130,7 +132,8 @@ export async function GET() {
       {
         portfolio,
         paperContribution,
-        market,
+        historicalRisk: historicalRisk(portfolio, riskHistoryInput),
+        market: displayMarket,
         runtime,
         research: readResearch(),
         researchLab: readResearchLab(),

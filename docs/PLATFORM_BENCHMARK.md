@@ -212,3 +212,8 @@ The continuous research workspace now reconstructs fill accounting in Python and
 ## Implementation delta — recorded account P&L and cost contribution
 
 The actual paper account now has an independently reconstructed instrument/fee breakdown tied to one engine/ledger read snapshot. Closed losses remain visible; stale or inconsistent evidence cannot produce current contribution totals. The private Portfolio page, export and bounded Atlas context share that evidence. [Accounting convention and verification](PAPER_ACCOUNT_CONTRIBUTION.md). This supersedes the earlier basic actual-account contribution gap. Recorded spread/slippage remain model estimates; observed broker execution quality, benchmark/sector/factor effects, external flows, income/corporate actions, FX and broader vendor parity remain open.
+
+
+## Implementation delta — exploratory historical cash-portfolio risk
+
+The private Risk lab now calculates aligned daily covariance/correlation, instrument volatility contributions, cash-inclusive diversification and 95% historical VaR/expected shortfall, with dated scenario inspection, private export and Atlas context. Missing exposures/dates cannot be dropped to manufacture a complete result. A real capture identified the NSE Budget Sunday omission; its official exception now reaches the shared calendar and runtime fingerprint. [Method and verification](HISTORICAL_PORTFOLIO_RISK.md). This advances IBKR-style empirical risk inspection and integrated portfolio analytics. It does not establish calibrated predictive risk, adjusted/qualified history, sector/factor/beta models, Greeks/margin, multi-asset or Bloomberg full-valuation scenario parity.
