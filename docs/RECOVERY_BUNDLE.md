@@ -1,6 +1,6 @@
 # Cross-file paper recovery bundle
 
-The recovery module captures the paper ledger, console database, XAI proofs, review artifacts, founder directives, operator halt file and optional research report as one explicitly selected bundle. Schema 2 also supports explicitly inventoried experiment journals, continuous portfolio journals, company-event databases, provider receipts, published reports and input archives. It never discovers secret stores, stops services, activates a restored engine or overwrites an existing destination.
+The recovery module captures the paper ledger, console database, XAI proofs, review artifacts, founder directives, operator halt file and optional research report as one explicitly selected bundle. Schema 2 also supports explicitly inventoried experiment journals, continuous portfolio journals, company-event databases, broker observation journals, provider receipts, published reports and input archives. It never discovers secret stores, stops services, activates a restored engine or overwrites an existing destination.
 
 ## Capture
 
@@ -54,6 +54,7 @@ Local verification used isolated synthetic QA state. Ledger and console data, pr
 |---|---|---|
 | `experiment_journal` | SQLite snapshot, integrity/foreign-key checks, exact table set, all stored rows, evidence and deterministic report hashes for every experiment | Frozen cases, outcomes and model decisions |
 | `portfolio_journal` | SQLite snapshot, integrity/foreign-key checks, exact table set, all stored rows, source evidence and deterministic replay hash | Continuous quotes, orders, clocks and candidate books |
+| `broker_journal` | SQLite snapshot, integrity checks, exact table set, all-row hash, capture chain and deterministic lifecycle replay | Retained external broker observations; separate from the paper account |
 | `company_events` | SQLite snapshot, integrity/foreign-key checks, exact table set and all-row hash including raw BLOB bytes | Feed captures/failures, revisions and reviewed mappings |
 | `file` | Byte-preserving copy and manifest size/hash | Published reports, input/configuration files without secrets |
 | `directory` | Complete directory/file inventory and byte hashes | Provider receipt files and retained raw input archives |

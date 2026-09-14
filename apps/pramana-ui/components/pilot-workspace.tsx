@@ -16,6 +16,7 @@ import { ResearchComparison } from "./research-comparison";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
+import type {BrokerSelection} from "@/lib/broker-lifecycle";
 import {BrokerObservation} from "./broker-observation";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
@@ -70,6 +71,7 @@ export function PilotWorkspace() {
   const [loading, setLoading] = useState(true);
   const [chat, setChat] = useState(false);
   const [draft, setDraft] = useState("");
+  const [brokerCapture,setBrokerCapture]=useState<BrokerSelection|undefined>(undefined);
   const [companyAsOf, setCompanyAsOf] = useState<string | undefined>();
   const [halt, setHalt] = useState(false);
   const [reason, setReason] = useState("");
@@ -114,8 +116,9 @@ export function PilotWorkspace() {
     url.searchParams.set("view", id);
     window.history.replaceState(null, "", url);
   }
-  function ask(q: string, eventCutoff?: string) {
+  function ask(q: string, eventCutoff?: string, broker?:BrokerSelection) {
     setCompanyAsOf(eventCutoff);
+    setBrokerCapture(broker);
     if (hosted) {
       setNotice(
         "This hosted snapshot is read-only. Use the authenticated engine workspace for Atlas and operator controls.",
@@ -582,7 +585,7 @@ export function PilotWorkspace() {
                 )}
                 {view === "activity" && (
                   <>
-                    {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={ask} />}
+                    {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={(prompt,selection)=>ask(prompt,undefined,selection)} />}
                     <TradeFeed trades={trades} />
                     <CostPanel friction={friction} />
                     <section className="panel">
@@ -626,7 +629,8 @@ export function PilotWorkspace() {
                   <CopilotPanel
                     draft={draft}
                     companyAsOf={companyAsOf}
-                    onFullWorkspace={() => setCompanyAsOf(undefined)}
+                    brokerCapture={brokerCapture}
+                    onFullWorkspace={() => {setCompanyAsOf(undefined);setBrokerCapture(undefined);}}
                     onDraft={setDraft}
                     configured={data.copilotConfigured}
                   />

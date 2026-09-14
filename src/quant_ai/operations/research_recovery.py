@@ -11,10 +11,12 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from quant_ai.execution.broker_journal import BrokerJournal
 from quant_ai.research.lab import ResearchLab, canonical
 from quant_ai.research.portfolio_sim import PortfolioJournal
 
 TABLES = {
+    "broker_journal": {"broker_journal_meta", "broker_captures"},
     "experiment_journal": {"experiments", "cases", "decisions", "outcomes"},
     "portfolio_journal": {"simulation_config", "simulation_events"},
     "company_events": {"event_revisions", "feed_captures", "symbol_mappings"},
@@ -57,7 +59,14 @@ def inspect(path: Path, kind: str) -> dict:
     if kind not in TABLES:
         return {"check": "manifest file hashes only; contents not semantically validated"}
     result = database_evidence(path, kind)
-    if kind == "experiment_journal":
+    if kind == "broker_journal":
+        with closing(BrokerJournal(path, readonly=True)) as journal:
+            report = journal.report()
+            result["journalId"] = report["journalId"]
+            result["headHash"] = report["headHash"]
+            result["reportSha256"] = sha(report)
+        result["check"] = "database integrity, all-row hash, capture chain and deterministic lifecycle replay"
+    elif kind == "experiment_journal":
         with closing(ResearchLab(path, readonly=True)) as lab:
             result["experiments"] = {
                 name: {"evidenceSha256": lab.export_evidence(name)["sha256"],

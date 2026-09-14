@@ -231,3 +231,7 @@ The private Portfolio page now compares reconstructed historical paper-account b
 ## Implementation delta — broker account isolation and order/trade observation
 
 Explicit external reads now preserve account/contract identity and fractional quantities, keep Kite trading funds distinct from portfolio equity, and inspect Kite daily orders against individual executions in the private Activity workspace. [Precise coverage](BROKER_OBSERVATIONS.md). Paper decisions continue to use the paper ledger. This supersedes the mixed-account read boundary and first-page/fraction-truncation defects. Complete broker lifecycle, cash/position reconciliation, live/backtest performance parity and advanced vendor analytics remain open.
+
+## Retained external observation history
+
+The private Activity workspace now retains and replays selected Kite daily-book captures, including partial completion, missing/changed executions and earlier discrepancies after recovery. Historical export and Atlas are bound to a selected capture, and selected schema 2 recovery verifies replay continuity. This improves broker evidence review but does not provide acknowledged order management, complete event delivery, cash/position reconciliation or QuantConnect live-versus-backtest parity. [Implementation and precise limits](BROKER_LIFECYCLE_HISTORY.md).

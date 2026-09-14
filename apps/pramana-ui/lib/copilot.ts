@@ -1,3 +1,4 @@
+import {validBrokerSelection,type BrokerSelection} from "./broker-lifecycle";
 import {brokerObservationContext} from "./broker-observation";
 import {companyEventsContext} from "./company-events";
 import { randomUUID } from "node:crypto";
@@ -52,16 +53,24 @@ export async function generateAnswer(
   id: string = randomUUID(),
   transport: typeof fetch = fetch,
   companyAsOf?: string,
+  brokerCapture?: BrokerSelection,
 ) {
+  if(brokerCapture!==undefined&&(!validBrokerSelection(brokerCapture)||companyAsOf!==undefined))throw new Error("Select one valid broker capture or company cutoff");
   if (companyAsOf !== undefined && (companyAsOf.length > 50 || !/(Z|[+-]\d\d:\d\d)$/.test(companyAsOf) || !Number.isFinite(Date.parse(companyAsOf)) || Date.parse(companyAsOf) > Date.now() + 1000))
     throw new Error("Invalid company evidence cutoff");
   const existing = conversations(id)[0];
   if (existing) return existing;
+  const selectedBroker=brokerCapture?brokerObservationContext(brokerCapture):undefined;
   const context = companyAsOf ? {
     asOf: companyAsOf,
     mode: "company_disclosure_review",
     companyEvents: companyEventsContext(companyAsOf),
     limitations: "Only stored company evidence available by this cutoff. Current portfolio, market data and previous conversation are excluded. This does not remove historical knowledge from model weights or qualify a trading strategy.",
+  } : brokerCapture ? {
+    asOf: selectedBroker!.asOf,
+    mode: "broker_capture_review",
+    brokerObservation: selectedBroker,
+    limitations: "Only the selected broker capture and preceding retained lifecycle evidence. Current workspace, later captures and earlier conversation are excluded. No broker-account execution, source authenticity or strategy qualification is established.",
   } : await (async () => {
     const market = await readMarket();
     const {portfolio, paperContribution, benchmarkPerformance} = readPortfolioSnapshot(market.riskHistory);
@@ -120,7 +129,7 @@ export async function generateAnswer(
       throw new Error(
         "Claude is not configured. Add the API key on the server to enable conversation.",
       );
-    const parent = !companyAsOf && parentId ? conversations(parentId)[0] : undefined;
+    const parent = !companyAsOf && !brokerCapture && parentId ? conversations(parentId)[0] : undefined;
     const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
     if (parent?.status === "complete" && parent.answer) {
       messages.push(

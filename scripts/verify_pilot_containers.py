@@ -300,6 +300,28 @@ def main():
         wait_for(lambda: run("docker", "exec", broker_ui, "node", "-e",
             "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "broker dashboard startup")
         report["checks"].append(json.loads(run("docker", "exec", broker_ui, "node", "/qa/broker_observation_smoke.mjs")))
+        journal_capture = json.loads(run("docker", "exec", engine, "python", "/qa/broker_journal_fixture.py", "--database", "/data/benchmark/broker-history.sqlite"))
+        for phase, database in [("broker-history", "/data/benchmark/broker-history.sqlite"), ("broker-history-restored", "/data/benchmark/broker-restored.sqlite")]:
+            if phase == "broker-history-restored":
+                recovery = json.loads(run("docker", "exec", engine, "python", "-c",
+                    "from pathlib import Path; import json; from quant_ai.operations.recovery_bundle import sqlite_backup; "
+                    "from quant_ai.operations.research_recovery import inspect; "
+                    "src=Path('/data/benchmark/broker-history.sqlite'); dst=Path('/data/benchmark/broker-restored.sqlite'); "
+                    "before=inspect(src,'broker_journal'); sqlite_backup(src,dst); after=inspect(dst,'broker_journal'); "
+                    "assert before==after; print(json.dumps({'brokerJournalRecovery':'pass','verification':after}))"))
+                report["checks"].append(recovery)
+            history_ui = name + "-" + phase
+            run("docker", "run", "-d", "--name", history_ui, *shared,
+                *environment("dashboard", PRAMANA_TENANT_ID="default",
+                    PRAMANA_LEDGER_PATH="/data/benchmark/paper.sqlite",
+                    PRAMANA_MARKET_SNAPSHOT="/data/benchmark/market.json",
+                    PRAMANA_CONSOLE_DB="/data/benchmark/console.sqlite",
+                    PRAMANA_BROKER_OBSERVATION="", PRAMANA_BROKER_JOURNAL=database,
+                    PRAMANA_BROKER_ACCOUNT_REF=journal_capture["accountRef"], BROKER_HISTORY_PHASE=phase), image_ui)
+            created_containers.append(history_ui)
+            wait_for(lambda history_ui=history_ui: run("docker", "exec", history_ui, "node", "-e",
+                "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "broker history dashboard startup")
+            report["checks"].append(json.loads(run("docker", "exec", history_ui, "node", "/qa/broker_journal_smoke.mjs")))
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

@@ -48,3 +48,5 @@ The recorded-account benchmark phase creates a separate six-fill synthetic accou
 
 
 The `broker-observation` phase starts a separate dashboard container using a selected synthetic account capture. It checks authentication, 14 orders/26 executions, private no-store export, changing/mismatched/stale/wrong-account handling and bounded saved Atlas context. Both broker and model external calls remain zero. It does not qualify an actual external broker account or target deployment.
+
+The `broker-history` and `broker-history-restored` phases use six retained synthetic captures in a real SQLite journal. Each production dashboard checks selected exports, persistent missing records, partial completion and historical Atlas isolation. Between phases a SQLite backup is independently inspected and its logical/chain/replay evidence compared with the source. Schema 2 bundle capture/restore is separately covered by Python tests. Inspect the exact revision artifact for both phases and the `brokerJournalRecovery` checkpoint; this is not an off-host recovery or actual broker drill.

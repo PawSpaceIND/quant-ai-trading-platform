@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       body.id,
       undefined,
       body.companyAsOf,
+      body.brokerCapture,
     );
     return NextResponse.json(row);
   } catch (e) {

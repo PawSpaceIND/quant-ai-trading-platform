@@ -30,7 +30,7 @@ The independent Python and dashboard implementations check:
 - Trade-to-order instrument, exchange, product, side and exchange-order identity.
 - Summed execution quantity versus reported filled quantity; excessive quantity components.
 - COMPLETE quantities and execution-weighted average price with a fixed 0.01 tolerance in quote units. Other statuses have no assumed completion average.
-- Pending quantities on terminal orders, fills on rejected orders, unsupported statuses/varieties and invalid order/fill timing.
+- Fills on rejected orders, unsupported statuses/varieties and invalid order/fill timing. Cancelled orders may retain pending quantities; pending and cancelled are not added as disjoint quantities.
 - Agreement between the two order reads and two trade reads. A changing capture withholds consistency even when one intermediate view looks valid.
 
 The panel labels empty evidence separately. A capture older than 120 seconds is historical; future, wrong-account or malformed files cannot produce a current result. Zero issues means only that these selected checks agree. Sequential reads cannot establish atomicity, exhaustive coverage or the truth of broker records. Only regular/AMO orders are covered; iceberg, cover and auction varieties are flagged.
@@ -48,7 +48,7 @@ python scripts/capture_broker_observation.py \
 
 Environment: `KITE_API_KEY`, `KITE_ACCESS_TOKEN`. Output must be a new path; permissions are 0600. Failures print a generic error without broker exception bodies. A failed/truncated file does not qualify; select a fresh path for retry.
 
-Configure the private dashboard with `PRAMANA_BROKER_OBSERVATION` pointing to the capture and `PRAMANA_BROKER_ACCOUNT_REF` equal to its reviewed `accountRef`. Container paths must exist in the private `/data` volume. Both fields are explicit; a mismatched reference is rejected. There is no automatic source discovery. Refresh the selected evidence deliberately after collection; this version has no lifecycle archive or continuous monitoring service. Include captures in the deployment's reviewed private file/backup inventory; no automatic capture retention is claimed.
+Configure the private dashboard with `PRAMANA_BROKER_OBSERVATION` pointing to the capture and `PRAMANA_BROKER_ACCOUNT_REF` equal to its reviewed `accountRef`. Container paths must exist in the private `/data` volume. Both fields are explicit; a mismatched reference is rejected. There is no automatic source discovery. Refresh the selected evidence deliberately after collection. Optional [retained lifecycle history](BROKER_LIFECYCLE_HISTORY.md) adds a journal destination, selected historical review and recovery checks. There is still no continuous monitoring service. Include all selected captures/journals in the reviewed private backup inventory.
 
 `GET /api/broker/observation` requires the dashboard session and returns a no-store attachment. The hosted snapshot publisher and Worker omit the entire broker observation. Atlas receives observation time, status, counts and bounded issue codes; account reference, order IDs, instrument names, prices and quantities are excluded from this context. No model tools or trading actions are added.
 

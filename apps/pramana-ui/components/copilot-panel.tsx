@@ -1,17 +1,20 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
+import type {BrokerSelection} from "@/lib/broker-lifecycle";
 import type { Conversation } from "@/lib/copilot";
 export function CopilotPanel({
   draft,
   onDraft,
   configured,
   companyAsOf,
+  brokerCapture,
   onFullWorkspace,
 }: {
   draft: string;
   onDraft: (s: string) => void;
   configured: boolean;
   companyAsOf?: string;
+  brokerCapture?: BrokerSelection;
   onFullWorkspace?: () => void;
 }) {
   const [history, setHistory] = useState<Conversation[]>([]);
@@ -71,6 +74,7 @@ export function CopilotPanel({
           parentId: active?.id,
           id: crypto.randomUUID(),
           companyAsOf,
+          brokerCapture,
         }),
       });
       const d = await r.json();
@@ -101,9 +105,10 @@ export function CopilotPanel({
         Ask about your portfolio, market evidence or launch readiness.
       </p>
       <div className="copilot-context">
-        <span className="dot" /> {companyAsOf ? "Company disclosures at selected cutoff" : "Portfolio + market + decision proofs"}{" "}
+        <span className="dot" /> {brokerCapture ? "Selected broker capture and preceding history" : companyAsOf ? "Company disclosures at selected cutoff" : "Portfolio + market + decision proofs"}{" "}
         <span>Read only</span>
       </div>
+      {brokerCapture && <div className="research-notice"><p>Broker capture #{brokerCapture.sequence}. Later captures, current workspace and earlier chat are excluded from this review.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       {companyAsOf && <div className="research-notice"><p>Company evidence through {new Date(companyAsOf).toLocaleString()}. Current workspace and earlier chat are excluded from this review.</p><button onClick={onFullWorkspace} disabled={busy}>Use full current workspace</button></div>}
       <div className="chat-body" aria-live="polite">
         {active ? (

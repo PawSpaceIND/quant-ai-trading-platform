@@ -125,7 +125,7 @@ def inspect_capture(capture: dict) -> dict:
             issue("unsupported_order_variety", order_id)
         if order["filled"] != qty:
             issue("filled_quantity_mismatch", order_id)
-        if order["filled"] + order["pending"] + order["cancelled"] > order["quantity"]:
+        if max(order["pending"], order["filled"] + order["cancelled"]) > order["quantity"]:
             issue("quantity_components_exceed_order", order_id)
         if order["status"] == "COMPLETE":
             if order["filled"] != order["quantity"] or order["pending"] or order["cancelled"]:
@@ -135,8 +135,6 @@ def inspect_capture(capture: dict) -> dict:
                 deviation = total - int(order["averagePrice"].replace(".", "")) * qty
                 if abs(deviation) > 1_000_000 * qty:
                     issue("complete_average_price_mismatch", order_id)
-        if order["status"] in {"CANCELLED", "REJECTED"} and order["pending"]:
-            issue("terminal_order_still_pending", order_id)
         if order["status"] == "REJECTED" and order["filled"]:
             issue("rejected_order_has_fills", order_id)
     return {"status": "changing" if not stable else "issues" if issues else "consistent" if by_order else "empty",

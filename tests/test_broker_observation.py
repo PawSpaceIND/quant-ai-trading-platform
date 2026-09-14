@@ -64,7 +64,7 @@ def test_split_execution_fills_reconcile_without_paper_or_profile_data():
     ({"filled_quantity":2}, "filled_quantity_mismatch"), ({"quantity":2}, "quantity_components_exceed_order"),
     ({"average_price":101}, "complete_average_price_mismatch"), ({"status":"MYSTERY"}, "unsupported_status"),
     ({"variety":"iceberg"}, "unsupported_order_variety"), ({"product":"MIS"}, "trade_identity_mismatch"),
-    ({"status":"CANCELLED", "pending_quantity":1}, "terminal_order_still_pending"),
+    ({"status":"CANCELLED", "pending_quantity":4}, "quantity_components_exceed_order"),
     ({"status":"REJECTED"}, "rejected_order_has_fills"), ({"order_timestamp":"2026-09-11 12:01:00"}, "order_time_after_capture"),
 ])
 def test_inconsistent_quantities_identity_status_and_price_are_visible(changes, code):
@@ -213,3 +213,9 @@ def test_ib_wrong_account_duplicate_page_and_page_limit_never_return_partial_por
         t.mode=mode
         with pytest.raises(BrokerReadError,match=reason):
             adapter.read_external_positions()
+
+
+def test_documented_cancelled_order_can_retain_pending_quantity():
+    # Kite orders documentation: qty=1, filled=0, pending=1, cancelled=1.
+    result=inspect_capture(capture(Transport([order(quantity=1,filled_quantity=0,pending_quantity=1,cancelled_quantity=1,status="CANCELLED",average_price=0)],[])))
+    assert result["status"]=="consistent" and result["openOrderCount"]==0

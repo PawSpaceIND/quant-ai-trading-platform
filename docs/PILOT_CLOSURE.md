@@ -34,6 +34,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P26 | Source timestamps and ordered quote observations | Actual SDK timestamp conversion, future/late/duplicate rejection, immutable closed bars, unchanged volume baseline and UI/Atlas diagnostics | Engineering/API/browser and offline SDK verified; real session/source completeness and clock qualification pending |
 | P27 | Recorded account benchmark comparison | Reconciled historical fills/cash/fees, matched daily closes, bounded gap-aware metrics, private UI/export/Atlas | Engineering/API/browser verified with real paper-broker synthetic history; source, total-return/corporate-action, sector/factor and forward qualification remain open |
 | P28 | Separate paper and external broker state; read-only daily order/trade inspection | Exact account identity, bounded full position reads, preserved quantities, independent consistency checks, private UI/export/Atlas | Engineering/API/browser verified on synthetic evidence; real broker lifecycle and broader reconciliation remain open |
+| P29 | Durable external observation history and selected review | Atomic retained captures, independent temporal checks, past-issue preservation, private historical export/Atlas and selected recovery | Engineering verified on synthetic evidence; production/browser/image evidence tracked per revision; actual broker lifecycle/source completeness remain open |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -106,3 +107,7 @@ Portfolio now reconstructs each historical session book from actual recorded pap
 ## Implementation delta — external broker observations
 
 The execution-facing adapters now keep account reads on the paper ledger. Explicit Kite/IBKR reads preserve contract identity and fractional quantities, and the private Activity view inspects bounded Kite daily order/trade captures. [Definitions, migration and limits](BROKER_OBSERVATIONS.md). This advances external observation and mismatch detection; it does not close live order lifecycle, position/cash reconciliation, QuantConnect live/backtest parity or external pilot gates.
+
+## Implementation delta — retained broker lifecycle observations
+
+P29 adds an append-only journal, independent Python/TypeScript lifecycle replay, historical Activity selection, capture-bound Atlas context and schema 2 recovery. Missing records and earlier contradictions remain visible after later recovery. Terminal pending semantics now follow the official Kite cancelled example. [Contract, retention bounds and remaining gates](BROKER_LIFECYCLE_HISTORY.md). This closes selected observation retention/review plumbing, not acknowledged OMS completeness, source coverage or target-host acceptance.
