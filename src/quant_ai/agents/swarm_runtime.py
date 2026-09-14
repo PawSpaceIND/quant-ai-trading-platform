@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -128,6 +128,13 @@ class SwarmPaperTradingService:
         tenant_id: str,
     ) -> SwarmExecutionResult:
         lifecycle = OrderLifecycle()
+        held = self._held_quantity(proposal, tenant_id)
+        if proposal.side == Side.SELL and held > 0:
+            # A SELL never exceeds the holding, and an unsized SELL (the sizer found no
+            # entry capacity, so quantity is 0) de-risks by exiting the position in full.
+            exit_quantity = min(proposal.quantity, held) if proposal.quantity > 0 else held
+            if exit_quantity != proposal.quantity:
+                proposal = replace(proposal, quantity=exit_quantity)
         stress = self.stress_agent.evaluate(proposal, portfolio)
 
         def refuse(reason: str) -> SwarmExecutionResult:
@@ -142,6 +149,11 @@ class SwarmPaperTradingService:
         # C5: an engaged kill switch halts the daemon before anything else is evaluated.
         if self.kill_switch.engaged:
             return refuse(f"kill_switch_engaged:{self.kill_switch.reason}")
+        if proposal.side == Side.SELL and held <= 0:
+            return refuse("paper_naked_sell_disabled")
+        if proposal.side == Side.BUY and proposal.quantity <= 0:
+            # The sizer found no risk budget, trade cap or deployable capital for an entry.
+            return refuse("position_sizer_no_capacity")
         if not stress.passed:
             return refuse("STRESS_VETO")
 
@@ -153,7 +165,6 @@ class SwarmPaperTradingService:
             lifecycle.transition(OrderState.REJECTED)
             return SwarmExecutionResult(proposal, risk, None, stress, trace, lifecycle.state)
 
-        held = self._held_quantity(risk.order, tenant_id)
         # C2: block a second entry into a symbol that is already open.
         if risk.order.side == Side.BUY and held > 0 and not self.allow_position_scaling:
             return refuse("position_already_open")
@@ -162,9 +173,6 @@ class SwarmPaperTradingService:
             risk.order, tenant_id, request.observed_at
         ):
             return refuse("re_entry_cooldown_active")
-        if risk.order.side == Side.SELL and held < risk.order.quantity:
-            return refuse("paper_naked_sell_disabled")
-
         lifecycle.transition(OrderState.RISK_APPROVED)
 
         # C5: durable replay guard. The claim is stored in SQLite, so a restart mid-cadence
@@ -203,7 +211,7 @@ class SwarmPaperTradingService:
         reference = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
         return reference < until
 
-    def _held_quantity(self, order: OrderIntent, tenant_id: str) -> int:
+    def _held_quantity(self, order: OrderIntent | TradeProposal, tenant_id: str) -> int:
         return sum(
             position.quantity
             for position in self.broker.get_positions(tenant_id)

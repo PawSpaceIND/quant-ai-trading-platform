@@ -39,3 +39,29 @@ def trailing_stop(side: Side, peak_or_trough: Decimal, atr: Decimal, multiple: D
         raise ValueError("positive values required")
     distance = atr * multiple
     return peak_or_trough - distance if side == Side.BUY else peak_or_trough + distance
+
+
+def orient_protective_levels(
+    side: Side | None,
+    reference_price: Decimal,
+    stop_price: Decimal | None,
+    take_profit_price: Decimal | None,
+) -> tuple[Decimal | None, Decimal | None]:
+    """Place stop and take-profit on the correct side of ``reference_price``.
+
+    Only the *distance* of each level from the reference is trusted; the side
+    decides the direction. For a BUY the stop sits below and the take-profit
+    above; for a SELL both are mirrored. Idempotent, so already-correct levels
+    pass through unchanged, and a ``None`` side or level is returned as is.
+    """
+    if side is None or reference_price <= 0:
+        return stop_price, take_profit_price
+    stop_distance = abs(reference_price - stop_price) if stop_price is not None else None
+    profit_distance = abs(take_profit_price - reference_price) if take_profit_price is not None else None
+    if side == Side.BUY:
+        stop = reference_price - stop_distance if stop_distance is not None else None
+        profit = reference_price + profit_distance if profit_distance is not None else None
+    else:
+        stop = reference_price + stop_distance if stop_distance is not None else None
+        profit = reference_price - profit_distance if profit_distance is not None else None
+    return stop, profit

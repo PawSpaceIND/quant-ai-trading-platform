@@ -82,3 +82,34 @@ export function latestSwarmIntelligence() {
     },
   };
 }
+
+/**
+ * Every persisted proof that produced a fill, keyed by broker order id.
+ *
+ * Scans the whole directory rather than the newest N files: a fill's proof is
+ * exactly as old as the fill, so any recency cap would silently drop the link
+ * for everything but the latest decisions. Files are pre-filtered on a cheap
+ * substring test before being parsed.
+ */
+export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
+  const index = new Map<string, { file: string; proof: Proof }>();
+  const directory = proofDirectory();
+  if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return index;
+  for (const file of fs.readdirSync(/* turbopackIgnore: true */ directory)) {
+    if (!file.endsWith(".json") || file === "latest-backtest-tearsheet.json") continue;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(/* turbopackIgnore: true */ path.join(directory, file), "utf8");
+    } catch {
+      continue;
+    }
+    if (!/"order_id"\s*:\s*"/.test(raw)) continue;
+    try {
+      const proof = JSON.parse(raw) as Proof;
+      if (typeof proof.order_id === "string" && proof.order_id) index.set(proof.order_id, { file, proof });
+    } catch {
+      // unreadable proof: leave the fill unlinked rather than guess
+    }
+  }
+  return index;
+}
