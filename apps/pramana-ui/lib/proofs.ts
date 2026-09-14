@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { projectRoot } from "@/lib/db";
+
 export type Proof = Record<string, unknown> & {
   decision_id?: string;
   generated_at?: string;
@@ -17,7 +19,9 @@ export type Proof = Record<string, unknown> & {
 };
 
 export function proofDirectory(): string {
-  return path.resolve(/* turbopackIgnore: true */ process.cwd(), process.env.PRAMANA_PROOF_DIR || "../../pramana-proofs");
+  const configured = process.env.PRAMANA_PROOF_DIR;
+  if (configured) return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured);
+  return path.join(/* turbopackIgnore: true */ projectRoot(), "pramana-proofs");
 }
 
 export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; proof: Proof }> {

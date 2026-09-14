@@ -16,3 +16,12 @@ secrets/
 *.egg-info/
 
 .venv-api/
+
+# Paper-trading ledgers and XAI proof artifacts (never commit trading state)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+pramana_ledger.sqlite
+pramana-proofs/

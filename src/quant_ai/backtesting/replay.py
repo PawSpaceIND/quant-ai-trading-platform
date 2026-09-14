@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.domain.models import Instrument, PortfolioSnapshot
+from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.friction import FrictionContext
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
@@ -138,20 +139,22 @@ class HistoricalReplayHarness:
         broker: PaperBrokerService,
         plan: CapitalPlan,
         *,
-        quantity: int = 1,
+        quantity: int | None = 1,
         country: str = "USA",
         tenant_id: str = "backtest",
+        xai_logger: XAITraceLogger | None = None,
     ) -> None:
         self.broker = broker
         self.plan = plan
         self.quantity = quantity
         self.country = country
         self.tenant_id = tenant_id
+        self.xai_logger = xai_logger
 
     def run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
         self._validate(dataset)
         feed = HistoricalMarketDataFeed(dataset.bars)
-        runtime = SwarmPaperTradingService(broker=self.broker)
+        runtime = SwarmPaperTradingService(broker=self.broker, xai_logger=self.xai_logger)
         pipeline = SwarmMarketAnalysisPipeline(
             feed,
             HistoricalNewsProvider(dataset.news),

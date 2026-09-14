@@ -16,8 +16,9 @@ from quant_ai.backtesting.replay import (
     load_replay_dataset,
 )
 from quant_ai.backtesting.tearsheet import build_tearsheet
+from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode, Side
-from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
+from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
 from quant_ai.execution.notifications import (
     ConsoleNotificationAdapter,
@@ -37,14 +38,12 @@ from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 
 
 def build_runtime() -> AutonomousTradingDaemon:
-    database = os.environ.get("QUANT_AI_PAPER_DB", "quant-ai-paper.db")
-    tenant_id = os.environ.get("QUANT_AI_TENANT_ID", "default")
-    broker = PaperBrokerService(database, starting_capital=Decimal(100000))
+    database = paths.ledger_path("QUANT_AI_PAPER_DB")
+    tenant_id = paths.tenant_id("QUANT_AI_TENANT_ID")
+    database.parent.mkdir(parents=True, exist_ok=True)
+    broker = PaperBrokerService(str(database), starting_capital=Decimal(100000))
     feed = UsaSandboxMarketDataFeed()
-    xai_dir = os.environ.get(
-        "PRAMANA_XAI_DIR",
-        os.environ.get("QUANT_AI_XAI_DIR", str(PRAMANA_PROOF_DIRECTORY)),
-    )
+    xai_dir = str(paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR"))
     runtime = SwarmPaperTradingService(broker=broker, xai_logger=XAITraceLogger(xai_dir))
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -71,7 +70,8 @@ def build_runtime() -> AutonomousTradingDaemon:
         tracker,
         instrument,
         plan,
-        quantity=10,
+        # quantity is intentionally unset: each entry is sized from live equity and the
+        # capital plan (PositionSizer.quantity_from_plan), not a fixed share count.
         country="USA",
         tenant_id=tenant_id,
         notifications=notifications,
@@ -187,7 +187,11 @@ def _backtest(args: argparse.Namespace) -> None:
         tuple(item for item in dataset.fundamentals if item.observed_at <= end_time),
         dataset.benchmark_closes,
     )
-    database = os.environ.get("QUANT_AI_BACKTEST_DB", ":memory:")
+    database = os.environ.get("QUANT_AI_BACKTEST_DB", "").strip() or ":memory:"
+    if database == "shared":
+        database = str(paths.ledger_path())
+    if database != ":memory:":
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
     broker = PaperBrokerService(database, starting_capital=Decimal(100000))
     plan = CapitalGoalEngine().recommend(
         CapitalPlanRequest(
@@ -195,14 +199,18 @@ def _backtest(args: argparse.Namespace) -> None:
             expected_edge=Decimal("0.02"), requested_mode=RiskMode.BALANCED,
         )
     )
-    result = HistoricalReplayHarness(
-        broker, plan, quantity=10, country="India" if market == Market.INDIA else "USA"
-    ).run(dataset)
-    tearsheet_json = build_tearsheet(result, broker).to_json()
-    proof_dir = Path(
-        os.environ.get("PRAMANA_PROOF_DIR", str(PRAMANA_PROOF_DIRECTORY))
-    )
+    proof_dir = paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR")
     proof_dir.mkdir(parents=True, exist_ok=True)
+    tenant = paths.tenant_id("QUANT_AI_TENANT_ID")
+    result = HistoricalReplayHarness(
+        broker,
+        plan,
+        quantity=None,  # dynamic: sized per bar from equity and the capital plan
+        country="India" if market == Market.INDIA else "USA",
+        tenant_id=tenant,
+        xai_logger=XAITraceLogger(proof_dir),
+    ).run(dataset)
+    tearsheet_json = build_tearsheet(result, broker, tenant_id=tenant).to_json()
     (proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
     print(tearsheet_json)
     broker.flush()

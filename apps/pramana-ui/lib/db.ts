@@ -4,9 +4,29 @@ import fs from "node:fs";
 
 export const tenantId = process.env.PRAMANA_TENANT_ID || "default";
 
+const ROOT_MARKERS = ["pyproject.toml", ".git"];
+
+/**
+ * Walk upwards from the process cwd to the repository root, mirroring
+ * `src/quant_ai/config/paths.py::project_root` so that the UI and the Python
+ * CLI/daemon agree on the default ledger location with no configuration.
+ */
+export function projectRoot(): string {
+  let current = path.resolve(/* turbopackIgnore: true */ process.cwd());
+  for (;;) {
+    if (ROOT_MARKERS.some((marker) => fs.existsSync(/* turbopackIgnore: true */ path.join(current, marker)))) {
+      return current;
+    }
+    const parent = path.dirname(/* turbopackIgnore: true */ current);
+    if (parent === current) return path.resolve(/* turbopackIgnore: true */ process.cwd());
+    current = parent;
+  }
+}
+
 export function ledgerPath(): string {
-  const configured = process.env.PRAMANA_LEDGER_PATH || "../../pramana_ledger.sqlite";
-  return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured);
+  const configured = process.env.PRAMANA_LEDGER_PATH;
+  if (configured) return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured);
+  return path.join(/* turbopackIgnore: true */ projectRoot(), "pramana_ledger.sqlite");
 }
 
 export function openLedger(): DatabaseSync | null {
