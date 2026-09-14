@@ -42,7 +42,6 @@ from quant_ai.risk.policy import RiskFirewall, RiskPolicy
 from quant_ai.risk.warden import RiskWarden
 from quant_ai.strategies.base import StrategySignal
 
-
 INSTRUMENT = Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
 NOW = datetime(2026, 9, 14, 14, 0, tzinfo=timezone.utc)
 
