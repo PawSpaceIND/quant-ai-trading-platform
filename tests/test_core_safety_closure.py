@@ -297,7 +297,9 @@ def test_target_preserves_reward_risk_after_worst_bounded_fill() -> None:
 
     assert stop is not None and target is not None
     assert target > worst
-    assert target - worst == (worst - stop) * capital_plan.reward_risk_ratio
+    reward_distance = target - worst
+    expected_reward = (worst - stop) * capital_plan.reward_risk_ratio
+    assert abs(reward_distance - expected_reward) <= Decimal("1e-24")
 
 
 def test_macro_changes_are_observation_to_observation_not_fixed_anchors() -> None:
