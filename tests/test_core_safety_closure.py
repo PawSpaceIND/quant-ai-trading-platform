@@ -142,16 +142,33 @@ def test_file_backed_risk_state_survives_restart_and_rolls_day(tmp_path) -> None
     day2 = date(2026, 9, 15)
 
     first = SQLiteRiskStateStore(path, starting_capital=Decimal(100000))
-    assert first.record_equity("default", day1, Decimal(100000)) == Decimal(100000)
-    assert first.record_equity("default", day1, Decimal(97000)) == Decimal(100000)
+    assert first.record_equity("default", day1, Decimal(98000)) == Decimal(98000)
+    assert first.record_equity("default", day1, Decimal(97000)) == Decimal(98000)
     first.set_kill_switch("default", True, "persistent fault")
     first.close()
 
     second = SQLiteRiskStateStore(path, starting_capital=Decimal(100000))
     assert second.kill_switch_state("default") == (True, "persistent fault")
-    assert second.record_equity("default", day1, Decimal(96000)) == Decimal(100000)
+    assert second.record_equity("default", day1, Decimal(96000)) == Decimal(98000)
     assert second.record_equity("default", day2, Decimal(95000)) == Decimal(96000)
     second.close()
+
+
+def test_cli_resume_clears_persisted_breaker(tmp_path, monkeypatch) -> None:
+    from quant_ai.cli import main as cli_main
+
+    ledger = tmp_path / "ledger.sqlite"
+    state = SQLiteRiskStateStore(ledger)
+    state.set_kill_switch("ghost", True, "cadence fault")
+    state.close()
+
+    monkeypatch.setenv("PRAMANA_LEDGER_PATH", str(ledger))
+    monkeypatch.setenv("PRAMANA_TENANT_ID", "ghost")
+    assert cli_main(["resume"]) == 0
+
+    reopened = SQLiteRiskStateStore(ledger)
+    assert reopened.kill_switch_state("ghost") == (False, None)
+    reopened.close()
 
 
 def test_fill_aware_sizing_respects_risk_budget_after_adverse_fill() -> None:
