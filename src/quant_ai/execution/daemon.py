@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from time import monotonic
 from typing import Callable
 
 from quant_ai.audit.journal import InMemoryAuditJournal
+from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.domain.models import Instrument, Market
 from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.notifications import TradingNotificationDispatcher
@@ -20,6 +23,8 @@ from quant_ai.execution.protective_exits import (
     market_feed_mark_resolver,
 )
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
+from quant_ai.execution.session import MarketState
+from quant_ai.governance.directives import country_for
 from quant_ai.notifications.trading import TradingAlertCode
 from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
@@ -53,9 +58,17 @@ class AutonomousTradingDaemon:
         clock: Callable[[], datetime] | None = None,
         exit_engine: ProtectiveExitEngine | None = None,
         halt_file: str | Path | None = None,
+        instruments: Iterable[Instrument] | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
+        # The founder's watchlist. Every instrument is evaluated on every cadence tick;
+        # the first one keeps the legacy single-instrument attributes working.
+        self.instruments = tuple(instruments) if instruments else (instrument,)
+        if not self.instruments:
+            raise ValueError("at least one instrument is required")
+        instrument = self.instruments[0]
+        self.briefs: tuple[FounderExecutionBrief, ...] = ()
         # Operator halt: a marker file an operator can create from outside the process.
         self.halt_file = Path(halt_file) if halt_file is not None else None
         self.scheduler = scheduler
@@ -162,6 +175,42 @@ class AutonomousTradingDaemon:
             )
         return exits
 
+    def country_of(self, instrument: Instrument) -> str:
+        """Country charged for an instrument under the warden's allocation cap."""
+        if instrument == self.instrument:
+            return self.country
+        return country_for(instrument)
+
+    def country_exposure(self, now: datetime | None = None) -> dict[str, Decimal]:
+        """Market value of open positions per country, so the country cap is real."""
+        exposure: dict[str, Decimal] = {}
+        for position in self.tracker.metrics(now).positions:
+            country = self.country_of(
+                self.tracker.instrument_resolver(
+                    BrokerPosition(
+                        self.tenant_id, position.symbol, position.market, position.asset_class,
+                        position.quantity, position.average_entry_price,
+                    )
+                )
+            )
+            exposure[country] = exposure.get(country, Decimal(0)) + position.market_value
+        return exposure
+
+    @staticmethod
+    def _primary_brief(briefs: list[FounderExecutionBrief]) -> FounderExecutionBrief:
+        for item in briefs:
+            if item.market_state == MarketState.REGULAR_HOURS:
+                return item
+        return briefs[0]
+
+    @staticmethod
+    def _briefs_to_dispatch(briefs: list[FounderExecutionBrief]) -> tuple[FounderExecutionBrief, ...]:
+        """One brief per instrument in session; a single closed-market sweep otherwise."""
+        if len(briefs) == 1:
+            return tuple(briefs)
+        in_session = tuple(item for item in briefs if item.market_state == MarketState.REGULAR_HOURS)
+        return in_session or (briefs[0],)
+
     def request_stop(self) -> None:
         self._stop_requested = True
 
@@ -182,27 +231,38 @@ class AutonomousTradingDaemon:
             # even on a tick where the swarm would otherwise want to add exposure.
             self.protective_exits = self.sweep_protective_exits(timestamp)
             pre_metrics = self.tracker.metrics(timestamp)
-            before = self.tracker.get_snapshot(timestamp)
-            if self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None:
-                brief = await self.scheduler.run_tick_async(
-                    self.instrument,
-                    timestamp,
-                    self.plan,
-                    before,
-                    quantity=self.quantity,
-                    country=self.country,
-                    tenant_id=self.tenant_id,
-                )
-            else:
-                brief = self.scheduler.run_tick(
-                    self.instrument,
-                    timestamp,
-                    self.plan,
-                    before,
-                    quantity=self.quantity,
-                    country=self.country,
-                    tenant_id=self.tenant_id,
-                )
+            use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
+            briefs: list[FounderExecutionBrief] = []
+            for instrument in self.instruments:
+                # A fresh snapshot per instrument: a fill earlier in the loop changes the
+                # exposure every later instrument is judged against.
+                before = self.tracker.get_snapshot(timestamp)
+                exposure = self.country_exposure(timestamp)
+                if use_llm:
+                    brief = await self.scheduler.run_tick_async(
+                        instrument,
+                        timestamp,
+                        self.plan,
+                        before,
+                        quantity=self.quantity,
+                        country=self.country_of(instrument),
+                        tenant_id=self.tenant_id,
+                        country_exposure=exposure,
+                    )
+                else:
+                    brief = self.scheduler.run_tick(
+                        instrument,
+                        timestamp,
+                        self.plan,
+                        before,
+                        quantity=self.quantity,
+                        country=self.country_of(instrument),
+                        tenant_id=self.tenant_id,
+                        country_exposure=exposure,
+                    )
+                briefs.append(brief)
+            self.briefs = tuple(briefs)
+            brief = self._primary_brief(briefs)
             metrics = self.tracker.metrics(timestamp)
             realized_delta = metrics.realized_pnl - pre_metrics.realized_pnl
             if realized_delta != 0:
@@ -210,20 +270,22 @@ class AutonomousTradingDaemon:
                 if traces:
                     agent_ids = tuple(row["agent_id"] for row in traces[-1].input_matrix)
                     self.scheduler.pipeline.runtime.attribution.record(agent_ids, realized_delta)
-            self.notifications.dispatch_brief(
-                brief,
-                total_equity=metrics.total_equity,
-                realized_pnl=metrics.realized_pnl,
-                unrealized_pnl=metrics.unrealized_pnl,
-                drawdown_fraction=metrics.drawdown_fraction,
-                tenant_id=self.tenant_id,
-            )
+            for item in self._briefs_to_dispatch(briefs):
+                self.notifications.dispatch_brief(
+                    item,
+                    total_equity=metrics.total_equity,
+                    realized_pnl=metrics.realized_pnl,
+                    unrealized_pnl=metrics.unrealized_pnl,
+                    drawdown_fraction=metrics.drawdown_fraction,
+                    tenant_id=self.tenant_id,
+                )
             self.audit.append(
                 "cadence_complete",
                 {
                     "market_state": brief.market_state.value,
                     "mode": brief.mode,
-                    "paper_orders": brief.paper_order_ids,
+                    "subjects": tuple(item.subject for item in briefs),
+                    "paper_orders": tuple(oid for item in briefs for oid in item.paper_order_ids),
                     "equity": str(metrics.total_equity),
                     "drawdown": str(metrics.drawdown_fraction),
                 },

@@ -35,10 +35,14 @@ class AtlasInvestmentAgent:
         policy: AtlasPolicy | None = None,
         founder_policy: FounderPolicy | None = None,
         llm_client: AnthropicSwarmClient | None = None,
+        founder_instructions: str = "",
     ) -> None:
         self.policy = policy or AtlasPolicy()
         self.founder_policy = founder_policy or FounderPolicy()
         self.llm_client = llm_client
+        # Free-text guidance from the founder. It shapes the consensus and is recorded
+        # on every proof; it can never lift a firewall limit.
+        self.founder_instructions = founder_instructions.strip()
 
     def decide(
         self,
@@ -94,7 +98,7 @@ class AtlasInvestmentAgent:
             f"average_confidence={confidence}",
             f"expected_return={expected_return}",
             f"expected_risk={expected_risk}",
-        ) + _market_rationale(market_tick)
+        ) + _market_rationale(market_tick) + self._founder_rationale()
         return AtlasDecision(
             uuid4().hex,
             now,
@@ -129,7 +133,7 @@ class AtlasInvestmentAgent:
             return deterministic
         try:
             payload = await self.llm_client.generate_trading_consensus(
-                _atlas_prompt(subject, evidence, market_tick)
+                _atlas_prompt(subject, evidence, market_tick, self.founder_instructions)
             )
             signal, proof = self.llm_client.parse_consensus(payload)
         except ConsensusSchemaError:
@@ -152,7 +156,7 @@ class AtlasInvestmentAgent:
             f"xai_summary={proof.summary}",
             *(f"xai_support={item}" for item in proof.supporting_factors),
             *(f"xai_risk={item}" for item in proof.risk_factors),
-        ) + _market_rationale(market_tick)
+        ) + _market_rationale(market_tick) + self._founder_rationale()
         return AtlasDecision(
             deterministic.cycle_id,
             now,
@@ -168,6 +172,11 @@ class AtlasInvestmentAgent:
             deterministic.founder_escalations,
             False,
         )
+
+    def _founder_rationale(self) -> tuple[str, ...]:
+        if not self.founder_instructions:
+            return ()
+        return (f"founder_directives={self.founder_instructions[:160]}",)
 
     def _hold(
         self,
@@ -195,12 +204,17 @@ class AtlasInvestmentAgent:
 
 
 def _atlas_prompt(
-    subject: str, evidence: tuple[AgentEvidence, ...], tick: LiveTick | None
+    subject: str,
+    evidence: tuple[AgentEvidence, ...],
+    tick: LiveTick | None,
+    founder_instructions: str = "",
 ) -> str:
     lines = [
         f"subject={subject}",
         "execution_mode=PAPER_ONLY",
     ]
+    if founder_instructions.strip():
+        lines.append(f"founder_directives={founder_instructions.strip()}")
     for item in evidence:
         lines.append(
             f"agent={item.agent_id};domain={item.domain.value};stance={item.stance.value};"

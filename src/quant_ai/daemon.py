@@ -7,7 +7,6 @@ import os
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,7 @@ from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.config import paths
-from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode
+from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
 from quant_ai.execution.notifications import (
@@ -33,6 +32,7 @@ from quant_ai.execution.session import (
     default_holidays,
     holidays_from_json,
 )
+from quant_ai.governance.directives import FounderDirectives, country_for
 from quant_ai.intelligence.external.fred import FredMacroProvider
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
@@ -54,9 +54,11 @@ from quant_ai.marketdata.ticker_stream import (
     IBKRAsyncTicker,
     TickBuffer,
     ZerodhaKiteTicker,
+    _contract_symbol,
 )
 from quant_ai.orchestration.cadence import CadenceMarketReader
-from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
+from quant_ai.planning.capital import CapitalGoalEngine
+from quant_ai.risk.warden import RiskWarden
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
@@ -274,19 +276,25 @@ def build_ghost_runner(
     holidays: dict[Market | GlobalVenue, frozenset[date]] | None = None,
     notifications: TradingNotificationDispatcher | None = None,
     halt_file: str | Path | None = None,
+    directives: FounderDirectives | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
-    broker = PaperBrokerService(database, starting_capital=Decimal(100000))
+    directives = directives or FounderDirectives()
+    broker = PaperBrokerService(database, starting_capital=directives.starting_capital)
     buffer = TickBuffer()
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
     feed = LiveTickMarketDataFeed(buffer)
-    cio = AtlasCIOAgent(AtlasInvestmentAgent(llm_client=llm_client))
+    cio = AtlasCIOAgent(
+        AtlasInvestmentAgent(llm_client=llm_client, founder_instructions=directives.instructions)
+    )
     runtime = SwarmPaperTradingService(
         cio=cio,
+        warden=RiskWarden(blocked_asset_classes=directives.blocked_asset_classes()),
         broker=broker,
         xai_logger=XAITraceLogger(xai_directory),
+        max_open_positions=directives.max_open_positions,
     )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -302,26 +310,29 @@ def build_ghost_runner(
         calendar=MarketCalendar(holidays=holidays if holidays is not None else default_holidays()),
     )
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
-    plan = CapitalGoalEngine().recommend(
-        CapitalPlanRequest(
-            Decimal(100000),
-            Decimal("0.80"),
-            Decimal("0.20"),
-            expected_edge=Decimal("0.02"),
-            requested_mode=RiskMode.BALANCED,
-        )
-    )
+    plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
+    instruments = directives.instruments_or(instrument)
+    mapped = set(zerodha_symbol_by_token.values())
+    if include_ibkr:
+        mapped.update(_contract_symbol(contract) for contract in ib_contracts)
+    for item in instruments:
+        if item.symbol not in mapped:
+            logging.getLogger("quant_ai.ghost_runner").warning(
+                "watchlist symbol %s has no websocket mapping; it will be vetoed as missing market data",
+                item.symbol,
+            )
     daemon = AutonomousTradingDaemon(
         scheduler,
         tracker,
-        instrument,
+        instruments[0],
         plan,
         # quantity is intentionally unset: sized per tick from live equity and the plan.
-        country="USA",
+        country=country_for(instruments[0]),
         tenant_id=tenant_id,
         notifications=notifications,
         halt_file=halt_file,
+        instruments=instruments,
     )
     streams: list[AbstractTickerStream] = [
         ZerodhaKiteTicker(
@@ -455,6 +466,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     )
     news, fundamentals, macro = _env_intelligence_providers()
     return build_ghost_runner(
+        directives=FounderDirectives.from_env(),
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,
