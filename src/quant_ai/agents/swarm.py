@@ -21,6 +21,12 @@ class AgentAnalysisRequest:
     source_freshness_seconds: int = 0
 
 
+# Valuation-driven agents only have an opinion on instruments that carry a balance
+# sheet; a metal, a rupee pair or a crude contract has no P/E and must not be scored
+# as if it had a bad one.
+EQUITY_LIKE = frozenset({AssetClass.EQUITY, AssetClass.ETF, AssetClass.INDEX})
+
+
 class SwarmAgent(ABC):
     agent_id: str
     domain: AgentDomain
@@ -103,6 +109,8 @@ class IndianEquitiesAgent(SwarmAgent):
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
         if request.market != Market.INDIA:
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_india_market")
+        if request.asset_class not in EQUITY_LIKE:
+            return self._evidence(request, Decimal(0), Decimal("0.30"), "non_equity_instrument")
         pe = request.metrics.get("pe", Decimal(0))
         debt = request.metrics.get("debt_equity", Decimal(0))
         margin = request.metrics.get("operating_margin", Decimal(0))
@@ -124,6 +132,8 @@ class USEquitiesAgent(SwarmAgent):
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
         if request.market != Market.USA:
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_us_market")
+        if request.asset_class not in EQUITY_LIKE:
+            return self._evidence(request, Decimal(0), Decimal("0.30"), "non_equity_instrument")
         pe = request.metrics.get("pe", Decimal(0))
         margin = request.metrics.get("operating_margin", Decimal(0))
         fcf = request.metrics.get("fcf_yield", Decimal(0))
@@ -143,6 +153,8 @@ class TechnicalQuantAgent(SwarmAgent):
     domain = AgentDomain.TECHNICAL
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        if request.metrics.get("price_history_bars", Decimal(50)) < Decimal(50):
+            return self._evidence(request, Decimal(0), Decimal("0.30"), "insufficient_price_history")
         spread = request.metrics.get("sma_spread", Decimal(0))
         rsi = request.metrics.get("rsi", Decimal(50))
         momentum = request.metrics.get("momentum", Decimal(0))

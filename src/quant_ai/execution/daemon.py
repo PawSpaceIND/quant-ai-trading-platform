@@ -5,6 +5,7 @@ import logging
 import signal
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 from typing import Callable
 
@@ -22,6 +23,8 @@ from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.notifications.trading import TradingAlertCode
 from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
+
+OPERATOR_HALT_PREFIX = "operator_halt_file"
 
 
 @dataclass(frozen=True)
@@ -49,9 +52,12 @@ class AutonomousTradingDaemon:
         idle_sleep_seconds: float = 1.0,
         clock: Callable[[], datetime] | None = None,
         exit_engine: ProtectiveExitEngine | None = None,
+        halt_file: str | Path | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
+        # Operator halt: a marker file an operator can create from outside the process.
+        self.halt_file = Path(halt_file) if halt_file is not None else None
         self.scheduler = scheduler
         self.tracker = tracker
         self.instrument = instrument
@@ -102,6 +108,28 @@ class AutonomousTradingDaemon:
             metadata={"reason": reason},
         )
 
+    def apply_operator_halt(self) -> None:
+        """Engage the kill switch while the halt file exists; release when it is removed.
+
+        Only a halt the file engaged is released by its removal: a halt latched by
+        repeated cadence failures stays until an operator restarts the daemon.
+        Protective exits keep running during a halt - a halt freezes new risk, never
+        the ability to cut it.
+        """
+        if self.halt_file is None:
+            return
+        reason = self.kill_switch.reason or ""
+        if self.halt_file.exists():
+            if not self.kill_switch.engaged:
+                note = self.halt_file.read_text(encoding="utf-8").strip() or str(self.halt_file)
+                self.engage_kill_switch(f"{OPERATOR_HALT_PREFIX}: {note}")
+        elif self.kill_switch.engaged and reason.startswith(OPERATOR_HALT_PREFIX):
+            self.kill_switch.reset()
+            self.audit.append(
+                "kill_switch_released",
+                {"tenant_id": self.tenant_id, "via": "halt_file_removed"},
+            )
+
     def notify_cadence_failure(self, detail: str, consecutive: int) -> None:
         self.audit.append(
             "cadence_tick_failed",
@@ -149,6 +177,7 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         self._in_flight = True
         try:
+            self.apply_operator_halt()
             # C1: liquidate breached positions BEFORE new analysis, so a stop is honoured
             # even on a tick where the swarm would otherwise want to add exposure.
             self.protective_exits = self.sweep_protective_exits(timestamp)

@@ -26,6 +26,7 @@ from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
     MacroIndicatorProvider,
     NewsSentimentProvider,
+    NewsSignal,
 )
 from quant_ai.intelligence.regime import MarketRegimeDetector, RegimeAssessment
 from quant_ai.marketdata.feed import MarketDataFeed
@@ -68,7 +69,11 @@ class SwarmMarketAnalysisPipeline:
         regime_detector: MarketRegimeDetector | None = None,
         tick_reader: CadenceMarketReader | None = None,
         sizer: PositionSizer | None = None,
+        news_window: timedelta = timedelta(hours=6),
     ) -> None:
+        if news_window <= timedelta(0):
+            raise ValueError("news_window must be positive")
+        self.news_window = news_window
         self.market_feed = market_feed
         self.news = news
         self.fundamentals = fundamentals
@@ -154,8 +159,8 @@ class SwarmMarketAnalysisPipeline:
             curve.append(curve[-1] * (Decimal(1) + item))
         analytics = summarize_performance(returns, tuple(curve), returns)
         technical = self._technical_metrics(closes)
-        equity_news = self._mean(tuple(item.sentiment for item in news))
-        geopolitical_sentiment = self._mean(tuple(item.sentiment for item in geopolitical))
+        equity_news = self._recent_sentiment(news, now)
+        geopolitical_sentiment = self._recent_sentiment(geopolitical, now)
         macro_metrics = self._macro_metrics(macro.indicators)
 
         common = dict(fundamentals.metrics)
@@ -322,6 +327,16 @@ class SwarmMarketAnalysisPipeline:
     def _mean(values: tuple[Decimal, ...]) -> Decimal:
         return sum(values, Decimal(0)) / Decimal(len(values)) if values else Decimal(0)
 
+    def _recent_sentiment(self, items: tuple[NewsSignal, ...], now: datetime) -> Decimal:
+        """Mean sentiment over items published inside the news window.
+
+        Providers return their whole history; without a window the mean never ages
+        out and the signal grows stiffer the longer the system runs.
+        """
+        floor = now - self.news_window
+        recent = tuple(item.sentiment for item in items if item.published_at >= floor)
+        return self._mean(recent)
+
     @staticmethod
     def _macro_metrics(values: dict[str, Decimal]) -> dict[str, Decimal]:
         us10y = values.get("US10Y", Decimal(0))
@@ -338,12 +353,19 @@ class SwarmMarketAnalysisPipeline:
 
     @staticmethod
     def _technical_metrics(closes: tuple[Decimal, ...]) -> dict[str, Decimal]:
+        bars = Decimal(len(closes))
         if len(closes) < 50:
-            return {"sma_spread": Decimal(0), "rsi": Decimal(50), "momentum": Decimal(0)}
+            # Not enough history for the indicators: report that fact so the technical
+            # agent abstains instead of voting on silent neutral defaults.
+            return {
+                "sma_spread": Decimal(0), "rsi": Decimal(50), "momentum": Decimal(0),
+                "price_history_bars": bars,
+            }
         sma20 = sum(closes[-20:], Decimal(0)) / Decimal(20)
         sma50 = sum(closes[-50:], Decimal(0)) / Decimal(50)
         spread = (sma20 - sma50) / sma50 if sma50 else Decimal(0)
-        momentum = (closes[-1] - closes[-10]) / closes[-10] if closes[-10] else Decimal(0)
+        # A 10-bar lookback compares the last close with the close ten bars earlier.
+        momentum = (closes[-1] - closes[-11]) / closes[-11] if closes[-11] else Decimal(0)
         gains = Decimal(0)
         losses = Decimal(0)
         for before, after in zip(closes[-15:-1], closes[-14:]):
@@ -357,7 +379,7 @@ class SwarmMarketAnalysisPipeline:
         else:
             rs = gains / losses
             rsi = Decimal(100) - Decimal(100) / (Decimal(1) + rs)
-        return {"sma_spread": spread, "rsi": rsi, "momentum": momentum}
+        return {"sma_spread": spread, "rsi": rsi, "momentum": momentum, "price_history_bars": bars}
 
     @staticmethod
     def _conflict_ratio(evidence: tuple[AgentEvidence, ...]) -> Decimal:

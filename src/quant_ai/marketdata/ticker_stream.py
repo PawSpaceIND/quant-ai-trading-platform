@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from importlib import import_module
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -44,12 +44,21 @@ class TickBuffer:
             raise ValueError("maxlen must be positive")
         self._ticks: deque[LiveTick] = deque(maxlen=maxlen)
         self._latest: dict[str, LiveTick] = {}
+        self._listeners: list[Callable[[LiveTick], None]] = []
         self._lock = RLock()
+
+    def subscribe(self, listener: Callable[[LiveTick], None]) -> None:
+        """Register a callback invoked for every tick after it is buffered."""
+        with self._lock:
+            self._listeners.append(listener)
 
     def put(self, tick: LiveTick) -> None:
         with self._lock:
             self._ticks.append(tick)
             self._latest[tick.symbol] = tick
+            listeners = tuple(self._listeners)
+        for listener in listeners:
+            listener(tick)
 
     def latest(self, symbol: str) -> LiveTick | None:
         with self._lock:

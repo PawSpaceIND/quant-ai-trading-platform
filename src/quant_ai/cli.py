@@ -221,14 +221,29 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "friction-audit",
+            "backtest", "friction-audit", "halt", "resume",
         ),
     )
     parser.add_argument("--data")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--market", choices=("india", "us"), default="us")
+    parser.add_argument("--reason", default="operator halt")
     args = parser.parse_args(argv)
+    if args.command == "halt":
+        target = paths.halt_file()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(args.reason.strip() or "operator halt", encoding="utf-8")
+        print(f"halt engaged: {target}")
+        return 0
+    if args.command == "resume":
+        target = paths.halt_file()
+        if target.exists():
+            target.unlink()
+            print(f"halt released: {target}")
+        else:
+            print(f"no halt file present: {target}")
+        return 0
     if args.command == "backtest":
         _backtest(args)
         return 0

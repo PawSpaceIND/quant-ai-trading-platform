@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from importlib import import_module
 from pathlib import Path
@@ -19,17 +19,36 @@ from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
+from quant_ai.execution.notifications import (
+    ConsoleNotificationAdapter,
+    TelegramNotificationAdapter,
+    TradingNotificationDispatcher,
+)
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
+from quant_ai.execution.session import (
+    GlobalVenue,
+    MarketCalendar,
+    default_holidays,
+    holidays_from_json,
+)
+from quant_ai.intelligence.external.fred import FredMacroProvider
+from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
+from quant_ai.intelligence.providers import (
+    FundamentalDataProvider,
+    MacroIndicatorProvider,
+    NewsSentimentProvider,
+)
+from quant_ai.intelligence.resilience import ResilientHttpClient, UrllibTransport
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
     SandboxMacroIndicatorProvider,
     SandboxNewsSentimentProvider,
 )
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
-from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
+from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
     IBKRAsyncTicker,
@@ -249,12 +268,20 @@ def build_ghost_runner(
     llm_client: AnthropicSwarmClient | None = None,
     instrument: Instrument | None = None,
     include_ibkr: bool = True,
+    news_provider: NewsSentimentProvider | None = None,
+    fundamentals_provider: FundamentalDataProvider | None = None,
+    macro_provider: MacroIndicatorProvider | None = None,
+    holidays: dict[Market | GlobalVenue, frozenset[date]] | None = None,
+    notifications: TradingNotificationDispatcher | None = None,
+    halt_file: str | Path | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
     broker = PaperBrokerService(database, starting_capital=Decimal(100000))
-    feed = UsaSandboxMarketDataFeed()
     buffer = TickBuffer()
+    # Candles and marks come from the websocket ticks themselves, for any market the
+    # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
+    feed = LiveTickMarketDataFeed(buffer)
     cio = AtlasCIOAgent(AtlasInvestmentAgent(llm_client=llm_client))
     runtime = SwarmPaperTradingService(
         cio=cio,
@@ -263,13 +290,17 @@ def build_ghost_runner(
     )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
-        SandboxNewsSentimentProvider(),
-        SandboxFundamentalDataProvider(),
-        SandboxMacroIndicatorProvider(),
+        news_provider or SandboxNewsSentimentProvider(),
+        fundamentals_provider or SandboxFundamentalDataProvider(),
+        macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
         tick_reader=CadenceMarketReader(buffer),
     )
-    scheduler = AutonomousCadenceScheduler(pipeline, cadence=timedelta(minutes=10))
+    scheduler = AutonomousCadenceScheduler(
+        pipeline,
+        cadence=timedelta(minutes=10),
+        calendar=MarketCalendar(holidays=holidays if holidays is not None else default_holidays()),
+    )
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
     plan = CapitalGoalEngine().recommend(
         CapitalPlanRequest(
@@ -289,6 +320,8 @@ def build_ghost_runner(
         # quantity is intentionally unset: sized per tick from live equity and the plan.
         country="USA",
         tenant_id=tenant_id,
+        notifications=notifications,
+        halt_file=halt_file,
     )
     streams: list[AbstractTickerStream] = [
         ZerodhaKiteTicker(
@@ -360,6 +393,47 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _env_intelligence_providers() -> tuple[
+    NewsSentimentProvider, FundamentalDataProvider, MacroIndicatorProvider
+]:
+    """Real news/macro adapters when configured; sandbox otherwise, and say so loudly."""
+    logger = logging.getLogger("quant_ai.ghost_runner")
+    client = ResilientHttpClient(UrllibTransport())
+    feeds = tuple(item.strip() for item in os.getenv("PRAMANA_NEWS_RSS_URLS", "").split(",") if item.strip())
+    if feeds:
+        news: NewsSentimentProvider = RssNewsSentimentAdapter(client, feeds)
+    else:
+        news = SandboxNewsSentimentProvider()
+        logger.warning("news provider: SANDBOX constants (set PRAMANA_NEWS_RSS_URLS for real headlines)")
+    fred_key = os.getenv("FRED_API_KEY", "").strip()
+    if fred_key:
+        macro: MacroIndicatorProvider = FredMacroProvider(client, fred_key)
+    else:
+        macro = SandboxMacroIndicatorProvider()
+        logger.warning("macro provider: SANDBOX constants (set FRED_API_KEY for real indicators)")
+    fundamentals: FundamentalDataProvider = SandboxFundamentalDataProvider()
+    logger.warning(
+        "fundamentals provider: SANDBOX constants (no licensed fundamentals adapter is configured; "
+        "valuation agents abstain on symbols the sandbox does not know)"
+    )
+    return news, fundamentals, macro
+
+
+def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
+    payload = _env_json("PRAMANA_HOLIDAYS_JSON", {})
+    return holidays_from_json(payload, default_holidays()) if payload else default_holidays()
+
+
+def _env_notifications() -> TradingNotificationDispatcher | None:
+    token = os.getenv("PRAMANA_TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("PRAMANA_TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return None
+    return TradingNotificationDispatcher(
+        (ConsoleNotificationAdapter(), TelegramNotificationAdapter(token, chat_id))
+    )
+
+
 def build_ghost_runner_from_env() -> DaemonRunner:
     """Build the headless ghost runner from deployment environment variables."""
     _assert_ghost_mode()
@@ -379,7 +453,14 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         os.getenv("PRAMANA_TARGET_CURRENCY", "USD").strip().upper(),
         os.getenv("PRAMANA_TARGET_EXCHANGE", "NASDAQ").strip().upper(),
     )
+    news, fundamentals, macro = _env_intelligence_providers()
     return build_ghost_runner(
+        news_provider=news,
+        fundamentals_provider=fundamentals,
+        macro_provider=macro,
+        holidays=_env_holidays(),
+        notifications=_env_notifications(),
+        halt_file=paths.halt_file(),
         zerodha_api_key=_required_env("ZERODHA_API_KEY"),
         zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
         zerodha_instrument_tokens=tokens,
