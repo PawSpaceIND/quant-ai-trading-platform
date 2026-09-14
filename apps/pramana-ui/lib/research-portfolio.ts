@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import {createHash} from "node:crypto";
 import {tenantId} from "./db";
+import {verifyPortfolioAccounting, type ReplayAttribution} from "./research-attribution";
 
 export type ReplayPoint = {event_index: number; at: string; equity_inr: string | null; drawdown_fraction: string | null; stale_symbols: string[]};
 export type ReplayHolding = {symbol: string; quantity: number; cost_inr: string; mark_fresh: boolean; last_bid: string | null; quote_at: string | null; market_value_inr: string | null; unrealized_pnl_inr: string | null};
-export type ReplayFill = {order_id: string; quote_id: string; symbol: string; side: "BUY" | "SELL"; quantity: number; price: string; fee_inr: string; at: string};
+export type ReplayFill = {order_id: string; quote_id: string; symbol: string; side: "BUY" | "SELL"; quantity: number; price: string; fee_inr: string; at: string; quote_bid?: string; quote_ask?: string};
 export type ReplayPending = {order_id: string; symbol: string; side: "BUY" | "SELL"; quantity: number; submitted_at: string};
 export type ReplayCancellation = {order_id: string; symbol: string; side: "BUY" | "SELL"; quantity: number; reason: string};
 export type ReplayBook = {
@@ -14,9 +15,10 @@ export type ReplayBook = {
   max_observed_drawdown_fraction: string | null; unvalued_observations: number;
   halted: boolean; stale_symbols: string[]; holdings: ReplayHolding[];
   fills: ReplayFill[]; pending_orders: ReplayPending[]; cancelled_orders: ReplayCancellation[]; curve: ReplayPoint[];
+  attribution?: ReplayAttribution;
 };
 export type PortfolioResearchReport = {
-  schema: "pramana.portfolio_workspace.v1"; tenant_id: string; name: string;
+  schema: "pramana.portfolio_workspace.v1" | "pramana.portfolio_workspace.v2"; tenant_id: string; name: string;
   generated_at: string; as_of: string | null; evidence_sha256: string;
   implementation: {source_sha256: string; python_version: string};
   mode: "research_simulation"; status: "insufficient_evidence"; automatic_promotion: false;
@@ -55,7 +57,8 @@ export function parsePortfolioResearch(raw: string, tenant: string): PortfolioRe
   check(createHash("sha256").update(envelope.payload).digest("hex") === envelope.sha256);
   const r = JSON.parse(envelope.payload);
   exact(r, ["schema", "tenant_id", "name", "generated_at", "as_of", "evidence_sha256", "implementation", "mode", "status", "automatic_promotion", "event_count", "quote_events", "order_events", "symbols", "config", "books", "limitations"]);
-  check(r.schema === "pramana.portfolio_workspace.v1" && r.tenant_id === tenant && label(r.name));
+  check(["pramana.portfolio_workspace.v1", "pramana.portfolio_workspace.v2"].includes(String(r.schema)) && r.tenant_id === tenant && label(r.name));
+  const v2 = r.schema === "pramana.portfolio_workspace.v2";
   check(r.mode === "research_simulation" && r.status === "insufficient_evidence" && r.automatic_promotion === false);
   check(date(r.generated_at) && Date.parse(String(r.generated_at)) <= Date.now() + 300000 && hash(r.evidence_sha256));
   exact(r.implementation, ["source_sha256", "python_version"]);
@@ -74,7 +77,7 @@ export function parsePortfolioResearch(raw: string, tenant: string): PortfolioRe
   const books = Object.entries(r.books); check(books.length > 0 && books.length <= 16);
   for (const [name, b] of books) {
     check(label(name));
-    exact(b, ["cash_inr", "current_equity_inr", "net_return_fraction", "realized_pnl_inr", "unrealized_pnl_inr", "fees_inr", "peak_observed_equity_inr", "current_drawdown_fraction", "max_observed_drawdown_fraction", "unvalued_observations", "halted", "stale_symbols", "holdings", "fills", "pending_orders", "cancelled_orders", "curve"]);
+    exact(b, ["cash_inr", "current_equity_inr", "net_return_fraction", "realized_pnl_inr", "unrealized_pnl_inr", "fees_inr", "peak_observed_equity_inr", "current_drawdown_fraction", "max_observed_drawdown_fraction", "unvalued_observations", "halted", "stale_symbols", "holdings", "fills", "pending_orders", "cancelled_orders", "curve", ...(v2 ? ["attribution"] : [])]);
     for (const k of ["cash_inr", "fees_inr", "peak_observed_equity_inr"]) check(decimal(b[k]));
     check(decimal(b.realized_pnl_inr, true) && typeof b.halted === "boolean" && count(b.unvalued_observations));
     check(b.current_equity_inr === null || decimal(b.current_equity_inr));
@@ -110,14 +113,16 @@ export function parsePortfolioResearch(raw: string, tenant: string): PortfolioRe
     }
     for (const k of ["fills", "pending_orders", "cancelled_orders"]) {list(b[k], 5000); const ids = new Set();
       for (const item of b[k]) {
-        exact(item, k === "fills" ? ["order_id", "quote_id", "symbol", "side", "quantity", "price", "fee_inr", "at"] : k === "pending_orders" ? ["order_id", "symbol", "side", "quantity", "submitted_at"] : ["order_id", "symbol", "side", "reason", "quantity"]);
+        exact(item, k === "fills" ? ["order_id", "quote_id", "symbol", "side", "quantity", "price", "fee_inr", "at", ...(v2 ? ["quote_bid", "quote_ask"] : [])] : k === "pending_orders" ? ["order_id", "symbol", "side", "quantity", "submitted_at"] : ["order_id", "symbol", "side", "reason", "quantity"]);
         check(label(item.order_id) && !ids.has(item.order_id)); ids.add(item.order_id);
         check(r.symbols.includes(item.symbol) && ["BUY", "SELL"].includes(String(item.side)) && count(item.quantity) && Number(item.quantity) > 0);
         if (k === "fills") check(label(item.quote_id) && decimal(item.price) && Number(item.price) > 0 && decimal(item.fee_inr) && date(item.at) && Date.parse(String(item.at)) <= Date.parse(String(r.as_of)));
+        if (k === "fills" && v2) check(decimal(item.quote_bid) && decimal(item.quote_ask));
         if (k === "pending_orders") check(date(item.submitted_at) && Date.parse(String(item.submitted_at)) <= Date.parse(String(r.as_of)));
         if (k === "cancelled_orders") check(label(item.reason));
       }
     }
+    verifyPortfolioAccounting(b as unknown as ReplayBook, r as unknown as PortfolioResearchReport);
   }
   return r as unknown as PortfolioResearchReport;
 }

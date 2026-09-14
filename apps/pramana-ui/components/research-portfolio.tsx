@@ -28,10 +28,19 @@ function ReplayTable({title, columns, rows}: {title: string; columns: string[]; 
 export function ResearchPortfolio({state, onAsk}: {state?: PortfolioResearchState; onAsk: (question: string) => void}) {
   const [choice, setChoice] = useState("");
   const [metric, setMetric] = useState<"equity" | "drawdown">("equity");
+  const [contributionOrder, setContributionOrder] = useState("impact");
   const report = state?.report;
   const names = Object.keys(report?.books || {});
   const selected = names.includes(choice) ? choice : names[0];
   const book = report?.books[selected];
+  const attribution = book?.attribution;
+  const contributions = useMemo(() => [...(attribution?.rows ?? [])].sort((a, b) => {
+    if (contributionOrder === "symbol") return a.symbol.localeCompare(b.symbol);
+    const amount = (row: typeof a) => contributionOrder === "costs"
+      ? Number(row.spread_cost_inr) + Number(row.slippage_cost_inr) + Number(row.fees_inr)
+      : row.net_pnl_inr === null ? -Infinity : Math.abs(Number(row.net_pnl_inr));
+    return amount(b) - amount(a) || a.symbol.localeCompare(b.symbol);
+  }), [attribution, contributionOrder]);
   const chart = useMemo(() => book?.curve.map(p => ({...p,
     equity: p.equity_inr === null ? null : Number(p.equity_inr),
     drawdown: p.drawdown_fraction === null ? null : Number(p.drawdown_fraction) * 100,
@@ -75,6 +84,23 @@ export function ResearchPortfolio({state, onAsk}: {state?: PortfolioResearchStat
         </LineChart></ResponsiveContainer>
       </div> : <p className="empty">No event observations have been replayed. Starting cash alone is not performance evidence.</p>}
       <p className="footnote">The horizontal axis follows recorded event order, with timestamps in the tooltip. Valuation gaps are not connected. Observed maximum drawdown can understate losses during those gaps.</p>
+      <h3>What drove the result</h3>
+      {!attribution ? <p className="research-notice">This legacy report has no execution-quote attribution. Publish a new portfolio replay to inspect instrument contributions and execution costs.</p> : <>
+        <p className="muted">Inception-to-date instrument contribution · {attribution.status === "complete" ? "Reconciled to latest simulated equity" : "Incomplete: final valuation unavailable"}</p>
+        <dl className="research-stats replay-metrics">
+          <div><dt>Execution-reference P&amp;L</dt><dd>{money(attribution.totals.reference_pnl_inr)}</dd></div>
+          <div><dt>Spread cost</dt><dd>{money(attribution.totals.spread_cost_inr)}</dd></div>
+          <div><dt>Slippage cost</dt><dd>{money(attribution.totals.slippage_cost_inr)}</dd></div>
+          <div><dt>Trading fees</dt><dd>{money(attribution.totals.fees_inr)}</dd></div>
+          <div><dt>Net contribution</dt><dd>{money(attribution.totals.net_pnl_inr)} / {percent(attribution.totals.contribution_fraction)}</dd></div>
+          <div><dt>Reconciliation difference</dt><dd>{money(attribution.reconciliation_difference_inr)}</dd></div>
+        </dl>
+        <p className="footnote">Execution-reference P&amp;L − spread − slippage − fees = net P&amp;L. The reference uses each fill quote’s midpoint and the same final bid marks; it is an accounting comparison, not an achievable trading result. Net P&amp;L already includes these costs.</p>
+        <div className="replay-selectors"><label>Contribution order<select aria-label="Portfolio contribution order" value={contributionOrder} onChange={e => setContributionOrder(e.target.value)}><option value="impact">Largest absolute net contribution</option><option value="costs">Highest execution costs</option><option value="symbol">Symbol</option></select></label></div>
+        <ReplayTable key={`${selected}:contributions:${contributionOrder}`} title="Instrument contributions" columns={["Symbol", "Open quantity", "Realized P&L", "Unrealized P&L", "Net P&L", "Return contribution (pp)", "Reference P&L", "Spread", "Slippage", "Fees"]}
+          rows={contributions.map(r => [r.symbol, r.quantity, money(r.realized_pnl_inr), money(r.unrealized_pnl_inr), money(r.net_pnl_inr), r.contribution_fraction === null ? "Unavailable" : `${(Number(r.contribution_fraction) * 100).toFixed(4)} pp`, money(r.reference_pnl_inr), money(r.spread_cost_inr), money(r.slippage_cost_inr), money(r.fees_inr)])} />
+        <p className="footnote">Includes fully closed positions. Contribution is net instrument P&amp;L divided by starting capital; it is not the return on that instrument. Missing marks remain unavailable. No benchmark, sector, factor, dividend or FX attribution is provided.</p>
+      </>}
       <ReplayTable key={`${selected}:holdings`} title="Simulated holdings" columns={["Symbol", "Quantity", "Remaining cost", "Last bid", "Quote timestamp", "Mark", "Market value", "Unrealized P&L"]}
         rows={book.holdings.map(h => [h.symbol, h.quantity, money(h.cost_inr), money(h.last_bid), timestamp(h.quote_at), h.mark_fresh ? "Fresh on timeline" : "Stale / absent", money(h.market_value_inr), money(h.unrealized_pnl_inr)])} />
       <details><summary>Fills and outstanding orders</summary>
@@ -90,7 +116,7 @@ export function ResearchPortfolio({state, onAsk}: {state?: PortfolioResearchStat
         <ul>{report.limitations.map((text, i) => <li key={i}>{text}</li>)}</ul>
         <p className="footnote">Journal evidence SHA-256: <code>{report.evidence_sha256}</code></p><p className="footnote">Simulator source SHA-256: <code>{report.implementation.source_sha256}</code> · Python {report.implementation.python_version}. Local hashes are not independent signatures or proof of source quality.</p>
       </details>
-      <div className="research-actions"><button onClick={() => onAsk(`Explain the published continuous portfolio replay ${JSON.stringify(report.name)}, especially candidate ${JSON.stringify(selected)}. Compare equity, drawdown, fees, open holdings and pending orders. Identify valuation gaps and missing qualification; distinguish these simulations from the running paper account and independent-case results.`)}>Discuss portfolio replay with Atlas ↗</button><a href="/api/research/portfolio" download="pramana-portfolio-replay.json">Export portfolio replay ↓</a></div>
+      <div className="research-actions"><button onClick={() => onAsk(`Explain the published continuous portfolio replay ${JSON.stringify(report.name)}, especially candidate ${JSON.stringify(selected)}. Explain instrument contributions, closed positions and the reference P&L minus spread, slippage and fees reconciliation when attribution is available. Do not subtract costs again from net P&L or infer benchmark outperformance. Compare equity, drawdown, open holdings and pending orders. Identify valuation gaps and missing qualification; distinguish these simulations from the running paper account and independent-case results.`)}>Discuss portfolio replay with Atlas ↗</button><a href="/api/research/portfolio" download="pramana-portfolio-replay.json">Export portfolio replay ↓</a></div>
     </>}
   </section>;
 }

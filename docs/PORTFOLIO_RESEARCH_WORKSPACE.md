@@ -48,3 +48,5 @@ All current verification used isolated synthetic stores and an empty provider ke
 
 
 The subsequent [company announcement workspace](COMPANY_EVENT_WORKSPACE.md) supersedes the company-event dashboard integration item above. It is verified on synthetic evidence; source and mapping qualification remain open.
+
+New publications now use schema v2 and include [reconciled instrument and execution-cost contribution](PORTFOLIO_CONTRIBUTION.md). The private reader independently reconstructs accounting for both versions; v1 remains readable without inventing missing quote references. The linked record supersedes the earlier verification counts for this increment and defines the contribution method, dashboard/Atlas behavior and remaining benchmark limits.

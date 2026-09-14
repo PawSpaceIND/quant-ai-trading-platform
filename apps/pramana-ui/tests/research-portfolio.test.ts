@@ -29,6 +29,75 @@ function report(): PortfolioResearchReport {
   return {schema: "pramana.portfolio_workspace.v1", tenant_id: "default", name: "Synthetic portfolio", generated_at: new Date().toISOString(), as_of: "2000-01-01T04:02:02Z", evidence_sha256: evidenceHash, implementation: {source_sha256: "e".repeat(64), python_version: "3.12"}, mode: "research_simulation", status: "insufficient_evidence", automatic_promotion: false, event_count: 4, quote_events: 2, order_events: 1, symbols: ["NSE:TEST"], config: {starting_cash_inr: "1000", fee_bps: "0", slippage_bps: "0", max_position_fraction: "1", max_gross_fraction: "1", max_drawdown_fraction: ".2", max_quote_age_seconds: 60, order_ttl_seconds: 60, max_order_quantity: 10}, books: {active, cash}, limitations: ["Synthetic supplied-event simulation; not current account performance."]};
 }
 function envelope(body: unknown) {const payload = JSON.stringify(body); return JSON.stringify({payload, sha256: createHash("sha256").update(payload).digest("hex")});}
+const contributionCases = JSON.parse(fs.readFileSync(new URL("../../../tests/fixtures/portfolio-attribution.json", import.meta.url), "utf8")) as Record<string, PortfolioResearchReport>;
+
+test("Python contribution evidence reconciles in Node across partial fills, closed positions, gaps and cash", async () => {
+  const {parsePortfolioResearch} = await import("../lib/research-portfolio");
+  for (const [name, body] of Object.entries(contributionCases)) {
+    const result = parsePortfolioResearch(envelope(body), "default");
+    assert.deepEqual(result, body, name);
+  }
+  const a = contributionCases.fresh.books.active.attribution!;
+  assert.equal(Number(a.totals.net_pnl_inr), 31.750065);
+  assert.equal(Number(a.totals.reference_pnl_inr), 50);
+  assert.equal(Number(a.totals.spread_cost_inr), 14);
+  assert.equal(Number(a.totals.slippage_cost_inr), 3.035);
+  assert.equal(Number(a.totals.fees_inr), 1.214935);
+});
+
+test("a recomputed hash cannot conceal accounting, reference-quote or attribution inconsistencies", async () => {
+  const {parsePortfolioResearch} = await import("../lib/research-portfolio");
+  const changes: Array<(r: PortfolioResearchReport) => void> = [
+    r => {r.books.active.cash_inr = "9999";},
+    r => {r.books.active.realized_pnl_inr = "99";},
+    r => {r.books.active.unrealized_pnl_inr = "99";},
+    r => {r.books.active.fees_inr = "0";},
+    r => {r.books.active.holdings[0].cost_inr = "1";},
+    r => {r.books.active.holdings[0].unrealized_pnl_inr = "10000";},
+    r => {r.books.active.fills[0].quote_ask = "500";},
+    r => {r.books.active.fills[0].quote_bid = "0";},
+    r => {r.books.active.fills[0].fee_inr = "0";},
+    r => {r.books.active.fills[0].side = "SELL";},
+    r => {r.books.active.fills.reverse();},
+    r => {r.books.active.attribution!.rows.pop();},
+    r => {r.books.active.attribution!.rows[0].net_pnl_inr = "0";},
+    r => {r.books.active.attribution!.rows[0].fees_inr = "0";},
+    r => {r.books.active.attribution!.totals.net_pnl_inr = "50";},
+    r => {r.books.active.attribution!.status = "incomplete";},
+    r => {r.books.active.attribution!.reconciliation_difference_inr = "1";},
+    r => {delete r.books.active.attribution;},
+    r => {r.schema = "pramana.portfolio_workspace.v1";},
+  ];
+  for (const change of changes) {
+    const r = structuredClone(contributionCases.fresh); change(r);
+    assert.throws(() => parsePortfolioResearch(envelope(r), "default"));
+  }
+  const stale = structuredClone(contributionCases.stale);
+  stale.books.active.attribution!.totals.net_pnl_inr = "31.750065";
+  assert.throws(() => parsePortfolioResearch(envelope(stale), "default"));
+  const legacy = report(); legacy.books.active.cash_inr = "901";
+  assert.throws(() => parsePortfolioResearch(envelope(legacy), "default"));
+});
+
+test("Atlas receives reconciled contribution rows and known costs without execution details", async () => {
+  fs.writeFileSync(file, envelope(contributionCases.partial));
+  process.env.PRAMANA_PORTFOLIO_RESEARCH_REPORT = file;
+  process.env.ANTHROPIC_API_KEY = "synthetic-no-network-key";
+  const {generateAnswer, conversations} = await import("../lib/copilot");
+  let supplied = "";
+  const transport: typeof fetch = async (_url, init) => {supplied = JSON.parse(String(init?.body)).system; return Response.json({content: [{type: "text", text: "Synthetic contribution response"}], usage: {input_tokens: 10, output_tokens: 5}});};
+  try {
+    const response = await generateAnswer("Explain contribution and missing marks", undefined, "synthetic-contribution-context", transport);
+    assert.equal(response.status, "complete");
+    const context = JSON.parse(conversations(response.id)[0].context!);
+    const b = context.researchPortfolio.report.books.active;
+    assert.deepEqual(b.attribution, contributionCases.partial.books.active.attribution);
+    assert.equal(b.attribution.status, "incomplete");
+    assert.equal(b.attribution.totals.net_pnl_inr, null);
+    assert.equal(b.fills, undefined);
+    assert(supplied.includes(JSON.stringify(context)));
+  } finally {delete process.env.ANTHROPIC_API_KEY;}
+});
 
 test("portfolio snapshot preserves missing valuations instead of carrying an old equity forward", async () => {
   const {parsePortfolioResearch} = await import("../lib/research-portfolio");
@@ -62,6 +131,7 @@ test("cross-tenant, corrupted, private-field and falsely completed portfolio evi
 
 test("unconfigured and damaged report files have explicit states without creating storage", async () => {
   const {readPortfolioResearch} = await import("../lib/research-portfolio");
+  fs.rmSync(file, {force: true});
   delete process.env.PRAMANA_PORTFOLIO_RESEARCH_REPORT;
   assert.equal(readPortfolioResearch().status, "unavailable");
   process.env.PRAMANA_PORTFOLIO_RESEARCH_REPORT = file;

@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from quant_ai.research.lab import canonical, identity, instant
+from quant_ai.research.portfolio_attribution import contribution
 from quant_ai.research.portfolio_sim import PortfolioJournal, replay
 
 MAX_BYTES = 4_000_000
@@ -35,6 +36,8 @@ LIMITATIONS = [
     "Trading fees are included; model, infrastructure and data charges are excluded.",
     "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
     "No winner, strategy acceptance or trading permission is produced by this report.",
+    "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+    "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills.",
 ]
 
 
@@ -42,7 +45,7 @@ def implementation():
     folder = Path(__file__).resolve().parent
     files = {
         name: hashlib.sha256((folder / name).read_bytes()).hexdigest()
-        for name in ("lab.py", "portfolio_sim.py", "portfolio_workspace.py")
+        for name in ("lab.py", "portfolio_sim.py", "portfolio_workspace.py", "portfolio_attribution.py")
     }
     return {
         "source_sha256": hashlib.sha256(canonical(files).encode()).hexdigest(),
@@ -61,6 +64,7 @@ def workspace_snapshot(journal: PortfolioJournal, name: str, tenant: str) -> dic
     result = replay(config, events)
     as_of = events[-1]["at"] if events else None
     quotes = {e["symbol"]: e for e in events if e["kind"] == "quote"}
+    fill_quotes = {e["id"]: e for e in events if e["kind"] == "quote"}
     orders = {e["id"]: e for e in events if e["kind"] == "order"}
     initial = Decimal(str(config["starting_cash_inr"]))
     books = {}
@@ -126,6 +130,9 @@ def workspace_snapshot(journal: PortfolioJournal, name: str, tenant: str) -> dic
             }
             for f in book["fills"]
         ]
+        for fill in fills:
+            quote = fill_quotes[fill["quote_id"]]
+            fill.update(quote_bid=str(quote["bid"]), quote_ask=str(quote["ask"]))
         pending = [
             {
                 "order_id": o["id"],
@@ -167,8 +174,9 @@ def workspace_snapshot(journal: PortfolioJournal, name: str, tenant: str) -> dic
             "cancelled_orders": cancelled,
             "curve": curve,
         }
+        books[candidate]["attribution"] = contribution(books[candidate], initial)
     body = {
-        "schema": "pramana.portfolio_workspace.v1",
+        "schema": "pramana.portfolio_workspace.v2",
         "tenant_id": tenant,
         "name": name,
         "generated_at": datetime.now(timezone.utc).isoformat(),

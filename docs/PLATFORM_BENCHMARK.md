@@ -202,3 +202,8 @@ Company disclosures now have search, saved-watchlist filtering, revision/capture
 ## Implementation delta — reversible company mapping reviews
 
 The private workspace and CLI now support dated mapping withdrawal and later re-review. Current watchlist and automatic Atlas evidence exclude withdrawn/conflicting links, historical availability retains microsecond precision, and recovery preserves the withdrawal journal. [Synthetic verification and limits](COMPANY_MAPPING_LIFECYCLE.md). This supersedes the mapping-revocation gap above. It does not certify instrument-master correctness or add corporate-action portfolio processing, factor attribution, broad licensed data, external broker reconciliation or live/backtest parity.
+
+
+## Implementation delta — research contribution and execution costs
+
+The continuous research workspace now reconstructs fill accounting in Python and Node, includes closed instruments in P&L contribution, and reconciles midpoint-reference P&L less spread, slippage and fees to the simulated equity change. Missing final marks withhold totals; private export and Atlas share that state. [Method, synthetic evidence and limits](PORTFOLIO_CONTRIBUTION.md). This advances the basic instrument/cost contribution part of portfolio analytics. Actual paper-account attribution, qualified benchmark allocation/selection, sector/factor models, income/corporate actions and FX/multi-asset attribution remain open; full Bloomberg/IBKR parity is not established.

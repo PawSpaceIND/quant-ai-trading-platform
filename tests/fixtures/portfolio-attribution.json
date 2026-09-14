@@ -1,0 +1,2694 @@
+{
+  "empty": {
+    "as_of": null,
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": null,
+          "rows": [],
+          "status": "incomplete",
+          "totals": {
+            "contribution_fraction": null,
+            "fees_inr": "0",
+            "net_pnl_inr": null,
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": null,
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": null
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": null,
+        "current_equity_inr": null,
+        "curve": [],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": null,
+        "net_return_fraction": null,
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": null,
+        "unvalued_observations": 0
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": null,
+          "rows": [],
+          "status": "incomplete",
+          "totals": {
+            "contribution_fraction": null,
+            "fees_inr": "0",
+            "net_pnl_inr": null,
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": null,
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": null
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": null,
+        "current_equity_inr": null,
+        "curve": [],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": null,
+        "net_return_fraction": null,
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": null,
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 0,
+    "evidence_sha256": "19d7fce3de0d25e994ec0c6e934c123dc88e3544bc1a2c85694f1b6e73b9aecf",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 0,
+    "quote_events": 0,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  },
+  "fresh": {
+    "as_of": "2000-01-01T04:00:14+00:00",
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0E-7",
+          "rows": [
+            {
+              "contribution_fraction": "-0.0002287205",
+              "fees_inr": "0.0822050",
+              "net_pnl_inr": "-2.2872050",
+              "quantity": 1,
+              "realized_pnl_inr": "0",
+              "reference_pnl_inr": "-1",
+              "slippage_cost_inr": "0.2050",
+              "spread_cost_inr": "1",
+              "symbol": "NSE:BANK",
+              "unrealized_pnl_inr": "-2.2872050"
+            },
+            {
+              "contribution_fraction": "-0.0014679035",
+              "fees_inr": "0.1940350",
+              "net_pnl_inr": "-14.6790350",
+              "quantity": 0,
+              "realized_pnl_inr": "-14.6790350",
+              "reference_pnl_inr": "-10",
+              "slippage_cost_inr": "0.4850",
+              "spread_cost_inr": "4",
+              "symbol": "NSE:INFY",
+              "unrealized_pnl_inr": "0E-7"
+            },
+            {
+              "contribution_fraction": "0.0048716305",
+              "fees_inr": "0.9386950",
+              "net_pnl_inr": "48.7163050",
+              "quantity": 3,
+              "realized_pnl_inr": "23.7810650",
+              "reference_pnl_inr": "61",
+              "slippage_cost_inr": "2.3450",
+              "spread_cost_inr": "9",
+              "symbol": "NSE:TCS",
+              "unrealized_pnl_inr": "24.9352400"
+            }
+          ],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0.0031750065",
+            "fees_inr": "1.2149350",
+            "net_pnl_inr": "31.7500650",
+            "realized_pnl_inr": "9.1020300",
+            "reference_pnl_inr": "50",
+            "slippage_cost_inr": "3.0350",
+            "spread_cost_inr": "14",
+            "unrealized_pnl_inr": "22.6480350"
+          }
+        },
+        "cancelled_orders": [
+          {
+            "order_id": "order-1",
+            "quantity": 6,
+            "reason": "liquidity_or_risk_cap",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "cash_inr": "9621.7500650",
+        "current_drawdown_fraction": "0.001803049605073119310488865126",
+        "current_equity_inr": "10031.7500650",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0.001803049605073119310488865126",
+            "equity_inr": "10031.7500650",
+            "event_index": 14,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "1.2149350",
+        "fills": [
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "fee_inr": "0.4090200",
+            "order_id": "order-1",
+            "price": "102.2550",
+            "quantity": 4,
+            "quote_ask": "102",
+            "quote_bid": "100",
+            "quote_id": "quote-2",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "fee_inr": "0.2005000",
+            "order_id": "order-3",
+            "price": "100.2500",
+            "quantity": 2,
+            "quote_ask": "100",
+            "quote_bid": "98",
+            "quote_id": "quote-4",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "fee_inr": "0.3291750",
+            "order_id": "order-5",
+            "price": "109.7250",
+            "quantity": 3,
+            "quote_ask": "112",
+            "quote_bid": "110",
+            "quote_id": "quote-6",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "fee_inr": "0.1042600",
+            "order_id": "order-8",
+            "price": "52.1300",
+            "quantity": 2,
+            "quote_ask": "52",
+            "quote_bid": "50",
+            "quote_id": "quote-9",
+            "side": "BUY",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "fee_inr": "0.0897750",
+            "order_id": "order-10",
+            "price": "44.8875",
+            "quantity": 2,
+            "quote_ask": "47",
+            "quote_bid": "45",
+            "quote_id": "quote-11",
+            "side": "SELL",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "fee_inr": "0.0822050",
+            "order_id": "order-13",
+            "price": "82.2050",
+            "quantity": 1,
+            "quote_ask": "82",
+            "quote_bid": "80",
+            "quote_id": "quote-14",
+            "side": "BUY",
+            "symbol": "NSE:BANK"
+          }
+        ],
+        "halted": false,
+        "holdings": [
+          {
+            "cost_inr": "305.0647600",
+            "last_bid": "110",
+            "mark_fresh": true,
+            "market_value_inr": "330",
+            "quantity": 3,
+            "quote_at": "2000-01-01T04:00:06+00:00",
+            "symbol": "NSE:TCS",
+            "unrealized_pnl_inr": "24.9352400"
+          },
+          {
+            "cost_inr": "82.2872050",
+            "last_bid": "80",
+            "mark_fresh": true,
+            "market_value_inr": "80",
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:00:14+00:00",
+            "symbol": "NSE:BANK",
+            "unrealized_pnl_inr": "-2.2872050"
+          }
+        ],
+        "max_observed_drawdown_fraction": "0.002212952",
+        "net_return_fraction": "0.0031750065",
+        "peak_observed_equity_inr": "10049.8704800",
+        "pending_orders": [],
+        "realized_pnl_inr": "9.1020300",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "22.6480350",
+        "unvalued_observations": 0
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0",
+          "rows": [],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0",
+            "fees_inr": "0",
+            "net_pnl_inr": "0",
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": "0",
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": "0"
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10000",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 14,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": "0",
+        "net_return_fraction": "0",
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0",
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 15,
+    "evidence_sha256": "6ab4659ddfc992f9524c5087a56b12bc34613e6130408d9201ac8eade95b9d33",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 6,
+    "quote_events": 9,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  },
+  "stale": {
+    "as_of": "2000-01-01T04:01:15+00:00",
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": null,
+          "rows": [
+            {
+              "contribution_fraction": null,
+              "fees_inr": "0.0822050",
+              "net_pnl_inr": null,
+              "quantity": 1,
+              "realized_pnl_inr": "0",
+              "reference_pnl_inr": null,
+              "slippage_cost_inr": "0.2050",
+              "spread_cost_inr": "1",
+              "symbol": "NSE:BANK",
+              "unrealized_pnl_inr": null
+            },
+            {
+              "contribution_fraction": "-0.0014679035",
+              "fees_inr": "0.1940350",
+              "net_pnl_inr": "-14.6790350",
+              "quantity": 0,
+              "realized_pnl_inr": "-14.6790350",
+              "reference_pnl_inr": "-10",
+              "slippage_cost_inr": "0.4850",
+              "spread_cost_inr": "4",
+              "symbol": "NSE:INFY",
+              "unrealized_pnl_inr": "0E-7"
+            },
+            {
+              "contribution_fraction": null,
+              "fees_inr": "0.9386950",
+              "net_pnl_inr": null,
+              "quantity": 3,
+              "realized_pnl_inr": "23.7810650",
+              "reference_pnl_inr": null,
+              "slippage_cost_inr": "2.3450",
+              "spread_cost_inr": "9",
+              "symbol": "NSE:TCS",
+              "unrealized_pnl_inr": null
+            }
+          ],
+          "status": "incomplete",
+          "totals": {
+            "contribution_fraction": null,
+            "fees_inr": "1.2149350",
+            "net_pnl_inr": null,
+            "realized_pnl_inr": "9.1020300",
+            "reference_pnl_inr": null,
+            "slippage_cost_inr": "3.0350",
+            "spread_cost_inr": "14",
+            "unrealized_pnl_inr": null
+          }
+        },
+        "cancelled_orders": [
+          {
+            "order_id": "order-1",
+            "quantity": 6,
+            "reason": "liquidity_or_risk_cap",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "cash_inr": "9621.7500650",
+        "current_drawdown_fraction": null,
+        "current_equity_inr": null,
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0.001803049605073119310488865126",
+            "equity_inr": "10031.7500650",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 15,
+            "stale_symbols": [
+              "NSE:TCS",
+              "NSE:BANK"
+            ]
+          }
+        ],
+        "fees_inr": "1.2149350",
+        "fills": [
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "fee_inr": "0.4090200",
+            "order_id": "order-1",
+            "price": "102.2550",
+            "quantity": 4,
+            "quote_ask": "102",
+            "quote_bid": "100",
+            "quote_id": "quote-2",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "fee_inr": "0.2005000",
+            "order_id": "order-3",
+            "price": "100.2500",
+            "quantity": 2,
+            "quote_ask": "100",
+            "quote_bid": "98",
+            "quote_id": "quote-4",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "fee_inr": "0.3291750",
+            "order_id": "order-5",
+            "price": "109.7250",
+            "quantity": 3,
+            "quote_ask": "112",
+            "quote_bid": "110",
+            "quote_id": "quote-6",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "fee_inr": "0.1042600",
+            "order_id": "order-8",
+            "price": "52.1300",
+            "quantity": 2,
+            "quote_ask": "52",
+            "quote_bid": "50",
+            "quote_id": "quote-9",
+            "side": "BUY",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "fee_inr": "0.0897750",
+            "order_id": "order-10",
+            "price": "44.8875",
+            "quantity": 2,
+            "quote_ask": "47",
+            "quote_bid": "45",
+            "quote_id": "quote-11",
+            "side": "SELL",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "fee_inr": "0.0822050",
+            "order_id": "order-13",
+            "price": "82.2050",
+            "quantity": 1,
+            "quote_ask": "82",
+            "quote_bid": "80",
+            "quote_id": "quote-14",
+            "side": "BUY",
+            "symbol": "NSE:BANK"
+          }
+        ],
+        "halted": false,
+        "holdings": [
+          {
+            "cost_inr": "305.0647600",
+            "last_bid": "110",
+            "mark_fresh": false,
+            "market_value_inr": null,
+            "quantity": 3,
+            "quote_at": "2000-01-01T04:00:06+00:00",
+            "symbol": "NSE:TCS",
+            "unrealized_pnl_inr": null
+          },
+          {
+            "cost_inr": "82.2872050",
+            "last_bid": "80",
+            "mark_fresh": false,
+            "market_value_inr": null,
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:00:14+00:00",
+            "symbol": "NSE:BANK",
+            "unrealized_pnl_inr": null
+          }
+        ],
+        "max_observed_drawdown_fraction": "0.002212952",
+        "net_return_fraction": null,
+        "peak_observed_equity_inr": "10049.8704800",
+        "pending_orders": [],
+        "realized_pnl_inr": "9.1020300",
+        "stale_symbols": [
+          "NSE:TCS",
+          "NSE:BANK"
+        ],
+        "unrealized_pnl_inr": null,
+        "unvalued_observations": 1
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0",
+          "rows": [],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0",
+            "fees_inr": "0",
+            "net_pnl_inr": "0",
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": "0",
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": "0"
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10000",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 15,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": "0",
+        "net_return_fraction": "0",
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0",
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 16,
+    "evidence_sha256": "7f79d3cd3f2b9efda7e01e7100cb082a9ff90a3a11be70d65a0192aa6a96e519",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 6,
+    "quote_events": 9,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  },
+  "partial": {
+    "as_of": "2000-01-01T04:01:16+00:00",
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": null,
+          "rows": [
+            {
+              "contribution_fraction": null,
+              "fees_inr": "0.0822050",
+              "net_pnl_inr": null,
+              "quantity": 1,
+              "realized_pnl_inr": "0",
+              "reference_pnl_inr": null,
+              "slippage_cost_inr": "0.2050",
+              "spread_cost_inr": "1",
+              "symbol": "NSE:BANK",
+              "unrealized_pnl_inr": null
+            },
+            {
+              "contribution_fraction": "-0.0014679035",
+              "fees_inr": "0.1940350",
+              "net_pnl_inr": "-14.6790350",
+              "quantity": 0,
+              "realized_pnl_inr": "-14.6790350",
+              "reference_pnl_inr": "-10",
+              "slippage_cost_inr": "0.4850",
+              "spread_cost_inr": "4",
+              "symbol": "NSE:INFY",
+              "unrealized_pnl_inr": "0E-7"
+            },
+            {
+              "contribution_fraction": "0.0063716305",
+              "fees_inr": "0.9386950",
+              "net_pnl_inr": "63.7163050",
+              "quantity": 3,
+              "realized_pnl_inr": "23.7810650",
+              "reference_pnl_inr": "76",
+              "slippage_cost_inr": "2.3450",
+              "spread_cost_inr": "9",
+              "symbol": "NSE:TCS",
+              "unrealized_pnl_inr": "39.9352400"
+            }
+          ],
+          "status": "incomplete",
+          "totals": {
+            "contribution_fraction": null,
+            "fees_inr": "1.2149350",
+            "net_pnl_inr": null,
+            "realized_pnl_inr": "9.1020300",
+            "reference_pnl_inr": null,
+            "slippage_cost_inr": "3.0350",
+            "spread_cost_inr": "14",
+            "unrealized_pnl_inr": null
+          }
+        },
+        "cancelled_orders": [
+          {
+            "order_id": "order-1",
+            "quantity": 6,
+            "reason": "liquidity_or_risk_cap",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "cash_inr": "9621.7500650",
+        "current_drawdown_fraction": null,
+        "current_equity_inr": null,
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0.001803049605073119310488865126",
+            "equity_inr": "10031.7500650",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 15,
+            "stale_symbols": [
+              "NSE:TCS",
+              "NSE:BANK"
+            ]
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 16,
+            "stale_symbols": [
+              "NSE:BANK"
+            ]
+          }
+        ],
+        "fees_inr": "1.2149350",
+        "fills": [
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "fee_inr": "0.4090200",
+            "order_id": "order-1",
+            "price": "102.2550",
+            "quantity": 4,
+            "quote_ask": "102",
+            "quote_bid": "100",
+            "quote_id": "quote-2",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "fee_inr": "0.2005000",
+            "order_id": "order-3",
+            "price": "100.2500",
+            "quantity": 2,
+            "quote_ask": "100",
+            "quote_bid": "98",
+            "quote_id": "quote-4",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "fee_inr": "0.3291750",
+            "order_id": "order-5",
+            "price": "109.7250",
+            "quantity": 3,
+            "quote_ask": "112",
+            "quote_bid": "110",
+            "quote_id": "quote-6",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "fee_inr": "0.1042600",
+            "order_id": "order-8",
+            "price": "52.1300",
+            "quantity": 2,
+            "quote_ask": "52",
+            "quote_bid": "50",
+            "quote_id": "quote-9",
+            "side": "BUY",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "fee_inr": "0.0897750",
+            "order_id": "order-10",
+            "price": "44.8875",
+            "quantity": 2,
+            "quote_ask": "47",
+            "quote_bid": "45",
+            "quote_id": "quote-11",
+            "side": "SELL",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "fee_inr": "0.0822050",
+            "order_id": "order-13",
+            "price": "82.2050",
+            "quantity": 1,
+            "quote_ask": "82",
+            "quote_bid": "80",
+            "quote_id": "quote-14",
+            "side": "BUY",
+            "symbol": "NSE:BANK"
+          }
+        ],
+        "halted": false,
+        "holdings": [
+          {
+            "cost_inr": "305.0647600",
+            "last_bid": "115",
+            "mark_fresh": true,
+            "market_value_inr": "345",
+            "quantity": 3,
+            "quote_at": "2000-01-01T04:01:16+00:00",
+            "symbol": "NSE:TCS",
+            "unrealized_pnl_inr": "39.9352400"
+          },
+          {
+            "cost_inr": "82.2872050",
+            "last_bid": "80",
+            "mark_fresh": false,
+            "market_value_inr": null,
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:00:14+00:00",
+            "symbol": "NSE:BANK",
+            "unrealized_pnl_inr": null
+          }
+        ],
+        "max_observed_drawdown_fraction": "0.002212952",
+        "net_return_fraction": null,
+        "peak_observed_equity_inr": "10049.8704800",
+        "pending_orders": [],
+        "realized_pnl_inr": "9.1020300",
+        "stale_symbols": [
+          "NSE:BANK"
+        ],
+        "unrealized_pnl_inr": null,
+        "unvalued_observations": 2
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0",
+          "rows": [],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0",
+            "fees_inr": "0",
+            "net_pnl_inr": "0",
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": "0",
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": "0"
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10000",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 15,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 16,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": "0",
+        "net_return_fraction": "0",
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0",
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 17,
+    "evidence_sha256": "97f0f12263b62b40c562078ebdfde895f085eb79f834a4f3e46d256649b532fd",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 6,
+    "quote_events": 10,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  },
+  "restored": {
+    "as_of": "2000-01-01T04:01:17+00:00",
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0E-7",
+          "rows": [
+            {
+              "contribution_fraction": "0.0002712795",
+              "fees_inr": "0.0822050",
+              "net_pnl_inr": "2.7127950",
+              "quantity": 1,
+              "realized_pnl_inr": "0",
+              "reference_pnl_inr": "4",
+              "slippage_cost_inr": "0.2050",
+              "spread_cost_inr": "1",
+              "symbol": "NSE:BANK",
+              "unrealized_pnl_inr": "2.7127950"
+            },
+            {
+              "contribution_fraction": "-0.0014679035",
+              "fees_inr": "0.1940350",
+              "net_pnl_inr": "-14.6790350",
+              "quantity": 0,
+              "realized_pnl_inr": "-14.6790350",
+              "reference_pnl_inr": "-10",
+              "slippage_cost_inr": "0.4850",
+              "spread_cost_inr": "4",
+              "symbol": "NSE:INFY",
+              "unrealized_pnl_inr": "0E-7"
+            },
+            {
+              "contribution_fraction": "0.0063716305",
+              "fees_inr": "0.9386950",
+              "net_pnl_inr": "63.7163050",
+              "quantity": 3,
+              "realized_pnl_inr": "23.7810650",
+              "reference_pnl_inr": "76",
+              "slippage_cost_inr": "2.3450",
+              "spread_cost_inr": "9",
+              "symbol": "NSE:TCS",
+              "unrealized_pnl_inr": "39.9352400"
+            }
+          ],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0.0051750065",
+            "fees_inr": "1.2149350",
+            "net_pnl_inr": "51.7500650",
+            "realized_pnl_inr": "9.1020300",
+            "reference_pnl_inr": "70",
+            "slippage_cost_inr": "3.0350",
+            "spread_cost_inr": "14",
+            "unrealized_pnl_inr": "42.6480350"
+          }
+        },
+        "cancelled_orders": [
+          {
+            "order_id": "order-1",
+            "quantity": 6,
+            "reason": "liquidity_or_risk_cap",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "cash_inr": "9621.7500650",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10051.7500650",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0.001803049605073119310488865126",
+            "equity_inr": "10031.7500650",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 15,
+            "stale_symbols": [
+              "NSE:TCS",
+              "NSE:BANK"
+            ]
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 16,
+            "stale_symbols": [
+              "NSE:BANK"
+            ]
+          },
+          {
+            "at": "2000-01-01T04:01:17+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10051.7500650",
+            "event_index": 17,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "1.2149350",
+        "fills": [
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "fee_inr": "0.4090200",
+            "order_id": "order-1",
+            "price": "102.2550",
+            "quantity": 4,
+            "quote_ask": "102",
+            "quote_bid": "100",
+            "quote_id": "quote-2",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "fee_inr": "0.2005000",
+            "order_id": "order-3",
+            "price": "100.2500",
+            "quantity": 2,
+            "quote_ask": "100",
+            "quote_bid": "98",
+            "quote_id": "quote-4",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "fee_inr": "0.3291750",
+            "order_id": "order-5",
+            "price": "109.7250",
+            "quantity": 3,
+            "quote_ask": "112",
+            "quote_bid": "110",
+            "quote_id": "quote-6",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "fee_inr": "0.1042600",
+            "order_id": "order-8",
+            "price": "52.1300",
+            "quantity": 2,
+            "quote_ask": "52",
+            "quote_bid": "50",
+            "quote_id": "quote-9",
+            "side": "BUY",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "fee_inr": "0.0897750",
+            "order_id": "order-10",
+            "price": "44.8875",
+            "quantity": 2,
+            "quote_ask": "47",
+            "quote_bid": "45",
+            "quote_id": "quote-11",
+            "side": "SELL",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "fee_inr": "0.0822050",
+            "order_id": "order-13",
+            "price": "82.2050",
+            "quantity": 1,
+            "quote_ask": "82",
+            "quote_bid": "80",
+            "quote_id": "quote-14",
+            "side": "BUY",
+            "symbol": "NSE:BANK"
+          }
+        ],
+        "halted": false,
+        "holdings": [
+          {
+            "cost_inr": "305.0647600",
+            "last_bid": "115",
+            "mark_fresh": true,
+            "market_value_inr": "345",
+            "quantity": 3,
+            "quote_at": "2000-01-01T04:01:16+00:00",
+            "symbol": "NSE:TCS",
+            "unrealized_pnl_inr": "39.9352400"
+          },
+          {
+            "cost_inr": "82.2872050",
+            "last_bid": "85",
+            "mark_fresh": true,
+            "market_value_inr": "85",
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:01:17+00:00",
+            "symbol": "NSE:BANK",
+            "unrealized_pnl_inr": "2.7127950"
+          }
+        ],
+        "max_observed_drawdown_fraction": "0.002212952",
+        "net_return_fraction": "0.0051750065",
+        "peak_observed_equity_inr": "10051.7500650",
+        "pending_orders": [],
+        "realized_pnl_inr": "9.1020300",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "42.6480350",
+        "unvalued_observations": 2
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0",
+          "rows": [],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0",
+            "fees_inr": "0",
+            "net_pnl_inr": "0",
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": "0",
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": "0"
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10000",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 15,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 16,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:17+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 17,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": "0",
+        "net_return_fraction": "0",
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0",
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 18,
+    "evidence_sha256": "d92d2c0b4ce35b6f25588fac3ffecab05620bc48e3fa2b3829c33cdce849520f",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 6,
+    "quote_events": 11,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  },
+  "reopened": {
+    "as_of": "2000-01-01T04:01:21+00:00",
+    "automatic_promotion": false,
+    "books": {
+      "active": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0E-7",
+          "rows": [
+            {
+              "contribution_fraction": "0.0002712795",
+              "fees_inr": "0.0822050",
+              "net_pnl_inr": "2.7127950",
+              "quantity": 1,
+              "realized_pnl_inr": "0",
+              "reference_pnl_inr": "4",
+              "slippage_cost_inr": "0.2050",
+              "spread_cost_inr": "1",
+              "symbol": "NSE:BANK",
+              "unrealized_pnl_inr": "2.7127950"
+            },
+            {
+              "contribution_fraction": "-0.0014679035",
+              "fees_inr": "0.1940350",
+              "net_pnl_inr": "-14.6790350",
+              "quantity": 0,
+              "realized_pnl_inr": "-14.6790350",
+              "reference_pnl_inr": "-10",
+              "slippage_cost_inr": "0.4850",
+              "spread_cost_inr": "4",
+              "symbol": "NSE:INFY",
+              "unrealized_pnl_inr": "0E-7"
+            },
+            {
+              "contribution_fraction": "0.00750334025",
+              "fees_inr": "1.4190975",
+              "net_pnl_inr": "75.0334025",
+              "quantity": 1,
+              "realized_pnl_inr": "77.4572050",
+              "reference_pnl_inr": "93",
+              "slippage_cost_inr": "3.5475",
+              "spread_cost_inr": "13",
+              "symbol": "NSE:TCS",
+              "unrealized_pnl_inr": "-2.4238025"
+            }
+          ],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0.00630671625",
+            "fees_inr": "1.6953375",
+            "net_pnl_inr": "63.0671625",
+            "realized_pnl_inr": "62.7781700",
+            "reference_pnl_inr": "87",
+            "slippage_cost_inr": "4.2375",
+            "spread_cost_inr": "18",
+            "unrealized_pnl_inr": "0.2889925"
+          }
+        },
+        "cancelled_orders": [
+          {
+            "order_id": "order-1",
+            "quantity": 6,
+            "reason": "liquidity_or_risk_cap",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "cash_inr": "9859.0671625",
+        "current_drawdown_fraction": "0.0003658482108147978540281758749",
+        "current_equity_inr": "10063.0671625",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0.000942902",
+            "equity_inr": "9990.5709800",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0.002212952",
+            "equity_inr": "9977.8704800",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0.0001148447636511231933806971809",
+            "equity_inr": "10048.7163050",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0.0005491050865762003332803150713",
+            "equity_inr": "10044.3520450",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0.001575464084985899241161165691",
+            "equity_inr": "10034.0372700",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0.001803049605073119310488865126",
+            "equity_inr": "10031.7500650",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 15,
+            "stale_symbols": [
+              "NSE:TCS",
+              "NSE:BANK"
+            ]
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": null,
+            "equity_inr": null,
+            "event_index": 16,
+            "stale_symbols": [
+              "NSE:BANK"
+            ]
+          },
+          {
+            "at": "2000-01-01T04:01:17+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10051.7500650",
+            "event_index": 17,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:18+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10051.7500650",
+            "event_index": 18,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:19+00:00",
+            "drawdown_fraction": "0.0001250751227427041519581026769",
+            "equity_inr": "10065.4909650",
+            "event_index": 19,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:20+00:00",
+            "drawdown_fraction": "0.0001250751227427041519581026769",
+            "equity_inr": "10065.4909650",
+            "event_index": 20,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:21+00:00",
+            "drawdown_fraction": "0.0003658482108147978540281758749",
+            "equity_inr": "10063.0671625",
+            "event_index": 21,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "1.6953375",
+        "fills": [
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "fee_inr": "0.4090200",
+            "order_id": "order-1",
+            "price": "102.2550",
+            "quantity": 4,
+            "quote_ask": "102",
+            "quote_bid": "100",
+            "quote_id": "quote-2",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "fee_inr": "0.2005000",
+            "order_id": "order-3",
+            "price": "100.2500",
+            "quantity": 2,
+            "quote_ask": "100",
+            "quote_bid": "98",
+            "quote_id": "quote-4",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "fee_inr": "0.3291750",
+            "order_id": "order-5",
+            "price": "109.7250",
+            "quantity": 3,
+            "quote_ask": "112",
+            "quote_bid": "110",
+            "quote_id": "quote-6",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "fee_inr": "0.1042600",
+            "order_id": "order-8",
+            "price": "52.1300",
+            "quantity": 2,
+            "quote_ask": "52",
+            "quote_bid": "50",
+            "quote_id": "quote-9",
+            "side": "BUY",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "fee_inr": "0.0897750",
+            "order_id": "order-10",
+            "price": "44.8875",
+            "quantity": 2,
+            "quote_ask": "47",
+            "quote_bid": "45",
+            "quote_id": "quote-11",
+            "side": "SELL",
+            "symbol": "NSE:INFY"
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "fee_inr": "0.0822050",
+            "order_id": "order-13",
+            "price": "82.2050",
+            "quantity": 1,
+            "quote_ask": "82",
+            "quote_bid": "80",
+            "quote_id": "quote-14",
+            "side": "BUY",
+            "symbol": "NSE:BANK"
+          },
+          {
+            "at": "2000-01-01T04:01:19+00:00",
+            "fee_inr": "0.3591000",
+            "order_id": "order-78",
+            "price": "119.7000",
+            "quantity": 3,
+            "quote_ask": "122",
+            "quote_bid": "120",
+            "quote_id": "quote-79",
+            "side": "SELL",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "at": "2000-01-01T04:01:21+00:00",
+            "fee_inr": "0.1213025",
+            "order_id": "order-80",
+            "price": "121.3025",
+            "quantity": 1,
+            "quote_ask": "121",
+            "quote_bid": "119",
+            "quote_id": "quote-81",
+            "side": "BUY",
+            "symbol": "NSE:TCS"
+          }
+        ],
+        "halted": false,
+        "holdings": [
+          {
+            "cost_inr": "121.4238025",
+            "last_bid": "119",
+            "mark_fresh": true,
+            "market_value_inr": "119",
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:01:21+00:00",
+            "symbol": "NSE:TCS",
+            "unrealized_pnl_inr": "-2.4238025"
+          },
+          {
+            "cost_inr": "82.2872050",
+            "last_bid": "85",
+            "mark_fresh": true,
+            "market_value_inr": "85",
+            "quantity": 1,
+            "quote_at": "2000-01-01T04:01:17+00:00",
+            "symbol": "NSE:BANK",
+            "unrealized_pnl_inr": "2.7127950"
+          }
+        ],
+        "max_observed_drawdown_fraction": "0.002212952",
+        "net_return_fraction": "0.00630671625",
+        "peak_observed_equity_inr": "10066.7500650",
+        "pending_orders": [],
+        "realized_pnl_inr": "62.7781700",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0.2889925",
+        "unvalued_observations": 2
+      },
+      "cash": {
+        "attribution": {
+          "method": "inception_cash_flow_midpoint_v1",
+          "reconciliation_difference_inr": "0",
+          "rows": [],
+          "status": "complete",
+          "totals": {
+            "contribution_fraction": "0",
+            "fees_inr": "0",
+            "net_pnl_inr": "0",
+            "realized_pnl_inr": "0",
+            "reference_pnl_inr": "0",
+            "slippage_cost_inr": "0",
+            "spread_cost_inr": "0",
+            "unrealized_pnl_inr": "0"
+          }
+        },
+        "cancelled_orders": [],
+        "cash_inr": "10000",
+        "current_drawdown_fraction": "0",
+        "current_equity_inr": "10000",
+        "curve": [
+          {
+            "at": "2000-01-01T04:00:00+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 0,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:01+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 1,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:02+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 2,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:03+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 3,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:04+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 4,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:05+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 5,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:06+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 6,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:07+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 7,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:08+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 8,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:09+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 9,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:10+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 10,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:11+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 11,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:12+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 12,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:13+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 13,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:00:14+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 14,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:15+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 15,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:16+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 16,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:17+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 17,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:18+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 18,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:19+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 19,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:20+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 20,
+            "stale_symbols": []
+          },
+          {
+            "at": "2000-01-01T04:01:21+00:00",
+            "drawdown_fraction": "0",
+            "equity_inr": "10000",
+            "event_index": 21,
+            "stale_symbols": []
+          }
+        ],
+        "fees_inr": "0",
+        "fills": [],
+        "halted": false,
+        "holdings": [],
+        "max_observed_drawdown_fraction": "0",
+        "net_return_fraction": "0",
+        "peak_observed_equity_inr": "10000",
+        "pending_orders": [],
+        "realized_pnl_inr": "0",
+        "stale_symbols": [],
+        "unrealized_pnl_inr": "0",
+        "unvalued_observations": 0
+      }
+    },
+    "config": {
+      "fee_bps": "10",
+      "max_drawdown_fraction": ".9",
+      "max_gross_fraction": "1",
+      "max_order_quantity": 20,
+      "max_position_fraction": "1",
+      "max_quote_age_seconds": 60,
+      "order_ttl_seconds": 20,
+      "slippage_bps": "25",
+      "starting_cash_inr": "10000"
+    },
+    "event_count": 22,
+    "evidence_sha256": "022ba4ebbe4c27826f6d4812ad415ad03cb4d2e24082abaa0f9c39605a134e50",
+    "generated_at": "2000-01-02T00:00:00+00:00",
+    "implementation": {
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "python_version": "fixture"
+    },
+    "limitations": [
+      "Replayed supplied events, not a live portfolio or independently verified forward record.",
+      "Missing valuations remain gaps; observed maximum drawdown may understate loss across gaps.",
+      "Each candidate has separate starting cash on the shared supplied quote timeline.",
+      "Session status, instrument metadata, prices, adjustments and liquidity need qualification.",
+      "Later-quote IOC fills are simulated; no queue priority, market impact or corporate-action processing.",
+      "Trading fees are included; model, infrastructure and data charges are excluded.",
+      "Drawdown halts block new buys in this simulation; losses can exceed configured thresholds.",
+      "No winner, strategy acceptance or trading permission is produced by this report.",
+      "Contribution covers inception-to-date simulated instrument P&L; no benchmark, sector or factor attribution.",
+      "Execution-reference P&L uses fill-quote midpoints and final bid marks. Spread and slippage are accounting costs, not achievable alternative fills."
+    ],
+    "mode": "research_simulation",
+    "name": "Synthetic contribution drill",
+    "order_events": 8,
+    "quote_events": 13,
+    "schema": "pramana.portfolio_workspace.v2",
+    "status": "insufficient_evidence",
+    "symbols": [
+      "NSE:TCS",
+      "NSE:INFY",
+      "NSE:BANK"
+    ],
+    "tenant_id": "default"
+  }
+}
