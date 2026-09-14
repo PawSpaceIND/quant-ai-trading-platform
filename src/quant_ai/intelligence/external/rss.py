@@ -30,7 +30,12 @@ class RssNewsSentimentAdapter:
                 text = f"{title} {description}"
                 if needle != "GEOPOLITICAL" and needle not in text.upper():
                     continue
-                published = self._published_at(item.findtext("pubDate"), now)
+                try:
+                    published = self._published_at(item.findtext("pubDate"), now)
+                except (ValueError, TypeError, OverflowError):
+                    continue
+                if published > now:
+                    continue
                 signals.append(
                     NewsSignal(
                         subject,
@@ -45,7 +50,7 @@ class RssNewsSentimentAdapter:
     @staticmethod
     def _published_at(raw: str | None, fallback: datetime) -> datetime:
         if not raw:
-            return fallback
+            raise ValueError("RSS publication time is missing")
         parsed = parsedate_to_datetime(raw)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)

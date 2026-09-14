@@ -183,6 +183,8 @@ def test_a_latched_cadence_halt_is_not_released_by_the_halt_file(tmp_path) -> No
 
 
 def test_cli_halt_and_resume_manage_the_marker_file(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("PRAMANA_LEDGER_PATH", str(tmp_path / "operator-test.sqlite"))
+    monkeypatch.setenv("PRAMANA_TENANT_ID", "operator-test")
     marker = tmp_path / "state" / "PRAMANA_HALT"
     monkeypatch.setenv("PRAMANA_HALT_FILE", str(marker))
     assert cli_main(["halt", "--reason", "weekend maintenance"]) == 0

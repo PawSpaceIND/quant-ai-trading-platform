@@ -62,21 +62,16 @@ NYSE_HOLIDAYS_2026 = frozenset(
     }
 )
 
-# NSE 2026: only closures fixed by the civil calendar are shipped. Lunar-calendar
-# closures (Ram Navami, Mahavir Jayanti, Id, Muharram, Ganesh Chaturthi, Dussehra,
-# Diwali, Guru Nanak Jayanti) move every year and must be loaded from the NSE
-# trading-holiday circular through PRAMANA_HOLIDAYS_JSON.
+# NSE/BSE 2026 full-day closures, including the Maharashtra election closure.
+# Source: https://zerodha.com/marketintel/holiday-calendar/
+# Special Sunday Muhurat sessions are not enabled by this regular-session calendar.
 NSE_HOLIDAYS_2026 = frozenset(
-    {
-        date(2026, 1, 26),   # Republic Day
-        date(2026, 3, 4),    # Holi
-        date(2026, 4, 3),    # Good Friday
-        date(2026, 4, 14),   # Dr. Ambedkar Jayanti
-        date(2026, 5, 1),    # Maharashtra Day
-        date(2026, 9, 14),   # Ganesh Chaturthi: confirmed Kite holiday notice
-        date(2026, 10, 2),   # Gandhi Jayanti
-        date(2026, 12, 25),  # Christmas
-    }
+    date(2026, month, day)
+    for month, day in (
+        (1, 15), (1, 26), (3, 3), (3, 26), (3, 31), (4, 3), (4, 14),
+        (5, 1), (5, 28), (6, 26), (9, 14), (10, 2), (10, 20),
+        (11, 10), (11, 24), (12, 25),
+    )
 )
 
 

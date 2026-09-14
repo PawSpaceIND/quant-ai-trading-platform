@@ -2,6 +2,7 @@
 import json
 import os
 import time
+import certifi
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,6 +19,9 @@ history = {}
 
 
 def collect():
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
+    from quant_ai.intelligence.resilience import ResilientHttpClient, UrllibTransport
     credentials = json.loads((CONFIG / "zerodha.json").read_text())
     session = json.loads((CONFIG / "zerodha-session.json").read_text())
     kite = KiteConnect(api_key=credentials["api_key"], access_token=session["access_token"], timeout=15)
@@ -31,12 +35,12 @@ def collect():
             rows.append({"symbol": symbol, "available": False})
             continue
         token = quote["instrument_token"]
-        if token not in history:
+        if token not in history or history[token][0] != now.date():
             try:
                 bars = kite.historical_data(token, (now - timedelta(days=35)).date(), now.date(), "day")
-                history[token] = [{"date": str(bar["date"]), "close": bar["close"]} for bar in bars]
+                history[token] = (now.date(), [{"date": str(bar["date"]), "close": bar["close"]} for bar in bars])
             except Exception:
-                history[token] = []
+                history[token] = (now.date(), [])
         close = quote.get("ohlc", {}).get("close", 0)
         price = quote.get("last_price")
         rows.append({"symbol": symbol, "available": True, "price": price,
@@ -44,13 +48,21 @@ def collect():
                      "ohlc": quote.get("ohlc"), "volume": quote.get("volume"),
                      "exchangeTimestamp": str(quote.get("timestamp") or ""),
                      "lastTrade": str(quote.get("last_trade_time") or ""),
-                     "history": history[token]})
-    return {"status": "ok", "fetchedAt": now.isoformat(), "source": "Zerodha REST quotes",
+                     "history": history[token][1]})
+    news = []
+    try:
+        adapter = RssNewsSentimentAdapter(ResilientHttpClient(UrllibTransport()), ("https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",))
+        news = [{"headline": item.headline, "publishedAt": item.published_at.isoformat(), "source": "Economic Times RSS"} for item in adapter.fetch("GEOPOLITICAL", now)[:6]]
+    except Exception:
+        pass
+    runtime_path = CONFIG / "india-paper/status.json"
+    runtime = json.loads(runtime_path.read_text()) if runtime_path.exists() else {"status": "not_started"}
+    return {"news": news, "runtime": runtime, "status": "ok", "fetchedAt": now.isoformat(), "source": "Zerodha REST quotes",
             "session": MarketCalendar(default_holidays()).state(Market.INDIA, now).value,
             "exchanges": profile.get("exchanges", []), "rows": rows,
             "commodity": "MCX enabled; contract feed not configured" if "MCX" in profile.get("exchanges", []) else "MCX access not reported by this account",
             "note": "Last available quotes; poll time is not trade time. Gold/silver ETFs follow NSE hours.",
-            "providers": {"Claude": "Authenticated; structured Sonnet 5 request verified", "Technical": "Real daily candle history", "News": "Sandbox provider", "Macro": "Sandbox provider", "Fundamentals": "Sandbox provider", "US equities": "No IBKR connection"}}
+            "providers": {"Claude": "Authenticated; structured Sonnet 5 request verified", "Technical": "Real daily candle history", "News": "Economic Times RSS; rule-based sentiment" if news else "RSS unavailable; no fabricated opinions", "Macro": "Unavailable; FRED not configured", "Fundamentals": "Unavailable; licensed source needed", "US equities": "No IBKR connection"}}
 
 
 if __name__ == "__main__":
