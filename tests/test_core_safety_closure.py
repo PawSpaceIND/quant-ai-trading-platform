@@ -19,6 +19,7 @@ from quant_ai.domain.models import (
     Side,
 )
 from quant_ai.execution.audit import XAITraceLogger
+from quant_ai.execution.daemon import AutonomousTradingDaemon
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
@@ -156,6 +157,26 @@ def test_country_limit_never_blocks_pure_covered_exit() -> None:
     assert RiskWarden().evaluate(buy, plan(), held).reason == "country_allocation_limit"
 
 
+def test_watchlist_country_metadata_survives_ledger_reconstruction() -> None:
+    custom = Instrument(
+        "ACME",
+        Market.GLOBAL,
+        AssetClass.EQUITY,
+        "USD",
+        "GLOBAL",
+        metadata={"country": "Singapore"},
+    )
+    daemon = object.__new__(AutonomousTradingDaemon)
+    daemon.instruments = (INSTRUMENT, custom)
+    daemon.instrument = INSTRUMENT
+    daemon.country = "USA"
+    reconstructed = Instrument(
+        "ACME", Market.GLOBAL, AssetClass.EQUITY, "USD", "GLOBAL"
+    )
+
+    assert daemon.country_of(reconstructed) == "Singapore"
+
+
 def test_blocked_asset_class_never_traps_a_covered_exit() -> None:
     firewall = RiskFirewall(RiskPolicy(blocked_asset_classes=(AssetClass.EQUITY,)))
     sell = OrderIntent(
@@ -259,6 +280,25 @@ def test_fill_aware_sizing_respects_risk_budget_after_adverse_fill() -> None:
     stop = Decimal(100) * (Decimal(1) - capital_plan.stop_loss_fraction)
     assert (worst - stop) * quantity <= Decimal(100000) * capital_plan.per_trade_risk_fraction
     assert worst * quantity <= Decimal(100000) * Decimal("0.05")
+
+
+def test_target_preserves_reward_risk_after_worst_bounded_fill() -> None:
+    pipeline = SwarmMarketAnalysisPipeline(
+        UsaSandboxMarketDataFeed(),
+        SandboxNewsSentimentProvider(),
+        SandboxFundamentalDataProvider(),
+        SandboxMacroIndicatorProvider(),
+    )
+    capital_plan = plan()
+    reference = Decimal(100)
+    stop, target = pipeline._protective_levels(capital_plan, reference)
+    worst = pipeline.runtime.broker.friction_model.worst_case_execution_price(
+        reference, Side.BUY
+    )
+
+    assert stop is not None and target is not None
+    assert target > worst
+    assert target - worst == (worst - stop) * capital_plan.reward_risk_ratio
 
 
 def test_macro_changes_are_observation_to_observation_not_fixed_anchors() -> None:
