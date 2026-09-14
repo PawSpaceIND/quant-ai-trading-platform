@@ -595,3 +595,57 @@ def test_c2_downtrend_does_not_churn_through_repeated_stop_outs():
     buys = [e for e in broker.ledger_entries("ghost") if e.side == Side.BUY]
     assert len(buys) <= 2, f"re-entry churn: {len(buys)} entries in a single downtrend"
     assert tracker.metrics(TS + timedelta(minutes=80)).realized_pnl > Decimal(-100)
+
+
+# ------------------------------------- C1 (burn-in finding): never mark from the synthetic feed
+def _live_resolver(buffer, base_price: Decimal):
+    from quant_ai.execution.protective_exits import market_feed_mark_resolver
+    from quant_ai.orchestration.cadence import CadenceMarketReader
+
+    return market_feed_mark_resolver(
+        UsaSandboxMarketDataFeed(base_price=base_price), lambda _p: AAPL,
+        CadenceMarketReader(buffer), lambda: TS,
+    )
+
+
+def _held_at_230() -> BrokerPosition:
+    # A real entry far from the sandbox feed's 200 constant: stop 225.65, target 238.70.
+    return BrokerPosition("ghost", "AAPL", Market.USA, AssetClass.EQUITY, 10, Decimal(230),
+                          Decimal("225.65"), Decimal("238.70"))
+
+
+def test_c1_ghost_wiring_never_falls_back_to_the_synthetic_feed():
+    from quant_ai.marketdata.ticker_stream import LiveTick, TickBuffer
+
+    buffer = TickBuffer()
+    resolver = _live_resolver(buffer, base_price=Decimal(200))
+
+    assert resolver(_held_at_230()) is None, "nothing buffered -> unknown, not 200"
+    buffer.put(LiveTick("AAPL", Decimal(231), Decimal(1), None, None,
+                        TS - timedelta(minutes=5), "test"))
+    assert resolver(_held_at_230()) is None, "stale tick -> unknown, not 200"
+    buffer.put(LiveTick("AAPL", Decimal(231), Decimal(1), None, None,
+                        TS - timedelta(seconds=5), "test"))
+    assert resolver(_held_at_230()) == Decimal(231)
+
+
+def test_c1_a_websocket_gap_cannot_liquidate_a_healthy_position():
+    """Before this fix a 2-minute tick gap marked a $230 position at the feed's 200 constant,
+    which sits below its 225.65 stop, and sold it."""
+    from quant_ai.marketdata.ticker_stream import TickBuffer
+
+    broker = PaperBrokerService(":memory:", starting_capital=Decimal(100000))
+    broker.buy(OrderIntent("AAPL", Market.USA, Side.BUY, 10, Decimal(230), "test",
+                           AssetClass.EQUITY, "ghost", Decimal("225.65"), Decimal("238.70")))
+    engine = ProtectiveExitEngine(broker, _live_resolver(TickBuffer(), Decimal(200)), tenant_id="ghost")
+
+    assert engine.evaluate(TS) == ()
+    assert broker.get_positions("ghost")[0].quantity == 10
+
+
+def test_c1_feed_fallback_is_kept_where_no_live_source_exists():
+    from quant_ai.execution.protective_exits import market_feed_mark_resolver
+
+    resolver = market_feed_mark_resolver(UsaSandboxMarketDataFeed(base_price=Decimal(140)), lambda _p: AAPL)
+
+    assert resolver(_held_at_230()) == Decimal(140)  # CLI path: the feed is the only source

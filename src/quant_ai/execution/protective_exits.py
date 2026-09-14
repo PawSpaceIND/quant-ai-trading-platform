@@ -220,9 +220,17 @@ def market_feed_mark_resolver(
 
     def resolve(position: BrokerPosition) -> Decimal | None:
         if tick_reader is not None:
-            tick, _ = tick_reader.market_data_status(position.symbol, now())  # type: ignore[attr-defined]
+            tick, veto = tick_reader.market_data_status(position.symbol, now())  # type: ignore[attr-defined]
             if tick is not None and tick.ltp > 0:
                 return tick.ltp
+            # A live source is configured but has nothing fresh. The historical feed is not
+            # a substitute for it - in the ghost wiring that feed is synthetic - and a
+            # fabricated mark can liquidate a healthy position or bank a fictional target.
+            # Unknown price -> skip this sweep; the next fresh tick re-arms the check.
+            LOGGER.warning(
+                "protective_exit_mark_skipped symbol=%s reason=%s", position.symbol, veto
+            )
+            return None
         tick = market_feed.latest_tick(instrument_resolver(position))  # type: ignore[attr-defined]
         return tick.last_price
 
