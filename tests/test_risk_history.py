@@ -10,7 +10,12 @@ import pytest
 from risk_history_fixture import fixture
 
 from quant_ai.domain.models import Market
-from quant_ai.execution.session import MarketCalendar, MarketState, default_holidays
+from quant_ai.execution.session import (
+    MarketCalendar,
+    MarketState,
+    default_holidays,
+    holidays_from_json,
+)
 from quant_ai.marketdata.risk_history import risk_history_input
 
 
@@ -65,10 +70,11 @@ def test_market_collector_publishes_risk_identity_and_long_history_without_exter
             return moment.astimezone(tz)
 
     calls = []
+    clients = []
 
     class Kite:
         def __init__(self, **kwargs):
-            pass
+            clients.append(True)
 
         def profile(self):
             return {"exchanges": ["NSE"]}
@@ -91,6 +97,7 @@ def test_market_collector_publishes_risk_identity_and_long_history_without_exter
 
     monkeypatch.setenv("ZERODHA_API_KEY", "synthetic")
     monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", "synthetic")
+    monkeypatch.delenv("PRAMANA_HOLIDAYS_JSON", raising=False)
     monkeypatch.setattr(module, "datetime", Clock)
     monkeypatch.setattr(module, "CONFIG", tmp_path)
     monkeypatch.setattr("quant_ai.intelligence.external.rss.RssNewsSentimentAdapter.fetch", lambda *args: ())
@@ -102,3 +109,33 @@ def test_market_collector_publishes_risk_identity_and_long_history_without_exter
     assert item["providerInstrumentId"] == "123" and item["assetClass"] == "EQUITY"
     assert item["observations"] == [{"date": "2026-09-11", "close": 99}]
     assert len(first["riskHistory"]["calendar"]["sessions"]) > 100
+    moment = moment.replace(day=15)
+    monkeypatch.setenv("PRAMANA_HOLIDAYS_JSON", '{"INDIA":["2026-09-11","2026-09-15"]}')
+    overridden = module.collect()
+    from quant_ai.daemon import _env_holidays
+    assert overridden["session"] == MarketCalendar(_env_holidays()).state(Market.INDIA, moment).value == "CLOSED"
+    assert "2026-09-11" not in overridden["riskHistory"]["calendar"]["sessions"]
+    assert overridden["riskHistory"]["calendar"]["configuredClosures"] == ["2026-09-11", "2026-09-15"]
+    # Preserve a conflicting provider row for downstream rejection, never clean it away.
+    assert overridden["riskHistory"]["instruments"][0]["observations"] == [{"date":"2026-09-11", "close":99}]
+    monkeypatch.setenv("PRAMANA_HOLIDAYS_JSON", "null")
+    with pytest.raises(TypeError):
+        module.collect()
+    assert len(clients) == 3
+
+
+@pytest.mark.parametrize("value", [None, [], "", {"INDIA":"2026-09-15"}, {"INDIA":[123]}, {"UNKNOWN":[]}])
+def test_invalid_holiday_environment_is_rejected_by_engine(monkeypatch, value):
+    from quant_ai.daemon import _env_holidays
+    monkeypatch.setenv("PRAMANA_HOLIDAYS_JSON", json.dumps(value))
+    with pytest.raises((TypeError, ValueError)):
+        _env_holidays()
+
+
+def test_risk_calendar_can_add_closures_but_cannot_invent_sessions():
+    now = datetime(2026, 9, 15, 12, tzinfo=ZoneInfo("Asia/Kolkata"))
+    closure = MarketCalendar(holidays_from_json({"INDIA":["2026-09-11"]}, default_holidays()))
+    assert "2026-09-11" not in risk_history_input([], now, calendar=closure)["calendar"]["sessions"]
+    assert risk_history_input([], now, calendar=MarketCalendar())["status"] == "unavailable"
+    unsupported = MarketCalendar(default_holidays(), special_sessions={Market.INDIA:frozenset({date(2026,2,8)})})
+    assert risk_history_input([], now, calendar=unsupported)["status"] == "unavailable"

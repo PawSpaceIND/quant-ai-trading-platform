@@ -10,7 +10,7 @@ import certifi
 from kiteconnect import KiteConnect
 
 from quant_ai.domain.models import Market
-from quant_ai.execution.session import MarketCalendar, default_holidays
+from quant_ai.execution.session import MarketCalendar, default_holidays, holidays_from_json
 from quant_ai.marketdata.risk_history import risk_history_input
 
 CONFIG = Path.home() / ".config/pramana"
@@ -20,6 +20,10 @@ history = {}
 
 
 def collect():
+    # Use the same additive closure override as the engine. Invalid configuration
+    # fails before any source request instead of quietly reverting to a different calendar.
+    holiday_override = json.loads(os.environ.get("PRAMANA_HOLIDAYS_JSON") or "{}")
+    calendar = MarketCalendar(holidays_from_json(holiday_override, default_holidays()))
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
     from quant_ai.intelligence.resilience import ResilientHttpClient, UrllibTransport
@@ -62,9 +66,9 @@ def collect():
     runtime_path = CONFIG / "india-paper/status.json"
     runtime = json.loads(runtime_path.read_text()) if runtime_path.exists() else {"status": "not_started"}
     return {"news": news, "runtime": runtime, "status": "ok", "fetchedAt": now.isoformat(), "source": "Zerodha REST quotes",
-            "session": MarketCalendar(default_holidays()).state(Market.INDIA, now).value,
+            "session": calendar.state(Market.INDIA, now).value,
             "exchanges": profile.get("exchanges", []), "rows": rows,
-            "riskHistory": risk_history_input(rows, now),
+            "riskHistory": risk_history_input(rows, now, calendar=calendar),
             "commodity": "MCX enabled; contract feed not configured" if "MCX" in profile.get("exchanges", []) else "MCX access not reported by this account",
             "note": "Last available quotes; poll time is not trade time. Gold/silver ETFs follow NSE hours.",
             "providers": {"Claude": "Availability is checked per copilot request", "Technical": "Real daily candle history", "News": "Economic Times RSS; rule-based sentiment" if news else "RSS unavailable; no fabricated opinions", "Macro": "Unavailable; FRED not configured", "Fundamentals": "Unavailable; licensed source needed", "US equities": "No IBKR connection"}}

@@ -11,7 +11,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P03 | Shared live portfolio valuation | UI/engine parity, staleness and ledger-version checks | Engineering verified; open-session parity pending |
 | P04 | Honest strategy performance | Actual account samples, cost-aware metrics, source labels | Engineering verified; forward evidence pending |
 | P05 | Honest data/provider readiness | Missing inputs abstain; stale data blocks risk | Engineering verified; source completeness pending |
-| P06 | Complete private deployment | Container config, secrets, health, backup/restore and rollback instructions | Partial: configuration and selected operational/research restore verified; target deployment/off-host qualification pending |
+| P06 | Complete private deployment | Container config and feature/source bindings, secrets, health, backup/restore and rollback instructions | Partial: configuration and selected operational/research restore verified; target deployment/off-host qualification pending |
 | P07 | Authenticated dashboard and controls | Authentication, CSRF, rate/size limits, audit trail | Verified for private founder scope |
 | P08 | Interactive market watch | Search, sort, selection, saved watchlist, detail chart, timestamps | Browser verified |
 | P09 | Grounded AI copilot | Persisted conversations, provider errors, source context, no execution tools | Verified including one real Claude request |
@@ -75,3 +75,8 @@ The Portfolio page now joins the current engine valuation to account, positions,
 ## Implementation delta — historical portfolio risk
 
 Risk lab now provides exploratory covariance, correlation, volatility contribution, historical VaR/expected shortfall and dated repricing scenarios. Missing holding/session data withholds aggregate numbers; cash stays in the denominator. Desktop/mobile controls, private export and Atlas context are verified. One real source capture exposed the omitted NSE Budget Sunday; the verified exception is now included in the shared calendar and runtime fingerprint. [Method, source observation and limits](HISTORICAL_PORTFOLIO_RISK.md). This partially closes empirical cash-portfolio risk analytics; source adjustment, prospective calibration, sector/factor/Greeks and multi-asset risk remain open.
+
+
+## Implementation delta — deployment feature bindings
+
+Compose now forwards private comparison, continuous replay and company-event paths, honors selected research/review paths and a custom read-only directives file, and passes the same holiday additions to engine and collector. Risk history records unverified closure additions and preserves conflicting bars for rejection. The recovery example includes the source market snapshot. Container verification uses the resolved service environment and exercises populated private reports/exports, missing-source failures and restoration. [Contract and remaining gates](DEPLOYMENT_WIRING.md). This addresses deployment omissions under P06/P23; it does not qualify the real target host or source/strategy evidence.

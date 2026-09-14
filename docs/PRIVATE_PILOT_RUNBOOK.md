@@ -9,6 +9,8 @@ This release is scoped to a founder-only INR / NSE cash-equity and ETF account. 
 
 ## Configure and start
 
+Review [deployment feature wiring](DEPLOYMENT_WIRING.md) for the private research/event paths and custom directives mount. These settings are now propagated by Compose; report paths refer to the shared container volume, while `PRAMANA_DIRECTIVES_HOST_FILE` refers to a host file. The collector and engine now share validated holiday overrides.
+
 1. Copy `.env.example` to `.env` (mode 0600). Set a randomly generated dashboard secret of at least 32 characters, Claude credentials, licensed Zerodha credentials, instrument tokens and the exact symbol map. Review `deploy/founder-directives.example.json`; the supplied pilot watches INFY only. Map every configured instrument. Set the public origin to the exact browser origin.
 2. Supply the actual exchange holiday calendar using `PRAMANA_HOLIDAYS_JSON`. Missing macro/fundamental feeds remain unavailable and may cause abstention; do not add synthetic constants to force trades.
 3. From `deploy/`, run `docker compose --env-file ../.env -f docker-compose.yml up -d --build`. The daemon, collector and dashboard share the same data volume and UID. The dashboard binds only to host loopback. Access it over an SSH tunnel, or a private HTTPS reverse proxy with an exact `PRAMANA_PUBLIC_ORIGIN` and authenticated network access. Do not open the port publicly.

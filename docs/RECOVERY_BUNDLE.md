@@ -76,3 +76,6 @@ The local verification artifact retains the synthetic manifest digest and exact 
 
 
 Company mapping withdrawals use a reserved empty-symbol journal row without changing the three-table schema. Schema-2 recovery includes this row in its all-row hash. The lifecycle regression restores withdrawal history unchanged and confirms that current NSE sources stay excluded while pre-withdrawal historical sources remain available. [Operator and rollback compatibility rules](COMPANY_MAPPING_LIFECYCLE.md). This is a local regression, not off-host recovery qualification.
+
+
+The deployment example now explicitly selects the source market snapshot as a schema-2 generic file, preserving the history behind private risk reports. Custom dashboard/report/event paths must be reflected in the selected inventory, and the collector must be stopped for capture. This does not add automatic inventory discovery or qualify off-host recovery. [Feature/source configuration](DEPLOYMENT_WIRING.md).

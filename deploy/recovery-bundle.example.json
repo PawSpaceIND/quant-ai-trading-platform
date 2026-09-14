@@ -11,6 +11,10 @@
     "research": "/data/research-report.json"
   },
   "research_state": {
+    "market-snapshot": {
+      "kind": "file",
+      "path": "/data/market-monitor.json"
+    },
     "experiments": {
       "kind": "experiment_journal",
       "path": "/data/research/research.sqlite"

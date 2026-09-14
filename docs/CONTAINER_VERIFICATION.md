@@ -37,6 +37,8 @@ The independent hosted monitor retains its separate credential and 150-second or
 
 ## Verification status
 
+The verifier now uses the resolved Compose environment for both runtime containers, loads three actual published research/event fixtures, honors a custom directives mount and checks authenticated exports. Missing configured files must fail closed without breaking the other panels, and restoration is checked. [Deployment wiring and precise limits](DEPLOYMENT_WIRING.md). The collector's custom calendar is covered by deterministic tests; it is not started against a provider in this CI fixture.
+
 Local Python tests and the synthetic engine/dashboard prerequisite verify the health rejection cases, private login, shared account, saved watchlist, halt acknowledgement, engine halt persistence and dashboard restart. Exact image-build and Linux container results are recorded by CI after the job runs. A green CI artifact qualifies packaging and the listed isolated flows only; intended-host deployment, real-session observation and operational burn-in remain open.
 
 The first Linux CI run built both images and passed 11 recorded checks. Artifact review found that the restart assertion could still read the prior heartbeat; the check now requires an observation at or after Docker's recorded `StartedAt` for the new container process. This prevents pre-restart evidence from satisfying restart acceptance. Inspect the artifact's `haltAfterEngineRestart.observed_at` and `restartedContainerStartedAt` fields.

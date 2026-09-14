@@ -465,7 +465,7 @@ def _env_intelligence_providers() -> tuple[
 
 def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     payload = _env_json("PRAMANA_HOLIDAYS_JSON", {})
-    return holidays_from_json(payload, default_holidays()) if payload else default_holidays()
+    return holidays_from_json(payload, default_holidays())
 
 
 def _env_notifications() -> TradingNotificationDispatcher | None:

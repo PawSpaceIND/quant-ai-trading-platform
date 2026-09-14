@@ -71,3 +71,8 @@ Deploy the updated collector and private UI together using the existing runbook.
 Real history coverage, adjusted-price/calendar/security-master qualification, source rights, target-host behavior and prospective tail calibration remain open. This is partial progress toward IBKR's documented historical VaR/expected-shortfall workflow and Bloomberg's integrated portfolio-risk workflow, not mathematical or feature parity with either product. IBKR supports additional horizons and methods; Bloomberg describes broader multi-asset risk and scenario models. [IBKR VaR documentation](https://www.ibkrguides.com/orgportal/performanceandstatements/valueatrisk.htm), [Bloomberg PORT](https://professional.bloomberg.com/products/bloomberg-terminal/portfolio-analytics/).
 
 Sector/factor/beta and Greeks/margin models, full-valuation scenarios, FX/multi-asset support, robust covariance estimation, stress calibration and risk-aware portfolio construction remain unfinished. No real-money execution or 100% pilot-readiness claim follows from this feature.
+
+
+## Configured closure consistency
+
+The collector now uses the same validated `PRAMANA_HOLIDAYS_JSON` additions as the engine for its session label and risk-history session list. Added closures are retained with a hash and an explicit operator-supplied/unverified label. Invalid structures fail before source requests. This producer cannot remove bundled closures or invent additional special sessions; those configurations require qualification. It retains any provider observation on a declared closed date for the strict reader to reject. No corporate-action, source-rights or calendar-completeness gate is closed by an operator override. [Deployment and verification](DEPLOYMENT_WIRING.md).

@@ -90,10 +90,14 @@ def holidays_from_json(
     base: dict[Market | GlobalVenue, frozenset[date]] | None = None,
 ) -> dict[Market | GlobalVenue, frozenset[date]]:
     """Merge ``{"INDIA": ["2026-11-09", ...], "USA": [...]}`` over ``base``."""
+    if not isinstance(payload, dict):
+        raise TypeError("Holiday overrides must be a venue-to-date-list object")
     merged: dict[Market | GlobalVenue, frozenset[date]] = dict(base or {})
     for key, values in payload.items():
+        if not isinstance(key, str) or not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            raise TypeError("Holiday overrides require string venues and lists of ISO date strings")
         venue = GlobalVenue(key.strip().upper())
-        parsed = frozenset(date.fromisoformat(str(item)) for item in values)
+        parsed = frozenset(date.fromisoformat(item) for item in values)
         merged[venue] = merged.get(venue, frozenset()) | parsed
     return merged
 

@@ -1,6 +1,8 @@
 """Source-labelled daily closes for exploratory cash-portfolio risk analytics."""
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -8,7 +10,7 @@ from quant_ai.domain.models import Market
 from quant_ai.execution.session import GlobalVenue, MarketCalendar, MarketState, default_holidays
 
 
-def risk_history_input(rows: list[dict], captured_at: datetime) -> dict:
+def risk_history_input(rows: list[dict], captured_at: datetime, *, calendar: MarketCalendar | None = None) -> dict:
     """Exclude the current local date, even after close; never invent missing bars.
 
     The bundled regular-session calendar is maintained for 2026 only. Other years
@@ -20,7 +22,16 @@ def risk_history_input(rows: list[dict], captured_at: datetime) -> dict:
     local = captured_at.astimezone(ZoneInfo("Asia/Kolkata"))
     if local.year != 2026:
         return {"status": "unavailable", "reason": "NSE risk-history calendar needs qualification for this year."}
-    calendar = MarketCalendar(default_holidays())
+    calendar = calendar or MarketCalendar(default_holidays())
+    # The bounded 2026 support and documented special-session set remain unchanged.
+    # Only explicit closure additions may narrow the bundled sessions for this input.
+    baseline = MarketCalendar(default_holidays())
+    allowed_special = baseline.special_sessions.get(GlobalVenue.INDIA, frozenset())
+    if calendar.special_sessions.get(GlobalVenue.INDIA, frozenset()) != allowed_special:
+        return {"status": "unavailable", "reason": "NSE special-session configuration needs qualification for risk history."}
+    holidays = calendar.holidays.get(GlobalVenue.INDIA, frozenset())
+    if not holidays.issuperset(baseline.holidays[GlobalVenue.INDIA]):
+        return {"status": "unavailable", "reason": "NSE risk-history calendar cannot remove bundled closures without qualification."}
     start = date(2026, 1, 1)
     sessions = []
     day = start
@@ -49,7 +60,7 @@ def risk_history_input(rows: list[dict], captured_at: datetime) -> dict:
             if start <= session_date < local.date():
                 observations.append({"date": session_date.isoformat(), "close": bar.get("close")})
         instruments.append({**identity, "observations": observations})
-    return {
+    result = {
         "schema": "pramana.risk_history.v1", "asOf": captured_at.isoformat(),
         "source": "Zerodha historical day candles",
         "priceBasis": "provider_close_adjustments_unverified",
@@ -60,3 +71,13 @@ def risk_history_input(rows: list[dict], captured_at: datetime) -> dict:
                      "specialSessionSource": "https://nsearchives.nseindia.com/content/circulars/CMTR72349.pdf"},
         "instruments": instruments,
     }
+    extra_closures = sorted(d.isoformat() for d in holidays - baseline.holidays[GlobalVenue.INDIA])
+    if extra_closures:
+        result["calendar"].update(
+            name="NSE cash sessions with configured closure additions",
+            version="bundled_nse_2026_with_cmtr72349_and_configured_closures",
+            configuredClosures=extra_closures,
+            configuredClosuresSha256=hashlib.sha256(json.dumps(extra_closures, separators=(",", ":")).encode()).hexdigest(),
+            configuredClosureQualification="operator_supplied_unverified",
+        )
+    return result
