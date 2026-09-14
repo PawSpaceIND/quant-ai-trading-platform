@@ -144,3 +144,11 @@ decision and kept the page within 390px, without console warnings/errors.
 this integration did not repeat a paid model call or NSE retrieval. Continuous-journal
 curves and company-event management remain CLI/API workflows pending further dashboard
 integration and external qualification. This is progress toward closure, not full parity.
+
+
+The first combined CI run at `324e24c` exposed an undeclared production dependency:
+`scripts/publish_cloud_snapshot.py` imported `requests`, which existed locally but
+was absent after a clean install. The publisher privacy test failed before its mock
+could run (473 passed / 1 failed). `requests>=2.32,<3` is now declared in the project
+runtime dependencies; the publisher regression is retained. Final CI is checked
+on the subsequent committed revision, rather than reusing the earlier local result.
