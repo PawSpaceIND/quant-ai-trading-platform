@@ -1,3 +1,4 @@
+import {readBrokerObservation} from "@/lib/broker-observation";
 import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy-evidence";
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
@@ -135,6 +136,7 @@ export async function GET() {
         portfolio,
         paperContribution,
         benchmarkPerformance,
+        brokerObservation: readBrokerObservation(),
         historicalRisk: historicalRisk(portfolio, riskHistoryInput),
         market: displayMarket,
         runtime,

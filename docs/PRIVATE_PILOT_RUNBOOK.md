@@ -120,3 +120,8 @@ Before open-session acceptance, verify actual exchange/receive times, eligible i
 ## Recorded account benchmark comparison
 
 After updating the private dashboard, Portfolio → **Account versus benchmark** reads the existing account and `PRAMANA_MARKET_SNAPSHOT` history. No migration or new provider request is required. Keep source histories for instruments held in earlier sessions, even after they close. Select a benchmark/window, inspect any missing dates and export `/api/portfolio/benchmark`. Retain the original account/valuation and market snapshot in the selected recovery inventory. The historical report stops at the account observation cutoff and cannot count as forward strategy acceptance. Adjustments, dividends/corporate actions and investable benchmark costs remain unqualified. [Data convention, formulas and verification](ACCOUNT_BENCHMARK.md).
+
+
+### Optional private external broker observation
+
+[Capture and account binding](BROKER_OBSERVATIONS.md) adds a GET-only selected-account report to Activity. It is separate from the pilot paper ledger and does not change readiness checks or enable live execution. Bind both `PRAMANA_BROKER_OBSERVATION` and `PRAMANA_BROKER_ACCOUNT_REF`; preserve the captures in the reviewed private backup inventory. Real account capture and any continuous monitoring require their own source/operational qualification.

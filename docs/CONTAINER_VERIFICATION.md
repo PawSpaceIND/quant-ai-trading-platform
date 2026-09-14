@@ -45,3 +45,6 @@ The first Linux CI run built both images and passed 11 recorded checks. Artifact
 
 
 The recorded-account benchmark phase creates a separate six-fill synthetic account through the real paper broker and starts another dashboard instance from the same production image. Runtime networking remains disabled. It checks 31 daily marks against an independent oracle, all six benchmark/window exports, authentication, no-store headers and saved bounded Atlas context with no provider key. The original protection/ledger fixture remains separate. Inspect the `account-benchmark` phase in the revision-specific artifact.
+
+
+The `broker-observation` phase starts a separate dashboard container using a selected synthetic account capture. It checks authentication, 14 orders/26 executions, private no-store export, changing/mismatched/stale/wrong-account handling and bounded saved Atlas context. Both broker and model external calls remain zero. It does not qualify an actual external broker account or target deployment.

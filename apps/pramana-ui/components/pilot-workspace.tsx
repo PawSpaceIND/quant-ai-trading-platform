@@ -16,6 +16,7 @@ import { ResearchComparison } from "./research-comparison";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
+import {BrokerObservation} from "./broker-observation";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
@@ -581,6 +582,7 @@ export function PilotWorkspace() {
                 )}
                 {view === "activity" && (
                   <>
+                    {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={ask} />}
                     <TradeFeed trades={trades} />
                     <CostPanel friction={friction} />
                     <section className="panel">

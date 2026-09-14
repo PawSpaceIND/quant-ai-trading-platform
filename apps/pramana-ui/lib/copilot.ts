@@ -1,3 +1,4 @@
+import {brokerObservationContext} from "./broker-observation";
 import {companyEventsContext} from "./company-events";
 import { randomUUID } from "node:crypto";
 import { consoleDb } from "./console-db";
@@ -76,6 +77,7 @@ export async function generateAnswer(
       portfolio,
       paperContribution: paperContributionContext(paperContribution),
       benchmarkPerformance: accountBenchmarkContext(benchmarkPerformance),
+      brokerObservation: brokerObservationContext(),
       historicalRisk: historicalRiskContext(historicalRisk(portfolio,market.riskHistory)),
       runtime,
       strategyObservation,

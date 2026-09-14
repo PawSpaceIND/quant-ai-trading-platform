@@ -286,6 +286,20 @@ def main():
         wait_for(lambda: run("docker", "exec", benchmark_ui, "node", "-e",
             "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "benchmark dashboard startup")
         report["checks"].append(json.loads(run("docker", "exec", benchmark_ui, "node", "/qa/account_benchmark_smoke.mjs")))
+        # Isolated broker observation fixture: GET-shaped synthetic evidence, no external account requests.
+        captured = json.loads(run("docker", "exec", engine, "python", "/qa/broker_observation_fixture.py", "--output", "/data/benchmark/broker.json"))
+        broker_ui = name + "-broker-ui"
+        run("docker", "run", "-d", "--name", broker_ui, *shared,
+            *environment("dashboard", PRAMANA_TENANT_ID="default",
+                PRAMANA_LEDGER_PATH="/data/benchmark/paper.sqlite",
+                PRAMANA_MARKET_SNAPSHOT="/data/benchmark/market.json",
+                PRAMANA_CONSOLE_DB="/data/benchmark/console.sqlite",
+                PRAMANA_BROKER_OBSERVATION="/data/benchmark/broker.json",
+                PRAMANA_BROKER_ACCOUNT_REF=captured["accountRef"]), image_ui)
+        created_containers.append(broker_ui)
+        wait_for(lambda: run("docker", "exec", broker_ui, "node", "-e",
+            "fetch('http://localhost:3000/login').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"), "broker dashboard startup")
+        report["checks"].append(json.loads(run("docker", "exec", broker_ui, "node", "/qa/broker_observation_smoke.mjs")))
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

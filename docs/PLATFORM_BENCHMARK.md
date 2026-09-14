@@ -226,3 +226,8 @@ Local protection health now rejects a fresh database row carrying stale, malform
 ## Implementation delta — recorded account versus benchmark
 
 The private Portfolio page now compares reconstructed historical paper-account books, including closed positions and recorded fees, against NIFTY 50/NIFTY BANK price closes. Selectable ranges, excess/relative wealth return, daily drawdown, tracking error/information ratio, empirical beta/correlation, daily evidence, export and saved Atlas summaries are verified. [Method and evidence](ACCOUNT_BENCHMARK.md). This supersedes the missing basic account-benchmark comparison and empirical benchmark-beta display. Qualified total-return data, sector allocation/selection, factor attribution, multi-asset models and full Bloomberg/IBKR parity remain open. It neither validates the strategy nor closes external pilot gates.
+
+
+## Implementation delta — broker account isolation and order/trade observation
+
+Explicit external reads now preserve account/contract identity and fractional quantities, keep Kite trading funds distinct from portfolio equity, and inspect Kite daily orders against individual executions in the private Activity workspace. [Precise coverage](BROKER_OBSERVATIONS.md). Paper decisions continue to use the paper ledger. This supersedes the mixed-account read boundary and first-page/fraction-truncation defects. Complete broker lifecycle, cash/position reconciliation, live/backtest performance parity and advanced vendor analytics remain open.
