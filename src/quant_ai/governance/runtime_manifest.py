@@ -60,6 +60,7 @@ FIELDS = {
     "quant_ai.intelligence.freshness.FreshnessValidator": ("TTL",),
     "quant_ai.orchestration.cadence.CadenceMarketReader": ("max_tick_age",),
     "quant_ai.execution.protective_exits.ProtectiveExitEngine": (
+        "tenant_id",
         "strategy_id",
         "re_entry_cooldown",
     ),
@@ -176,6 +177,33 @@ def describe(obj, issues: list[str]) -> dict | None:
         from quant_ai.execution.session import SESSIONS
 
         result["sessions"] = stable(SESSIONS)
+    if name.endswith("ProtectiveExitEngine"):
+        resolver = obj.mark_resolver
+        identity = f"{getattr(resolver, '__module__', '')}.{getattr(resolver, '__qualname__', type(resolver).__qualname__)}"
+        result["mark_resolver"] = identity
+        if (
+            identity
+            != "quant_ai.execution.protective_exits.market_feed_mark_resolver.<locals>.resolve"
+        ):
+            issues.append("unsupported_protective_mark_resolver")
+    if name.endswith("AnthropicSwarmClient"):
+        from anthropic import AsyncAnthropic
+
+        client = obj._client
+        if type(client) is not AsyncAnthropic or obj.transport_kind != "anthropic_sdk":
+            issues.append("unsupported_inference_transport")
+            result["sdk_configuration"] = {"supported": False}
+        else:
+            timeout = client.timeout
+            timeout_fields = ("connect", "read", "write", "pool")
+            result["sdk_configuration"] = {
+                "supported": True,
+                "endpoint_sha256": source_identity(str(client.base_url)),
+                "max_retries": client.max_retries,
+                "timeout": timeout
+                if timeout is None or isinstance(timeout, (float, int))
+                else {key: getattr(timeout, key) for key in timeout_fields},
+            }
     if name.endswith("LiveTickMarketDataFeed"):
         result["aggregator"] = describe(obj.aggregator, issues)
     if name.endswith("FredMacroProvider"):
@@ -321,6 +349,9 @@ class RuntimeManifest:
             "tenant_id": d.tenant_id,
             "release_revision": self.revision,
             "execution_mode": "paper",
+            "shared_broker_wiring": r.broker is d.tracker.broker
+            and d.exit_engine.broker is r.broker,
+            "shared_market_feed_wiring": p.market_feed is d.tracker.market_feed,
             "source": self._source_inventory(force_source),
             "python": sys.version.split()[0],
             "dependencies": self._dependencies,
@@ -330,6 +361,8 @@ class RuntimeManifest:
             "news_window_seconds": p.news_window.total_seconds(),
             "baseline_risk_policy": stable(RiskPolicy()),
         }
+        if not manifest["shared_broker_wiring"] or not manifest["shared_market_feed_wiring"]:
+            issues.append("unsupported_engine_wiring")
         if not re.fullmatch("[0-9a-f]{40}", self.revision):
             issues.append("release_revision_unconfigured")
         return {"manifest": manifest, "sha256": digest(manifest), "issues": sorted(set(issues))}

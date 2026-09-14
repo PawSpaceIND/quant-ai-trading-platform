@@ -135,7 +135,9 @@ def test_export_is_exact_hash_bound_private_and_refuses_tampering_or_overwrite(
     assert not (tmp_path / "bad.json").exists()
 
 
-@pytest.mark.parametrize("field", ["stream", "fees", "model", "holiday", "session", "specialist"])
+@pytest.mark.parametrize(
+    "field", ["stream", "fees", "model", "holiday", "session", "specialist", "protection_tenant"]
+)
 def test_effective_strategy_fields_change_the_fingerprint(tmp_path, monkeypatch, field):
     from datetime import date, time
 
@@ -156,6 +158,8 @@ def test_effective_strategy_fields_change_the_fingerprint(tmp_path, monkeypatch,
         monkeypatch.setitem(
             SESSIONS, GlobalVenue.INDIA, replace(SESSIONS[GlobalVenue.INDIA], regular_open=time(10))
         )
+    elif field == "protection_tenant":
+        d.exit_engine.tenant_id = "different-tenant"
     else:
         monkeypatch.setattr(d.scheduler.pipeline.agents[0], "agent_id", "changed-specialist")
     result = d.strategy_manifest.check()
@@ -238,3 +242,42 @@ def test_governed_fill_retains_the_checked_runtime_binding(tmp_path, monkeypatch
         ("pilot", sha),
     ).fetchone()[0]
     assert hashlib.sha256(recorded.encode()).hexdigest() == sha
+
+
+def test_sdk_endpoint_retry_timeout_and_custom_transport_are_not_silent(tmp_path, monkeypatch):
+    import asyncio
+
+    from quant_ai.llm.anthropic_client import AnthropicSwarmClient
+
+    runner, _ = setup(tmp_path, monkeypatch)
+    d = runner.daemon
+    client = AnthropicSwarmClient(
+        api_key="synthetic-credential-never-export", model="synthetic-model"
+    )
+    d.scheduler.pipeline.runtime.cio.atlas.llm_client = client
+    try:
+        first = d.strategy_manifest.capture()
+        assert not first["issues"]
+        assert "synthetic-credential" not in json.dumps(first)
+        client._client.base_url = "https://different-provider.example.test/v1/"
+        second = d.strategy_manifest.capture()
+        assert second["sha256"] != first["sha256"]
+        client._client.max_retries += 1
+        third = d.strategy_manifest.capture()
+        assert third["sha256"] != second["sha256"]
+        client._client.timeout = 7.5
+        assert d.strategy_manifest.capture()["sha256"] != third["sha256"]
+    finally:
+        asyncio.run(client._client.close())
+    client._client = SimpleNamespace()
+    client.transport_kind = "injected_client"
+    assert "unsupported_inference_transport" in d.strategy_manifest.capture()["issues"]
+
+
+def test_custom_protective_resolver_cannot_inherit_a_complete_binding(tmp_path, monkeypatch):
+    runner, source = setup(tmp_path, monkeypatch)
+    runner.daemon.exit_engine.mark_resolver = lambda position: Decimal(100)
+    runner.daemon.bind_strategy_manifest(runner.streams, source_root=source, revision="a" * 40)
+    summary = runner.daemon.strategy_manifest.summary
+    assert summary["status"] == "incomplete"
+    assert "unsupported_protective_mark_resolver" in summary["issues"]
