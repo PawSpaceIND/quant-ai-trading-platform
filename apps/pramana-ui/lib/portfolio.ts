@@ -155,7 +155,7 @@ function buildEquityCurve(startingCapital: number, entries: LedgerRow[], costs: 
     for (const [positionKey, qty] of quantity) marketValue += Math.max(0, qty) * (marks.get(positionKey) ?? 0);
     points.push({ timestamp: entry.created_at, equity: cash + marketValue });
   }
-  return points.length ? points : [{ timestamp: new Date(0).toISOString(), equity: startingCapital }];
+  return points;
 }
 
 function emptyPortfolio(reason: string) {
