@@ -19,6 +19,8 @@ def diagnostics(report):
         for key in ("errors", "missing_decisions", "pending_buy_outcomes", "unresolved_exits"):
             if candidate[key]:
                 issues.append(f"{name}:{key}")
+        if candidate.get("unknown_cost_decisions", 0):
+            issues.append(f"{name}:unknown_cost_decisions")
     return {
         "comparison_blockers": issues,
         "winner": None,
@@ -67,13 +69,14 @@ def render_html(report):
         ("unresolved_exits", "Unresolved exits"),
         ("pending_buy_outcomes", "Pending buys"),
         ("completed_case_pnl_inr", "Completed-case P&L (INR)"),
-        ("api_cost_usd", "Reported API cost (USD)"),
+        ("api_cost_usd", "Known API cost subtotal (USD)"),
+        ("unknown_cost_decisions", "Decisions with unknown cost"),
     ]
     rows = "".join(
         "<tr><th scope='row'>"
         + e(name)
         + "</th>"
-        + "".join("<td>" + e(candidate[key]) + "</td>" for key, _ in columns)
+        + "".join("<td>" + e(candidate.get(key, 0)) + "</td>" for key, _ in columns)
         + "</tr>"
         for name, candidate in report["candidates"].items()
     )
