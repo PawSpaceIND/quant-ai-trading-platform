@@ -74,7 +74,7 @@ async def run():
         await runner.daemon.run_once()
     task = asyncio.create_task(runner.start())
     try:
-        while not task.done():
+        while not task.done() and not runner.daemon.heartbeat().stopping:
             beat = asdict(runner.daemon.heartbeat())
             save_status({"status": "running", "updatedAt": datetime.now(timezone.utc).isoformat(),
                          "mode": "paper", "watchlist": SYMBOLS, "heartbeat": beat,
@@ -84,7 +84,8 @@ async def run():
                                        "Macro": "Unavailable unless FRED configured",
                                        "Fundamentals": "Unavailable; affected agents abstain"}})
             await asyncio.sleep(15)
-        await task
+        if task.done():
+            await task
     finally:
         runner.request_stop()
         task.cancel()
