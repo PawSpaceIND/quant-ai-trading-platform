@@ -11,16 +11,21 @@ from quant_ai.execution.broker_observation import capture_kite, inspect_capture
 
 
 def fixture(now):
-    date = (now-timedelta(minutes=10)).astimezone(ZoneInfo("Asia/Kolkata"))
+    local = now.astimezone(ZoneInfo("Asia/Kolkata"))
+    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Kite's daily book cannot contain yesterday's executions. Compress only
+    # this synthetic timeline near midnight; keep production validation strict.
+    span = min(600, (local-day_start).total_seconds())
+    date = local-timedelta(seconds=span)
     orders, trades = [], []
     for i in range(14):
         base = {"order_id":f"synthetic-{i+1}", "instrument_token":738561+i, "tradingsymbol":"RELIANCE" if i==0 else "INFY" if i==12 else "TCS" if i==13 else f"SYMBOL{i+1}",
             "exchange":"NSE", "product":"CNC", "transaction_type":"BUY", "quantity":3, "exchange_order_id":f"ex-{i+1}"}
         orders.append({**base,"status":"OPEN" if i==12 else "CANCELLED" if i==13 else "COMPLETE", "variety":"regular", "filled_quantity":1 if i>=12 else 3,
             "pending_quantity":2 if i==12 else 0, "cancelled_quantity":2 if i==13 else 0,"average_price":0 if i>=12 else 100,"order_timestamp":date.strftime("%Y-%m-%d %H:%M:%S")})
-        trades.append({**base,"trade_id":f"trade-{i+1}-a","quantity":1,"average_price":98,"fill_timestamp":(date+timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")})
+        trades.append({**base,"trade_id":f"trade-{i+1}-a","quantity":1,"average_price":98,"fill_timestamp":(date+timedelta(seconds=span/10)).strftime("%Y-%m-%d %H:%M:%S")})
         if i<12:
-            trades.append({**base,"trade_id":f"trade-{i+1}-b","quantity":2,"average_price":101,"fill_timestamp":(date+timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")})
+            trades.append({**base,"trade_id":f"trade-{i+1}-b","quantity":2,"average_price":101,"fill_timestamp":(date+timedelta(seconds=span/5)).strftime("%Y-%m-%d %H:%M:%S")})
     class SyntheticReads:
         def get(self, path):
             return {"status":"success","data":{"user_id":"SYNTHETIC"} if path=="/user/profile" else orders if path=="/orders" else trades}
