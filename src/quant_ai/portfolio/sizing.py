@@ -29,7 +29,13 @@ class PositionSizer:
             RiskMode.AGGRESSIVE: self.policy.aggressive_risk,
         }[mode]
 
-    def quantity(self, opportunity: Opportunity, portfolio: PortfolioSnapshot, price: Decimal, mode: RiskMode) -> int:
+    def quantity(
+        self,
+        opportunity: Opportunity,
+        portfolio: PortfolioSnapshot,
+        price: Decimal,
+        mode: RiskMode,
+    ) -> int:
         if price <= 0 or portfolio.equity <= 0 or opportunity.stop_distance <= 0:
             return 0
         risk_budget = portfolio.equity * self._risk_fraction(mode)
@@ -40,31 +46,40 @@ class PositionSizer:
         return max(0, int(min(by_risk, by_notional)))
 
     def quantity_from_plan(
-        self, plan: CapitalPlan, portfolio: PortfolioSnapshot, price: Decimal
+        self,
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        price: Decimal,
+        *,
+        worst_entry_price: Decimal | None = None,
     ) -> int:
-        """Size an entry from the *live* portfolio and the capital plan's risk parameters.
+        """Size an entry against both intended stop risk and bounded execution friction.
 
-        Four independent caps; the tightest wins:
-        - risk budget: equity x per-trade risk fraction, spent at the plan's stop distance
-        - position cap: equity x the plan's max position fraction
-        - trade cap: equity x max_trade_fraction (the firewall's single-trade limit)
-        - deployable capital: equity net of the plan's cash reserve, less gross exposure
-          already deployed - so the size shrinks as capital is committed elsewhere
-        Uses current equity rather than the plan's starting capital, so sizing follows the
-        account up and down instead of staying pinned to day-one numbers.
+        Four independent caps; the tightest wins. When ``worst_entry_price`` is supplied,
+        the risk distance is measured from that adverse fill to the stop derived from the
+        signal/reference price. This prevents spread/slippage from silently increasing the
+        intended per-trade loss budget or notional/cash usage.
         """
         if price <= 0 or portfolio.equity <= 0 or plan.stop_loss_fraction <= 0:
             return 0
         equity = portfolio.equity
+        effective_entry = max(price, worst_entry_price or price)
+        stop_price = price * (Decimal(1) - plan.stop_loss_fraction)
+        per_unit_risk = effective_entry - stop_price
+        if per_unit_risk <= 0:
+            return 0
         risk_budget = equity * plan.per_trade_risk_fraction
-        per_unit_risk = price * plan.stop_loss_fraction
         by_risk = (risk_budget / per_unit_risk).to_integral_value(rounding=ROUND_DOWN)
-        by_position = (equity * plan.max_position_fraction / price).to_integral_value(
-            rounding=ROUND_DOWN
+        by_position = (
+            equity * plan.max_position_fraction / effective_entry
+        ).to_integral_value(rounding=ROUND_DOWN)
+        by_trade = (
+            equity * self.policy.max_trade_fraction / effective_entry
+        ).to_integral_value(rounding=ROUND_DOWN)
+        deployable = (
+            equity * (Decimal(1) - plan.cash_reserve_fraction) - portfolio.gross_exposure
         )
-        by_trade = (equity * self.policy.max_trade_fraction / price).to_integral_value(
-            rounding=ROUND_DOWN
-        )
-        deployable = equity * (Decimal(1) - plan.cash_reserve_fraction) - portfolio.gross_exposure
-        by_capital = (max(Decimal(0), deployable) / price).to_integral_value(rounding=ROUND_DOWN)
+        by_capital = (
+            max(Decimal(0), deployable) / effective_entry
+        ).to_integral_value(rounding=ROUND_DOWN)
         return max(0, int(min(by_risk, by_position, by_trade, by_capital)))

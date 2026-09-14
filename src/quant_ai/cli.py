@@ -27,6 +27,7 @@ from quant_ai.execution.notifications import (
 )
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
+from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.governance.directives import FounderDirectives
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
@@ -95,7 +96,6 @@ def _portfolio(daemon: AutonomousTradingDaemon) -> None:
     print(f"drawdown={metrics.drawdown_fraction}")
 
 
-
 def _analytics(daemon: AutonomousTradingDaemon) -> None:
     now = datetime.now(timezone.utc)
     candles = daemon.scheduler.pipeline.market_feed.fetch_ohlcv(
@@ -147,7 +147,6 @@ def _stress_test(daemon: AutonomousTradingDaemon) -> None:
             f"scenario={verdict.worst_scenario} projected_loss={verdict.projected_loss} "
             f"equity_loss_fraction={verdict.loss_fraction_of_equity}"
         )
-
 
 
 def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
@@ -218,6 +217,7 @@ def _backtest(args: argparse.Namespace) -> None:
     print(tearsheet_json)
     broker.flush()
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pramana")
     parser.add_argument(
@@ -246,6 +246,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"halt released: {target}")
         else:
             print(f"no halt file present: {target}")
+        ledger = paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+        if ledger.exists():
+            tenant = paths.tenant_id("QUANT_AI_TENANT_ID", default="ghost")
+            risk_state = SQLiteRiskStateStore(ledger)
+            risk_state.set_kill_switch(tenant, False, None)
+            risk_state.close()
+            print(f"persisted halt released: tenant={tenant}")
         return 0
     if args.command == "backtest":
         _backtest(args)

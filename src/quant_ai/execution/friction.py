@@ -131,6 +131,22 @@ class MarketFrictionModel:
             fixed_slippage_bps=slippage_bps,
         )
 
+    @property
+    def max_adverse_fraction(self) -> Decimal:
+        return (
+            self.max_half_spread_fraction
+            + self.max_slippage_fraction
+            + self.fixed_slippage_bps / Decimal(10000)
+        )
+
+    def worst_case_execution_price(self, reference_price: Decimal, side: Side) -> Decimal:
+        if reference_price <= 0:
+            return Decimal(0)
+        fraction = self.max_adverse_fraction
+        if side == Side.BUY:
+            return reference_price * (Decimal(1) + fraction)
+        return reference_price * max(Decimal(0), Decimal(1) - fraction)
+
     def evaluate(self, order: OrderIntent, context: FrictionContext) -> FrictionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")

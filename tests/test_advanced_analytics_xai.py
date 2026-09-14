@@ -69,7 +69,7 @@ def test_performance_metrics_and_var_are_mathematically_bounded() -> None:
 
 def test_regime_detector_classifies_trend_and_tightens_exposure() -> None:
     detector = MarketRegimeDetector()
-    bull = detector.detect(candles(tuple(Decimal(100 + index) for index in range(20))))
+    bull = detector.detect(candles(tuple(Decimal(100 + index) for index in range(40))))
     assert bull.regime == MarketRegime.BULL_TRENDING
     assert bull.gross_exposure_multiplier == Decimal("1.00")
     crisis_prices = tuple(Decimal(100 + (10 if index % 2 else -10)) for index in range(20))
