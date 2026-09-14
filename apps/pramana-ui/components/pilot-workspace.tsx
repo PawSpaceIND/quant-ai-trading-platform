@@ -464,7 +464,7 @@ export function PilotWorkspace() {
                 {view === "research" && (
                   <>
                     <ResearchPanel data={data} />
-                    <TradeEvidencePanel data={data} />
+                    <TradeEvidencePanel data={data} onAsk={ask} />
                     <section className="panel">
                       <div className="panel-title">
                         <div>
@@ -1301,8 +1301,9 @@ function TradeRows({
   );
 }
 
-function TradeEvidencePanel({ data }: { data: Workspace }) {
+function TradeEvidencePanel({ data, onAsk }: { data: Workspace; onAsk: (prompt: string) => void }) {
   const report = data.runtime.tradeEvidence;
+  const strategy = data.runtime.strategyEvidence;
   const summary = report?.status === "ok" ? report.summary : undefined;
   const numeric = (value: string | null | undefined) => value != null && Number.isFinite(Number(value)) ? Number(value) : undefined;
   return <section className="panel">
@@ -1319,7 +1320,20 @@ function TradeEvidencePanel({ data }: { data: Workspace }) {
       </div>
       <p className="footnote">Ledger {report!.ledgerId} · Generated {report!.generatedAt} · {report!.currency}. Source hash: {report!.sourceSha256.slice(0, 16)}… Full hash is included in the evidence export.</p>
     </>}
-    <p className="muted">A trade runs from flat position to flat position, including scaling and partial exits. Open episodes are excluded. These are account-level paper results, not strategy attribution, calibrated confidence or verified forward performance. Recorded fees are included; AI/infrastructure costs and data-quality uncertainty remain outside these figures.</p>
+    <div className="panel-title"><div><span className="eyebrow">ACTIVE CONFIGURATION ONLY</span><h3>Strategy-linked evidence</h3></div></div>
+    {strategy?.status === "ok" ? <>
+      <div className="metric-grid research-metrics">
+        <Metric label="Linked completed trades" value={String(strategy.summary.completedTrades)} note={`${strategy.summary.openEpisodes} linked open episodes`} />
+        <Metric label="Configuration-qualified days" value={String(data.strategyObservation?.days ?? 0)} note="At least 300 distinct fresh minute samples per day" />
+        <Metric label="Linked net closed P&L" value={money(numeric(strategy.summary.netPnl))} note="INR · recorded cash fees deducted" />
+        <Metric label="Unresolved episodes" value={String(strategy.unresolvedEpisodes)} note="Mixed or unproven episodes in the observation period" />
+        <Metric label="Foreign / unproven open episodes" value={String(strategy.foreignOpenEpisodes)} note="These prevent acceptance and qualifying observations" />
+        <Metric label="Unlinked account trades" value={String(strategy.unlinkedAccountCompletedTrades)} note="Included in account totals; excluded from strategy metrics" />
+      </div>
+      <p className="footnote">Configuration {strategy.strategySha256.slice(0,16)}… · Evidence {strategy.evidenceSha256.slice(0,16)}… · Ledger {strategy.ledgerId}. Full hashes are in the evidence export. Every fill, including protective exits, must link to the same intact configuration. A review must match these after-fee metrics; linkage does not establish genuine market data, AI calibration or profitability.</p>
+    </> : <p className="empty">No current strategy-linked report. Legacy or missing proof cannot establish configuration ownership.</p>}
+    <button onClick={() => onAsk("Explain the active configuration's strategy-linked evidence and unresolved episodes. Compare linked results with account totals and explain the missing qualification requirements. Do not infer profitability from these counts.")}>Discuss this evidence with Atlas ↗</button>
+    <p className="muted">The account totals include every flat-to-flat episode, including scaling and partial exits. Open episodes are excluded. The separate strategy figures require configuration linkage. Neither set establishes calibrated confidence or verified forward performance. Recorded fees are included; AI/infrastructure costs and data-quality uncertainty remain outside these figures.</p>
   </section>;
 }
 

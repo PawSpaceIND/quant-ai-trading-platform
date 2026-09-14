@@ -14,5 +14,6 @@
   "profit_factor": "0",
   "profitable_regimes": 0,
   "paper_days": 0,
-  "strategy_config_sha256": ""
+  "strategy_config_sha256": "",
+  "strategy_evidence_sha256": ""
 }

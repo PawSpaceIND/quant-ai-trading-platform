@@ -72,6 +72,7 @@ class ProtectiveExitEngine:
     ) -> None:
         self.broker = broker
         self.mark_resolver = mark_resolver
+        self.strategy_manifest_provider = None
         self.tenant_id = tenant_id
         self.dispatcher = dispatcher or TradingNotificationDispatcher()
         self.strategy_id = strategy_id
@@ -147,7 +148,15 @@ class ProtectiveExitEngine:
         observation = {"symbol": position.symbol, "price": str(mark),
             "source": str(observation.get("source", "unavailable"))[:128],
             "source_timestamp": str(observation["source_timestamp"]) if observation.get("source_timestamp") else None}
+        binding = None
+        if self.strategy_manifest_provider is not None:
+            try:
+                binding = self.strategy_manifest_provider(now)
+            except Exception as error:  # noqa: BLE001 - metadata failure must never suppress protection
+                LOGGER.warning("protective_strategy_evidence_unavailable error=%s", type(error).__name__)
+                binding = {"status": "unavailable", "issues": ["evidence_capture_failed"]}
         proof = {
+            "runtime_strategy": binding,
             "schema": "pramana.protective_exit.v1", "event_type": "protective_exit",
             "decision_id": "PROTECTION-" + uuid4().hex,
             "generated_at": now.isoformat(), "trigger": trigger.value, "threshold": str(threshold),

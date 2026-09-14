@@ -58,6 +58,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  strategyObservation?: {days:number;daily:{date:string;minutes:number}[];source:string};
   research: ResearchReport | null;
   portfolio: Portfolio;
   market: MarketSnapshot;

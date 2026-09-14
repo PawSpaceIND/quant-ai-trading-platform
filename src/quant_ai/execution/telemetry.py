@@ -14,6 +14,9 @@ class PilotTelemetry:
     def __init__(self, daemon) -> None:
         self.daemon = daemon
         self.broker = daemon.tracker.broker
+        self._strategy_report = None
+        self._strategy_sha = None
+        self._strategy_evidence = None
         with self.broker._lock, self.broker._connection:
             self.broker._connection.executescript("""
                 CREATE TABLE IF NOT EXISTS paper_live_valuations (
@@ -55,6 +58,23 @@ class PilotTelemetry:
                 if daemon.scheduler.calendar.state(daemon.instruments[0].market, previous_session) == MarketState.REGULAR_HOURS:
                     break
                 previous_session -= timedelta(days=1)
+            manifest = daemon.strategy_manifest.summary if daemon.strategy_manifest else None
+            strategy_sha = manifest.get("sha256") if manifest else None
+            if self._strategy_report is not daemon.trade_evidence or self._strategy_sha != strategy_sha:
+                from quant_ai.validation.strategy_attribution import select_strategy_evidence
+                selected = select_strategy_evidence(daemon.trade_evidence, strategy_sha)
+                self._strategy_evidence = ({key: value for key, value in selected.items()
+                    if key not in {"completedEpisodeOrderIds", "openEpisodeOrderIds", "unresolvedOrderIds"}}
+                    if selected else None)
+                self._strategy_report = daemon.trade_evidence
+                self._strategy_sha = strategy_sha
+            strategy_evidence = self._strategy_evidence if self._strategy_evidence and self._strategy_evidence["ledgerId"] == ledger_id else None
+            binding_age = ((now - datetime.fromisoformat(manifest["checkedAt"])).total_seconds()
+                if manifest and manifest.get("checkedAt") else float("inf"))
+            strategy_observation = {"manifestSha256": strategy_sha,
+                "eligible": bool(manifest and manifest.get("status") == "matched" and -5 <= binding_age <= 10
+                    and strategy_evidence and strategy_evidence["foreignOpenEpisodes"] == 0
+                    and strategy_evidence["unresolvedEpisodes"] == 0 and not daemon.kill_switch.engaged)}
             payload = {
                 "status": "ok" if all_fresh else "degraded", "tenantId": daemon.tenant_id,
                 "currency": daemon.instruments[0].currency, "markMode": "engine_live",
@@ -67,6 +87,7 @@ class PilotTelemetry:
                 "updatedAt": now.isoformat(), "allMarksFresh": all_fresh,
                 "previousSessionDate": previous_session.date().isoformat(),
                 "sessionDate": now.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat(),
+                "strategyObservation": strategy_observation,
                 "qualifyingSession": all_fresh and all(self.fresh(i, now)[0] for i in daemon.instruments)
                     and daemon.scheduler.calendar.state(daemon.instruments[0].market, now) == MarketState.REGULAR_HOURS,
             }
@@ -78,8 +99,9 @@ class PilotTelemetry:
                 "halted": daemon.kill_switch.engaged, "haltReason": daemon.kill_switch.reason,
                 "watchlist": watchlist, "protectionIntervalSeconds": 1,
                 "strategyManifest": daemon.strategy_manifest.summary if daemon.strategy_manifest else None,
+                "strategyEvidence": strategy_evidence,
                 "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
-                    if key not in {"episodes", "openPositions"}}
+                    if key not in {"episodes", "openPositions", "strategyAttribution"}}
                     if daemon.trade_evidence and daemon.trade_evidence["ledgerId"] == ledger_id else None),
                 "reconciliation": ({**daemon.reconciliation,
                     "status": "outdated" if daemon.reconciliation["status"] == "matched"

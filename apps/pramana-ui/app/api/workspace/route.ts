@@ -1,3 +1,4 @@
+import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy-evidence";
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
 import fs from "node:fs";
@@ -33,7 +34,10 @@ export async function GET() {
     const haltRequested = fs.existsSync(/* turbopackIgnore: true */ haltedFile);
     const strategyReview = reviewedGate("strategy", runtime),
       recoveryReview = reviewedGate("recovery");
-    const completedTrades = runtime.tradeEvidence?.status === "ok" ? runtime.tradeEvidence.summary?.completedTrades : undefined;
+    const strategySha = runtime.strategyManifest?.sha256;
+    const strategyEvidence = runtime.strategyEvidence;
+    const strategyObservation = strategyObservationDays(strategySha, strategyEvidence?.incompatibleSessionDates, strategyEvidence?.coverageStartedAt);
+    const completedTrades = strategyEvidence?.status === "ok" ? strategyEvidence.summary?.completedTrades : undefined;
     const reconciliationAge = Date.now() - Date.parse(runtime.reconciliation?.checkedAt || "");
     const checks = [
       {
@@ -49,6 +53,12 @@ export async function GET() {
         id: "strategy_manifest",
         title: "Running strategy configuration",
         ...verifiedRuntimeManifest(runtime),
+      },
+      {
+        id: "strategy_evidence",
+        title: "Strategy evidence coverage",
+        pass: runtime.status === "running" && !!strategySha && currentStrategyEvidence(runtime,strategySha),
+        detail: strategyEvidence ? `${strategyEvidence.unresolvedEpisodes} unresolved episodes; ${strategyEvidence.foreignOpenEpisodes} foreign or unproven open episodes. Coverage must be complete for the active configuration; account totals retain unproven trades.` : "No current configuration-linked episode report.",
       },
       {
         id: "reconciliation",
@@ -103,8 +113,8 @@ export async function GET() {
       {
         id: "evidence",
         title: "Forward observation",
-        pass: perf.days >= 30 && strategyReview.pass && Number.isInteger(completedTrades) && (completedTrades ?? 0) >= 100,
-        detail: `${perf.days} observed days; ${completedTrades ?? "unavailable"} completed paper trade episodes (minimum 100). ${strategyReview.detail} Counts alone are not approval.`,
+        pass: strategyObservation.days >= 30 && strategyReview.pass && !!strategySha && currentStrategyEvidence(runtime,strategySha) && Number.isInteger(completedTrades) && (completedTrades ?? 0) >= 100,
+        detail: `${strategyObservation.days} configuration-qualified days; ${completedTrades ?? "unavailable"} strategy-linked completed trades (minimum 100). ${strategyReview.detail} Counts alone are not approval.`,
       },
       {
         id: "recovery",
@@ -120,6 +130,7 @@ export async function GET() {
         runtime,
         research: readResearch(),
         performance: perf,
+        strategyObservation,
         intelligence: latestSwarmIntelligence(),
         checks,
         audit,

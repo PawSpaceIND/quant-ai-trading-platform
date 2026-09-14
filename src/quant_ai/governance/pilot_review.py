@@ -24,6 +24,8 @@ def review(artifact: dict, gate: str, *, tenant: str, revision: str) -> None:
             raise ValueError("Strategy review is incomplete")
         if not re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("strategy_config_sha256", ""))):
             raise ValueError("Pin the reviewed strategy configuration and model/prompt versions")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("strategy_evidence_sha256", ""))):
+            raise ValueError("Pin the reviewed strategy-linked episode evidence hash")
         if any(type(artifact.get(k)) is not int or artifact[k] < 0 for k in ("sample_trades", "profitable_regimes", "paper_days")):
             raise ValueError("Evidence counts must be nonnegative integers")
         evidence = StrategyEvidence(**{k: int(artifact[k]) if k in {"sample_trades", "profitable_regimes", "paper_days"} else Decimal(str(artifact[k])) for k in StrategyEvidence.__dataclass_fields__})

@@ -36,7 +36,15 @@ export type LivePortfolio = {
   }>;
   equityCurve: Array<{ timestamp: string; equity: number }>;
 };
+export type StrategyEpisodeEvidence = {
+  schema: string; status: string; strategySha256: string; sourceSha256: string; evidenceSha256: string;
+  generatedAt: string; coverageStartedAt: string; ledgerId: number; unresolvedEpisodes: number; foreignOpenEpisodes: number;
+  unlinkedAccountCompletedTrades: number; incompatibleSessionDates: string[];
+  summary: {completedTrades: number; openEpisodes: number; netPnl: string; expectancy: string | null;
+    profitFactor: string | null; profitFactorState: string; winRate: string | null; closedCashFees: string};
+};
 export type Runtime = {
+  strategyEvidence?: StrategyEpisodeEvidence | null;
   strategyManifest?: {status: string; sha256?: string; bootSha256?: string; sourceSha256?: string;
     releaseRevision?: string; checkedAt: string; sourceCheckAgeSeconds?: number; issues: string[]} | null;
   tradeEvidence?: {status: string; currency?: string; ledgerId: number; fillCount: number; generatedAt: string; sourceSha256: string; reason?: string; summary?: {

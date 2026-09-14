@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, createHmac } from "node:crypto";
 import { constantEqual } from "./auth";
 import { hasTable, ledgerPath, openLedger, tenantId } from "./db";
+import { currentStrategyEvidence, sameEvidenceMetric, strategyObservationDays } from "./strategy-evidence";
 import { readRuntime, type Runtime } from "./pilot";
 
 export function verifiedRuntimeManifest(runtime: Runtime): {pass: boolean; detail: string; sha256?: string} {
@@ -87,9 +88,24 @@ export function reviewedGate(gate: "strategy" | "recovery", runtime?: Runtime): 
     )
       throw new Error();
     if (gate === "strategy") {
-      const active = verifiedRuntimeManifest(runtime ?? readRuntime());
+      const running = runtime ?? readRuntime();
+      const active = verifiedRuntimeManifest(running);
       if (!active.pass || active.sha256 !== r.artifact?.strategy_config_sha256) {
         return {pass:false,detail:`Strategy review does not match verified running configuration. ${active.detail}`};
+      }
+      const evidence=running.strategyEvidence;
+      if (!active.sha256 || !currentStrategyEvidence(running,active.sha256) || !evidence
+          || evidence.evidenceSha256 !== r.artifact?.strategy_evidence_sha256
+          || evidence.summary.completedTrades !== r.artifact?.sample_trades
+          || evidence.summary.completedTrades < 100
+          || !sameEvidenceMetric(r.artifact?.expectancy,evidence.summary.expectancy)
+          || !sameEvidenceMetric(r.artifact?.profit_factor,evidence.summary.profitFactor)
+          || Number(evidence.summary.expectancy)<=0 || Number(evidence.summary.profitFactor)<1.2) {
+        return {pass:false,detail:"Strategy review does not match current, complete strategy-linked trade evidence and after-fee metrics."};
+      }
+      const observed=strategyObservationDays(active.sha256,evidence.incompatibleSessionDates,evidence.coverageStartedAt);
+      if (!Number.isInteger(r.artifact?.paper_days) || r.artifact.paper_days<30 || r.artifact.paper_days>observed.days) {
+        return {pass:false,detail:`Review claims do not match configuration-qualified observation days (${observed.days} recorded).`};
       }
     }
     return {

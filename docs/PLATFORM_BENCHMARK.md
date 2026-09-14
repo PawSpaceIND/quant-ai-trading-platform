@@ -147,3 +147,7 @@ The workspace now provides distinct shocks by holding, per-holding scenario P&L 
 ## Implementation delta — internal accounting reconciliation
 
 Paper account state is now reconstructed from fills and recorded cash-debit fees and compared with persisted cash, quantities, average prices and protection levels. Pilot entries fail closed on discrepancies, daemon fault halts persist, and the dashboard exposes the checked ledger version and freshness. [Rules and evidence](PAPER_RECONCILIATION.md). This improves the accounting foundation but does not substitute for QuantConnect-style live/backtest reconciliation or an independent broker order/cash/position reconciliation service; those remain open.
+
+## Implementation delta — strategy evidence ownership
+
+Research now separates account totals from exact-configuration completed episodes. Canonical fill/protective proofs, runtime manifests, fees and timing must match; mixed or missing evidence remains visible and unresolved losses cannot be silently excluded from acceptance. Observation days are filtered to the same configuration, and operator reviews must match the strategy evidence hash, count and after-fee metrics. [Ownership and limits](STRATEGY_EPISODE_ATTRIBUTION.md). This improves strategy evaluation integrity; it is not Bloomberg-style factor/performance attribution, verified AI effectiveness or full benchmark parity.

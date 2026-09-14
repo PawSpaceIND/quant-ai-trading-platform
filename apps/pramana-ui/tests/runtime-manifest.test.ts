@@ -31,7 +31,7 @@ function sign(strategyHash=sha) {
 test("strategy review needs fresh engine evidence even when environment and attestation hashes agree", async () => {
   const { reviewedGate } = await import("../lib/review");
   sign();
-  assert(reviewedGate("strategy",fresh()).pass);
+  assert.match(reviewedGate("strategy",fresh()).detail,/trade evidence/);
   assert(!reviewedGate("strategy",{status:"running",mode:"paper"}).pass);
   sign("c".repeat(64));
   assert(!reviewedGate("strategy",fresh()).pass);

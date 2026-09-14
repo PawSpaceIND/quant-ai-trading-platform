@@ -148,6 +148,8 @@ class AutonomousTradingDaemon:
             self.apply_operator_halt()
             self.protective_exits = self.sweep_protective_exits(timestamp)
             if self.telemetry is not None:
+                if any(exit.filled for exit in self.protective_exits):
+                    self._reconcile_pilot()
                 if self.strategy_manifest is not None:
                     manifest = self.strategy_manifest.check(timestamp)
                     if manifest['status'] in {'changed', 'unavailable'}:
@@ -166,6 +168,9 @@ class AutonomousTradingDaemon:
         self.strategy_manifest = RuntimeManifest(self, streams, **options)
         self.strategy_manifest.check(self.clock())
         self.scheduler.pipeline.runtime.strategy_manifest_provider = lambda: self.strategy_manifest.summary
+        self.exit_engine.strategy_manifest_provider = lambda now: self.strategy_manifest.check(now, force_source=True)
+        if self.telemetry is not None:
+            self._reconcile_pilot()
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
         return ProtectiveExitEngine(
@@ -352,6 +357,8 @@ class AutonomousTradingDaemon:
                         country_exposure=exposure,
                     )
                 briefs.append(brief)
+            if self.telemetry is not None:
+                self._reconcile_pilot()
             self.briefs = tuple(briefs)
             brief = self._primary_brief(briefs)
             metrics = self.tracker.metrics(timestamp)
