@@ -15,6 +15,7 @@ from typing import Any
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
@@ -388,10 +389,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         ib_host=os.getenv("PRAMANA_IB_HOST", "127.0.0.1"),
         ib_port=int(os.getenv("PRAMANA_IB_PORT", "7497")),
         ib_client_id=int(os.getenv("PRAMANA_IB_CLIENT_ID", "17")),
-        database=os.getenv("PRAMANA_PAPER_DB", "/var/lib/pramana/pramana.db"),
-        tenant_id=os.getenv("PRAMANA_TENANT_ID", "ghost"),
+        database=str(paths.ledger_path("PRAMANA_PAPER_DB")),
+        tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
-        xai_directory=os.getenv("PRAMANA_XAI_DIR", "/var/lib/pramana/xai"),
+        xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),
         llm_client=AnthropicSwarmClient(),
         instrument=instrument,
         include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
