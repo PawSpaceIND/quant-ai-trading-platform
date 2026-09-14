@@ -314,7 +314,7 @@ function TradeRows({ trade, expanded, onToggle }: { trade: Trade; expanded: bool
 }
 
 function ProofDetail({ trade }: { trade: Trade }) {
-  if (!trade.proof) return <div><div className="text-xs font-medium text-slate-300">Pramana Proof unavailable for this fill</div><p className="mt-2 max-w-3xl text-xs leading-5 text-slate-600">The current XAI schema does not persist the broker order ID, so this UI refuses to associate a rationale by timestamp or symbol guesswork. The fill remains visible, but no proof is claimed.</p><div className="mt-3 font-mono text-[10px] text-slate-700">{trade.orderId}</div></div>;
+  if (!trade.proof) return <div><div className="text-xs font-medium text-slate-300">Pramana Proof unavailable for this fill</div><p className="mt-2 max-w-3xl text-xs leading-5 text-slate-600">No proof carries this fill's order ID. Either the decision predates order-id linking or its proof file is missing. This UI refuses to associate a rationale by timestamp or symbol guesswork, so the fill remains visible but no proof is claimed.</p><div className="mt-3 font-mono text-[10px] text-slate-700">{trade.orderId}</div></div>;
   return <div className="grid gap-5 lg:grid-cols-3"><div><ProofLabel>Declared rationale</ProofLabel><ul className="mt-2 space-y-1 text-xs leading-5 text-slate-400">{trade.proof.rationale.map((item) => <li key={item}>— {item}</li>)}</ul></div><div><ProofLabel>Stress verdict</ProofLabel><KeyValues values={trade.proof.stress} /></div><div><ProofLabel>Risk verdict</ProofLabel><KeyValues values={trade.proof.risk} /></div></div>;
 }
 

@@ -114,6 +114,7 @@ class PortfolioTracker:
             peak_equity=metrics.high_water_mark,
             symbol_exposure=symbol_exposure,
             asset_exposure=asset_exposure,
+            symbol_quantity={item.symbol: item.quantity for item in metrics.positions},
         )
 
     def _mark_position(self, position: BrokerPosition) -> MarkedPosition:

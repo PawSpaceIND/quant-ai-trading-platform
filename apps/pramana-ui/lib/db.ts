@@ -44,6 +44,12 @@ export function hasTable(db: DatabaseSync, name: string): boolean {
   return Boolean(row?.present);
 }
 
+export function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  // PRAGMA cannot take bound parameters; callers pass literal table names only.
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}
+
 export type LedgerRow = {
   id: number;
   order_id: string;

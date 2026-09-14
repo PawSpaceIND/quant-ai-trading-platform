@@ -43,11 +43,7 @@ class RiskFirewall:
         # Directionality. On this long-only ledger a SELL unwinds exposure up to the amount
         # held; only the slice beyond the holding would *add* (short) exposure and is
         # therefore the only slice the caps apply to. A BUY adds all of its notional.
-        if order.side == Side.SELL:
-            reducing = min(notional, max(current_symbol, Decimal(0)))
-            adding = notional - reducing
-        else:
-            reducing, adding = Decimal(0), notional
+        reducing, adding = self._exposure_delta(order, portfolio, notional, current_symbol)
 
         if adding == 0:
             # Pure de-risking. Neither the concentration caps nor the loss/drawdown halts
@@ -74,4 +70,43 @@ class RiskFirewall:
         projected_gross = portfolio.gross_exposure - reducing + adding
         if projected_gross > portfolio.equity * self.policy.max_gross_exposure:
             return RiskDecision(False, "gross_exposure_limit")
+        # An order that opens exposure must carry its stop on the losing side: below the
+        # reference for a long, above it for a short. A pure unwind returned earlier and
+        # is never held to stop geometry.
+        if order.stop_price is not None and not _stop_on_loss_side(order):
+            return RiskDecision(False, "protective_stop_wrong_side")
         return RiskDecision(True, "approved")
+
+    @staticmethod
+    def _exposure_delta(
+        order: OrderIntent,
+        portfolio: PortfolioSnapshot,
+        notional: Decimal,
+        current_symbol: Decimal,
+    ) -> tuple[Decimal, Decimal]:
+        """Split an order into (exposure unwound, exposure added).
+
+        A BUY adds all of its notional. A SELL unwinds what is held and only the
+        units beyond the holding add (short) exposure. When the snapshot carries
+        held quantities the split is exact by units, so a full liquidation is a
+        pure unwind even when the mark has drifted from the reference price; a
+        snapshot without quantities falls back to the notional split.
+        """
+        if order.side != Side.SELL:
+            return Decimal(0), notional
+        held = portfolio.symbol_quantity.get(order.symbol)
+        if held is None:
+            reducing = min(notional, max(current_symbol, Decimal(0)))
+            return reducing, notional - reducing
+        if held <= 0:
+            return Decimal(0), notional
+        covered = min(order.quantity, held)
+        reducing = max(current_symbol, Decimal(0)) * Decimal(covered) / Decimal(held)
+        return reducing, order.reference_price * (order.quantity - covered)
+
+
+def _stop_on_loss_side(order: OrderIntent) -> bool:
+    assert order.stop_price is not None
+    if order.side == Side.BUY:
+        return order.stop_price < order.reference_price
+    return order.stop_price > order.reference_price

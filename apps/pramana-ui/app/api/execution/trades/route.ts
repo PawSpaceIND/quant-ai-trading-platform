@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
-import { readProofs } from "@/lib/proofs";
+import { proofsByOrderId } from "@/lib/proofs";
 
 export const dynamic = "force-dynamic";
 
@@ -12,12 +12,7 @@ export async function GET() {
     const trades = db.prepare(
       "SELECT * FROM paper_ledger WHERE tenant_id=? ORDER BY id DESC LIMIT 100",
     ).all(tenantId) as LedgerRow[];
-    const proofs = readProofs(200);
-    const byOrder = new Map(
-      proofs
-        .filter(({ proof }) => typeof proof.order_id === "string")
-        .map(({ file, proof }) => [proof.order_id as string, { file, proof }]),
-    );
+    const byOrder = proofsByOrderId();
     return NextResponse.json({
       status: "ok",
       tenantId,

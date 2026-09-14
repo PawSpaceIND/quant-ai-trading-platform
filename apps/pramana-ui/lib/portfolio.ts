@@ -1,4 +1,4 @@
-import { CostRow, hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
+import { CostRow, hasColumn, hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
 
 type PositionState = { quantity: number; average: number; market: string; assetClass: string };
 
@@ -53,7 +53,12 @@ export function readPortfolio() {
     const cash = Number(account.cash_balance);
     const totalEquity = cash + holdings.reduce((sum, row) => sum + row.marketValue, 0);
     const equityCurve = buildEquityCurve(Number(account.starting_capital), entries, costs);
-    const highWaterMark = Math.max(Number(account.starting_capital), ...equityCurve.map((point) => point.equity));
+    // The engine persists its intra-run peak (paper_accounts.peak_equity) so the drawdown
+    // breaker survives restarts; the tile shows that same peak, not just the fill-to-fill one.
+    const persistedPeak = hasColumn(db, "paper_accounts", "peak_equity")
+      ? Number((db.prepare("SELECT peak_equity FROM paper_accounts WHERE tenant_id=?").get(tenantId) as { peak_equity: string | null } | undefined)?.peak_equity ?? 0)
+      : 0;
+    const highWaterMark = Math.max(Number(account.starting_capital), persistedPeak, ...equityCurve.map((point) => point.equity));
     const drawdown = highWaterMark > 0 ? Math.max(0, (highWaterMark - totalEquity) / highWaterMark) : 0;
     return {
       status: "ok",

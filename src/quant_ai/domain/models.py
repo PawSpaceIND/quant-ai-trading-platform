@@ -70,6 +70,9 @@ class PortfolioSnapshot:
     peak_equity: Decimal | None = None
     symbol_exposure: dict[str, Decimal] = field(default_factory=dict)
     asset_exposure: dict[AssetClass, Decimal] = field(default_factory=dict)
+    # Held units per symbol. Lets the risk firewall tell an unwind apart from a
+    # short open by quantity rather than by mark-vs-reference notional drift.
+    symbol_quantity: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

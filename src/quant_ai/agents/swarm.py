@@ -8,6 +8,7 @@ from decimal import Decimal
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
 from quant_ai.domain.models import AssetClass, Market, Side
+from quant_ai.risk.stops import orient_protective_levels
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,10 @@ class AtlasCIOAgent:
             side = Side.BUY
         elif action in {Stance.SELL, Stance.STRONG_SELL}:
             side = Side.SELL
+        # The pipeline computes levels before the side is known; orient them now.
+        stop_price, take_profit_price = orient_protective_levels(
+            side, reference_price, stop_price, take_profit_price
+        )
         return TradeProposal(
             decision.cycle_id, request.subject, request.market, country,
             request.asset_class, side, quantity, reference_price, stop_price,
