@@ -87,6 +87,7 @@ class AutonomousTradingDaemon:
         self._logger = logging.getLogger("quant_ai.daemon")
         self.telemetry = None
         self.reconciliation = None
+        self.trade_evidence = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -106,8 +107,12 @@ class AutonomousTradingDaemon:
     def _reconcile_pilot(self) -> bool:
         self.reconciliation = self.tracker.broker.reconcile(self.tenant_id)
         if self.reconciliation["status"] != "matched":
+            self.trade_evidence = None
             self.engage_kill_switch("paper_ledger_reconciliation_failed")
             return False
+        from quant_ai.validation.trade_evidence import build_trade_evidence
+        with self.tracker.broker._lock:
+            self.trade_evidence = build_trade_evidence(self.tracker.broker._connection, self.tenant_id)
         return True
 
     def _pilot_pre_submit(self, proposal) -> str | None:

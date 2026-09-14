@@ -464,6 +464,7 @@ export function PilotWorkspace() {
                 {view === "research" && (
                   <>
                     <ResearchPanel data={data} />
+                    <TradeEvidencePanel data={data} />
                     <section className="panel">
                       <div className="panel-title">
                         <div>
@@ -1283,6 +1284,28 @@ function TradeRows({
       )}
     </>
   );
+}
+
+function TradeEvidencePanel({ data }: { data: Workspace }) {
+  const report = data.runtime.tradeEvidence;
+  const summary = report?.status === "ok" ? report.summary : undefined;
+  const numeric = (value: string | null | undefined) => value != null && Number.isFinite(Number(value)) ? Number(value) : undefined;
+  return <section className="panel">
+    <span className="eyebrow">RECONCILED PAPER LEDGER</span>
+    <h2>Completed-trade evidence</h2>
+    {!summary ? <p className="empty">{report?.reason || "No current trade-episode report. The engine checks at startup and before entries; new fills require a new report."}</p> : <>
+      <div className="metric-grid research-metrics">
+        <Metric label="Completed trades" value={String(summary.completedTrades)} note={`${report!.fillCount} fills · ${summary.openEpisodes} open episodes`} />
+        <Metric label="Net closed-trade P&L" value={money(numeric(summary.netPnl))} note="INR · recorded cash fees deducted" />
+        <Metric label="Average P&L per trade" value={money(numeric(summary.expectancy))} note="Historical sample mean, not forecast expectancy" />
+        <Metric label="Win rate" value={pct(numeric(summary.winRate))} note={`${summary.wins} wins · ${summary.losses} losses · ${summary.breakeven} flat`} />
+        <Metric label="Profit factor" value={numeric(summary.profitFactor)?.toFixed(2) ?? "—"} note={summary.profitFactorState === "no_observed_losses" ? "No observed losses; ratio undefined" : "Net gains / absolute net losses"} />
+        <Metric label="Closed / open cash fees" value={`${money(numeric(summary.closedCashFees))} / ${money(numeric(summary.openCashFees))}`} note="Open-episode fees stay outside closed-trade statistics" />
+      </div>
+      <p className="footnote">Ledger {report!.ledgerId} · Generated {report!.generatedAt} · {report!.currency}. Source hash: {report!.sourceSha256.slice(0, 16)}… Full hash is included in the evidence export.</p>
+    </>}
+    <p className="muted">A trade runs from flat position to flat position, including scaling and partial exits. Open episodes are excluded. These are account-level paper results, not strategy attribution, calibrated confidence or verified forward performance. Recorded fees are included; AI/infrastructure costs and data-quality uncertainty remain outside these figures.</p>
+  </section>;
 }
 
 function ResearchPanel({ data }: { data: Workspace }) {

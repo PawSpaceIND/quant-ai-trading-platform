@@ -77,6 +77,9 @@ class PilotTelemetry:
                 "status": "running", "mode": "paper", "updatedAt": now.isoformat(),
                 "halted": daemon.kill_switch.engaged, "haltReason": daemon.kill_switch.reason,
                 "watchlist": watchlist, "protectionIntervalSeconds": 1,
+                "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
+                    if key not in {"episodes", "openPositions"}}
+                    if daemon.trade_evidence and daemon.trade_evidence["ledgerId"] == ledger_id else None),
                 "reconciliation": ({**daemon.reconciliation,
                     "status": "outdated" if daemon.reconciliation["status"] == "matched"
                         and daemon.reconciliation["ledgerId"] != ledger_id

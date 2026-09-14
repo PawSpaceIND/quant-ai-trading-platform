@@ -32,6 +32,7 @@ export async function GET() {
       path.join(path.dirname(ledgerPath()), "PRAMANA_HALT");
     const strategyReview = reviewedGate("strategy"),
       recoveryReview = reviewedGate("recovery");
+    const completedTrades = runtime.tradeEvidence?.status === "ok" ? runtime.tradeEvidence.summary?.completedTrades : undefined;
     const reconciliationAge = Date.now() - Date.parse(runtime.reconciliation?.checkedAt || "");
     const checks = [
       {
@@ -87,8 +88,8 @@ export async function GET() {
       {
         id: "evidence",
         title: "Forward observation",
-        pass: perf.days >= 30 && strategyReview.pass,
-        detail: `${perf.days} observed days. ${strategyReview.detail} Time alone is not approval.`,
+        pass: perf.days >= 30 && strategyReview.pass && Number.isInteger(completedTrades) && (completedTrades ?? 0) >= 100,
+        detail: `${perf.days} observed days; ${completedTrades ?? "unavailable"} completed paper trade episodes (minimum 100). ${strategyReview.detail} Counts alone are not approval.`,
       },
       {
         id: "recovery",

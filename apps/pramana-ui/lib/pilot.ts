@@ -37,6 +37,11 @@ export type LivePortfolio = {
   equityCurve: Array<{ timestamp: string; equity: number }>;
 };
 export type Runtime = {
+  tradeEvidence?: {status: string; currency?: string; ledgerId: number; fillCount: number; generatedAt: string; sourceSha256: string; reason?: string; summary?: {
+    completedTrades: number; openEpisodes: number; wins: number; losses: number; breakeven: number;
+    netPnl: string; expectancy: string | null; winRate: string | null; profitFactor: string | null;
+    profitFactorState: string; closedCashFees: string; openCashFees: string;
+  }} | null;
   reconciliation?: {status: string; checkedAt: string; ledgerId: number; issueCount: number; scope: string} | null;
   status: string;
   mode: string;

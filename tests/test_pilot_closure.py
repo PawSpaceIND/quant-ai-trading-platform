@@ -179,3 +179,36 @@ def test_direct_pilot_buy_cannot_bypass_reconciliation(tmp_path):
     assert len(broker.ledger_entries("pilot")) == before
     broker.sell(OrderIntent("INFY", Market.INDIA, Side.SELL, 1, Decimal(100), "test", tenant_id="pilot"))
     assert not broker.get_positions("pilot")
+
+
+def test_trade_evidence_follows_checked_ledger_and_never_counts_open_fill_as_trade(tmp_path):
+    runner = runner_for(tmp_path)
+    broker = runner.daemon.tracker.broker
+    broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
+    runner.daemon.telemetry.publish(datetime.now(timezone.utc))
+    state=json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
+    assert state["tradeEvidence"] is None
+    assert runner.daemon._reconcile_pilot()
+    runner.daemon.telemetry.publish(datetime.now(timezone.utc))
+    state=json.loads(broker._connection.execute("SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
+    assert state["tradeEvidence"]["fillCount"] == 1
+    assert state["tradeEvidence"]["summary"]["completedTrades"] == 0
+    assert "episodes" not in state["tradeEvidence"]
+
+
+def test_trade_evidence_refreshes_after_fee_correction_without_new_fill(tmp_path):
+    runner=runner_for(tmp_path)
+    broker=runner.daemon.tracker.broker
+    broker.buy(OrderIntent("INFY",Market.INDIA,Side.BUY,1,Decimal(100),"test",tenant_id="pilot"))
+    runner.daemon._reconcile_pilot()
+    before=runner.daemon.trade_evidence
+    row=broker._connection.execute("SELECT id,amount FROM paper_cost_ledger WHERE tenant_id='pilot' AND cash_debit=1 ORDER BY id LIMIT 1").fetchone()
+    cash=broker.get_margin("pilot").cash_balance
+    broker._connection.execute("UPDATE paper_cost_ledger SET amount=? WHERE id=?",(str(Decimal(row['amount'])+1),row['id']))
+    broker._connection.execute("UPDATE paper_accounts SET cash_balance=? WHERE tenant_id='pilot'",(str(cash-1),))
+    broker._connection.commit()
+    assert runner.daemon._reconcile_pilot()
+    after=runner.daemon.trade_evidence
+    assert after['ledgerId']==before['ledgerId']
+    assert after['sourceSha256']!=before['sourceSha256']
+    assert Decimal(after['summary']['openCashFees'])==Decimal(before['summary']['openCashFees'])+1
