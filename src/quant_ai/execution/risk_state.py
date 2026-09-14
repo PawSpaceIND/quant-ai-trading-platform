@@ -41,7 +41,7 @@ class InMemoryRiskStateStore(RiskStateStore):
                 for (tenant, day), values in self._daily.items()
                 if tenant == tenant_id and day < valuation_date
             ]
-            opening = max(prior, key=lambda item: item[0])[1] if prior else self.starting_capital
+            opening = max(prior, key=lambda item: item[0])[1] if prior else equity
             self._daily[key] = (opening, equity)
             return opening
 
@@ -114,7 +114,7 @@ class SQLiteRiskStateStore(RiskStateStore):
                 ORDER BY valuation_date DESC LIMIT 1""",
                 (tenant_id, day),
             ).fetchone()
-            opening = Decimal(prior["last_equity"]) if prior is not None else self.starting_capital
+            opening = Decimal(prior["last_equity"]) if prior is not None else equity
             self._connection.execute(
                 """INSERT INTO risk_daily_equity
                 (tenant_id, valuation_date, opening_equity, last_equity, updated_at)
