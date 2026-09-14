@@ -1,6 +1,6 @@
 # Company announcement workspace
 
-The private Markets screen reads the existing NSE company-event database. Search, saved-watchlist filtering, pagination, disclosure details, source links, revision and capture history, historical cutoffs, mapping review, private export and Atlas handoff are connected. This is stored research evidence, not a live news terminal, fundamental-data service or corporate-action accounting engine.
+The private Markets screen reads the existing NSE company-event database. Search, saved-watchlist filtering, pagination, disclosure details, source links, revision and capture history, historical cutoffs, mapping review/withdrawal, private export and Atlas handoff are connected. This is stored research evidence, not a live news terminal, fundamental-data service or corporate-action accounting engine.
 
 ## Configuration and collection
 
@@ -13,9 +13,9 @@ This is a single-founder private workspace. The server selects the database; cli
 ## Dates, revisions and mappings
 
 - A historical cutoff includes only revisions first observed by that time and mappings recorded by that time. Publication time alone cannot backdate availability.
-- The latest known revision for a GUID supersedes older content before symbol filtering. A newer unmapped correction cannot revive the old mapped announcement. Equally recent conflicting revisions are withheld from automatic symbol-specific context.
+- The latest known revision for a GUID supersedes older content before symbol filtering. A newer unmapped correction cannot revive the old mapped announcement. Equally recent conflicting revisions or mapping reviews are withheld from automatic symbol-specific context. Both readers preserve microsecond cutoff precision.
 - Mapping review requires an exact known company title, an NSE symbol from the configured market list, a reference and an explicit checked assertion. Saving appends a server-timestamped record. Stale competing requests fail with 409; no history is overwritten or backdated. The Python research reader consumes the same rows.
-- Historical views disable mapping changes. Correction to a different supported symbol is possible by appending another review. Mapping revocation/unmapping is not yet implemented; a rejected source should be withheld operationally until that workflow exists.
+- Historical views disable mapping changes. Correction to a different supported symbol and withdrawal are available through dated, append-only reviews. See the [mapping lifecycle](COMPANY_MAPPING_LIFECYCLE.md) for concurrency, precise cutoff and rollback rules.
 - Capture failure and age remain visible. The 24-hour age threshold is a display convention, not proof of complete session coverage. Imported XML remains labelled imported.
 
 Raw capture hashes and revision-content hashes are checked. Stored capture linkage is checked against observation time and capture kind. The reader does not independently reparse raw XML to certify economic facts. The report digest fingerprints the entire current stored evidence inventory; in a historical view it is an inventory identifier, not a historical model feature or external signature. Future revision counts are diagnostics only.
@@ -38,3 +38,6 @@ Automatic company context includes at most 30 mapped, unambiguous records with t
 - The actual browser-to-API request persisted cutoff `2026-01-01T04:00:25.000Z`, one corrected disclosure and no current portfolio/market context. With the provider key empty it saved and displayed the expected setup error. A separate mocked provider test verifies that earlier chat and later company content are absent from the outbound request.
 
 All checks in this increment used isolated synthetic evidence. No external provider request, live source fetch, order, deployment or real acceptance was performed. Real source completeness, independently reviewed mappings, prospective provider outcomes and target-host operations remain open.
+
+
+The subsequent [mapping lifecycle increment](COMPANY_MAPPING_LIFECYCLE.md) adds withdrawal/re-review, explicit withdrawn/conflicting state, persistent save feedback and microsecond eligibility. Its 507/43/13 regression and browser/API/CLI verification supersede the corresponding missing-work items above.

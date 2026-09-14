@@ -197,3 +197,8 @@ Schema 2 recovery now preserves explicitly selected research journals, raw compa
 ## Implementation delta — dated company announcement workspace
 
 Company disclosures now have search, saved-watchlist filtering, revision/capture history, cutoff views, append-only mapping review, private export and cutoff-scoped Atlas requests. A later unmapped correction cannot resurrect older mapped content, and equal-time conflicts are withheld. The initial company-event UI gap is superseded by [synthetic engineering/browser/API verification](COMPANY_EVENT_WORKSPACE.md). This adds source inspection and research interaction; it does not supply Bloomberg PORT corporate-action accounting, financial statements, factor/return attribution, complete point-in-time archives or independently qualified company facts. Mapping revocation, real NSE collection/coverage, source rights and prospective provider qualification remain open.
+
+
+## Implementation delta — reversible company mapping reviews
+
+The private workspace and CLI now support dated mapping withdrawal and later re-review. Current watchlist and automatic Atlas evidence exclude withdrawn/conflicting links, historical availability retains microsecond precision, and recovery preserves the withdrawal journal. [Synthetic verification and limits](COMPANY_MAPPING_LIFECYCLE.md). This supersedes the mapping-revocation gap above. It does not certify instrument-master correctness or add corporate-action portfolio processing, factor attribution, broad licensed data, external broker reconciliation or live/backtest parity.

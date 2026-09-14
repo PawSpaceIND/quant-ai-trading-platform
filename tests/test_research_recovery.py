@@ -202,3 +202,17 @@ def test_legacy_bundle_remains_restorable_without_implying_research_coverage(tmp
     result = bundle.restore(tmp_path / "backup", tmp_path / "restored", manifest_sha256=bundle.digest(path))
     assert result["status"] == "restored"
     assert result["researchRecovery"]["status"] == "not_selected"
+
+
+def test_restored_withdrawal_does_not_resurrect_company_mapping(tmp_path):
+    spec = research_fixture(tmp_path)
+    with closing(CompanyEvents(spec["research_state"]["events"]["path"])) as events:
+        record = events.revoke_company("Infosys Limited", "withdrawn before backup", at(11))
+        expected = events.db.execute("SELECT * FROM symbol_mappings ORDER BY verified_at").fetchall()
+    manifest = bundle.create(spec, tmp_path / "backup", writers_stopped=True)
+    result = bundle.restore(tmp_path / "backup", tmp_path / "restored", manifest_sha256=manifest["manifestSha256"])
+    assert result["researchRecovery"]["status"] == "selected_state_verified"
+    with closing(CompanyEvents(tmp_path / "restored" / "research-state" / "events", readonly=True)) as events:
+        assert events.db.execute("SELECT * FROM symbol_mappings ORDER BY verified_at").fetchall() == expected
+        assert events.sources_as_of("NSE:INFY", record["verified_at"]) == []
+        assert len(events.sources_as_of("NSE:INFY", at(12))) == 1

@@ -24,7 +24,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P16 | Provider and market-event research | Provider receipts, continuous portfolio journal, time-aware company-event evidence, real source/provider qualification | Framework/tests integrated; continuous replay and company-event UI verified on synthetic evidence; two-provider/live-source qualification pending |
 | P17 | Continuous portfolio research workspace | Read-only journal snapshot, gap-aware curves, candidate holdings/orders, private export and bounded Atlas context | Engineering/browser verified on synthetic evidence; real input and target-host research-recovery qualification pending |
 | P18 | Research recovery continuity | Explicit database/report/input/receipt inventory, trusted hashes, deterministic replay and preserved pending-request guards | Engineering/CLI verified on synthetic evidence; complete deployed inventory and off-host restore pending |
-| P19 | Company announcement workflow | Search/watchlist, dated revisions, append-only mapping review, private export and cutoff-scoped Atlas | Engineering/browser/API verified on synthetic evidence; real feed/mapping qualification and revocation workflow pending |
+| P19 | Company announcement workflow | Search/watchlist, dated revisions, append-only mapping review, private export and cutoff-scoped Atlas | Engineering/browser/API verified on synthetic evidence; real feed and independent mapping qualification pending |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -51,4 +51,9 @@ Schema 2 recovery adds the three research database kinds, published files and re
 
 ## Implementation delta — company announcement workflow
 
-The private Markets screen now connects stored announcements, watchlist filtering, historical revisions, mapping review and private export. Atlas requests carry a server-enforced company-evidence cutoff and persist that context; historical requests exclude later records and prior chat. Python and dashboard readers agree on correction and conflict eligibility. [Workflow, evidence and limits](COMPANY_EVENT_WORKSPACE.md). This supersedes the initial event-dashboard wiring gap. Real capture coverage, source rights, independent mapping qualification, mapping revocation and advanced company/portfolio analytics remain open.
+The private Markets screen now connects stored announcements, watchlist filtering, historical revisions, mapping review and private export. Atlas requests carry a server-enforced company-evidence cutoff and persist that context; historical requests exclude later records and prior chat. Python and dashboard readers agree on correction and conflict eligibility. [Workflow, evidence and limits](COMPANY_EVENT_WORKSPACE.md). This supersedes the initial event-dashboard wiring gap. Real capture coverage, source rights, independent mapping qualification and advanced company/portfolio analytics remain open.
+
+
+## Implementation delta — mapping lifecycle
+
+Current mappings can now be withdrawn and later re-reviewed without erasing history. Withdrawn/conflicting links are excluded from automatic company context, historical availability preserves microseconds, and recovery retains withdrawal rows. Desktop/mobile, CLI and private API checks pass on synthetic evidence. [Workflow and precise scope](COMPANY_MAPPING_LIFECYCLE.md). P19's mapping-revocation engineering gap is closed; actual source/mapping qualification and the overall external/benchmark gates remain open.

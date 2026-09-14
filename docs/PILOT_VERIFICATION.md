@@ -181,3 +181,11 @@ on the subsequent committed revision, rather than reusing the earlier local resu
 - Desktop and phone document widths matched 1280/390px viewports. Mobile detail width 324px and final cutoff notice 330px. No browser console warnings/errors. Temporary server and test tabs stopped/closed; viewport reset.
 - API results: private reads 401 without a session, mutations 403 without the correct Origin, authenticated attachment 200, mapping stale retry 409, invalid symbol/oversized body 400 and rate limit 429. Corrupt event storage returned 503 while workspace remained 200 and readiness unchanged; original fixture restored.
 - Source retrieval, independently reviewed mappings, real provider outcomes and target-host operations remain unqualified. [Exact workflow and limits](COMPANY_EVENT_WORKSPACE.md).
+
+
+## Mapping withdrawal and timestamp precision — 14 September 2026
+
+- **507 Python**, **43 dashboard** and **13 Worker** tests pass, together with CI-scope Ruff, the changed CLI script, TypeScript and webpack production build. The unchanged Starlette warnings remain. A deterministic fixture reproduces byte-for-byte and yields Python/Node parity across 22 symbol/cutoff snapshots.
+- Withdrawal is server-timed, append-only and protected against stale/future/invalid requests. Equal-time mapping conflicts are withheld; later reviews resolve them. Microsecond cutoff comparisons prevent early disclosure or false conflicts after millisecond rounding. Recovery preserves current withdrawal and historical eligibility.
+- Synthetic browser verification covers withdrawal from a saved-watchlist view (2 records to 0), persistent confirmation, historical lookup, retained withdrawal reason, later mobile re-review and three-row history. Mobile viewport/document 390px; event detail 324px and action selector 286px. No browser warnings/errors.
+- API withdrawal succeeds without market rows; private mutation checks remain 401/403, stale retry 409, duplicate/invalid withdrawal 400 and authenticated export 200. Readiness checks are unchanged. The actual CLI rejects stale reviews and missing stores; Python/Node read one another's withdrawal records. No provider request, real source capture, order, deployment or signed acceptance. [Evidence and limits](COMPANY_MAPPING_LIFECYCLE.md).
