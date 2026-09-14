@@ -19,6 +19,8 @@ The existing optional Telegram adapter remains supported through local environme
 
 ## Halt and restart
 
+Before qualifying a release, inspect its `containers` CI artifact. The [image and health verification](CONTAINER_VERIFICATION.md) builds both deployment images and exercises isolated shared-state/authentication/restart flows. It does not replace starting the real deployment. The local health command now exits 2 for a halt or invalid engine payload, even with a recent database timestamp; a live halted protection loop is reported separately. Do not automatically restart or resume from this availability signal.
+
 The dashboard can request a halt only. Confirm acknowledgement from the independent protection heartbeat; a stopped process cannot acknowledge it. Protective exits continue while halted. Use the existing `pramana halt` and `pramana resume` operator commands against the same paths. Investigate a fault before resuming. Persistent fault halts must not be cleared merely to make readiness indicators green.
 
 The protection worker is independent of the AI event loop but shares the process and ledger. A host crash or disk failure can still stop protection. Paper stops are simulated, and their trigger prices are not guaranteed execution prices.

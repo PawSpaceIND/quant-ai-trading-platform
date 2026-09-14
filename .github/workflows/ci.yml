@@ -51,3 +51,24 @@ jobs:
       - run: npm ci --prefix apps/pramana-ui
       - run: node --test deploy/cloudflare/worker.test.mjs
       - run: python scripts/build_cloud_web.py
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build deployment images and verify isolated paper workspace
+        env:
+          PRAMANA_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/verify_pilot_containers.py --output /tmp/pilot-container-verification.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pilot-container-verification
+          path: /tmp/pilot-container-verification.json
+          if-no-files-found: warn

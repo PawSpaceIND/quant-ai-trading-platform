@@ -33,16 +33,8 @@ def backup(source: Path, destination: Path) -> dict:
 
 
 def health(database: Path, tenant: str) -> dict:
-    with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as db:
-        row = db.execute("SELECT updated_at,payload FROM pilot_runtime WHERE tenant_id=?", (tenant,)).fetchone()
-    if not row:
-        raise ValueError("No protection heartbeat")
-    age = (datetime.now(timezone.utc) - datetime.fromisoformat(row[0])).total_seconds()
-    if not 0 <= age <= 15:
-        raise ValueError("Protection heartbeat stale")
-    payload = json.loads(row[1])
-    return {"heartbeat": "ok", "age_seconds": age, "halted": payload.get("halted"),
-            "note": "Heartbeat health does not certify feed quality or trading readiness"}
+    from quant_ai.operations.health import protection_health
+    return protection_health(database, tenant)
 
 
 if __name__ == "__main__":
@@ -61,6 +53,8 @@ if __name__ == "__main__":
         raise SystemExit(0 if result["status"] == "matched" else 2)
     if args.action == "health":
         result = health(args.database, args.tenant)
+        print(json.dumps(result, indent=2))
+        raise SystemExit(0 if result["status"] == "observation_ok" else 2)
     else:
         if not args.destination:
             parser.error("--destination required; use a new path")

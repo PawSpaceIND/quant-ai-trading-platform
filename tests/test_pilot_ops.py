@@ -28,5 +28,6 @@ def test_health_needs_fresh_engine_heartbeat(tmp_path):
     database = tmp_path / "engine.sqlite"
     with sqlite3.connect(database) as db:
         db.executescript("CREATE TABLE pilot_runtime(tenant_id TEXT,updated_at TEXT,payload TEXT); INSERT INTO pilot_runtime VALUES ('pilot','2000-01-01T00:00:00+00:00','{}');")
-    with pytest.raises(ValueError, match="stale"):
-        ops.health(database, "pilot")
+    result = ops.health(database, "pilot")
+    assert result["status"] == "unhealthy"
+    assert "stored_heartbeat_stale_or_invalid" in result["reasons"]
