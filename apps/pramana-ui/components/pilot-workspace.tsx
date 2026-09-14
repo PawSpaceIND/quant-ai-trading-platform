@@ -781,6 +781,7 @@ function EquityChart({ portfolio }: { portfolio: Portfolio }) {
               <Area
                 type="linear"
                 dataKey="equity"
+                connectNulls={false}
                 stroke="#65d9b5"
                 fill="url(#equity-fill)"
                 strokeWidth={2}
@@ -795,7 +796,7 @@ function EquityChart({ portfolio }: { portfolio: Portfolio }) {
           </div>
         )}
       </div>
-      <p className="panel-footnote">{portfolio.markDisclaimer}</p>
+      <p className="panel-footnote">{portfolio.markDisclaimer} Gaps indicate unavailable valuations; they are not zero equity.</p>
     </section>
   );
 }

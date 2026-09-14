@@ -6,7 +6,7 @@ import signal
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from pathlib import Path
 from time import monotonic
 from typing import Callable
@@ -15,6 +15,7 @@ from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.domain.models import Instrument, Market, Side
 from quant_ai.execution.briefing import FounderExecutionBrief
+from quant_ai.execution.ledger_integrity import PaperLedgerDataError
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.protective_exits import (
@@ -103,7 +104,7 @@ class AutonomousTradingDaemon:
         runtime = self.scheduler.pipeline.runtime
         runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
         runtime.pre_submit_check = self._pilot_pre_submit
-        self.tracker.broker.get_margin(self.tenant_id)
+        self.tracker.broker.get_starting_capital(self.tenant_id)
         self.check_protection_coverage(self.clock())
         self._reconcile_pilot()
 
@@ -174,7 +175,12 @@ class AutonomousTradingDaemon:
                     manifest = self.strategy_manifest.check(timestamp)
                     if manifest['status'] in {'changed', 'unavailable'}:
                         self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
-                metrics = self.tracker.metrics(timestamp)
+                try:
+                    metrics = self.tracker.metrics(timestamp)
+                except (ValueError, DecimalException, OverflowError) as error:
+                    reason = str(error) if isinstance(error, PaperLedgerDataError) else "invalid_account_or_valuation"
+                    self.telemetry.publish_unavailable(timestamp, reason)
+                    return
                 daily_limit = min(self.plan.max_daily_loss_fraction, Decimal(".02"))
                 opening = metrics.total_equity - metrics.daily_total_pnl
                 if metrics.drawdown_fraction >= min(self.plan.max_drawdown_fraction, Decimal(".10")):
@@ -199,7 +205,7 @@ class AutonomousTradingDaemon:
                 self.tracker.market_feed,
                 self.tracker.instrument_resolver,
                 getattr(self.scheduler.pipeline, "tick_reader", None),
-                self.clock,
+                lambda: self.clock(),
             ),
             tenant_id=self.tenant_id,
             dispatcher=self.notifications,

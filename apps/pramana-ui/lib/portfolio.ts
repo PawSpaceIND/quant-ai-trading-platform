@@ -18,6 +18,11 @@ export function readPortfolioSnapshot() {
     // Keep engine valuation, head, account, positions, fills and charges in one SQLite snapshot.
     db.exec("BEGIN");
     let portfolio = readPortfolioFromDatabase(db);
+    if (portfolio.status === "invalid") return {
+      portfolio: {...emptyPortfolio("invalid_engine_valuation"), status: "invalid", markMode: "engine_live",
+        markDisclaimer: portfolio.markDisclaimer, equityCurve: portfolio.equityCurve},
+      paperContribution: {status: "invalid", detail: portfolio.markDisclaimer, report: null} as PaperContributionState,
+    };
     const paperContribution = readPaperContribution(db, portfolio);
     if (portfolio.markMode === "engine_live" && ["invalid", "outdated", "unavailable"].includes(paperContribution.status)) portfolio = {...emptyPortfolio("invalid_account_evidence"), status: "invalid", markMode: "engine_live", markDisclaimer: paperContribution.detail};
     return {portfolio, paperContribution};

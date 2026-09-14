@@ -35,7 +35,7 @@ export type Portfolio = {
   highWaterMark: number;
   drawdown: number;
   holdings: Holding[];
-  equityCurve: { timestamp: string; equity: number }[];
+  equityCurve: { timestamp: string; equity: number | null }[];
   updatedAt: string | null;
 };
 export type DecisionProvenance = {

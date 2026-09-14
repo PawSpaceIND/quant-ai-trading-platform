@@ -7,6 +7,7 @@ from typing import Callable
 
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.domain.models import AssetClass, Instrument, Market, PortfolioSnapshot, Side
+from quant_ai.execution.ledger_integrity import finite_amount
 from quant_ai.execution.paper_ledger import PaperBrokerService, PaperLedgerEntry
 from quant_ai.execution.risk_state import RiskStateStore, risk_state_for_broker
 from quant_ai.marketdata.feed import MarketDataFeed
@@ -53,7 +54,7 @@ class PortfolioTracker:
         self.market_feed = market_feed
         self.tenant_id = tenant_id
         self.instrument_resolver = instrument_resolver or self._default_instrument
-        starting_capital = broker.get_margin(tenant_id).starting_capital
+        starting_capital = broker.get_starting_capital(tenant_id)
         self.risk_state = risk_state or risk_state_for_broker(
             broker,
             starting_capital=starting_capital,
@@ -89,12 +90,17 @@ class PortfolioTracker:
             Decimal(0),
         )
         market_value = sum((item.market_value for item in positions), Decimal(0))
-        equity = margin.cash_balance + market_value
+        equity = finite_amount(margin.cash_balance + market_value, "invalid_portfolio_equity")
+        finite_amount(unrealized, "invalid_portfolio_pnl")
+        finite_amount(realized, "invalid_portfolio_pnl")
+        finite_amount(daily_realized, "invalid_portfolio_pnl")
+        finite_amount(self._high_water_mark, "invalid_equity_peak", positive=True)
         opening_equity = self.risk_state.record_equity(
             self.tenant_id,
             observed_at.astimezone(timezone.utc).date(),
             equity,
         )
+        opening_equity = finite_amount(opening_equity, "invalid_opening_equity")
         daily_total = equity - opening_equity
         if equity > self._high_water_mark:
             self._high_water_mark = self.broker.record_peak_equity(equity, self.tenant_id)
@@ -147,6 +153,7 @@ class PortfolioTracker:
             current_price = self.market_feed.latest_tick(instrument).last_price
         except (RuntimeError, ValueError, TimeoutError):
             current_price = position.average_price
+        current_price = finite_amount(current_price, "invalid_market_mark", positive=True)
         market_value = current_price * position.quantity
         unrealized = (current_price - position.average_price) * position.quantity
         return MarkedPosition(

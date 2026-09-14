@@ -130,7 +130,7 @@ def main():
                        "fetch('http://localhost:3000/login').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))")
 
         def dashboard(phase):
-            result = run("docker", "exec", "-e", f"SMOKE_PHASE={phase}", ui,
+            result = run("docker", "exec", "-e", f"SMOKE_PHASE={phase}", "-e", "SMOKE_SESSION_FILE=/data/smoke-session", ui,
                          "node", "/qa/container_dashboard_smoke.mjs")
             report["checks"].append(json.loads(result))
 
@@ -224,6 +224,44 @@ def main():
         set_stop("95")
         report["checks"].append({"restoredProtectionHalted":wait_for(lambda: protection_state("complete"), "restored coverage without auto-resume")})
         dashboard("protection-restored")
+        original_average = run("docker", "exec", engine, "python", "-c",
+            "import sqlite3,os; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+            "print(db.execute('SELECT average_price FROM paper_positions WHERE tenant_id=?', "
+            "(os.environ['PRAMANA_TENANT_ID'],)).fetchone()[0]); db.close()")
+
+        def set_average(value):
+            run("docker", "exec", engine, "python", "-c",
+                "import sqlite3,os,sys; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+                "db.execute('UPDATE paper_positions SET average_price=? WHERE tenant_id=?', "
+                "(sys.argv[1],os.environ['PRAMANA_TENANT_ID'])); db.commit(); db.close()", value)
+
+        def valuation_state(expected):
+            state = json.loads(run("docker", "exec", engine, "python", "-c",
+                "import sqlite3,os,json; db=sqlite3.connect(os.environ['PRAMANA_LEDGER_PATH']); "
+                "tenant=os.environ['PRAMANA_TENANT_ID']; "
+                "runtime=json.loads(db.execute('SELECT payload FROM pilot_runtime WHERE tenant_id=?',(tenant,)).fetchone()[0]); "
+                "valuation=json.loads(db.execute('SELECT payload FROM paper_live_valuations WHERE tenant_id=? ORDER BY timestamp DESC LIMIT 1',(tenant,)).fetchone()[0]); "
+                "print(json.dumps({'runtime':runtime['valuation'],'snapshotStatus':valuation['status'],'equity':valuation['totalEquity'],'halted':runtime['halted']})); db.close()"))
+            if state["runtime"]["status"] != expected or not state["halted"]:
+                raise ValueError("Waiting for requested valuation state with fault halt")
+            if expected == "unavailable" and (state["snapshotStatus"] != "invalid" or state["equity"] is not None):
+                raise ValueError("Invalid valuation must withhold equity")
+            if expected == "available" and state["snapshotStatus"] != "ok":
+                raise ValueError("Waiting for next valid minute; the invalid minute must remain")
+            return state
+
+        set_average("broken")
+        report["checks"].append({"invalidLedgerObservation":wait_for(lambda: valuation_state("unavailable"), "invalid ledger observation")})
+        dashboard("invalid-ledger")
+        run("docker", "restart", engine)
+        started_at = run("docker", "inspect", "--format", "{{.State.StartedAt}}", engine)
+        new_heartbeat = wait_for(restarted_halt, "new heartbeat with invalid ledger after restart")
+        report["checks"].append({"invalidLedgerRestart":valuation_state("unavailable"),
+                                 "restartHeartbeat":new_heartbeat, "restartedContainerStartedAt":started_at})
+        dashboard("ledger-restarted")
+        set_average(original_average)
+        report["checks"].append({"restoredLedgerObservation":wait_for(lambda: valuation_state("available"), "restored valuation after invalid minute", seconds=75)})
+        dashboard("ledger-restored")
         report["images"] = {label:json.loads(run("docker", "image", "inspect", image))[0]["Id"]
                             for label, image in [("engine", image_engine), ("dashboard", image_ui)]}
         report["status"] = "pass"

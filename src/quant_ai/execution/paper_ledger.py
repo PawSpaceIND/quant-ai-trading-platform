@@ -16,6 +16,12 @@ from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
 from quant_ai.execution.friction import FrictionContext, FrictionResult, MarketFrictionModel
+from quant_ai.execution.ledger_integrity import (
+    PaperLedgerDataError,
+    finite_amount,
+    position_geometry_issues,
+    whole_quantity,
+)
 from quant_ai.execution.protection_state import positive_level, protection_coverage
 
 
@@ -224,8 +230,10 @@ class PaperBrokerService(BrokerAdapter):
             self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
                 tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
                 symbols TEXT NOT NULL)""")
-            positions = self.get_positions(tenant_id)
-            if any(p.market != Market.INDIA or symbols.get(p.symbol) != p.asset_class.value for p in positions):
+            positions = self._connection.execute(
+                "SELECT symbol,market,asset_class FROM paper_positions WHERE tenant_id=?", (tenant_id,)
+            ).fetchall()
+            if any(p["market"] != Market.INDIA.value or symbols.get(p["symbol"]) != p["asset_class"] for p in positions):
                 raise ValueError("pilot_existing_positions_out_of_scope")
             previous = self._connection.execute(
                 "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
@@ -233,7 +241,8 @@ class PaperBrokerService(BrokerAdapter):
             if previous and (previous["currency"], previous["market"]) != ("INR", "INDIA"):
                 raise ValueError("pilot_account_currency_mismatch")
             # Legacy mixed-market accounts cannot be relabeled as INR.
-            if any(e.market != Market.INDIA for e in self.ledger_entries(tenant_id)):
+            markets = self._connection.execute("SELECT DISTINCT market FROM paper_ledger WHERE tenant_id=?", (tenant_id,))
+            if any(row["market"] != Market.INDIA.value for row in markets):
                 raise ValueError("pilot_legacy_currency_ambiguous")
             self._connection.execute("INSERT OR REPLACE INTO pilot_scope VALUES (?, 'INR', 'INDIA', ?)",
                                      (tenant_id, json.dumps(symbols, sort_keys=True)))
@@ -307,7 +316,8 @@ class PaperBrokerService(BrokerAdapter):
 
     def _execute(self, order: OrderIntent, *, evidence: dict | None = None,
                  cooldown_until: datetime | None = None, idempotency_key: str | None = None) -> ExecutionResult:
-        if type(order.quantity) is not int or order.quantity <= 0 or positive_level(order.reference_price) is None:
+        whole_quantity(order.quantity, "positive quantity and reference_price required")
+        if positive_level(order.reference_price) is None:
             raise ValueError("positive quantity and reference_price required")
         friction = self.friction_model.evaluate(order, self._context_for(order))
         fill_price = friction.execution_price
@@ -347,7 +357,8 @@ class PaperBrokerService(BrokerAdapter):
         idempotency_key: str | None = None,
     ) -> ExecutionResult:
         tenant_id = order.tenant_id
-        statutory_fees = friction.statutory_fees
+        statutory_fees = finite_amount(friction.statutory_fees, "invalid_execution_fees", nonnegative=True)
+        finite_amount(notional, "invalid_execution_notional", positive=True)
         with self._lock, self._connection:
             # Acquire the write transaction before reading scope or risk state. The
             # final checks and fill cannot race another connection's configuration/halt.
@@ -361,17 +372,18 @@ class PaperBrokerService(BrokerAdapter):
                 if inserted.rowcount != 1:
                     raise ValueError("duplicate_order")
             account = self._connection.execute(
-                "SELECT cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
+                "SELECT starting_capital,cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
             ).fetchone()
-            cash = Decimal(account["cash_balance"])
+            finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True)
+            cash = finite_amount(account["cash_balance"], "invalid_account_cash")
             position = self._connection.execute(
                 """SELECT quantity, average_price, stop_price, take_profit_price
                 FROM paper_positions
                 WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
                 (tenant_id, order.symbol, order.market.value, order.asset_class.value),
             ).fetchone()
-            current_qty = int(position["quantity"]) if position else 0
-            current_avg = Decimal(position["average_price"]) if position else Decimal(0)
+            current_qty = whole_quantity(position["quantity"]) if position else 0
+            current_avg = finite_amount(position["average_price"], "invalid_position_average", positive=True) if position else Decimal(0)
             held_stop = position["stop_price"] if position else None
             held_take_profit = position["take_profit_price"] if position else None
             # A BUY carries the protective levels forward onto the position; a SELL that only
@@ -407,6 +419,10 @@ class PaperBrokerService(BrokerAdapter):
                 new_qty = current_qty - order.quantity
                 new_avg = current_avg if new_qty else Decimal(0)
                 new_cash = cash + notional - statutory_fees
+            finite_amount(new_cash, "invalid_resulting_cash")
+            if new_qty:
+                whole_quantity(new_qty, "invalid_resulting_quantity")
+                finite_amount(new_avg, "invalid_resulting_average", positive=True)
             self._connection.execute(
                 "UPDATE paper_accounts SET cash_balance = ?, updated_at = ? WHERE tenant_id = ?",
                 (str(new_cash), now.isoformat(), tenant_id),
@@ -507,28 +523,52 @@ class PaperBrokerService(BrokerAdapter):
             return True
 
     def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+        """Complete position book. Any invalid row fails, never a partial valuation."""
+        return tuple(self._decode_position(row) for row in self._position_rows(tenant_id))
+
+    def get_protection_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+        """Valid rows for independent exits only, never for totals or sizing.
+
+        Excluded rows are reported by protection_coverage and halt pilot entries.
+        No quantity, cost basis or instrument identity is guessed for a corrupt row.
+        """
+        return tuple(self._decode_position(row) for row in self._position_rows(tenant_id)
+                     if not position_geometry_issues(row))
+
+    def _position_rows(self, tenant_id: str):
         with self._lock:
-            rows = self._connection.execute(
+            return self._connection.execute(
                 """SELECT tenant_id, symbol, market, asset_class, quantity, average_price,
                 stop_price, take_profit_price
                 FROM paper_positions WHERE tenant_id = ? ORDER BY symbol""",
                 (tenant_id,),
             ).fetchall()
-        return tuple(
-            BrokerPosition(
+    @staticmethod
+    def _decode_position(row) -> BrokerPosition:
+        issues = position_geometry_issues(row)
+        if issues:
+            raise PaperLedgerDataError(issues[0])
+        return BrokerPosition(
                 row["tenant_id"],
                 row["symbol"],
                 Market(row["market"]),
                 AssetClass(row["asset_class"]),
-                int(row["quantity"]),
+                row["quantity"],
                 Decimal(row["average_price"]),
                 # Raw invalid values remain visible in protection_coverage. Exclude them
                 # from comparisons so one corrupt threshold cannot suppress other exits.
                 positive_level(row["stop_price"]),
                 positive_level(row["take_profit_price"]),
-            )
-            for row in rows
         )
+
+    def get_starting_capital(self, tenant_id: str = "default") -> Decimal:
+        """Initialize/read capital without projecting possibly damaged positions."""
+        with self._lock, self._connection:
+            self._ensure_account(tenant_id)
+            row = self._connection.execute(
+                "SELECT starting_capital FROM paper_accounts WHERE tenant_id=?", (tenant_id,)
+            ).fetchone()
+        return finite_amount(row[0], "invalid_starting_capital", positive=True)
 
     def get_peak_equity(self, tenant_id: str = "default") -> Decimal | None:
         """Durable high-water mark. None when the tenant has never been marked."""
@@ -611,20 +651,17 @@ class PaperBrokerService(BrokerAdapter):
                 "SELECT starting_capital, cash_balance FROM paper_accounts WHERE tenant_id = ?",
                 (tenant_id,),
             ).fetchone()
-            rows = self._connection.execute(
-                "SELECT quantity, average_price FROM paper_positions WHERE tenant_id = ?",
-                (tenant_id,),
-            ).fetchall()
+            positions = self.get_positions(tenant_id)
         gross = sum(
-            (Decimal(row["average_price"]) * int(row["quantity"]) for row in rows),
+            (row.average_price * row.quantity for row in positions),
             Decimal(0),
         )
-        cash = Decimal(account["cash_balance"])
+        cash = finite_amount(account["cash_balance"], "invalid_account_cash")
         return BrokerMargin(
             tenant_id,
-            Decimal(account["starting_capital"]),
+            finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True),
             cash,
-            gross,
+            finite_amount(gross, "invalid_gross_position_value", nonnegative=True),
             cash,
         )
 
@@ -644,9 +681,9 @@ class PaperBrokerService(BrokerAdapter):
                 Market(row["market"]),
                 AssetClass(row["asset_class"]),
                 Side(row["side"]),
-                int(row["quantity"]),
-                Decimal(row["fill_price"]),
-                Decimal(row["notional"]),
+                whole_quantity(row["quantity"], "invalid_fill_quantity"),
+                finite_amount(row["fill_price"], "invalid_fill_price", positive=True),
+                finite_amount(row["notional"], "invalid_fill_notional", positive=True),
                 row["status"],
                 datetime.fromisoformat(row["created_at"]),
                 _optional_decimal(row["stop_price"]),
@@ -667,7 +704,7 @@ class PaperBrokerService(BrokerAdapter):
                 row["order_id"],
                 row["tenant_id"],
                 row["code"],
-                Decimal(row["amount"]),
+                finite_amount(row["amount"], "invalid_cost_amount", nonnegative=True),
                 bool(row["cash_debit"]),
                 datetime.fromisoformat(row["created_at"]),
             )

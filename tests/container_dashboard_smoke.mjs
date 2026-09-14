@@ -1,19 +1,28 @@
 // Runs inside the isolated dashboard container against its real npm-start server.
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 const origin = process.env.SMOKE_ORIGIN || "http://localhost:3000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(origin).hostname));
 const phase = process.env.SMOKE_PHASE;
 const protectionMissing = ["missing-protection", "protection-restarted"].includes(phase);
-const faultHalted = protectionMissing || phase === "protection-restored";
+const invalidLedger = ["invalid-ledger", "ledger-restarted"].includes(phase);
+const faultHalted = protectionMissing || phase === "protection-restored" || invalidLedger || phase === "ledger-restored";
 const anonymous = await fetch(`${origin}/api/workspace`);
 assert.equal(anonymous.status, 401);
-const login = await fetch(`${origin}/api/session`, {
-  method: "POST", headers: {origin, "Content-Type": "application/json"},
-  body: JSON.stringify({secret: process.env.PRAMANA_DASHBOARD_SECRET}),
-});
-assert.equal(login.status, 200);
-const cookie = login.headers.get("set-cookie")?.split(";")[0];
+// Persist one test-only signed session across phases/restarts without relaxing the
+// product's login rate limit. Anonymous rejection is still checked on every phase.
+const sessionFile = process.env.SMOKE_SESSION_FILE;
+let cookie = sessionFile && fs.existsSync(sessionFile) ? fs.readFileSync(sessionFile, "utf8") : null;
+if (!cookie) {
+  const login = await fetch(`${origin}/api/session`, {
+    method: "POST", headers: {origin, "Content-Type": "application/json"},
+    body: JSON.stringify({secret: process.env.PRAMANA_DASHBOARD_SECRET}),
+  });
+  assert.equal(login.status, 200);
+  cookie = login.headers.get("set-cookie")?.split(";")[0];
+  if (sessionFile) fs.writeFileSync(sessionFile, cookie, {mode: 0o600});
+}
 assert.ok(cookie?.startsWith("pramana_session="));
 async function request(route, method = "GET", body, requestOrigin = origin) {
   return fetch(origin + route, {method, headers: {cookie, origin: requestOrigin, "Content-Type": "application/json"},
@@ -29,16 +38,25 @@ assert.equal(workspace.copilotConfigured, false);
 assert.equal(workspace.runtime.mode, "paper");
 assert.equal(workspace.checks.find(c => c.id === "recovery").pass, false);
 assert.equal(workspace.checks.find(c => c.id === "evidence").pass, false);
-assert.equal(workspace.portfolio.holdings.length, 1);
-assert.equal(workspace.portfolio.holdings[0].symbol, "INFY");
-assert.equal(workspace.portfolio.holdings[0].quantity, 2);
-assert.equal(workspace.portfolio.startingCapital, 123456);
+if (invalidLedger) {
+  assert.equal(workspace.portfolio.status, "invalid");
+  assert.equal(workspace.portfolio.holdings.length, 0);
+  assert.match(workspace.portfolio.markDisclaimer, /invalid_position_average/);
+  assert.equal(workspace.paperContribution.status, "invalid");
+  assert.equal(workspace.runtime.valuation.status, "unavailable");
+  assert.equal(workspace.checks.find(c => c.id === "marks").pass, false);
+} else {
+  assert.equal(workspace.portfolio.holdings.length, 1);
+  assert.equal(workspace.portfolio.holdings[0].symbol, "INFY");
+  assert.equal(workspace.portfolio.holdings[0].quantity, 2);
+  assert.equal(workspace.portfolio.startingCapital, 123456);
+}
 assert.equal(workspace.runtime.limits.maxPositions, 3);
-assert.equal(workspace.runtime.protectionCoverage.status, protectionMissing ? "incomplete" : "complete");
+assert.equal(workspace.runtime.protectionCoverage.status, invalidLedger ? "invalid" : protectionMissing ? "incomplete" : "complete");
 assert.equal(workspace.runtime.protectionCoverage.tenantId, workspace.tenantId);
 assert.equal(workspace.runtime.protectionCoverage.positionCount, 1);
-assert.equal(workspace.runtime.protectionCoverage.ledgerId, workspace.portfolio.ledgerId);
-assert.equal(workspace.checks.find(c => c.id === "protection_coverage").pass, phase !== "stale" && !protectionMissing);
+if (!invalidLedger) assert.equal(workspace.runtime.protectionCoverage.ledgerId, workspace.portfolio.ledgerId);
+assert.equal(workspace.checks.find(c => c.id === "protection_coverage").pass, phase !== "stale" && !protectionMissing && !invalidLedger);
 if (protectionMissing) assert.equal(workspace.runtime.protectionCoverage.issues[0].code, "missing_stop");
 if (faultHalted) assert.equal(workspace.runtime.haltReason, "paper_position_protection_incomplete");
 const researchMissing = phase === "missing-research";
@@ -83,8 +101,8 @@ if (phase === "stale") {
   assert.equal(workspace.runtime.status, "running");
   assert.equal(workspace.runtime.halted, phase === "halted" || faultHalted);
   assert.equal(workspace.checks.find(c => c.id === "entry_controls").pass, phase !== "halted" && !faultHalted);
-  assert.equal(workspace.portfolio.status, "ok");
-  assert.equal(workspace.portfolio.holdings[0].markPrice, 100);
+  assert.equal(workspace.portfolio.status, invalidLedger ? "invalid" : "ok");
+  if (!invalidLedger) assert.equal(workspace.portfolio.holdings[0].markPrice, 100);
   assert.equal(workspace.market.rows[0].symbol, "INFY");
 }
 if (phase === "initial") {
@@ -99,9 +117,10 @@ if (phase === "initial") {
   assert.equal((await halt.json()).status, "requested");
 }
 console.log(JSON.stringify({phase, status:"pass", authenticated:true, liveEnabled:false,
+  valuationStatus:workspace.runtime.valuation?.status, portfolioStatus:workspace.portfolio.status,
   protectionCoverage:workspace.runtime.protectionCoverage.status,
   protectionCheck:workspace.checks.find(c => c.id === "protection_coverage").pass,
   runtime:workspace.runtime.status, halted:workspace.runtime.halted, savedWatchlist:["INFY"],
-  accountQuantity:2, operatorAcceptance:false, customDirectives:{startingCapital:123456,maxPositions:3},
+  accountQuantity:invalidLedger ? null : 2, operatorAcceptance:false, customDirectives:{startingCapital:123456,maxPositions:3},
   research:{comparison:workspace.researchLab.status, portfolio:workspace.researchPortfolio.status,
     companyEvents:workspace.companyEvents.status, authenticatedExportStatus:researchMissing ? 503 : 200, endpointsChecked:3}}));

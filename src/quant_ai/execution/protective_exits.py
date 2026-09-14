@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from enum import Enum
 from typing import Callable
 from uuid import uuid4
@@ -86,7 +86,7 @@ class ProtectiveExitEngine:
         """Check every open position and liquidate the ones whose thresholds are breached."""
         observed_at = now or datetime.now(timezone.utc)
         exits: list[ProtectiveExit] = []
-        for position in self.broker.get_positions(self.tenant_id):
+        for position in self.broker.get_protection_positions(self.tenant_id):
             decision = self._breach(position)
             if decision is None:
                 continue
@@ -116,7 +116,7 @@ class ProtectiveExitEngine:
     def _mark(self, position: BrokerPosition) -> Decimal | None:
         try:
             return positive_level(self.mark_resolver(position))
-        except (RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as error:
+        except (RuntimeError, ValueError, DecimalException, TimeoutError, ConnectionError, OSError) as error:
             # An unknown price is never treated as a safe price: skip, log, retry next tick.
             LOGGER.warning(
                 "protective_exit_mark_unavailable symbol=%s error=%s", position.symbol, error
@@ -246,7 +246,16 @@ def market_feed_mark_resolver(
         resolve.last_observation = {}  # type: ignore[attr-defined]
         if tick_reader is not None:
             tick, veto = tick_reader.market_data_status(position.symbol, now())  # type: ignore[attr-defined]
-            if tick is not None and tick.ltp > 0:
+            age = None
+            if tick is not None:
+                observed = tick.observed_at
+                current = now()
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                if current.tzinfo is None:
+                    current = current.replace(tzinfo=timezone.utc)
+                age = (current - observed).total_seconds()
+            if tick is not None and age is not None and 0 <= age <= 120 and positive_level(tick.ltp) is not None:
                 resolve.last_observation = {"symbol": position.symbol, "price": str(tick.ltp),  # type: ignore[attr-defined]
                     "source": tick.source, "source_timestamp": tick.observed_at.isoformat()}
                 return tick.ltp

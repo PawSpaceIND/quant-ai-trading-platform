@@ -10,6 +10,8 @@ import sqlite3
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+from quant_ai.execution.ledger_integrity import position_geometry_issues
+
 
 def positive_level(value) -> Decimal | None:
     """Only usable positive finite levels; safe for comparison and JSON display."""
@@ -31,7 +33,7 @@ def protection_coverage(db: sqlite3.Connection, tenant: str, now: datetime | Non
             "SELECT COALESCE(MAX(id),0) FROM paper_ledger WHERE tenant_id=?", (tenant,)
         ).fetchone()[0]
         rows = db.execute(
-            "SELECT symbol,market,asset_class,quantity,stop_price,take_profit_price "
+            "SELECT symbol,market,asset_class,quantity,average_price,stop_price,take_profit_price "
             "FROM paper_positions WHERE tenant_id=? ORDER BY symbol,market,asset_class", (tenant,)
         ).fetchall()
     finally:
@@ -39,10 +41,8 @@ def protection_coverage(db: sqlite3.Connection, tenant: str, now: datetime | Non
     issues = []
     issue_count = covered = missing = invalid = 0
     for row in rows:
-        codes = []
+        codes = position_geometry_issues(row)
         stop, target = positive_level(row["stop_price"]), positive_level(row["take_profit_price"])
-        if type(row["quantity"]) is not int or row["quantity"] <= 0:
-            codes.append("invalid_position_quantity")
         if row["stop_price"] is None:
             codes.append("missing_stop")
             missing += 1

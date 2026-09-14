@@ -104,3 +104,9 @@ Update the collector and private dashboard together. The existing `PRAMANA_MARKE
 ## Stored protection qualification
 
 Before authorizing new pilot entries, confirm **Stored position protection** is current and complete in Research → Pilot readiness, in addition to heartbeat, marks and reconciliation. A missing/invalid level or failed protective exit latches a durable entry halt; fixing the data or restarting does not clear it. Review the raw affected records and canonical fills before using the existing controlled reset workflow. Do not invent a stop to clear a gate. Legacy symbol-only scope requires the normal pilot startup with explicit instrument configuration before buying. See [stored protection contract](PROTECTION_COVERAGE.md).
+
+## Invalid ledger observation
+
+Treat **Portfolio totals withheld** or runtime `valuation.status = unavailable` as an accounting/mark fault, even when protection heartbeat is current. Keep entries halted. Preserve the affected raw state and inspect the bounded reason, canonical fills, account/cost records and source observations. Do not round quantities, fabricate cost basis or clear the halt to make the dashboard green. Use the existing reviewed recovery workflow if authoritative repair cannot be established.
+
+Valid holdings may still exit independently, but invalid cash blocks every fill; corrupt capital/schema/scope may prevent startup entirely. After reviewed recovery, verify a fresh complete valuation, coverage and reconciliation before considering the controlled halt-reset workflow. Invalid minutes remain in the curve and their day cannot qualify as clean forward evidence. Updating both engine and private UI is required for this contract. See [ledger integrity and precise limits](LEDGER_INTEGRITY.md).

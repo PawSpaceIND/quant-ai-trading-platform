@@ -36,7 +36,7 @@ export type LivePortfolio = {
     stopPrice: number | null;
     takeProfitPrice: number | null;
   }>;
-  equityCurve: Array<{ timestamp: string; equity: number }>;
+  equityCurve: Array<{ timestamp: string; equity: number | null }>;
 };
 export type StrategyEpisodeEvidence = {
   schema: string; status: string; strategySha256: string; sourceSha256: string; evidenceSha256: string;
@@ -46,6 +46,7 @@ export type StrategyEpisodeEvidence = {
     profitFactor: string | null; profitFactorState: string; winRate: string | null; closedCashFees: string};
 };
 export type Runtime = {
+  valuation?: {status: string; reason?: string; checkedAt: string; ledgerId: number};
   protectionCoverage?: {
     schema: string; tenantId: string; status: string; checkedAt: string; ledgerId: number;
     positionCount: number; coveredCount: number; missingStopCount: number; invalidPositionCount: number;
@@ -108,14 +109,14 @@ export function readLivePortfolio(connection?: DatabaseSync): LivePortfolio | nu
     return {
       ...latest,
       ledgerId: rows[0].ledger_id,
-      status: stale ? "stale" : latest.status,
+      status: latest.status === "invalid" ? "invalid" : stale ? "stale" : latest.status,
       allMarksFresh: !stale && latest.allMarksFresh,
-      markDisclaimer: stale
+      markDisclaimer: stale && latest.status !== "invalid"
         ? "Engine snapshot is stale or precedes a newer fill. These are last observed values, not current equity."
         : latest.markDisclaimer,
       equityCurve: rows.reverse().map((r) => {
         const p = JSON.parse(r.payload);
-        return { timestamp: p.updatedAt, equity: p.totalEquity };
+        return { timestamp: p.updatedAt, equity: p.status === "invalid" || !Number.isFinite(p.totalEquity) ? null : p.totalEquity as number };
       }),
     };
   } finally {
@@ -184,6 +185,7 @@ export function performance() {
       }
     >();
     let initial: number | undefined;
+    const invalidDays = new Set<string>();
     const today = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata",
       year: "numeric",
@@ -192,6 +194,7 @@ export function performance() {
     }).format(new Date());
     for (const row of rows) {
       const p = JSON.parse(row.payload) as LivePortfolio;
+      if (p.status === "invalid" && p.sessionDate) invalidDays.add(p.sessionDate);
       if (
         !p.allMarksFresh ||
         !p.qualifyingSession ||
@@ -216,7 +219,7 @@ export function performance() {
     // A full observation needs at least 300 distinct minute buckets, including the
     // final five minutes of the cash session. Partial days never count as burn-in.
     const daily = [...days.values()].filter(
-      (d) => d.minutes >= 300 && d.lastMinute >= 15 * 60 + 25,
+      (d) => !invalidDays.has(d.date) && d.minutes >= 300 && d.lastMinute >= 15 * 60 + 25,
     );
     const returns = daily
       .slice(1)

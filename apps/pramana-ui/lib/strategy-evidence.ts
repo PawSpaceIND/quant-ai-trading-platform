@@ -16,6 +16,10 @@ export function strategyObservationDays(sha: string | undefined, incompatibleDat
     const invalid = new Set(incompatibleDates);
     for (const row of rows) {
       const p = JSON.parse(row.payload);
+      if (p.status === "invalid" && p.sessionDate && Date.parse(p.updatedAt) >= coverageStart) invalid.add(p.sessionDate);
+    }
+    for (const row of rows) {
+      const p = JSON.parse(row.payload);
       if (p.qualifyingSession !== true || !p.sessionDate || p.sessionDate >= today) continue;
       const timestamp = Date.parse(p.updatedAt);
       if (!Number.isFinite(timestamp) || timestamp < coverageStart) continue;

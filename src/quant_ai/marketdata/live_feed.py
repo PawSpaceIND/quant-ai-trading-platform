@@ -79,7 +79,7 @@ class TickBarAggregator:
         self._lock = RLock()
 
     def ingest(self, tick: LiveTick) -> None:
-        if tick.ltp <= 0:
+        if not tick.ltp.is_finite() or tick.ltp <= 0 or not tick.volume.is_finite() or tick.volume < 0:
             return
         observed = _utc(tick.observed_at)
         start = self._floor(observed)
