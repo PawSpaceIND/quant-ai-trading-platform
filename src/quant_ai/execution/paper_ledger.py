@@ -549,6 +549,30 @@ class PaperBrokerService(BrokerAdapter):
         for entry in self.cost_entries(tenant_id):
             totals[entry.code] = totals.get(entry.code, Decimal(0)) + entry.amount
         return totals
+    def record_replay_valuation(self, timestamp: str, payload: str, tenant_id: str) -> None:
+        """Persist one complete replay valuation without altering trading state."""
+        with self._lock, self._connection:
+            self._connection.execute(
+                """CREATE TABLE IF NOT EXISTS paper_replay_valuations (
+                    tenant_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    ledger_id INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, timestamp)
+                )"""
+            )
+            ledger_id = self._connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM paper_ledger WHERE tenant_id=?",
+                (tenant_id,),
+            ).fetchone()[0]
+            self._connection.execute(
+                """INSERT INTO paper_replay_valuations
+                   (tenant_id, timestamp, ledger_id, payload) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(tenant_id, timestamp) DO UPDATE SET
+                   ledger_id=excluded.ledger_id, payload=excluded.payload""",
+                (tenant_id, timestamp, ledger_id, payload),
+            )
+
     def flush(self) -> None:
         with self._lock:
             self._connection.commit()

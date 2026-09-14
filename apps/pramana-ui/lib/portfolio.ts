@@ -16,6 +16,37 @@ export function readPortfolio() {
     ).get(tenantId) as { starting_capital: string; cash_balance: string; updated_at: string } | undefined;
     if (!account) return emptyPortfolio("tenant_not_initialized");
 
+    if (hasTable(db, "paper_replay_valuations")) {
+      const snapshots = db.prepare(
+        "SELECT timestamp, ledger_id, payload FROM paper_replay_valuations WHERE tenant_id=? ORDER BY timestamp",
+      ).all(tenantId) as Array<{ timestamp: string; ledger_id: number; payload: string }>;
+      const latest = snapshots[snapshots.length - 1];
+      const ledgerHead = db.prepare(
+        "SELECT COALESCE(MAX(id), 0) AS id FROM paper_ledger WHERE tenant_id=?",
+      ).get(tenantId) as { id: number };
+      // Fall back if a later trade has made the replay snapshot obsolete.
+      if (latest && latest.ledger_id === ledgerHead.id) {
+        const snapshot = JSON.parse(latest.payload) as {
+          status: string; tenantId: string; markMode: string; markDisclaimer: string;
+          cash: number; totalEquity: number; startingCapital: number;
+          realizedPnl: number; unrealizedPnl: number; highWaterMark: number;
+          drawdown: number; updatedAt: string;
+          holdings: Array<{
+            symbol: string; market: string; assetClass: string; quantity: number;
+            averageEntry: number; markPrice: number; markSource: string;
+            marketValue: number; unrealizedPnl: number;
+          }>;
+        };
+        return {
+          ...snapshot,
+          equityCurve: snapshots.map((row) => ({
+            timestamp: row.timestamp,
+            equity: Number(JSON.parse(row.payload).totalEquity),
+          })),
+        };
+      }
+    }
+
     const entries = db.prepare(
       "SELECT * FROM paper_ledger WHERE tenant_id=? ORDER BY id",
     ).all(tenantId) as LedgerRow[];
@@ -124,7 +155,7 @@ function buildEquityCurve(startingCapital: number, entries: LedgerRow[], costs: 
     for (const [positionKey, qty] of quantity) marketValue += Math.max(0, qty) * (marks.get(positionKey) ?? 0);
     points.push({ timestamp: entry.created_at, equity: cash + marketValue });
   }
-  return points.length ? points : [{ timestamp: new Date(0).toISOString(), equity: startingCapital }];
+  return points;
 }
 
 function emptyPortfolio(reason: string) {
