@@ -1,3 +1,4 @@
+import {snapshotHealth} from "./health.mjs";
 import {workspaceSnapshot} from "./workspace.mjs";
 const paths = ["/api/market","/api/portfolio/mtm","/api/intelligence/swarm","/api/execution/friction","/api/execution/trades"];
 async function equal(a,b) {
@@ -13,6 +14,15 @@ function json(value,status=200){return response(JSON.stringify(value),status,{"C
 export default {
  async fetch(request,env) {
   const url=new URL(request.url);
+  if(url.pathname==="/healthz"){
+   if(!env.MONITOR_TOKEN || !await equal(request.headers.get("Authorization"),"Bearer "+env.MONITOR_TOKEN))return response("Unauthorized",401);
+   if(request.method!=="GET" && request.method!=="HEAD")return response("Method not allowed",405);
+   try {
+    const row=await env.DB.prepare("SELECT body,source_at,received_at FROM snapshot WHERE id=1").first();
+    const health=snapshotHealth(row);
+    return request.method==="HEAD" ? response(null,health.status==="observation_ok"?200:503) : json(health,health.status==="observation_ok"?200:503);
+   } catch { return json({status:"unhealthy",reasons:["monitor_storage_unavailable"]},503); }
+  }
   if(url.pathname==="/_ingest"){
    if(request.method!=="POST")return response("Method not allowed",405);
    if(!await equal(request.headers.get("Authorization"),"Bearer "+env.PUBLISH_TOKEN) || !env.PUBLISH_TOKEN)return response("Unauthorized",401);
