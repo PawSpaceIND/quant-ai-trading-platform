@@ -187,3 +187,8 @@ advanced attribution/risk and external broker reconciliation still remain open.
 ## Implementation delta — continuous portfolio research workspace
 
 Continuous journal research now has an authenticated dashboard: separate candidate portfolios, event-ordered equity/drawdown curves, visible valuation gaps, current holdings, fees, fills, outstanding orders, export and Atlas context. [Evidence and publication](PORTFOLIO_RESEARCH_WORKSPACE.md). This is a verified synthetic workflow on the simulator described above. It is not independently qualified live/backtest reconciliation, factor attribution, multi-asset risk or licensed point-in-time data. Company-event UI, real paired-provider/source qualification and recovery of all research journals remain open. Earlier sections describe their historical implementation stage; this section supersedes the outstanding continuous-curve UI item only.
+
+
+## Implementation delta — research-state recovery
+
+Schema 2 recovery now preserves explicitly selected research journals, raw company-event captures/mappings, provider receipts, reports and input archives alongside operational state. Supported research reports must replay identically after restore, and a pending receipt continues blocking an automatic paid retry. This improves operational continuity behind the research workflow. It does not qualify research inputs, prove target-host disaster recovery or supply missing broker, advanced risk or attribution capabilities. [Evidence and limitations](RECOVERY_BUNDLE.md). The earlier local research-state recovery gap is superseded for selected sources; deployment-wide inventory and off-host acceptance remain open.

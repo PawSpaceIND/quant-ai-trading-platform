@@ -9,5 +9,35 @@
     "directives": "/app/directives.json",
     "halt": "/data/PRAMANA_HALT",
     "research": "/data/research-report.json"
+  },
+  "research_state": {
+    "experiments": {
+      "kind": "experiment_journal",
+      "path": "/data/research/research.sqlite"
+    },
+    "portfolios": {
+      "kind": "portfolio_journal",
+      "path": "/data/research/portfolio.sqlite"
+    },
+    "company-events": {
+      "kind": "company_events",
+      "path": "/data/research/events.sqlite"
+    },
+    "provider-receipts": {
+      "kind": "directory",
+      "path": "/data/research/provider-receipts"
+    },
+    "comparison-report": {
+      "kind": "file",
+      "path": "/data/research/comparison-001.json"
+    },
+    "portfolio-report": {
+      "kind": "file",
+      "path": "/data/research/portfolio-001.json"
+    },
+    "input-archive": {
+      "kind": "directory",
+      "path": "/data/research/input-archive"
+    }
   }
 }

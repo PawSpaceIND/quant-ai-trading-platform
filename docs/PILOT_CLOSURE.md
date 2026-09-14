@@ -11,7 +11,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P03 | Shared live portfolio valuation | UI/engine parity, staleness and ledger-version checks | Engineering verified; open-session parity pending |
 | P04 | Honest strategy performance | Actual account samples, cost-aware metrics, source labels | Engineering verified; forward evidence pending |
 | P05 | Honest data/provider readiness | Missing inputs abstain; stale data blocks risk | Engineering verified; source completeness pending |
-| P06 | Complete private deployment | Container config, secrets, health, backup/restore and rollback instructions | Partial: configuration and local DB restore verified; target deployment pending |
+| P06 | Complete private deployment | Container config, secrets, health, backup/restore and rollback instructions | Partial: configuration and selected operational/research restore verified; target deployment/off-host qualification pending |
 | P07 | Authenticated dashboard and controls | Authentication, CSRF, rate/size limits, audit trail | Verified for private founder scope |
 | P08 | Interactive market watch | Search, sort, selection, saved watchlist, detail chart, timestamps | Browser verified |
 | P09 | Grounded AI copilot | Persisted conversations, provider errors, source context, no execution tools | Verified including one real Claude request |
@@ -22,7 +22,8 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P14 | Strategy-specific evidence coverage | Exact episode proof/configuration linkage, unresolved-loss coverage, qualified days and review metric/hash parity | Engineering verified; real strategy validation pending |
 | P15 | Usable experiment comparison | Private report publication, candidate coverage/cost sensitivity, authenticated export, responsive Research and Atlas context | Engineering/browser verified on synthetic evidence; real candidate evaluation pending |
 | P16 | Provider and market-event research | Provider receipts, continuous portfolio journal, time-aware company-event evidence, real source/provider qualification | Framework/tests integrated; continuous replay UI verified on synthetic evidence; two-provider/live-source and company-event UI qualification pending |
-| P17 | Continuous portfolio research workspace | Read-only journal snapshot, gap-aware curves, candidate holdings/orders, private export and bounded Atlas context | Engineering/browser verified on synthetic evidence; real input and research-recovery qualification pending |
+| P17 | Continuous portfolio research workspace | Read-only journal snapshot, gap-aware curves, candidate holdings/orders, private export and bounded Atlas context | Engineering/browser verified on synthetic evidence; real input and target-host research-recovery qualification pending |
+| P18 | Research recovery continuity | Explicit database/report/input/receipt inventory, trusted hashes, deterministic replay and preserved pending-request guards | Engineering/CLI verified on synthetic evidence; complete deployed inventory and off-host restore pending |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
 | X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
@@ -39,4 +40,9 @@ Lower-timeframe protective-exit replay has now been implemented and regression-t
 
 ## Implementation delta — continuous portfolio research
 
-The private Research page now displays per-candidate equity/drawdown curves, gaps, holdings, fees, fills and pending/cancelled orders from a consistent read-only journal export. Candidate/chart switches, pagination, authenticated download and Atlas handoff are verified on desktop/mobile. [Publication, evidence and limits](PORTFOLIO_RESEARCH_WORKSPACE.md). This closes the initial continuous replay display gap; it does not close real-input qualification, company-event UI, portfolio attribution, paired-provider performance or complete research-state recovery. The existing operational bundle does not automatically include the separate research journals.
+The private Research page now displays per-candidate equity/drawdown curves, gaps, holdings, fees, fills and pending/cancelled orders from a consistent read-only journal export. Candidate/chart switches, pagination, authenticated download and Atlas handoff are verified on desktop/mobile. [Publication, evidence and limits](PORTFOLIO_RESEARCH_WORKSPACE.md). This closes the initial continuous replay display gap; it does not close real-input qualification, company-event UI, portfolio attribution, paired-provider performance or complete research-state recovery. Schema 2 now captures explicitly selected research journals, reports and receipt directories; no automatic source discovery is implied.
+
+
+## Implementation delta — selected research recovery
+
+Schema 2 recovery adds the three research database kinds, published files and receipt/input directories to the same manifest as the paper state. It verifies database integrity, all-row hashes and deterministic experiment/portfolio reports, preserves pending provider guards, and fails on source changes or replay drift. [Capture, restore and precise limits](RECOVERY_BUNDLE.md). Local CLI and restored dashboard-reader checks pass. Actual inventory completeness, encrypted off-host retrieval, target-host restart and operator recovery acceptance remain unclosed.

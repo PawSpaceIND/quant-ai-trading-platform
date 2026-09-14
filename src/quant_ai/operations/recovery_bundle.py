@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_ai.execution.reconciliation import reconcile_paper
+from quant_ai.operations import research_recovery
 
 KINDS = {"ledger": "sqlite", "console": "sqlite", "proofs": "directory", "reviews": "directory",
          "directives": "file", "halt": "optional", "research": "optional"}
@@ -32,6 +33,8 @@ def regular(path: Path) -> None:
 
 
 def sources(spec: dict) -> dict[str, Path]:
+    if set(spec) - {"tenant", "revision", "sources", "research_state"}:
+        raise ValueError("Unknown recovery specification fields")
     if set(spec.get("sources", {})) != set(KINDS):
         raise ValueError("Specify ledger, console, proofs, reviews, directives, halt and research paths")
     if not re.fullmatch(r"[0-9a-f]{40}", spec.get("revision", "")) or not spec.get("tenant"):
@@ -39,15 +42,40 @@ def sources(spec: dict) -> dict[str, Path]:
     return {name: Path(value).absolute() for name, value in spec["sources"].items()}
 
 
-def inventory(paths: dict[str, Path]) -> dict[str, str]:
+def source_plan(spec: dict) -> tuple[dict[str, Path], dict[str, str], dict]:
+    paths, kinds, research = sources(spec), dict(KINDS), {}
+    selected = spec.get("research_state", {})
+    if not isinstance(selected, dict) or len(selected) > 64:
+        raise ValueError("Select at most 64 named research sources")
+    for name, entry in selected.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
+            raise ValueError("Invalid research source name")
+        if (not isinstance(entry, dict) or set(entry) != {"kind", "path"}
+                or entry["kind"] not in research_recovery.STORAGE
+                or not isinstance(entry["path"], str) or not entry["path"].strip()):
+            raise ValueError("Research source requires supported kind and explicit path")
+        role = f"research-state/{name}"
+        paths[role] = Path(entry["path"]).absolute()
+        kinds[role] = research_recovery.STORAGE[entry["kind"]]
+        research[name] = {"kind": entry["kind"], "path": role}
+    resolved = [p.resolve() for p in paths.values()]
+    for i, path in enumerate(resolved):
+        if any(path == other or path.is_relative_to(other) or other.is_relative_to(path)
+               for other in resolved[:i]):
+            raise ValueError("Selected recovery sources must not overlap")
+    return paths, kinds, research
+
+
+def inventory(paths: dict[str, Path], kinds: dict[str, str] | None = None) -> dict[str, str]:
+    kinds = kinds or KINDS
     result = {}
     for role, path in paths.items():
         if path.is_symlink():
             raise ValueError("Symlink sources are unsupported")
-        if not path.exists() and KINDS[role] == "optional":
+        if not path.exists() and kinds[role] == "optional":
             result[role] = "absent"
             continue
-        if KINDS[role] == "directory":
+        if kinds[role] == "directory":
             if not path.is_dir():
                 raise ValueError(f"Directory missing: {role}")
             result[role + "/"] = "directory"
@@ -62,11 +90,14 @@ def inventory(paths: dict[str, Path]) -> dict[str, str]:
         else:
             regular(path)
             result[role] = digest(path)
-            if KINDS[role] == "sqlite":
+            if kinds[role] == "sqlite":
                 wal = Path(str(path) + "-wal")
                 if wal.exists():
                     regular(wal)
-                    result[role + "-wal"] = digest(wal)
+                    # A read-only SQLite open can create a zero-byte WAL sidecar.
+                    # It carries no database frames; nonempty WALs remain fingerprinted.
+                    if wal.stat().st_size:
+                        result[role + "-wal"] = digest(wal)
     return result
 
 
@@ -82,18 +113,20 @@ def sqlite_backup(source: Path, target: Path) -> None:
 def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
     if not writers_stopped:
         raise ValueError("Stop all writers before creating a cross-file bundle")
-    paths = sources(spec)
+    paths, kinds, research = source_plan(spec)
     destination = destination.absolute()
     for source in paths.values():
         if destination.resolve() == source.resolve() or destination.resolve().is_relative_to(source.resolve()):
             raise ValueError("Bundle must be outside source paths")
-    before = inventory(paths)
+    before = inventory(paths, kinds)
     destination.mkdir(mode=0o700, parents=False, exist_ok=False)
     try:
+        if research:
+            (destination / "research-state").mkdir(mode=0o700)
         for role, source in paths.items():
             if before.get(role) == "absent":
                 continue
-            kind = KINDS[role]
+            kind = kinds[role]
             target = destination / role
             if kind == "sqlite":
                 sqlite_backup(source, target)
@@ -101,8 +134,10 @@ def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
                 shutil.copytree(source, target, symlinks=True)
             else:
                 shutil.copyfile(source, target, follow_symlinks=False)
-        if before != inventory(paths):
+        if before != inventory(paths, kinds):
             raise ValueError("Source changed during capture; stop writers and retry")
+        for entry in research.values():
+            entry["verification"] = research_recovery.inspect(destination / entry["path"], entry["kind"])
         files = {}
         directories = []
         for item in sorted(destination.rglob("*")):
@@ -114,9 +149,10 @@ def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
                 regular(item)
                 item.chmod(0o600)
                 files[relative] = {"sha256": digest(item), "size": item.stat().st_size}
-        manifest = {"schema": 1, "tenant": spec["tenant"], "revision": spec["revision"],
+        manifest = {"schema": 2, "tenant": spec["tenant"], "revision": spec["revision"],
                     "createdAt": datetime.now(timezone.utc).isoformat(), "files": files,
                     "directories": directories,
+                    "researchState": research,
                     "absent": [role for role in KINDS if before.get(role) == "absent"],
                     "sourceFingerprint": hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest(),
                     "consistency": "operator-declared stopped writers; unchanged capture fingerprints",
@@ -131,7 +167,7 @@ def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
 
 def safe_relative(value: str) -> Path:
     part = Path(value)
-    if not value or part.is_absolute() or ".." in part.parts or part.as_posix() != value:
+    if not value or value == "." or part.is_absolute() or ".." in part.parts or part.as_posix() != value:
         raise ValueError("Unsafe manifest path")
     return part
 
@@ -142,9 +178,22 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256 or "") or digest(bundle / "manifest.json") != manifest_sha256:
         raise ValueError("Trusted manifest checksum mismatch")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    if manifest.get("schema") != 1 or not isinstance(manifest.get("files"), dict):
+    if manifest.get("schema") not in (1, 2) or not isinstance(manifest.get("files"), dict):
         raise ValueError("Unsupported bundle schema")
     files, directories = manifest["files"], manifest.get("directories", [])
+    research = manifest.get("researchState") if manifest["schema"] == 2 else {}
+    if not isinstance(research, dict) or len(research) > 64:
+        raise ValueError("Invalid research recovery inventory")
+    for name, entry in research.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name)
+                or not isinstance(entry, dict) or set(entry) != {"kind", "path", "verification"}
+                or entry["kind"] not in research_recovery.STORAGE
+                or entry["path"] != f"research-state/{name}"
+                or not isinstance(entry["verification"], dict)):
+            raise ValueError("Invalid research recovery entry")
+        expected_kind = research_recovery.STORAGE[entry["kind"]]
+        if entry["path"] not in (directories if expected_kind == "directory" else files):
+            raise ValueError("Required research recovery state missing")
     expected = set(files) | set(directories) | {"manifest.json"}
     actual = {p.relative_to(bundle).as_posix() for p in bundle.rglob("*")}
     if actual != expected:
@@ -171,6 +220,12 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
             target.chmod(0o600)
             if digest(target) != info["sha256"]:
                 raise ValueError("Restored checksum mismatch")
+        research_results = {}
+        for name, entry in research.items():
+            checked = research_recovery.inspect(destination / entry["path"], entry["kind"])
+            if checked != entry["verification"]:
+                raise ValueError("Restored research verification mismatch; use the captured release")
+            research_results[name] = {"kind": entry["kind"], "path": entry["path"], **checked}
         with closing(sqlite3.connect(f"{(destination / 'ledger').resolve().as_uri()}?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
             if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
@@ -213,6 +268,10 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
                   "manifestSha256": manifest_sha256,
                   "durationSeconds": round(time.monotonic() - start, 3), "fileCount": len(files),
                   "consoleCounts": counts, "reconciliation": reconciliation,
+                  "researchRecovery": {
+                      "status": "selected_state_verified" if research else "not_selected",
+                      "sources": research_results,
+                      "scope": "Explicitly selected state only; no source discovery, provider retry, publication or qualification"},
                   "proofCoverage": {"filledOrders": len(filled_ids), "missingCount": len(missing_proofs),
                       "missingOrderIds": sorted(missing_proofs)[:50], "invalidJsonRecords": invalid_proofs, "ledgerProtectionRecords": len(protection_rows),
                       "ledgerDecisionRecords": len(decision_rows),

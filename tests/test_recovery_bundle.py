@@ -14,8 +14,10 @@ def fixture(tmp_path):
     source.mkdir()
     broker = PaperBrokerService(source / "ledger")
     fill = broker.buy(OrderIntent("INFY", Market.INDIA, Side.BUY, 2, Decimal(100), "synthetic", tenant_id="pilot"))
+    broker._connection.close()
     with sqlite3.connect(source / "console") as db:
         db.executescript("CREATE TABLE preferences(id INTEGER); CREATE TABLE conversations(id INTEGER); CREATE TABLE audit(id INTEGER); INSERT INTO conversations VALUES(1);")
+    db.close()
     for name in ("proofs", "reviews"):
         (source / name).mkdir()
     (source / "proofs" / "fill.json").write_text(json.dumps({"order_id": fill.order_id, "fixture": True}))
