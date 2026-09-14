@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { projectRoot, openLedger, hasTable, tenantId } from "@/lib/db";
+import type { DecisionProvenance } from "@/lib/types";
 
 export type Proof = Record<string, unknown> & {
   decision_id?: string;
@@ -22,6 +23,18 @@ export function proofDirectory(): string {
   const configured = process.env.PRAMANA_PROOF_DIR;
   if (configured) return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured);
   return path.join(/* turbopackIgnore: true */ projectRoot(), "pramana-proofs");
+}
+
+/** Keep full prompts/inputs in the private evidence store, outside dashboard responses. */
+export function provenanceSummary(proof: Proof): DecisionProvenance {
+  const record = (x: unknown): Record<string, unknown> => x && typeof x === "object" && !Array.isArray(x) ? x as Record<string, unknown> : {};
+  const p = record(proof.provenance), i = record(p.inference);
+  const text = (x: unknown) => typeof x === "string" && x ? x.slice(0, 200) : null;
+  const hash = (x: unknown) => typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : null;
+  if (p.schema !== "pramana.decision_provenance.v1") return {mode:"unrecorded",status:"unrecorded",provider:null,transport:null,requestedModel:null,resolvedModel:null,requestSha256:null,configurationSha256:null};
+  return {mode:text(p.mode) ?? "unrecorded",status:text(i.status) ?? (p.mode === "deterministic" ? "not_called" : "unrecorded"),provider:text(i.provider),
+    transport:text(i.transport),requestedModel:text(i.requested_model),resolvedModel:text(i.resolved_model),
+    requestSha256:hash(i.request_sha256),configurationSha256:hash(p.configuration_sha256)};
 }
 
 export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; proof: Proof }> {
@@ -82,6 +95,7 @@ export function latestSwarmIntelligence() {
       rationale: latest.proof.declared_rationales ?? [],
       stress: latest.proof.stress_verdict ?? {},
       risk: latest.proof.risk_verdict ?? {},
+      provenance: provenanceSummary(latest.proof),
     },
   };
 }

@@ -12,7 +12,7 @@ import {
 import { portfolioRisk } from "@/lib/portfolio-risk";
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
-import type { Workspace, Portfolio, Trade, Friction } from "@/lib/types";
+import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
   { id: "overview", name: "Overview", icon: "◫" },
@@ -1038,6 +1038,17 @@ function ProviderPanel({ data }: { data: Workspace }) {
     </section>
   );
 }
+function DecisionSource({ value, compact = false }: { value?: DecisionProvenance; compact?: boolean }) {
+  if (!value || value.mode === "unrecorded") return <p className="footnote">Decision source not recorded for this proof.</p>;
+  return <div className="footnote">
+    <p>{value.mode === "deterministic" ? "Decision source: deterministic rules. No model call." :
+      `Decision source: ${value.transport === "injected_client" ? "Test/custom transport · " : ""}${value.provider ?? "unverified provider"} · ${value.status.replaceAll("_", " ")}. Requested: ${value.requestedModel ?? "unrecorded"}. Returned: ${value.resolvedModel ?? "identity unavailable"}.`}</p>
+    {!compact && <dl className="details">
+      <div><dt>Request fingerprint</dt><dd style={{overflowWrap:"anywhere"}}>{value.requestSha256 ?? "Not recorded"}</dd></div>
+      <div><dt>Atlas configuration fingerprint</dt><dd style={{overflowWrap:"anywhere"}}>{value.configurationSha256 ?? "Not recorded"}</dd></div>
+    </dl>}
+  </div>;
+}
 function IntelligencePanel({
   data,
   onAsk,
@@ -1081,6 +1092,7 @@ function IntelligencePanel({
             Confidence scores are model outputs, not measured success
             probabilities.
           </p>
+          <DecisionSource value={i.proof?.provenance} compact />
           <button
             onClick={() =>
               onAsk(
@@ -1149,6 +1161,7 @@ function CostPanel({ friction }: { friction: Friction | null }) {
 function TradeFeed({ trades }: { trades: Trade[] }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const scroll = useRef<HTMLDivElement>(null);
   const visible = trades.filter((t) =>
     t.symbol.toLowerCase().includes(query.toLowerCase()),
   );
@@ -1178,7 +1191,7 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>
-      <div className="table-scroll">
+      <div className="table-scroll proof-table-scroll" ref={scroll}>
         <table>
           <thead>
             <tr>
@@ -1197,9 +1210,10 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
                 key={t.orderId}
                 trade={t}
                 expanded={expanded === t.orderId}
-                onToggle={() =>
-                  setExpanded(expanded === t.orderId ? null : t.orderId)
-                }
+                onToggle={() => {
+                  setExpanded(expanded === t.orderId ? null : t.orderId);
+                  scroll.current?.scrollTo({ left: 0 });
+                }}
               />
             ))}
           </tbody>
@@ -1259,6 +1273,7 @@ function TradeRows({
                       <li key={i}>{r}</li>
                     ))}
                   </ul>
+                  {t.proof.kind !== "protective_exit" && <DecisionSource value={t.proof.provenance} />}
                   <div className="provider-grid">
                     {[t.proof.risk, t.proof.stress].map((obj, i) => (
                       <dl className="details" key={i}>

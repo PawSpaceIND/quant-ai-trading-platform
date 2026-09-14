@@ -32,6 +32,11 @@ export type Portfolio = {
   equityCurve: { timestamp: string; equity: number }[];
   updatedAt: string | null;
 };
+export type DecisionProvenance = {
+  mode: string; status: string; provider: string | null; transport: string | null;
+  requestedModel: string | null; resolvedModel: string | null;
+  requestSha256: string | null; configurationSha256: string | null;
+};
 export type Intelligence = {
   status: string;
   regime: string;
@@ -49,6 +54,7 @@ export type Intelligence = {
     rationale: string[];
     risk: Record<string, string>;
     stress: Record<string, string>;
+    provenance?: DecisionProvenance;
   };
 };
 export type Workspace = {
@@ -83,6 +89,7 @@ export type Trade = {
   proofStatus: string;
   proof: null | {
     kind?: string;
+    provenance?: DecisionProvenance;
     rationale: string[];
     risk: Record<string, string>;
     stress: Record<string, string>;

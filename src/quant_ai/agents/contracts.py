@@ -70,6 +70,7 @@ class AtlasDecision:
     country_recommendations: tuple[str, ...]
     founder_escalations: tuple[FounderEscalation, ...]
     live_execution_allowed: bool = False
+    provenance: dict | None = None
 
     def to_json(self) -> str:
         def normalize(value: object) -> object:

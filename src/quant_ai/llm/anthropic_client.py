@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
+from importlib.metadata import version
 from typing import Any
 
 from anthropic import AsyncAnthropic
 
 from quant_ai.agents.contracts import Stance
+from quant_ai.llm.provenance import ConsensusPayload, content_hash
 
 LOGGER = logging.getLogger("quant_ai.anthropic")
 
@@ -20,6 +24,10 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 
 class ConsensusSchemaError(ValueError):
     """Raised when an LLM tool payload violates the strict trading schema."""
+
+    def __init__(self, message: str, provenance: dict | None = None):
+        super().__init__(message)
+        self.provenance = provenance
 
 
 @dataclass(frozen=True)
@@ -63,35 +71,49 @@ class AnthropicSwarmClient:
             raise ValueError("timeout_seconds must be positive")
         self.model = model or os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
         self.timeout_seconds = timeout_seconds
+        self.transport_kind = "injected_client" if client is not None else "anthropic_sdk"
         self._client = client or AsyncAnthropic(api_key=key)
 
     async def generate_trading_consensus(self, prompt: str) -> dict[str, Any]:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
+        request = {
+            "model": self.model, "max_tokens": 1200,
+            "system": (
+                "You are Pramana's advisory quant consensus engine. Use only the supplied "
+                "market context. Never claim execution capability. Return the structured "
+                "trading_consensus tool payload only."
+            ),
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": [{"name": TOOL_NAME, "description": "Structured Pramana trading consensus and XAI proof",
+                       "input_schema": _consensus_schema()}],
+            "tool_choice": {"type": "tool", "name": TOOL_NAME},
+        }
+        provenance = {
+            "schema": "pramana.inference.v1", "provider": "anthropic", "requested_model": request["model"],
+            "transport": self.transport_kind, "sdk_version": version("anthropic"), "timeout_seconds": self.timeout_seconds,
+            "resolved_model": None, "response_id": None,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "request": request, "request_sha256": content_hash(request),
+            "prompt_sha256": content_hash(prompt), "system_sha256": content_hash(request["system"]),
+            "tool_schema_sha256": content_hash(request["tools"]),
+        }
+        start = time.monotonic()
+
+        def finish(status: str) -> dict:
+            return {**provenance, "status": status, "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": round((time.monotonic() - start) * 1000, 3)}
+
+        def unavailable(detail: str) -> ConsensusPayload:
+            return ConsensusPayload(self._unavailable_payload(detail), {**finish("unavailable"), "failure": detail})
+
         try:
             response = await asyncio.wait_for(
-                self._client.messages.create(
-                    model=self.model,
-                    max_tokens=1200,
-                    system=(
-                        "You are Pramana's advisory quant consensus engine. Use only the supplied "
-                        "market context. Never claim execution capability. Return the structured "
-                        "trading_consensus tool payload only."
-                    ),
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=[
-                        {
-                            "name": TOOL_NAME,
-                            "description": "Structured Pramana trading consensus and XAI proof",
-                            "input_schema": _consensus_schema(),
-                        }
-                    ],
-                    tool_choice={"type": "tool", "name": TOOL_NAME},
-                ),
+                self._client.messages.create(**request),
                 timeout=self.timeout_seconds,
             )
         except (asyncio.TimeoutError, TimeoutError):
-            return self._unavailable_payload("API Timeout")
+            return unavailable("API Timeout")
         except ConsensusSchemaError:
             raise
         except Exception as error:  # noqa: BLE001 - no provider fault may kill the cadence
@@ -103,19 +125,28 @@ class AnthropicSwarmClient:
             if status == 529:
                 # Overload is transient unavailability; keep the established timeout label.
                 LOGGER.warning("anthropic_consensus_unavailable detail=HTTP 529")
-                return self._unavailable_payload("API Timeout")
+                return unavailable("API Timeout")
             label = f"HTTP {status}" if status is not None else type(error).__name__
             LOGGER.warning("anthropic_consensus_unavailable detail=%s", label)
-            return self._unavailable_payload(label)
+            return unavailable(label)
 
+        for attribute in ("model", "id"):
+            value = getattr(response, attribute, None)
+            provenance["resolved_model" if attribute == "model" else "response_id"] = value if isinstance(value, str) else None
+        usage = getattr(response, "usage", None)
+        provenance["usage"] = {name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
+                               for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_NAME:
                 payload = getattr(block, "input", None)
                 if not isinstance(payload, dict):
-                    raise ConsensusSchemaError("tool payload must be an object")
-                self.parse_consensus(payload)
-                return payload
-        raise ConsensusSchemaError("Anthropic response did not contain structured trading consensus")
+                    raise ConsensusSchemaError("tool payload must be an object", finish("invalid_schema"))
+                try:
+                    self.parse_consensus(payload)
+                except ConsensusSchemaError as error:
+                    raise ConsensusSchemaError(str(error), finish("invalid_schema")) from error
+                return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
+        raise ConsensusSchemaError("Anthropic response did not contain structured trading consensus", finish("invalid_schema"))
 
     def parse_consensus(self, payload: dict[str, Any]) -> tuple[TradeSignal, XAIProof]:
         required = {
@@ -157,7 +188,8 @@ class AnthropicSwarmClient:
             rationale,
         )
         xai = XAIProof(
-            self.model,
+            (getattr(payload, "provenance", {}).get("resolved_model")
+             or getattr(payload, "provenance", {}).get("requested_model") or self.model),
             summary,
             _string_list(proof["supporting_factors"], "supporting_factors"),
             _string_list(proof["risk_factors"], "risk_factors"),

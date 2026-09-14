@@ -1072,6 +1072,13 @@ td .pill {
   border-radius: 7px;
   overflow-wrap: anywhere;
 }
+.proof-table-scroll {
+  container-type: inline-size;
+}
+.proof-table-scroll .proof-detail {
+  max-width: calc(100cqi - 16px);
+  box-sizing: border-box;
+}
 .proof-detail ul {
   padding-left: 15px;
   line-height: 1.8;
@@ -1374,6 +1381,12 @@ td .pill {
   }
   .provider-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .proof-detail .provider-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .proof-detail .details dd {
+    min-width: 0;
   }
   .check-list > div {
     gap: 8px;

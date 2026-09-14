@@ -290,3 +290,18 @@ test("canonical swarm evidence survives absent/conflicting file projections and 
   assert.deepEqual(latestSwarmIntelligence().proof?.rationale,proof.declared_rationales);
   assert.equal(readProofs().filter(({proof:p})=>p.order_id===proof.order_id).length,1);
 });
+
+test("decision provenance exposes bounded identifiers and never raw provider requests", async () => {
+  const { provenanceSummary } = await import("../lib/proofs");
+  const p = provenanceSummary({provenance:{schema:"pramana.decision_provenance.v1",mode:"llm",configuration_sha256:"a".repeat(64),
+    inference:{status:"completed",provider:"anthropic",requested_model:"requested-alias",resolved_model:"reported-model",request_sha256:"b".repeat(64),request:{messages:[{content:"private full prompt"}]}}}});
+  assert.equal(p.requestedModel,"requested-alias");
+  assert.equal(p.resolvedModel,"reported-model");
+  assert.equal(p.requestSha256,"b".repeat(64));
+  assert(!JSON.stringify(p).includes("private full prompt"));
+  assert.equal(provenanceSummary({}).mode,"unrecorded");
+  const missing = provenanceSummary({provenance:{schema:"pramana.decision_provenance.v1",mode:"llm",inference:{requested_model:"alias",request_sha256:"bad"}}});
+  assert.equal(missing.resolvedModel,null);
+  assert.equal(missing.requestSha256,null);
+  assert.equal(missing.status,"unrecorded");
+});

@@ -32,6 +32,7 @@ class XAITrace:
     # a proof can only ever be joined to the exact fill it caused - never by timestamp or
     # symbol guesswork.
     order_id: str | None = None
+    provenance: dict | None = None
 
 
 class XAITraceLogger:
@@ -105,6 +106,7 @@ class XAITraceLogger:
                 "reason": risk.reason,
             },
             fill.order_id if fill is not None else None,
+            proposal.provenance,
         )
         return trace
 

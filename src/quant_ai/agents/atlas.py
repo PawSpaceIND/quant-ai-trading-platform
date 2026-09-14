@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -9,6 +9,7 @@ from quant_ai.agents.contracts import AgentEvidence, AtlasDecision, Stance
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient, ConsensusSchemaError
+from quant_ai.llm.provenance import content_hash, normalize
 from quant_ai.marketdata.ticker_stream import LiveTick
 
 STANCE_SCORE = {
@@ -113,6 +114,7 @@ class AtlasInvestmentAgent:
             recommendations,
             escalations,
             False,
+            self._provenance(subject, evidence, now, market_tick),
         )
 
     async def decide_with_llm(
@@ -136,10 +138,18 @@ class AtlasInvestmentAgent:
                 _atlas_prompt(subject, evidence, market_tick, self.founder_instructions)
             )
             signal, proof = self.llm_client.parse_consensus(payload)
-        except ConsensusSchemaError:
-            return self._hold(
-                subject, now, evidence, "Consensus Skipped: Invalid Schema", market_tick
-            )
+        except ConsensusSchemaError as error:
+            held = self._hold(subject, now, evidence, "Consensus Skipped: Invalid Schema", market_tick)
+            return replace(held, provenance={
+                **deterministic.provenance, "mode": "llm_invalid_schema",
+                "inference": error.provenance or {"status": "unverified", "provider": "unverified"},
+            })
+        inference = getattr(payload, "provenance", None)
+        if not isinstance(inference, dict):
+            inference = {"status": "unverified", "provider": "unverified",
+                         "requested_model": getattr(self.llm_client, "model", None), "resolved_model": None}
+        mode = ("llm" if inference.get("status") == "completed" else
+                "llm_unavailable" if inference.get("status") == "unavailable" else "unverified_inference")
         action = signal.stance
         if signal.expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
@@ -171,7 +181,17 @@ class AtlasInvestmentAgent:
             deterministic.country_recommendations,
             deterministic.founder_escalations,
             False,
+            {**deterministic.provenance, "mode": mode, "inference": inference},
         )
+
+    def _provenance(self, subject, evidence, now, market_tick) -> dict:
+        configuration = normalize({"atlas_policy": self.policy, "founder_policy": self.founder_policy,
+                                   "founder_instructions": self.founder_instructions})
+        inputs = normalize({"subject": subject, "evidence": evidence, "observed_at": now,
+                            "market_tick": market_tick})
+        return {"schema": "pramana.decision_provenance.v1", "mode": "deterministic",
+                "configuration": configuration, "configuration_sha256": content_hash(configuration),
+                "inputs": inputs, "inputs_sha256": content_hash(inputs), "inference": None}
 
     def _founder_rationale(self) -> tuple[str, ...]:
         if not self.founder_instructions:
@@ -200,6 +220,7 @@ class AtlasInvestmentAgent:
             (),
             (),
             False,
+            self._provenance(subject, evidence, now, market_tick),
         )
 
 

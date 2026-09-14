@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasTable, LedgerRow, openLedger, tenantId } from "@/lib/db";
-import { proofsByOrderId } from "@/lib/proofs";
+import { proofsByOrderId, provenanceSummary } from "@/lib/proofs";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +36,7 @@ export async function GET() {
             rationale: match.proof.declared_rationales ?? [],
             stress: match.proof.stress_verdict ?? {},
             risk: match.proof.risk_verdict ?? {},
+            provenance: provenanceSummary(match.proof),
           } : null,
           proofStatus: match ? "exact_match" : "unavailable_no_exact_reference",
         };
