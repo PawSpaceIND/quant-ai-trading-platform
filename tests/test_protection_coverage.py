@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal as D
@@ -122,6 +123,25 @@ def test_pilot_scope_binds_exact_asset_class_after_restart_and_accepts_iterators
     assert broker.buy(buy()).status == "FILLED"
     with pytest.raises(ValueError, match="pilot_existing_positions_out_of_scope"):
         broker.configure_pilot((replace(INSTRUMENT, asset_class=AssetClass.ETF),), "pilot")
+
+
+def test_scope_validation_and_fill_exclude_concurrent_configuration_writes(tmp_path, monkeypatch):
+    database = tmp_path / "ledger.db"
+    broker = PaperBrokerService(database)
+    broker.configure_pilot((INSTRUMENT,), "pilot")
+    other = sqlite3.connect(database, timeout=0)
+    original = broker._assert_pilot_order
+    def check(order):
+        # A second writer must be excluded already, before scope is read. It can
+        # acquire the lock again after the full validation/fill transaction completes.
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            other.execute("BEGIN IMMEDIATE")
+        return original(order)
+    monkeypatch.setattr(broker, "_assert_pilot_order", check)
+    assert broker.buy(buy()).status == "FILLED"
+    other.execute("BEGIN IMMEDIATE")
+    other.rollback()
+    other.close()
 
 
 def test_legacy_symbol_only_scope_needs_explicit_configuration_for_new_risk(tmp_path):

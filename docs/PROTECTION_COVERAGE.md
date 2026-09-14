@@ -18,7 +18,7 @@ Research's Pilot readiness view shows **Stored position protection** separately 
 
 ## Verification and limits
 
-The combined local suite passes 585 Python, 61 dashboard and 13 Worker tests, plus Ruff, TypeScript and the production UI build. New cases cover atomic rejection, friction-crossed/inherited targets, stop loosening, exact instrument scope, legacy migration, tenant isolation, corrupt thresholds, valid independent exits, failed-exit retry, durable halts, report bounds and stale/foreign/ledger-mismatched dashboard evidence.
+The combined local suite passes 586 Python, 61 dashboard and 13 Worker tests, plus Ruff, TypeScript and the production UI build. New cases cover atomic rejection, friction-crossed/inherited targets, stop loosening, exact instrument scope, legacy migration, tenant isolation, corrupt thresholds, valid independent exits, failed-exit retry, durable halts, report bounds and stale/foreign/ledger-mismatched dashboard evidence.
 
 A temporary real paper engine and compiled private dashboard were exercised with synthetic data: complete → missing → invalid protection, process restart, explicit fixture repair and a halt remaining latched. Authenticated API and browser checks show the failed protection row and affected INFY holding alongside the independent heartbeat. No browser warnings/errors were captured. The Linux container verifier also exercises missing protection, a new post-restart halted heartbeat and restoration without automatic entry resumption; revision-specific CI evidence is published separately.
 

@@ -257,9 +257,6 @@ class PaperBrokerService(BrokerAdapter):
                 # Older scopes recorded symbols only. The normal pilot factory refreshes
                 # this from configured instruments; never guess a contract for new risk.
                 raise ValueError("pilot_scope_requires_instrument_configuration")
-            # Acquire the SQLite write transaction before inspecting risk/account state.
-            # The final checks and fill cannot race another connection's persisted halt.
-            self._ensure_account(order.tenant_id)
             controls = self._connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='risk_control_state'"
             ).fetchone()
@@ -352,6 +349,9 @@ class PaperBrokerService(BrokerAdapter):
         tenant_id = order.tenant_id
         statutory_fees = friction.statutory_fees
         with self._lock, self._connection:
+            # Acquire the write transaction before reading scope or risk state. The
+            # final checks and fill cannot race another connection's configuration/halt.
+            self._ensure_account(tenant_id)
             pilot_order = self._assert_pilot_order(order)
             if idempotency_key is not None:
                 inserted = self._connection.execute(
@@ -360,7 +360,6 @@ class PaperBrokerService(BrokerAdapter):
                 )
                 if inserted.rowcount != 1:
                     raise ValueError("duplicate_order")
-            self._ensure_account(tenant_id)
             account = self._connection.execute(
                 "SELECT cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
             ).fetchone()
