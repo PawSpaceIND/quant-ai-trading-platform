@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -56,6 +57,29 @@ class ReconnectPolicy:
             raise ValueError("reconnect multiplier must be at least one")
 
 
+@dataclass(frozen=True)
+class CadenceFaultPolicy:
+    """C3: a failing cadence tick backs off instead of taking the process down.
+
+    Escalating to the kill switch matters as much as surviving: a daemon that crash-loops
+    under systemd `Restart=on-failure` looks healthy while repeatedly resetting its own
+    circuit breakers. Persistent failure must become a visible, latched halt.
+    """
+
+    backoff_seconds: tuple[float, ...] = (5.0, 15.0, 60.0)
+    halt_after_consecutive_failures: int = 5
+
+    def __post_init__(self) -> None:
+        if not self.backoff_seconds or any(item < 0 for item in self.backoff_seconds):
+            raise ValueError("backoff_seconds must be a non-empty series of non-negative delays")
+        if self.halt_after_consecutive_failures < 1:
+            raise ValueError("halt_after_consecutive_failures must be at least one")
+
+    def delay_for(self, consecutive_failures: int) -> float:
+        index = min(max(consecutive_failures, 1), len(self.backoff_seconds)) - 1
+        return self.backoff_seconds[index]
+
+
 class DaemonRunner:
     """24/7 ghost-mode supervisor for websocket feeds and the 10-minute swarm cadence."""
 
@@ -66,6 +90,7 @@ class DaemonRunner:
         *,
         cadence: timedelta = timedelta(minutes=10),
         reconnect: ReconnectPolicy | None = None,
+        fault_policy: CadenceFaultPolicy | None = None,
         log_path: str | Path = "pramana-ghost.log",
         clock: Clock | None = None,
         sleeper: Sleeper = asyncio.sleep,
@@ -77,11 +102,18 @@ class DaemonRunner:
         self.streams = tuple(streams)
         self.cadence = cadence
         self.reconnect = reconnect or ReconnectPolicy()
+        self.fault_policy = fault_policy or CadenceFaultPolicy()
         self.log_path = Path(log_path)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sleeper = sleeper
         self._stop_requested = False
         self._proof_count = 0
+        self._consecutive_failures = 0
+        self._logger = logging.getLogger("quant_ai.ghost_runner")
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._consecutive_failures
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -127,8 +159,49 @@ class DaemonRunner:
             if self._stop_requested:
                 return
             current = _as_utc(self.clock())
-            await self.daemon.run_once(current)
-            await self._capture_xai_proofs(current)
+            try:
+                await self.daemon.run_once(current)
+                await self._capture_xai_proofs(current)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - the supervisor is the last line
+                await self._handle_cadence_failure(error, current)
+            else:
+                if self._consecutive_failures:
+                    self._logger.info(
+                        "cadence_recovered after %d consecutive failures",
+                        self._consecutive_failures,
+                    )
+                    await self._write_event(
+                        "cadence_recovered",
+                        consecutive_failures=str(self._consecutive_failures),
+                    )
+                self._consecutive_failures = 0
+
+    async def _handle_cadence_failure(self, error: BaseException, at: datetime) -> None:
+        """Absorb a failing tick: log it, back off, and latch a halt if it keeps failing."""
+        self._consecutive_failures += 1
+        detail = f"{type(error).__name__}: {error}"
+        self._logger.exception(
+            "cadence_tick_failed consecutive=%d detail=%s",
+            self._consecutive_failures,
+            detail,
+        )
+        await self._write_event(
+            "cadence_tick_failed",
+            consecutive_failures=str(self._consecutive_failures),
+            error=detail,
+            occurred_at=at.isoformat(),
+        )
+        self.daemon.notify_cadence_failure(detail, self._consecutive_failures)
+        if self._consecutive_failures >= self.fault_policy.halt_after_consecutive_failures:
+            reason = (
+                f"cadence failed {self._consecutive_failures} times consecutively: {detail}"
+            )
+            self.daemon.engage_kill_switch(reason)
+            self._logger.critical("cadence_halted reason=%s", reason)
+            await self._write_event("cadence_halted", reason=reason)
+        await self.sleeper(self.fault_policy.delay_for(self._consecutive_failures))
 
     async def _capture_xai_proofs(self, generated_at: datetime) -> None:
         logger = self.daemon.scheduler.pipeline.runtime.xai_logger

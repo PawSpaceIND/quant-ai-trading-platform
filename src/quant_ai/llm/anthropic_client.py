@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from decimal import Decimal
@@ -10,7 +11,9 @@ from anthropic import AsyncAnthropic
 
 from quant_ai.agents.contracts import Stance
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+LOGGER = logging.getLogger("quant_ai.anthropic")
+
+DEFAULT_MODEL = "claude-sonnet-5"
 TOOL_NAME = "trading_consensus"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
@@ -89,11 +92,22 @@ class AnthropicSwarmClient:
                 timeout=self.timeout_seconds,
             )
         except (asyncio.TimeoutError, TimeoutError):
-            return self._timeout_payload()
-        except Exception as error:
-            if getattr(error, "status_code", None) == 529:
-                return self._timeout_payload()
+            return self._unavailable_payload("API Timeout")
+        except ConsensusSchemaError:
             raise
+        except Exception as error:  # noqa: BLE001 - no provider fault may kill the cadence
+            # C3: every provider failure degrades to a NEUTRAL consensus. Auth errors, rate
+            # limits, 5xx, stale model ids and socket drops must not terminate the daemon —
+            # an unavailable opinion is "no opinion", never an exception the cadence cannot
+            # survive. The deterministic Atlas path still governs the tick.
+            status = getattr(error, "status_code", None)
+            if status == 529:
+                # Overload is transient unavailability; keep the established timeout label.
+                LOGGER.warning("anthropic_consensus_unavailable detail=HTTP 529")
+                return self._unavailable_payload("API Timeout")
+            label = f"HTTP {status}" if status is not None else type(error).__name__
+            LOGGER.warning("anthropic_consensus_unavailable detail=%s", label)
+            return self._unavailable_payload(label)
 
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_NAME:
@@ -152,19 +166,24 @@ class AnthropicSwarmClient:
         return signal, xai
 
     @staticmethod
-    def _timeout_payload() -> dict[str, Any]:
+    def _unavailable_payload(detail: str) -> dict[str, Any]:
         return {
             "stance": "NEUTRAL",
             "confidence": 0.0,
             "expected_return": 0.0,
             "expected_risk": 0.0,
-            "rationale": ["Consensus Skipped: API Timeout"],
+            "rationale": [f"Consensus Skipped: {detail}"],
             "xai_proof": {
-                "summary": "Consensus Skipped: API Timeout",
+                "summary": f"Consensus Skipped: {detail}",
                 "supporting_factors": [],
                 "risk_factors": ["anthropic_api_unavailable"],
             },
         }
+
+    @classmethod
+    def _timeout_payload(cls) -> dict[str, Any]:
+        """Retained for callers that assert the original timeout shape."""
+        return cls._unavailable_payload("API Timeout")
 
 
 def _strict_decimal(value: Any, field: str) -> Decimal:

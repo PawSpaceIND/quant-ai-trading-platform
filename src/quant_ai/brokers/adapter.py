@@ -17,6 +17,8 @@ class BrokerPosition:
     asset_class: AssetClass
     quantity: int
     average_price: Decimal
+    stop_price: Decimal | None = None
+    take_profit_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
