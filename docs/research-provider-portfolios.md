@@ -157,3 +157,7 @@ Sources: [OpenAI structured output documentation](https://developers.openai.com/
 - Private smoke evidence SHA-256:
   98246f4433144950c56a70c65ed7bef127284777e11ba4f725be3e548bf47c30.
 - No hosted UI or broker/runtime configuration changed. No real order submitted.
+
+- Temporary merge with PR #50 at 3900aa9ff70d0706ae913a6b41b1183ae53a7f5b
+  was conflict-free; the combined Python suite passed all 448 tests. The temporary
+  merge was discarded after verification; PR #50's branch was not modified.
