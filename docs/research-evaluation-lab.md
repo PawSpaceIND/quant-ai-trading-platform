@@ -101,3 +101,19 @@ The lab refuses databases with unrelated tables, guarding against accidental use
 of the running paper ledger. Existing experiment/packet hashes and decision input
 links are checked during export and reporting. These detect inconsistency, not
 malicious rewriting of every stored hash.
+
+
+## Verification and integration handoff — 14 September 2026
+
+- Research branch: 313 Python tests pass, including 27 research cases; focused Ruff passes.
+- CLI demo, HTML review and private JSON export executed successfully on isolated synthetic data.
+- Combined PR #51 source 125ac9a with PR #50 source 3900aa9: clean merge, 411 Python tests pass.
+- Initial combined subprocess failure imported the old editable install. The complete rerun
+  used an explicit PYTHONPATH pointing to the combined tree; no product workaround was applied.
+- These results certify the offline module at those revisions, not future PR #50 changes,
+  cloud deployment, actual model calls, trained models or profitable performance.
+
+Integration owner: existing pilot workspace lane. Reuse the authenticated Research
+screen and provider provenance conventions. Do not expose private evidence bundles
+through the public snapshot viewer. Provider credentials, real side-by-side calls
+and UI/API wiring remain explicitly pending; no real provider verification occurred here.
