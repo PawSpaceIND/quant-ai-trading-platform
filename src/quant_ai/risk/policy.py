@@ -33,8 +33,6 @@ class RiskFirewall:
             return RiskDecision(False, "invalid_order")
         if portfolio.equity <= 0:
             return RiskDecision(False, "invalid_portfolio_equity")
-        if order.asset_class in self.policy.blocked_asset_classes:
-            return RiskDecision(False, "asset_class_blocked")
         if order.stop_price is not None and order.stop_price <= 0:
             return RiskDecision(False, "invalid_stop_price")
         if order.take_profit_price is not None and order.take_profit_price <= 0:
@@ -48,10 +46,12 @@ class RiskFirewall:
         reducing, adding = self._exposure_delta(order, portfolio, notional, current_symbol)
 
         if adding == 0:
-            # Pure de-risking. Neither the concentration caps nor the loss/drawdown halts
-            # may block it: a halt freezes risk-taking, never the ability to cut risk.
+            # Pure de-risking. Founder scope, concentration caps and loss/drawdown halts
+            # may never trap an existing position: a halt freezes risk-taking, not exits.
             return RiskDecision(True, "approved_risk_reducing")
 
+        if order.asset_class in self.policy.blocked_asset_classes:
+            return RiskDecision(False, "asset_class_blocked")
         if self.policy.require_protective_stop and order.stop_price is None:
             return RiskDecision(False, "protective_stop_required")
         # Use the more conservative loss signal. This preserves a realized loss even when
