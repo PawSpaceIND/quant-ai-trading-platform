@@ -185,8 +185,11 @@ class AutonomousTradingDaemon:
 
     def country_of(self, instrument: Instrument) -> str:
         """Country charged for an instrument under the warden's allocation cap."""
-        if instrument == self.instrument:
-            return self.country
+        key = (instrument.symbol, instrument.market, instrument.asset_class)
+        for index, configured in enumerate(self.instruments):
+            configured_key = (configured.symbol, configured.market, configured.asset_class)
+            if configured_key == key:
+                return self.country if index == 0 else country_for(configured)
         return country_for(instrument)
 
     def country_exposure(self, now: datetime | None = None) -> dict[str, Decimal]:
