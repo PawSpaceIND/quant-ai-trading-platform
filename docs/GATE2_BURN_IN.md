@@ -11,6 +11,7 @@ controls that exist today.
 | Prices, candles, marks | Zerodha / IBKR websocket ticks → `LiveTickMarketDataFeed` | **Real**, any market the streams carry |
 | Protective stops / targets | Persisted on fill, swept at the top of every cadence tick against the live tick | **Real** (latency ≤ cadence, 10 min) |
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
+| Daily-loss baseline, kill-switch latch | Persisted in the ledger (`risk_daily_equity`, `risk_control_state`) | **Real**, survives restarts |
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` (keyword sentiment) | Real if set, else sandbox constants |
 | Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY) | `FRED_API_KEY` | Real if set, else sandbox constants |
 | Fundamentals (P/E, margin, FCF) | none | **Sandbox** — valuation agents abstain on unknown symbols |
@@ -79,9 +80,11 @@ pramana resume                           # released on the next tick
 tail -f pramana-ghost.log                # JSON lines: ticks, exits, faults, proofs
 ```
 
-A halt freezes new risk only: protective exits keep running. A halt latched by
-repeated cadence failures (`cadence_halted` in the log) is not released by `resume`;
-fix the cause and restart the daemon.
+A halt freezes new risk only: protective exits keep running. Every halt is persisted
+in the ledger (`risk_control_state`), so a restart re-engages it instead of silently
+resetting the breaker. A halt latched by repeated cadence failures (`cadence_halted` in
+the log) is not released by removing the halt file: fix the cause, run `pramana resume`
+(which also clears the persisted latch), then restart the daemon.
 
 Holidays: NYSE 2026 closures are built in. For NSE only civil-calendar closures are
 built in; load the lunar-calendar dates from the exchange circular:
@@ -105,15 +108,20 @@ faults. `position_sizer_no_capacity` means no risk budget or deployable capital
 remained — check the plan before assuming a bug.
 
 **Stops** — the exit sweep runs before analysis on every tick, so a stop fills at the
-next tick's mark (expect slippage past the threshold on a fast move). Look for
+next tick's mark (expect slippage past the threshold on a fast move). Stop and target
+distances adapt to realised volatility: the regime detector sets the stop from the
+recent ATR (clamped to 0.6%–5%) and the target from the plan's reward:risk ratio; the
+proof rationale carries `live_stop_fraction=`. Look for
 `protective_exit` events and a SELL row with EXACT PROOF. A run of
 `protective_exit_mark_skipped` warnings during session hours means the tick feed is
 silent and **stops are not being enforced for the gap** — treat it as a feed outage
 (Zerodha access tokens expire daily).
 
 **Halts** — after a breach, BUYs show `max_drawdown_reached` /
-`daily_loss_limit_reached`; SELLs show `approved_risk_reducing`. The drawdown tile
-tracks the persisted peak. Kill and restart the daemon once mid-session: peak,
+`daily_loss_limit_reached`; SELLs show `approved_risk_reducing`. The daily-loss breaker
+is mark-to-market: unrealised losses against the day's opening equity (persisted in
+`risk_daily_equity`) count, not only realised ones. The drawdown tile tracks the
+persisted peak. Kill and restart the daemon once mid-session: peak,
 positions and cooldowns must survive; no duplicate fill on the next tick.
 
 **Proofs** — every trade row shows EXACT PROOF; every proof carries
