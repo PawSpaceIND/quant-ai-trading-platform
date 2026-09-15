@@ -112,6 +112,15 @@ def _ratio_line(value: Decimal | None) -> str:
 
 
 def _analytics(daemon: AutonomousTradingDaemon) -> None:
+    """Statistics of the traded instrument's recent price, not of the paper account.
+
+    Every ratio below is computed from the last hour of one-minute candles for the
+    configured instrument. What the account itself did is what ``portfolio`` prints. The
+    two used to be indistinguishable here - a bare ``sharpe=`` line in the same operator
+    command that prints a bare ``equity=`` line - which is how a number describing one
+    stock's last hour gets read as the system's track record. Each line now names the
+    series it measures, and the two numbers that cannot be measured at all are withheld.
+    """
     now = datetime.now(timezone.utc)
     candles = daemon.scheduler.pipeline.market_feed.fetch_ohlcv(
         daemon.instrument, now - timedelta(minutes=60), now, "1m"
@@ -126,26 +135,44 @@ def _analytics(daemon: AutonomousTradingDaemon) -> None:
     for item in returns:
         curve.append(curve[-1] * (Decimal(1) + item))
     periods = intraday_periods_per_year(daemon.instrument.market, timedelta(minutes=1))
-    metrics = summarize_performance(returns, tuple(curve), returns, returns, periods=periods)
+    # No benchmark argument. The only series in scope here is the instrument, and
+    # regressing it on itself returns alpha=0, beta=1 by construction - a tautology that
+    # reads as "tracking the market exactly". Alpha and beta need an independent index, so
+    # they are reported as unavailable rather than manufactured from the same column twice.
+    metrics = summarize_performance(returns, tuple(curve), returns, periods=periods)
+    # The market is part of the name because ``--market`` defaults to ``us``: run without
+    # it on an India pilot and every figure below describes AAPL, not anything on the
+    # watchlist. That was invisible when the output named no instrument at all.
+    print(
+        f"series=instrument_price:{daemon.instrument.symbol}:{daemon.instrument.market.value}"
+        ":1m:last_60_minutes"
+    )
+    print("series_measures=instrument_price_not_account_performance")
     # A one-minute series annualised with trading days overstates the ratio by the square
     # root of the bars in a session, so the interval is named alongside every ratio and a
     # sample too short to support one prints no number at all.
     print(f"annualisation_periods_per_year={metrics.periods_per_year}")
     print(f"return_observations={metrics.observations}")
-    print(f"sharpe={_ratio_line(metrics.sharpe)}")
-    print(f"sortino={_ratio_line(metrics.sortino)}")
+    print(f"instrument_sharpe={_ratio_line(metrics.sharpe)}")
+    print(f"instrument_sortino={_ratio_line(metrics.sortino)}")
+    # The same sample, unannualised. sharpe == t_statistic * sqrt(periods_per_year / n),
+    # so a t-statistic near zero and a large Sharpe are one measurement printed at two
+    # scales, not two findings: the t-statistic is the one that says whether the mean
+    # return is distinguishable from zero at all.
     significance = mean_return_significance(returns)
     if significance is None:
-        print(f"mean_return_t_statistic=unavailable:fewer_than_{MINIMUM_SIGNIFICANCE_OBSERVATIONS}_observations")
+        print(f"instrument_mean_return_t_statistic=unavailable:fewer_than_{MINIMUM_SIGNIFICANCE_OBSERVATIONS}_observations")
     else:
-        print(f"mean_return_t_statistic={significance.t_statistic}")
-        print(f"mean_return_observations={significance.observations}")
-        print("mean_return_multiple_testing_correction=none")
-    print(f"max_drawdown={metrics.max_drawdown}")
-    print(f"win_loss_ratio={metrics.win_loss_ratio}")
-    print(f"var_95={metrics.var_95}")
-    print(f"alpha={metrics.alpha}")
-    print(f"beta={metrics.beta}")
+        print(f"instrument_mean_return_t_statistic={significance.t_statistic}")
+        print(f"instrument_mean_return_observations={significance.observations}")
+        print("instrument_mean_return_multiple_testing_correction=none")
+    print(f"instrument_max_drawdown={metrics.max_drawdown}")
+    # Up minutes over down minutes in the price series. Not trades: the account's realised
+    # wins and losses are not in this command at all.
+    print(f"instrument_up_down_minute_ratio={metrics.win_loss_ratio}")
+    print(f"instrument_var_95={metrics.var_95}")
+    print("alpha=unavailable:no_independent_benchmark")
+    print("beta=unavailable:no_independent_benchmark")
     attribution = daemon.scheduler.pipeline.runtime.attribution.attribution()
     if not attribution:
         print("agent_attribution=none")
