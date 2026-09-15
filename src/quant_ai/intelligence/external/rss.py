@@ -5,6 +5,7 @@ from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
 
+from quant_ai.intelligence.headline_sentiment import keyword_sentiment
 from quant_ai.intelligence.providers import NewsSignal
 from quant_ai.intelligence.resilience import ResilientHttpClient
 
@@ -58,8 +59,11 @@ class RssNewsSentimentAdapter:
 
     @staticmethod
     def _sentiment(text: str) -> Decimal:
-        lowered = text.lower()
-        positive = sum(word in lowered for word in ("gain", "growth", "beat", "rally", "peace", "deal"))
-        negative = sum(word in lowered for word in ("war", "sanction", "miss", "fall", "crash", "conflict"))
-        score = Decimal(positive - negative) / Decimal(max(1, positive + negative))
-        return max(Decimal(-1), min(Decimal(1), score))
+        """The deterministic floor every signal carries until a scorer improves on it.
+
+        The adapter is synchronous and runs wherever news is fetched, so it never calls a
+        provider of its own. ``SwarmMarketAnalysisPipeline`` re-scores the headlines that
+        reach a decision, with the model when one is configured, and records which scorer
+        produced the number it used.
+        """
+        return keyword_sentiment(text)

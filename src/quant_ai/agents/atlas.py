@@ -221,7 +221,8 @@ class AtlasInvestmentAgent:
                 "configuration": configuration, "configuration_sha256": content_hash(configuration),
                 "inputs": inputs, "inputs_sha256": content_hash(inputs), "inference": None,
                 "regime": label if isinstance(label, str) else None,
-                "regime_timeframe": timeframe if isinstance(timeframe, str) else None}
+                "regime_timeframe": timeframe if isinstance(timeframe, str) else None,
+                **_headline_provenance(context)}
 
     def _founder_rationale(self) -> tuple[str, ...]:
         if not self.founder_instructions:
@@ -356,7 +357,8 @@ def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = 
         )
         lines.extend(
             f"headline=subject={item.subject};sentiment={item.sentiment};"
-            f"published_at={item.published_at};provider={item.provider};text={item.headline}"
+            f"scorer={item.scorer};published_at={item.published_at};provider={item.provider};"
+            f"rationale={item.rationale};text={item.headline}"
             for item in context.headlines
         )
     elif omitted.headlines:
@@ -426,6 +428,29 @@ def _metric_line(
     if observed_at is not None:
         rendered = f"observed_at={observed_at};{rendered}"
     return f"{name}={rendered}"
+
+
+def _headline_provenance(context: EvidenceContext | None) -> dict:
+    """Which scorer produced each headline number, and why, on the proof itself.
+
+    The consensus prompt already carries the headlines and the proof already fingerprints
+    the prompt, but a founder reading a decision should not have to re-derive a hash to
+    learn whether a sentiment number came from a model that can read negation or from the
+    word counter. The rendered headlines are already bounded, so this stays small.
+    """
+    headlines = context.headlines if context is not None else ()
+    counts: dict[str, int] = {}
+    for item in headlines:
+        counts[item.scorer] = counts.get(item.scorer, 0) + 1
+    return {
+        "headline_scorers": counts,
+        "headlines": [
+            {"provider": item.provider, "published_at": item.published_at,
+             "subject": item.subject, "sentiment": str(item.sentiment),
+             "scorer": item.scorer, "rationale": item.rationale, "headline": item.headline}
+            for item in headlines
+        ],
+    }
 
 
 def _market_rationale(tick: LiveTick | None) -> tuple[str, ...]:
