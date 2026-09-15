@@ -117,7 +117,7 @@ def external_gate_report(document: Mapping[str, object], *, evidence_root: Path 
     results = assess_external_gates(document, evidence_root=evidence_root)
     source_gates = document.get("gates")
     return {
-        "schema": "pramana.external_gate_report.v1",
+        "schema": "pramana.external_gate_report.v2",
         "ready": bool(results) and all(result.passed for result in results),
         "liveExecutionEnabled": False,
         "revision": document.get("revision"),

@@ -23,11 +23,11 @@ export function externalGateChecks(): ExternalGateCheck[] {
       const candidate = gates.find((entry) => entry && typeof entry === "object" && (entry as {id?: unknown}).id === id) as {title?: unknown} | undefined;
       return gateIds.includes(id) && candidate?.title === title;
     });
-    const reportReady = report.schema === "pramana.external_gate_report.v1" && report.ready === true && report.liveExecutionEnabled === false && exactGateSet && /^[0-9a-f]{40}$/i.test(revision) && typeof report.targetHost === "string" && report.targetHost.trim().length > 0 && (!expectedRevision || expectedRevision === revision);
+    const reportReady = report.schema === "pramana.external_gate_report.v2" && report.ready === true && report.liveExecutionEnabled === false && exactGateSet && /^[0-9a-f]{40}$/i.test(revision) && typeof report.targetHost === "string" && report.targetHost.trim().length > 0 && (!expectedRevision || expectedRevision === revision);
     return expected.map(([id, title]) => {
       const item = gates.find((candidate) => candidate && typeof candidate === "object" && (candidate as {id?: unknown}).id === id) as {id?: unknown; title?: unknown; passed?: unknown; detail?: unknown; evidenceSha256?: unknown} | undefined;
       const pass = reportReady && item?.title === title && item?.passed === true && typeof item.evidenceSha256 === "string" && /^[0-9a-f]{64}$/i.test(item.evidenceSha256);
-      return {id, title, pass, detail: pass ? "Reviewed external evidence passed." : typeof item?.detail === "string" ? item.detail : "External evidence is missing or does not match this release."};
+      return {id, title, pass, detail: pass ? "Reviewed external evidence passed." : reportReady && typeof item?.detail === "string" && item.detail !== "passed" ? item.detail : "External evidence is missing or does not match this release."};
     });
   } catch {
     return expected.map(([id, title]) => ({id, title, pass: false, detail: "External gate report is unreadable, malformed or exceeds the supported bound."}));
