@@ -103,7 +103,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      # gitleaks-action v2 requires a (free) license key for organization-owned repositories.
+      # gitleaks-action requires a (free) license key for organization-owned repositories.
       GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
     steps:
       - uses: actions/checkout@v4
