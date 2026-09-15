@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -15,6 +16,11 @@ from quant_ai.intelligence.adversarial import StressVerdict
 from quant_ai.risk.warden import WardenDecision
 
 PRAMANA_PROOF_DIRECTORY = Path("pramana-proofs")
+
+# A daemon that runs for months would otherwise hold every decision of every session in
+# memory. Only the tail is ever read (``traces()[-1]`` for attribution, the unwritten
+# tail for proof capture); the durable copy of every trace is the proof directory.
+RETAINED_TRACES = 2_000
 
 
 @dataclass(frozen=True)
@@ -42,9 +48,14 @@ class XAITrace:
 class XAITraceLogger:
     """Decision-evidence logger. Records declared inputs/rationales, not hidden chain-of-thought."""
 
-    def __init__(self, directory: str | Path | None = None) -> None:
+    def __init__(
+        self, directory: str | Path | None = None, *, retained: int = RETAINED_TRACES
+    ) -> None:
+        if retained < 1:
+            raise ValueError("retained traces must be positive")
         self.directory = Path(directory) if directory is not None else None
-        self._traces: list[XAITrace] = []
+        self._traces: deque[XAITrace] = deque(maxlen=retained)
+        self._recorded = 0
         if self.directory is not None:
             self.directory.mkdir(parents=True, exist_ok=True)
 
@@ -123,13 +134,24 @@ class XAITraceLogger:
     def record(self, trace: XAITrace) -> None:
         """Publish the in-memory/file projection of a prepared trace."""
         self._traces.append(trace)
+        self._recorded += 1
         if self.directory is not None:
             stem = self.directory / trace.decision_id
             stem.with_suffix(".json").write_text(self.to_json(trace))
             stem.with_suffix(".md").write_text(self.to_markdown(trace))
 
     def traces(self) -> tuple[XAITrace, ...]:
+        """The retained tail, oldest first, so ``traces()[-1]`` is still the newest."""
         return tuple(self._traces)
+
+    @property
+    def recorded_count(self) -> int:
+        """Every trace ever recorded, including those the tail cap has since dropped.
+
+        Callers that track how far they have consumed must count against this rather
+        than ``len(traces())``, which stops growing once the cap is reached.
+        """
+        return self._recorded
 
     @staticmethod
     def _normalize(value: Any) -> Any:

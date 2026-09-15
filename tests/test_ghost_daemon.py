@@ -58,6 +58,12 @@ class FakeLogger:
     def traces(self) -> tuple[object, ...]:
         return tuple(self.items)
 
+    @property
+    def recorded_count(self) -> int:
+        # The real logger keeps only a tail; the runner counts proofs against the
+        # total ever recorded, which this fake never drops.
+        return len(self.items)
+
     def to_json(self, trace: object) -> str:
         return json.dumps(trace)
 

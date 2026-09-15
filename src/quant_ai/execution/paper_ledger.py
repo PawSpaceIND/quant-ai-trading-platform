@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import sqlite3
 import time
@@ -22,7 +23,10 @@ from quant_ai.execution.ledger_integrity import (
     position_geometry_issues,
     whole_quantity,
 )
+from quant_ai.execution.live_friction import assumed_friction_context
 from quant_ai.execution.protection_state import positive_level, protection_coverage
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PaperBrokerDatabaseLockedError(RuntimeError):
@@ -70,6 +74,7 @@ class PaperBrokerService(BrokerAdapter):
         starting_capital: Decimal = Decimal(100000),
         slippage_bps: Decimal | None = None,
         friction_model: MarketFrictionModel | None = None,
+        friction_context_provider: Callable[[OrderIntent], FrictionContext | None] | None = None,
         lock_retries: int = 3,
         lock_backoff_seconds: float = 0.05,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -93,6 +98,9 @@ class PaperBrokerService(BrokerAdapter):
             else MarketFrictionModel()
         )
         self._friction_context: FrictionContext | None = None
+        # The live source of observed friction inputs. Unset means no market was observed,
+        # and an unobserved market is priced from the conservative assumption.
+        self._friction_context_provider = friction_context_provider
         self._execution_time: datetime | None = None
         self.lock_retries = lock_retries
         self.lock_backoff_seconds = lock_backoff_seconds
@@ -211,15 +219,51 @@ class PaperBrokerService(BrokerAdapter):
         self._friction_context = context
         self._execution_time = execution_time
 
+    def set_friction_context_provider(
+        self, provider: Callable[[OrderIntent], FrictionContext | None] | None
+    ) -> None:
+        """Install the live source of friction inputs (observed bars and quotes).
+
+        A harness that pins one context per step - historical replay - still wins over the
+        provider, so replay stays reproducible.
+        """
+        self._friction_context_provider = provider
+
     def _context_for(self, order: OrderIntent) -> FrictionContext:
         if self._friction_context is not None:
             return self._friction_context
-        return FrictionContext(
-            atr=order.reference_price * Decimal("0.01"),
-            average_daily_volume=max(Decimal(1000000), Decimal(order.quantity * 10000)),
-            liquidity_score=Decimal(1),
-            delivery=True,
-        )
+        provider = self._friction_context_provider
+        if provider is not None:
+            try:
+                supplied = provider(order)
+            except Exception:  # market data must never take down a fill
+                LOGGER.warning(
+                    "friction_context_provider_failed symbol=%s; pricing from assumed inputs",
+                    order.symbol,
+                    exc_info=True,
+                )
+                supplied = None
+            if supplied is not None:
+                return supplied
+        # No observed inputs at all: assume a wide, thin market rather than a cheap one.
+        return assumed_friction_context(order)
+
+    @staticmethod
+    def _friction_proof(
+        friction: FrictionResult, context: FrictionContext | None
+    ) -> dict[str, object]:
+        """The cost inputs and the charge lines behind one fill, as plain strings."""
+        proof: dict[str, object] = {
+            "schema": "pramana.fill_friction.v1",
+            "referencePrice": str(friction.reference_price),
+            "executionPrice": str(friction.execution_price),
+            "spreadDrag": str(friction.spread_drag),
+            "slippageDrag": str(friction.slippage_drag),
+            "charges": {item.code: str(item.amount) for item in friction.charges},
+        }
+        if context is not None:
+            proof["inputs"] = context.provenance()
+        return proof
 
     def configure_pilot(self, instruments, tenant_id: str) -> None:
         from quant_ai.governance.pilot import validate_pilot_instruments
@@ -319,7 +363,8 @@ class PaperBrokerService(BrokerAdapter):
         whole_quantity(order.quantity, "positive quantity and reference_price required")
         if positive_level(order.reference_price) is None:
             raise ValueError("positive quantity and reference_price required")
-        friction = self.friction_model.evaluate(order, self._context_for(order))
+        context = self._context_for(order)
+        friction = self.friction_model.evaluate(order, context)
         fill_price = friction.execution_price
         if positive_level(fill_price) is None:
             raise ValueError("positive finite fill_price required")
@@ -330,7 +375,8 @@ class PaperBrokerService(BrokerAdapter):
             try:
                 return self._execute_once(
                     order, friction, fill_price, notional, order_id, now,
-                    evidence=evidence, cooldown_until=cooldown_until, idempotency_key=idempotency_key,
+                    evidence=evidence, cooldown_until=cooldown_until,
+                    idempotency_key=idempotency_key, context=context,
                 )
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).lower():
@@ -354,7 +400,7 @@ class PaperBrokerService(BrokerAdapter):
         order_id: str,
         now: datetime,
         *, evidence: dict | None = None, cooldown_until: datetime | None = None,
-        idempotency_key: str | None = None,
+        idempotency_key: str | None = None, context: FrictionContext | None = None,
     ) -> ExecutionResult:
         tenant_id = order.tenant_id
         statutory_fees = finite_amount(friction.statutory_fees, "invalid_execution_fees", nonnegative=True)
@@ -496,7 +542,9 @@ class PaperBrokerService(BrokerAdapter):
                 payload = {**evidence, "order_id": order_id, "tenant_id": tenant_id,
                     "subject": order.symbol, "filled_at": now.isoformat(),
                     "fill": {"quantity": order.quantity, "price": str(fill_price),
-                        "cash_fees": str(statutory_fees), "status": "FILLED"}}
+                        "cash_fees": str(statutory_fees), "status": "FILLED",
+                        # What priced this fill: observed market inputs, or an assumption.
+                        "friction": self._friction_proof(friction, context)}}
                 if idempotency_key is not None:
                     payload["idempotency_key"] = idempotency_key
                 # Names are fixed here, never taken from the evidence or an API parameter.

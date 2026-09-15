@@ -21,6 +21,8 @@ from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
+from quant_ai.execution.friction import BrokerageSchedule, MarketFrictionModel
+from quant_ai.execution.live_friction import LiveFrictionContextProvider
 from quant_ai.execution.notifications import (
     ConsoleNotificationAdapter,
     TelegramNotificationAdapter,
@@ -62,6 +64,7 @@ from quant_ai.marketdata.ticker_stream import (
     _contract_symbol,
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
+from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.warden import RiskWarden
@@ -258,14 +261,19 @@ class DaemonRunner:
     async def _capture_xai_proofs(self, generated_at: datetime) -> None:
         logger = self.daemon.scheduler.pipeline.runtime.xai_logger
         traces = logger.traces()
-        for trace in traces[self._proof_count :]:
+        # Count against every trace ever recorded, not the retained window: the logger
+        # keeps only the newest traces in memory, so an index into the window would
+        # silently stop advancing once the cap is reached. Clamping to the window means
+        # a session long enough to overflow it writes the proofs it still holds.
+        unwritten = min(max(logger.recorded_count - self._proof_count, 0), len(traces))
+        for trace in traces[len(traces) - unwritten :]:
             payload = {
                 "event": "xai_proof",
                 "generated_at": generated_at.isoformat(),
                 "proof": json.loads(logger.to_json(trace)),
             }
             await asyncio.to_thread(self._append_json_line, payload)
-        self._proof_count = len(traces)
+        self._proof_count = logger.recorded_count
 
     async def _write_event(self, event: str, **fields: str) -> None:
         payload = {"event": event, "generated_at": _as_utc(self.clock()).isoformat(), **fields}
@@ -315,7 +323,13 @@ def build_ghost_runner(
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
     directives = directives or FounderDirectives()
-    broker = PaperBrokerService(database, starting_capital=directives.starting_capital)
+    broker = PaperBrokerService(
+        database,
+        starting_capital=directives.starting_capital,
+        # Broker charges are part of the cost of a fill, and the environment may override
+        # the published schedule for the account actually being shadowed.
+        friction_model=MarketFrictionModel(brokerage_schedule=BrokerageSchedule.from_env()),
+    )
     buffer = TickBuffer()
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
@@ -358,6 +372,14 @@ def build_ghost_runner(
     plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    # Price live fills from the market that was actually observed: ATR and volume from the
+    # closed tick bars, the half spread from the tick's own bid/ask. The clock is read
+    # through the buffer because the daemon rebinds it below.
+    broker.set_friction_context_provider(
+        LiveFrictionContextProvider(
+            feed, buffer, instruments, clock=lambda: buffer.clock()
+        )
+    )
     if pilot_mode:
         broker.configure_pilot(instruments, tenant_id)
     mapped = set(zerodha_symbol_by_token.values())
@@ -558,14 +580,23 @@ def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     return holidays_from_json(payload, default_holidays())
 
 
-def _env_notifications() -> TradingNotificationDispatcher | None:
+def _env_notifications() -> TradingNotificationDispatcher:
+    """Always durable, with Telegram as an addition rather than a precondition.
+
+    Console output dies with the container that `up -d --build` replaces, so the
+    JSON-lines log on the shared volume is wired in unconditionally and needs no
+    credentials. Telegram is added only when both settings are present; without them
+    the operator loses push delivery, never the record.
+    """
+    sinks: list[TradingNotificationSink] = [
+        ConsoleNotificationAdapter(),
+        JsonlFileSink(paths.alert_log("PRAMANA_PAPER_DB")),
+    ]
     token = os.getenv("PRAMANA_TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("PRAMANA_TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        return None
-    return TradingNotificationDispatcher(
-        (ConsoleNotificationAdapter(), TelegramNotificationAdapter(token, chat_id))
-    )
+    if token and chat_id:
+        sinks.append(TelegramNotificationAdapter(token, chat_id))
+    return TradingNotificationDispatcher(tuple(sinks))
 
 
 def build_ghost_runner_from_env() -> DaemonRunner:

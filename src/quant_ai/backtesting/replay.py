@@ -12,6 +12,7 @@ from quant_ai.backtesting.intrabar import IntrabarWindow, first_breach
 from quant_ai.domain.models import Instrument, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.friction import FrictionContext
+from quant_ai.execution.live_friction import friction_context_from_bars
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
@@ -376,16 +377,12 @@ class HistoricalReplayHarness:
 
     @staticmethod
     def _friction_context(visible: tuple[Candle, ...]) -> FrictionContext:
-        recent = visible[-15:]
-        ranges = [item.high - item.low for item in recent]
-        atr = sum(ranges, Decimal(0)) / Decimal(len(ranges)) if ranges else Decimal(0)
-        average_bar_volume = (
-            sum((item.volume for item in recent), Decimal(0)) / Decimal(len(recent))
-            if recent
-            else Decimal(1)
-        )
-        adv = max(Decimal(1), average_bar_volume * Decimal(390))
-        return FrictionContext(atr, adv, Decimal("0.90"), True)
+        """ATR and ADV from the bars this step may see, on the shared cost inputs.
+
+        The live path builds its context from the same helper, so a replayed fill and a
+        ghost fill cannot be priced by two different cost models.
+        """
+        return friction_context_from_bars(visible, liquidity_score=Decimal("0.90"), delivery=True)
 
     @staticmethod
     def _benchmark_returns(dataset: HistoricalReplayDataset) -> tuple[Decimal, ...]:
