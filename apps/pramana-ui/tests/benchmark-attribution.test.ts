@@ -24,3 +24,13 @@ test("configured reader withholds mismatched portfolio and omits raw inputs",asy
   if(priorPortfolio===undefined)delete process.env.PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO;else process.env.PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO=priorPortfolio;
  }
 });
+
+
+test("unexpected report fields cannot cross into workspace summaries",()=>{
+ for(const target of ["root","sector","totals"]){
+  const report=structuredClone(valid);
+  const object=target==="root"?report:target==="sector"?report.sectors[0]:report.totals;
+  object.privateReviewerNotes="not for workspace";
+  assert.throws(()=>parseBenchmarkAttribution(JSON.stringify(report),"example-portfolio"));
+ }
+});

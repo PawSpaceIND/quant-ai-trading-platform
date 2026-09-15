@@ -25,6 +25,8 @@ function day(value: unknown): asserts value is string {
 export function parseBenchmarkAttribution(raw: string, portfolioId: string): BenchmarkAttribution {
   check(Buffer.byteLength(raw) <= 4_000_000);
   const r = JSON.parse(raw);
+  const exact=(value:unknown,keys:string[])=>check(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length===keys.length && keys.every(key=>Object.hasOwn(value,key)));
+  exact(r,["schema","method","portfolioId","benchmarkId","periodStart","periodEnd","currency","sourceQualified","portfolioReturn","benchmarkReturn","activeReturn","reconciliationDifference","sectors","totals","inputSha256","inputPayload","input","scope"]);
   check(r && r.schema === "pramana.benchmark_attribution.v1" && r.method === "single_period_brinson_fachler" && r.currency === "INR" && r.sourceQualified === false);
   check(typeof r.inputPayload === "string" && Buffer.byteLength(r.inputPayload) <= 1_000_000);
   check(createHash("sha256").update(r.inputPayload).digest("hex") === r.inputSha256);
@@ -51,9 +53,11 @@ export function parseBenchmarkAttribution(raw: string, portfolioId: string): Ben
   rows.forEach((s,i)=>{
     const allocation=(s.wp-s.wb)*(s.rb-br), selection=s.wb*(s.rp-s.rb), interaction=(s.wp-s.wb)*(s.rp-s.rb);
     const values={allocation,selection,interaction,total:allocation+selection+interaction};
+    exact(r.sectors[i],["name","allocation","selection","interaction","total"]);
     check(r.sectors[i]?.name===s.name);
     for(const key of Object.keys(values) as (keyof typeof values)[]) {same(r.sectors[i][key],values[key]);totals[key]+=values[key];}
   });
+  exact(r.totals,["allocation","selection","interaction","total"]);
   for(const key of Object.keys(totals) as (keyof typeof totals)[]) same(r.totals?.[key],totals[key]);
   same(r.activeReturn,pr-br); same(r.reconciliationDifference,0); same(String(totals.total),pr-br);
   check(typeof r.scope === "string" && r.scope.length <= 1000);
