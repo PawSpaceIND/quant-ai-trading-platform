@@ -1076,7 +1076,7 @@ function RiskLab({
           <div className="table-scroll"><table><thead><tr><th>Sector</th><th>Market value</th><th>Weight</th></tr></thead><tbody>{data.attribution.sectors?.map(row => <tr key={row.name}><td>{row.name}</td><td>{money(row.marketValue)}</td><td>{pct(row.weight)}</td></tr>)}</tbody></table></div>
           <div className="tag-list">{data.attribution.factors?.map(row => <span className="pill neutral" key={row.name}>{row.name}: {row.exposure.toFixed(2)}</span>)}</div>
           <div className="research-actions">
-            <button onClick={() => download("portfolio-attribution.json", JSON.stringify(data.attribution, null, 2))}>Download attribution ↗</button>
+            <a href="/api/portfolio/attribution" download="pramana-portfolio-attribution.json">Download attribution ↗</a>
             <button onClick={() => onAsk(`Explain the reviewed sector and factor exposure snapshot dated ${data.attribution?.asOf}. Sectors: ${JSON.stringify(data.attribution?.sectors)}. Factors: ${JSON.stringify(data.attribution?.factors)}. State clearly that this is marked exposure, not realized return attribution, margin, Greeks or a forecast.`)}>Discuss with Atlas ↗</button>
           </div>
         </> : <p className="empty">{data.attribution?.detail || "Attribution is unavailable until reviewed metadata is configured."}</p>}
