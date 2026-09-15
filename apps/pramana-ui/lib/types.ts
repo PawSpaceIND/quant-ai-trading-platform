@@ -1,3 +1,4 @@
+import type {BenchmarkAttributionState} from "./benchmark-attribution";
 import type {CompanyEventsState} from "./company-events";
 import type { ResearchReport } from "./research";
 import type { ResearchLabState } from "./research-lab";
@@ -70,6 +71,7 @@ export type Workspace = {
   historicalRisk?: HistoricalRiskState;
   attribution?: import("./portfolio-attribution").AttributionState;
   paperContribution?: PaperContributionState;
+  benchmarkAttribution?: BenchmarkAttributionState;
   researchLab?: ResearchLabState;
   researchPortfolio?: PortfolioResearchState;
   companyEvents?: CompanyEventsState;

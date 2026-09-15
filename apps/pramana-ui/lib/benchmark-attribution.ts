@@ -59,3 +59,6 @@ export function parseBenchmarkAttribution(raw: string, portfolioId: string): Ben
   check(typeof r.scope === "string" && r.scope.length <= 1000);
   return r as BenchmarkAttribution;
 }
+
+export type BenchmarkAttributionSummary = Omit<BenchmarkAttribution,"input"|"inputPayload"|"scope">;
+export type BenchmarkAttributionState = {status:"unavailable"|"invalid"|"published";detail:string;report:BenchmarkAttributionSummary|null};

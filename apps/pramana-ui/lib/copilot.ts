@@ -1,3 +1,4 @@
+import {benchmarkAttributionContext} from "./benchmark-attribution-store";
 import {runComparisonContext} from "./run-comparison";
 import {validBrokerSelection,type BrokerSelection} from "./broker-lifecycle";
 import {brokerObservationContext} from "./broker-observation";
@@ -94,6 +95,7 @@ export async function generateAnswer(
       historicalRisk: historicalRiskContext(historicalRisk(portfolio,market.riskHistory)),
       runtime,
       strategyObservation,
+      benchmarkAttribution: benchmarkAttributionContext(),
       researchLab: researchLabContext(),
       researchPortfolio: portfolioResearchContext(),
       runComparison: runComparisonContext(),

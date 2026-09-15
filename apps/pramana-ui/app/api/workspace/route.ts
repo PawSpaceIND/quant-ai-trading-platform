@@ -1,3 +1,4 @@
+import {readBenchmarkAttribution} from "@/lib/benchmark-attribution-store";
 import {readRunComparison} from "@/lib/run-comparison";
 import {tradingFeedCheck} from "@/lib/freshness";
 import {readBrokerObservation} from "@/lib/broker-observation";
@@ -145,6 +146,7 @@ export async function GET() {
         market: displayMarket,
         runtime,
         research: readResearch(),
+        benchmarkAttribution: readBenchmarkAttribution(),
         researchLab: readResearchLab(),
         researchPortfolio: readPortfolioResearch(),
         runComparison: readRunComparison(),
