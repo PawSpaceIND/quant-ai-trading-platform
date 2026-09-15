@@ -46,3 +46,29 @@ def test_duplicate_sector_rejected():
     data = fixture(); data["sectors"].append(deepcopy(data["sectors"][0]))
     with pytest.raises(ValueError):
         benchmark_attribution(data)
+
+
+def test_private_cli_binds_exact_input_and_refuses_overwrite(tmp_path):
+    import hashlib
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    source, destination = tmp_path / "input.json", tmp_path / "report.json"
+    source.write_text(json.dumps(fixture()))
+    command = [sys.executable, str(Path(__file__).resolve().parents[1] / "scripts/benchmark_attribution.py"),
+               "--input", str(source), "--output", str(destination)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(destination.read_text())
+    assert report["inputSha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert report["input"] == fixture()
+    assert destination.stat().st_mode & 0o777 == 0o600
+    original = destination.read_bytes()
+    assert subprocess.run(command, capture_output=True, check=False).returncode == 2
+    assert destination.read_bytes() == original
+    source.write_text('{}')
+    command[-1] = str(tmp_path / "invalid.json")
+    assert subprocess.run(command, capture_output=True, check=False).returncode == 2
+    assert not Path(command[-1]).exists()

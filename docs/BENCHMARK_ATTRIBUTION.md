@@ -9,3 +9,11 @@ The input schema is `pramana.benchmark_attribution_input.v1`, with `currency: IN
 The independent numerical regression uses Table 8 of [Achmea Investment Management's Shapley Attribution research](https://www.achmeainvestmentmanagement.nl/-/media/files/institutioneel/nieuws/aim-shapley-attributie-research-paper.pdf): allocation 0.50%, selection -1.30%, interaction 0.05%, active return -0.75%. See also [CFA Institute's performance attribution review](https://rpc.cfainstitute.org/sites/default/files/-/media/documents/book/rf-lit-review/2019/rflr-performance-attribution.pdf).
 
 This is a calculation component, not complete Bloomberg PORT parity. It does not generate qualified beginning weights, sector classifications or total-return histories. Source receipts, period/currency alignment, corporate-action/income accounting, fee treatment, multi-period linking, publication, exports and dashboard/Atlas wiring remain open. Do not feed current holdings into historical attribution. The existing exposure panel remains exposure-only until these inputs and integrations are implemented and verified.
+
+Generate a private report with:
+
+```sh
+python scripts/benchmark_attribution.py --input /data/reviews/attribution-input.json --output /data/reviews/attribution-report.json
+```
+
+The command limits input to 1 MB, includes the supplied inputs and their exact byte SHA-256, writes with mode 0600, and refuses to overwrite an existing output. Invalid inputs exit 2 without creating a report. The source hash identifies the reviewed file; it does not authenticate its contents. Keep source and report in a private review directory. This command does not automatically publish to the dashboard or qualify a pilot gate.
