@@ -120,6 +120,27 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    # `restart: unless-stopped` only reacts to the Node process exiting. A Next.js server
+    # that is alive but no longer serving - an event loop wedged on a stuck handler, a
+    # worker that never finished booting - keeps the container "up" and the console blank.
+    # So probe the thing the service exists to do: answer on the port this file publishes
+    # (`ports: 127.0.0.1:3000:3000`, container port 3000) with a real 200.
+    # `/login` is the unauthenticated entry page and is the exact probe the containers CI
+    # job already uses against this image (scripts/verify_pilot_containers.py, `ready()`),
+    # so a build that passes CI passes this check for the same reason.
+    # `node -e` rather than curl/wget: neither is in node:24-bookworm-slim, and the probe
+    # is a short-lived process (~45 MB for a few hundred ms) well inside the 512m cap.
+    # 127.0.0.1 rather than localhost: `next start --hostname 0.0.0.0` does not listen on
+    # ::1, and Node resolves localhost verbatim, so the name can pick the address nothing
+    # is bound to.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # `npm start` on a 2 GB instance needs well under a minute to accept connections;
+      # until then a refused connection is expected and must not count as a failure.
+      start_period: 60s
     mem_limit: 512m
     logging: *logging
   market-monitor:
@@ -151,7 +172,57 @@ services:
     # a 4 GB host. The peak itself is the real defect: the summary needs counters and a small
     # sample, not three full copies. Bring this back down once that load is a single pass.
     mem_limit: 512m
+    # The collector's job is one file: PRAMANA_MARKET_SNAPSHOT (/data/market-monitor.json),
+    # rewritten every cycle by scripts/market_monitor.py. Checking that the process is
+    # alive proves nothing - the loop's `except` clause publishes an `unavailable` payload
+    # rather than dying, so a broker outage leaves a *running* process that keeps writing,
+    # and only a genuinely wedged process stops the file from moving. Freshness is
+    # therefore the only signal that separates the two, and it is exactly the failure the
+    # dashboard cannot distinguish from a slow provider.
+    #
+    # Threshold. The loop's coded cadence is `time.sleep(60)` plus one collect(). One
+    # collect() is bounded by its client timeouts - KiteConnect(timeout=15) for quotes,
+    # profile and daily candles, and ResilientHttpClient (capped at 5s) for the RSS
+    # fetch. The worst cycle is the first of a trading day, which adds the once-daily
+    # kite.instruments() master (plus the ~110k-row parse this service was resized for)
+    # and a daily-candle backfill for each of the 16 default rows, on top of the
+    # per-key quote retry fan-out the batched call falls back to. At the full 15s
+    # timeout for every one of those ~35 sequential requests that is roughly 9-10
+    # minutes. 900s clears it with margin, and still catches a wedged collector inside a
+    # quarter of one 09:15-15:30 session.
+    #
+    # This is deliberately NOT the dashboard's 120s bound (apps/pramana-ui/lib/market.ts
+    # `collectorStale`, apps/pramana-ui/lib/freshness.ts). That one answers "may I show
+    # this quote as current" and must be tight. This one answers "should this container be
+    # replaced" and must not fire on the daily heavy cycle. Do not reconcile them.
+    #
+    # `find -newermt` rather than `stat`/`date` arithmetic keeps the probe free of `$`,
+    # which Compose would otherwise interpolate, and free of a Python interpreter, which
+    # would add ~20 MB inside the cap that a real OOM set. A missing file prints nothing
+    # and fails, which is the correct answer before the first snapshot is written.
+    healthcheck:
+      test: ["CMD-SHELL", "find /data/market-monitor.json -newermt '900 seconds ago' | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      # A cold start writes nothing until its first collect() returns, and that is the
+      # heavy cycle described above: the instrument master download and parse.
+      start_period: 300s
     logging: *logging
+  # Deliberately has no healthcheck, unlike every other service here. This is cron in a
+  # sleep loop, not a server: scripts/scheduled_backup.py runs one cycle and then sleeps
+  # PRAMANA_BACKUP_INTERVAL_SECONDS (86400 by default), so the only artifact it produces
+  # appears once a day. A freshness check would have to allow a full interval plus the
+  # 1800s backup subprocess timeout - about 25 hours - which means it would report
+  # `healthy` for a day after the loop wedged. A green light that is a day stale is worse
+  # than no light, because `docker compose ps` presents it as a live answer.
+  # The failure it could catch is also one this service deliberately survives: `cycle()`
+  # logs and continues, because a backup that cannot be taken must not take the service
+  # down. Restarting the container would not empty a full disk or repair a corrupt ledger;
+  # it would only reset the interval timer and re-run the same failing cycle. Backup
+  # coverage is reviewed from /data/backups and its sha256 manifests (see
+  # docs/VPS_GHOST_DEPLOYMENT.md), and one full cycle is verified end to end in CI by
+  # scripts/verify_pilot_containers.py.
   # Daily consistent ledger backups without host cron: the same image, a sleep loop and
   # the existing pilot_ops backup (SQLite online backup API, integrity check, sha256
   # manifest). It reads the ledger through a read-only connection and never pauses the
