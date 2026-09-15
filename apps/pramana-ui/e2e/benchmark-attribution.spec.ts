@@ -66,8 +66,8 @@ test("private market watchlist persists and hands a selected instrument to Atlas
  await expect(page.getByRole("heading",{name:/Market watch/})).toBeVisible();
  await expect(page.getByText("Collector stale",{exact:true})).toBeVisible();
  await page.getByRole("textbox",{name:"Search instruments"}).fill("INFY");
- await expect(page.getByRole("button",{name:"NSE:INFY NSE · INR"})).toBeVisible();
- await expect(page.getByRole("button",{name:"NSE:TCS NSE · INR"})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"NSE:INFY NSE · INR · EQUITY"})).toBeVisible();
+ await expect(page.getByRole("button",{name:"NSE:TCS NSE · INR · EQUITY"})).toHaveCount(0);
  await page.getByRole("button",{name:"Save NSE:INFY"}).click();
  await expect(page.getByRole("button",{name:"Remove NSE:INFY"})).toBeVisible();
  await page.reload();
