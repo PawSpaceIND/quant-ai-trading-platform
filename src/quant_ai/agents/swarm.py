@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent
-from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
+from quant_ai.agents.contracts import AgentDomain, AgentEvidence, EvidenceContext, Stance
 from quant_ai.domain.models import AssetClass, Market, Side
 from quant_ai.risk.stops import orient_protective_levels
 
@@ -204,9 +204,11 @@ class AtlasCIOAgent:
         take_profit_price: Decimal | None,
         country: str,
         market_tick: object | None = None,
+        evidence_context: EvidenceContext | None = None,
     ) -> TradeProposal:
         decision = await self.atlas.decide_with_llm(
-            request.subject, evidence, request.observed_at, market_tick=market_tick
+            request.subject, evidence, request.observed_at, market_tick=market_tick,
+            evidence_context=evidence_context,
         )
         return self._proposal_from_decision(
             request, decision, quantity=quantity, reference_price=reference_price,

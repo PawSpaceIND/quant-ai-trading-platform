@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from quant_ai.agents.contracts import AgentEvidence
+from quant_ai.agents.contracts import AgentEvidence, EvidenceContext
 from quant_ai.agents.swarm import AgentAnalysisRequest, AtlasCIOAgent, TradeProposal
 from quant_ai.analytics.attribution import AgentAttributionEngine
 from quant_ai.brokers.base import ExecutionResult
@@ -107,6 +107,7 @@ class SwarmPaperTradingService:
         preflight_veto_reason: str | None = None,
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
+        evidence_context: EvidenceContext | None = None,
     ) -> SwarmExecutionResult:
         weighted = self.attribution.weight_evidence(evidence)
         if preflight_veto_reason is not None:
@@ -123,7 +124,7 @@ class SwarmPaperTradingService:
         proposal = await self.cio.propose_async(
             request, weighted, quantity=quantity, reference_price=reference_price,
             stop_price=stop_price, take_profit_price=take_profit_price, country=country,
-            market_tick=market_tick,
+            market_tick=market_tick, evidence_context=evidence_context,
         )
         return self._execute_proposal(
             request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
