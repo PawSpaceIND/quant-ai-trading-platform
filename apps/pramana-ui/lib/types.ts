@@ -1,3 +1,4 @@
+import type {ExternalAccountState} from "./external-account";
 import type {BenchmarkAttributionState} from "./benchmark-attribution";
 import type {CompanyEventsState} from "./company-events";
 import type { ResearchReport } from "./research";
@@ -66,6 +67,7 @@ export type Intelligence = {
 };
 export type Workspace = {
   runComparison?: import("./run-comparison-model").RunComparisonState;
+  externalAccount?: ExternalAccountState;
   brokerObservation?: import("./broker-observation").BrokerObservationState;
   benchmarkPerformance?: import("./benchmark-comparison").AccountBenchmarkState;
   historicalRisk?: HistoricalRiskState;

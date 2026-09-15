@@ -1,3 +1,4 @@
+import {externalAccountContext} from "./external-account";
 import {benchmarkAttributionContext} from "./benchmark-attribution-store";
 import {runComparisonContext} from "./run-comparison";
 import {validBrokerSelection,type BrokerSelection} from "./broker-lifecycle";
@@ -91,6 +92,7 @@ export async function generateAnswer(
       portfolio,
       paperContribution: paperContributionContext(paperContribution),
       benchmarkPerformance: accountBenchmarkContext(benchmarkPerformance),
+      externalAccount: externalAccountContext(),
       brokerObservation: brokerObservationContext(),
       historicalRisk: historicalRiskContext(historicalRisk(portfolio,market.riskHistory)),
       runtime,

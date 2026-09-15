@@ -35,3 +35,21 @@ test("attribution remains usable in a 390px viewport",async({page})=>{
   await expect(page.getByRole("link",{name:"Download attribution JSON"})).toBeVisible();
   await page.screenshot({path:"test-results/attribution-mobile.png",fullPage:true});
 });
+
+
+test("selected external account remains historical and private",async({page})=>{
+ await page.goto("/login");
+ await page.getByLabel("Workspace access key").fill(secret);
+ await page.getByRole("button",{name:/Open workspace/}).click();
+ await expect(page).toHaveURL(/\/$/);
+ await page.getByRole("navigation",{name:"Main navigation"}).getByRole("button",{name:/Activity/}).click();
+ await expect(page.getByRole("heading",{name:"Selected account funds & net positions"})).toBeVisible();
+ await expect(page.getByText("Historical selected-account snapshot",{exact:false})).toBeVisible();
+ await expect(page.getByRole("rowheader",{name:"INFY"})).toBeVisible();
+ const downloadPromise=page.waitForEvent("download");
+ await page.getByRole("link",{name:"Download selected account JSON"}).click();
+ expect((await downloadPromise).suggestedFilename()).toBe("pramana-external-account.json");
+ await page.getByRole("button",{name:"Ask Atlas about this account"}).click();
+ await expect(page.locator(".copilot-dock textarea")).toHaveValue(/separate paper ledger/);
+ await page.screenshot({path:"test-results/external-account-desktop.png",fullPage:true});
+});

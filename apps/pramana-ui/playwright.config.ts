@@ -1,6 +1,9 @@
+import fs from "node:fs";
 import {defineConfig} from "@playwright/test";
 import path from "node:path";
 
+const externalFixture=path.resolve("tests/fixtures/external-account-snapshot.json");
+const externalRef=JSON.parse(fs.readFileSync(externalFixture,"utf8")).accountRef as string;
 const port=3217;
 const baseURL=`http://127.0.0.1:${port}`;
 export default defineConfig({
@@ -22,6 +25,8 @@ export default defineConfig({
       PRAMANA_CONSOLE_DB:"/tmp/pramana-browser-fixture/console.sqlite",
       PRAMANA_BENCHMARK_ATTRIBUTION_REPORT:path.resolve("tests/fixtures/benchmark-attribution.json"),
       PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO:"example-portfolio",
+      PRAMANA_EXTERNAL_ACCOUNT_SNAPSHOT:externalFixture,
+      PRAMANA_EXTERNAL_ACCOUNT_REF:externalRef,
       TRADING_LIVE_MONEY_ACTIVE:"false",
     },
   },

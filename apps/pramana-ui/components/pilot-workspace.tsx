@@ -1,3 +1,4 @@
+import {ExternalAccountPanel} from "./external-account";
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {ageWorkspace,sourceAge,within} from "@/lib/freshness";
@@ -622,6 +623,7 @@ export function PilotWorkspace() {
                 )}
                 {view === "activity" && (
                   <>
+                    {!hosted && <ExternalAccountPanel state={data.externalAccount} onAsk={ask} />}
                     {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={(prompt,selection)=>ask(prompt,undefined,selection)} />}
                     <TradeFeed trades={trades} />
                     <CostPanel friction={friction} />

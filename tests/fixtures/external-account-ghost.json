@@ -1,0 +1,68 @@
+{
+  "schema": "pramana.external_account_snapshot.v1",
+  "scope": "selected_external_kite_equity_net_positions_and_funds_excludes_depository_holdings",
+  "broker": "zerodha-kite",
+  "tenantId": "ghost",
+  "accountRef": "bcec62f59baa14cadf077485ebd4e1836713f1ac6774d6a49d8311a31fd6b215",
+  "startedAt": "2026-09-11T06:30:00.000+00:00",
+  "finishedAt": "2026-09-11T06:30:00.000+00:00",
+  "status": "consistent",
+  "fundsBefore": {
+    "broker": "zerodha-kite",
+    "currency": "INR",
+    "cash_balance": "1000",
+    "available_balance": "800",
+    "net_liquidation": null,
+    "net_trading_funds": "900",
+    "opening_balance": "1200",
+    "segment": "equity"
+  },
+  "positionsBefore": [
+    {
+      "broker": "zerodha-kite",
+      "instrument_id": "123",
+      "symbol": "INFY",
+      "exchange": "NSE",
+      "currency": null,
+      "security_type": null,
+      "product": "CNC",
+      "quantity": "2",
+      "average_cost": "100",
+      "scope": "broker_net_positions_excludes_separate_holdings",
+      "cost_basis": "per_unit",
+      "model": null
+    }
+  ],
+  "funds": {
+    "broker": "zerodha-kite",
+    "currency": "INR",
+    "cash_balance": "1000",
+    "available_balance": "800",
+    "net_liquidation": null,
+    "net_trading_funds": "900",
+    "opening_balance": "1200",
+    "segment": "equity"
+  },
+  "positions": [
+    {
+      "broker": "zerodha-kite",
+      "instrument_id": "123",
+      "symbol": "INFY",
+      "exchange": "NSE",
+      "currency": null,
+      "security_type": null,
+      "product": "CNC",
+      "quantity": "2",
+      "average_cost": "100",
+      "scope": "broker_net_positions_excludes_separate_holdings",
+      "cost_basis": "per_unit",
+      "model": null
+    }
+  ],
+  "limitations": [
+    "Kite net positions exclude a separate depository holdings inventory.",
+    "This external account is not the independent paper ledger; no cash or position parity is claimed.",
+    "Sequential GETs are not atomic and do not prove provider completeness or settlement."
+  ],
+  "sha256": "1f7e57ee977f85ec6cf5aa83277c4372ca20b4e373324c2b793e666d0930002d"
+}

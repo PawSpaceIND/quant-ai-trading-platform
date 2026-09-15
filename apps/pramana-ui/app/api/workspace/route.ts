@@ -1,3 +1,4 @@
+import {readExternalAccount} from "@/lib/external-account";
 import {readBenchmarkAttribution} from "@/lib/benchmark-attribution-store";
 import {readRunComparison} from "@/lib/run-comparison";
 import {tradingFeedCheck} from "@/lib/freshness";
@@ -140,6 +141,7 @@ export async function GET() {
         portfolio,
         paperContribution,
         benchmarkPerformance,
+        externalAccount: readExternalAccount(),
         brokerObservation: readBrokerObservation(),
         historicalRisk: historicalRisk(portfolio, riskHistoryInput),
         attribution: portfolioAttribution(portfolio),

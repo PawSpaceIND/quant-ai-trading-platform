@@ -40,6 +40,7 @@ def publish():
         detail.pop("paperContribution", None)  # Detailed account attribution stays on the engine host.
         detail.pop("historicalRisk", None)
         detail.pop("runComparison", None)
+        detail.pop("externalAccount", None)  # Selected external funds and positions stay private.
         detail.pop("brokerObservation", None)  # External account evidence stays private.
         detail.pop("benchmarkPerformance", None)  # Current-account risk diagnostics remain private.
         snapshots["/api/workspace"] = detail

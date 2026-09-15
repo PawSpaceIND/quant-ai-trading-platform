@@ -11,6 +11,7 @@ const faultHalted = protectionMissing || phase === "protection-restored" || inva
 const anonymous = await fetch(`${origin}/api/workspace`);
 assert.equal(anonymous.status, 401);
 assert.equal((await fetch(`${origin}/api/research/attribution`)).status, 401);
+assert.equal((await fetch(`${origin}/api/broker/external-account`)).status, 401);
 // Persist one test-only signed session across phases/restarts without relaxing the
 // product's login rate limit. Anonymous rejection is still checked on every phase.
 const sessionFile = process.env.SMOKE_SESSION_FILE;
@@ -37,6 +38,14 @@ assert.equal(workspace.tenantId, process.env.PRAMANA_TENANT_ID);
 assert.equal(workspace.liveEnabled, false);
 assert.equal(workspace.copilotConfigured, false);
 assert.equal(workspace.runtime.mode, "paper");
+assert.equal(workspace.externalAccount.status,"stale");
+assert.equal(workspace.externalAccount.report.status,"consistent");
+assert.equal(workspace.externalAccount.report.positions[0].quantity,"2");
+const externalDownload=await request("/api/broker/external-account");
+assert.equal(externalDownload.status,200);
+assert.match(externalDownload.headers.get("cache-control"),/no-store/);
+assert.deepEqual(await externalDownload.json(),workspace.externalAccount.report);
+
 assert.equal(workspace.benchmarkAttribution.status, "published");
 assert.equal(workspace.benchmarkAttribution.report.portfolioId, "example-portfolio");
 assert.equal(workspace.benchmarkAttribution.report.sourceQualified, false);
