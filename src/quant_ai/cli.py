@@ -61,8 +61,15 @@ def build_runtime() -> AutonomousTradingDaemon:
     xai_dir = str(paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR"))
     # Sandbox runtime: no return history source, so only the operator's group limit
     # arms here. Correlation/expected-shortfall stay unarmed.
+    # The pilot daemon rebuilds specialist scores from the decision journal at boot
+    # (daemon.py). This runtime did not, so ``analytics`` reported an engine that had
+    # never loaded anything as an engine that had learned nothing - the same
+    # ``agent_attribution=none`` an untraded account prints, and indistinguishable from it.
     runtime = build_traded_runtime(
-        broker=broker, directives=directives, xai_logger=XAITraceLogger(xai_dir)
+        broker=broker,
+        directives=directives,
+        xai_logger=XAITraceLogger(xai_dir),
+        attribution_journal_tenant=tenant_id,
     )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -148,6 +155,13 @@ def _analytics(daemon: AutonomousTradingDaemon) -> None:
         ":1m:last_60_minutes"
     )
     print("series_measures=instrument_price_not_account_performance")
+    # Whether these are real quotes at all. This runtime is served by a sandbox feed
+    # whose prices are generated, so the ratios are arithmetic on synthetic input and
+    # must never be read as market observation. The account figures that ``portfolio``
+    # prints come from the shared paper ledger and are unaffected by this.
+    feed = daemon.scheduler.pipeline.market_feed
+    sandbox = "Sandbox" in type(feed).__name__
+    print(f"series_source={'sandbox_generated_prices' if sandbox else 'live_feed'}")
     # A one-minute series annualised with trading days overstates the ratio by the square
     # root of the bars in a session, so the interval is named alongside every ratio and a
     # sample too short to support one prints no number at all.
@@ -221,7 +235,7 @@ def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
 def _backtest(args: argparse.Namespace) -> None:
     if not args.data:
         raise SystemExit("backtest requires --data")
-    market = Market.INDIA if args.market == "india" else Market.USA
+    market = Market.INDIA if (args.market or "us") == "india" else Market.USA
     instrument = (
         Instrument("RELIANCE", market, AssetClass.EQUITY, "INR", "NSE")
         if market == Market.INDIA
@@ -434,7 +448,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data")
     parser.add_argument("--start")
     parser.add_argument("--end")
-    parser.add_argument("--market", choices=("india", "us"), default="us")
+    # No default. A command that cannot honour this flag must refuse it rather than
+    # print US sandbox figures under an operator's ``--market india``.
+    parser.add_argument("--market", choices=("india", "us"), default=None)
     parser.add_argument("--reason", default="operator halt")
     parser.add_argument(
         "--clear-fault-halt",
@@ -476,6 +492,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         _backtest(args)
         return 0
+    if args.market is not None:
+        raise SystemExit(
+            f"--market does not apply to {args.command}: this runtime is a US sandbox. "
+            "Only backtest reads --market; the pilot watchlist is set by founder directives."
+        )
     daemon = build_runtime()
     if args.command == "run-once":
         brief = asyncio.run(daemon.run_once())
