@@ -202,7 +202,12 @@ class SwarmPaperTradingService:
             return refuse("STRESS_VETO")
 
         risk = self.warden.evaluate(
-            proposal, plan, portfolio, country_exposure=country_exposure, tenant_id=tenant_id
+            proposal, plan, portfolio, country_exposure=country_exposure, tenant_id=tenant_id,
+            # Where this decision sits inside the trading session, which is what the
+            # overnight limits turn on. The analysis instant rather than a fresh clock
+            # read, so the gate judges the same moment every other verdict on this
+            # proposal was reached at.
+            now=request.observed_at,
         )
         if not risk.approved or risk.order is None:
             trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, risk)
