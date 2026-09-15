@@ -23,6 +23,7 @@ def main():
         result = benchmark_attribution(json.loads(raw))
         result["inputSha256"] = hashlib.sha256(raw).hexdigest()
         result["input"] = json.loads(raw)
+        result["inputPayload"] = raw.decode("utf-8")
         payload = json.dumps(result, indent=2, allow_nan=False) + "\n"
         fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as destination:
