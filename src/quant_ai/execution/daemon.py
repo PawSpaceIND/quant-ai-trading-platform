@@ -576,6 +576,7 @@ class AutonomousTradingDaemon:
             record_decision(
                 self.tracker.broker, execution, tenant_id=self.tenant_id,
                 now=timestamp, llm_available=llm_available,
+                features=getattr(result, "features", None),
             )
         except Exception:  # evidence capture must never break the cadence
             self._logger.exception("decision_journal_write_failed symbol=%s", instrument.symbol)

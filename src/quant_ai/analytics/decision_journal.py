@@ -53,6 +53,8 @@ COLUMNS = (
     "reason",
     "order_id",
     "agents",
+    "features",
+    "feature_schema_version",
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -99,6 +101,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     reason TEXT,
     order_id TEXT,
     agents TEXT NOT NULL,
+    features TEXT,
+    feature_schema_version INTEGER,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -139,11 +143,29 @@ MODE_DETERMINISTIC = "deterministic"
 MODE_UNVERIFIED = "unverified_inference"
 
 
+# Columns added after the first release, as ``(name, declaration)``. ``CREATE TABLE IF NOT
+# EXISTS`` does nothing to a table that already exists, so a ledger written by an earlier
+# build keeps its old shape while ``insert_decision`` names every column in ``COLUMNS`` -
+# and the insert fails. The daemon logs that failure and carries on, so the first symptom
+# would be a journal that quietly stopped growing, which is the one failure this table
+# exists to prevent. Every entry must be nullable: rows decided before a column existed
+# genuinely have nothing to put in it, and NULL is the honest value.
+MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("features", "TEXT"),
+    ("feature_schema_version", "INTEGER"),
+)
+
+
 def ensure_journal(broker) -> None:
-    """Create the journal table lazily through the broker's own connection and lock."""
+    """Create the journal table lazily, and add any column an older ledger predates."""
     with broker._lock, broker._connection as db:
         db.execute(SCHEMA)
         db.execute(INDEX)
+        present = {row[1] for row in db.execute(f"PRAGMA table_info({TABLE})")}
+        for column, declaration in MIGRATIONS:
+            if column not in present:
+                # Cheap in SQLite: appends to the header, never rewrites the rows.
+                db.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {declaration}")
 
 
 def aware(value: datetime) -> datetime:
@@ -151,6 +173,49 @@ def aware(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
     return value.astimezone(timezone.utc)
+
+
+# Bumped whenever the set of features the pipeline publishes changes, so a training set
+# assembled later can tell "this decision had no such feature" from "this feature was
+# zero". Rows keep the version they were written under; nothing is ever back-filled.
+FEATURE_SCHEMA_VERSION = 1
+
+# A decision is judged on a bounded vector, and a ledger is not a place to discover that
+# an upstream dict grew without limit.
+MAX_FEATURES = 200
+MAX_FEATURE_NAME = 64
+MAX_FEATURE_TEXT = 200
+
+
+def feature_json(features: Any) -> str | None:
+    """The decision-time feature vector as exact text, or None when there is none.
+
+    Values arrive as ``Decimal`` (every number the pipeline computes) or ``str`` (labels
+    such as the regime). Decimals are stored as text for the same reason money is: a float
+    round-trip changes the number, and a training set built from these rows would be
+    learning against inputs the engine never actually saw. A non-finite value is dropped
+    rather than written, because NaN in a feature column is indistinguishable from a
+    feature that was genuinely absent.
+    """
+    if not isinstance(features, dict) or not features:
+        return None
+    encoded: dict[str, str] = {}
+    for key, value in features.items():
+        if len(encoded) >= MAX_FEATURES:
+            break
+        name = str(key)[:MAX_FEATURE_NAME]
+        if isinstance(value, bool):
+            # bool is an int subclass; storing True as "1" loses that it was a flag.
+            encoded[name] = "true" if value else "false"
+        elif isinstance(value, (Decimal, int, float)):
+            text = decimal_text(value)
+            if text is not None:
+                encoded[name] = text
+        elif isinstance(value, str):
+            encoded[name] = value[:MAX_FEATURE_TEXT]
+    if not encoded:
+        return None
+    return json.dumps(encoded, sort_keys=True, allow_nan=False)
 
 
 def enum_value(value: Any) -> Any:
@@ -254,6 +319,7 @@ def decision_row(
     regime: Any = None,
     mode: str | None = None,
     llm_available: bool = False,
+    features: Any = None,
 ) -> dict[str, Any]:
     """Build the journal row for one ``SwarmExecutionResult`` without writing it."""
     proposal = result.proposal
@@ -287,6 +353,12 @@ def decision_row(
         "reason": reason[:200] if reason else None,
         "order_id": str(fill.order_id) if fill is not None and fill.order_id else None,
         "agents": json.dumps(agents_of(trace), sort_keys=True, allow_nan=False),
+        # What the decision was made on, not what the agents concluded from it. ``agents``
+        # already records the conclusions; without the inputs beside them no later work can
+        # ask whether the conclusions were any good, and the inputs cannot be reconstructed
+        # after the fact from anything the ledger keeps.
+        "features": (encoded := feature_json(features)),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION if encoded else None,
     }
 
 
@@ -294,6 +366,17 @@ def insert_decision(broker, row: dict[str, Any]) -> bool:
     """Insert a journal row; a repeated ``decision_id`` is a no-op. True when inserted."""
     ensure_journal(broker)
     values = {column: row.get(column) for column in COLUMNS}
+    # ``decision_row`` already encodes this, but a caller building a row by hand naturally
+    # puts the mapping here, and SQLite refuses to bind a dict. That raise reaches the
+    # daemon's journal guard, which logs and continues - so the mistake would cost the
+    # whole evidence trail and show up only as a table that stopped growing. Encoded here
+    # too, where it is one call and the failure mode is closed for every caller.
+    if values.get("features") is not None and not isinstance(values["features"], str):
+        values["features"] = feature_json(values["features"])
+        if values["features"] is None:
+            values["feature_schema_version"] = None
+        elif values.get("feature_schema_version") is None:
+            values["feature_schema_version"] = FEATURE_SCHEMA_VERSION
     placeholders = ", ".join("?" for _ in COLUMNS)
     with broker._lock, broker._connection as db:
         inserted = db.execute(
@@ -312,10 +395,12 @@ def record_decision(
     mode: str | None = None,
     now: datetime,
     llm_available: bool = False,
+    features: Any = None,
 ) -> bool:
     """Journal one cadence decision. Idempotent on ``decision_id``; True when a row was added."""
     row = decision_row(
-        result, tenant_id=tenant_id, now=now, regime=regime, mode=mode, llm_available=llm_available
+        result, tenant_id=tenant_id, now=now, regime=regime, mode=mode,
+        llm_available=llm_available, features=features,
     )
     inserted = insert_decision(broker, row)
     if inserted:

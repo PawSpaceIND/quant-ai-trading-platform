@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -110,6 +110,11 @@ class MarketAnalysisResult:
     analytics: PerformanceMetrics
     # The deterministic regime label the decision was made in; see ``MarketContext``.
     regime_summary: RegimeSummary | None = None
+    # The metric vector handed to every specialist on this tick. It is computed here and
+    # was, until now, discarded once the agents had read it - which left the journal
+    # holding conclusions with no record of what produced them. Carried so the decision
+    # journal can store it; nothing in the decision path reads it back.
+    features: Mapping[str, Decimal | str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -396,6 +401,11 @@ class SwarmMarketAnalysisPipeline:
             regime,
             analytics,
             market.primary,
+            # ``common`` and not the per-agent ``metrics``: the only difference is the
+            # freshness multiplier each agent is weighted by, which belongs to the agent
+            # rather than to the market, and is already reflected in its published
+            # confidence. This is the vector the tick was judged on, once.
+            features=dict(common),
         )
 
     async def run_async(
@@ -543,6 +553,11 @@ class SwarmMarketAnalysisPipeline:
             regime,
             analytics,
             market.primary,
+            # ``common`` and not the per-agent ``metrics``: the only difference is the
+            # freshness multiplier each agent is weighted by, which belongs to the agent
+            # rather than to the market, and is already reflected in its published
+            # confidence. This is the vector the tick was judged on, once.
+            features=dict(common),
         )
 
     def _market_context(
