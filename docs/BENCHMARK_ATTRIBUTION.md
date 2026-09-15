@@ -8,7 +8,7 @@ The input schema is `pramana.benchmark_attribution_input.v1`, with `currency: IN
 
 The independent numerical regression uses Table 8 of [Achmea Investment Management's Shapley Attribution research](https://www.achmeainvestmentmanagement.nl/-/media/files/institutioneel/nieuws/aim-shapley-attributie-research-paper.pdf): allocation 0.50%, selection -1.30%, interaction 0.05%, active return -0.75%. See also [CFA Institute's performance attribution review](https://rpc.cfainstitute.org/sites/default/files/-/media/documents/book/rf-lit-review/2019/rflr-performance-attribution.pdf).
 
-This is a calculation component, not complete Bloomberg PORT parity. It does not generate qualified beginning weights, sector classifications or total-return histories. Source receipts, period/currency alignment, corporate-action/income accounting, fee treatment, multi-period linking, publication, exports and dashboard/Atlas wiring remain open. Do not feed current holdings into historical attribution. The existing exposure panel remains exposure-only until these inputs and integrations are implemented and verified.
+This is a calculation component, not complete Bloomberg PORT parity. It does not generate qualified beginning weights, sector classifications or total-return histories. Source receipts, period/currency alignment, corporate-action/income accounting, fee treatment and multi-period linking remain open. Publication, summary export and dashboard/Atlas wiring are implemented as described below; runtime and browser acceptance are tracked separately. Do not feed current holdings into historical attribution. The existing exposure panel remains exposure-only until these inputs and integrations are implemented and verified.
 
 Generate a private report with:
 
