@@ -150,6 +150,28 @@ positions and cooldowns must survive; no duplicate fill on the next tick.
 **Proofs** — every trade row shows EXACT PROOF; every proof carries
 `founder_directives=…` when instructions are set.
 
+## Daily routine and the decision record
+
+Two operator actions per trading day, both on the host:
+
+```bash
+pramana zerodha-login                  # after 06:00 IST, before 09:15 IST; then restart the daemon
+pramana post-mortem                    # after the close, writes the session review as "pending"
+pramana post-mortem --approve YYYY-MM-DD   # after you have read it
+```
+
+Every cadence decision is journalled with its stance, confidence, regime and
+governance outcome, and its forward returns are resolved afterwards, so the burn-in
+produces measurable numbers rather than impressions. The dashboard shows them under
+**Decision quality**, and `pramana decision-quality` prints the same report. Only
+lessons from post-mortems you have approved ever reach the consensus prompt, and
+they reach it as data inside the untrusted-evidence block.
+
+Read `docs/DECISION_QUALITY.md` for what each number means and for the six criteria
+this pilot must satisfy before a live adapter is worth discussing. Until at least 20
+directional decisions have a resolved 60-minute outcome, the report says
+`insufficient_sample` and none of its numbers should be read as edge.
+
 ## Known limits of this build
 
 - Fundamentals come from Yahoo Finance's public `quoteSummary` endpoint (crumb-and-cookie
