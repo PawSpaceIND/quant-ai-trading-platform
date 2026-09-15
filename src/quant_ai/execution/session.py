@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 from zoneinfo import ZoneInfo
 
@@ -75,6 +75,39 @@ NSE_HOLIDAYS_2026 = frozenset(
 )
 
 
+def venue_of(market: Market | GlobalVenue) -> GlobalVenue:
+    """The venue whose session definition governs a market."""
+    if isinstance(market, GlobalVenue):
+        return market
+    if market == Market.INDIA:
+        return GlobalVenue.INDIA
+    if market == Market.USA:
+        return GlobalVenue.USA
+    raise ValueError("GLOBAL market requires an explicit GlobalVenue")
+
+
+def regular_session_length(market: Market | GlobalVenue) -> timedelta:
+    """Length of one regular trading session, used to annualise intraday statistics."""
+    session = SESSIONS[venue_of(market)]
+    opened = datetime.combine(date(2000, 1, 1), session.regular_open)
+    closed = datetime.combine(date(2000, 1, 1), session.regular_close)
+    return closed - opened
+
+
+def intraday_periods_per_year(market: Market | GlobalVenue, interval: timedelta) -> int:
+    """Sampling intervals in a trading year for an intraday series on ``market``.
+
+    Zero when the market has no session definition to annualise against, which makes
+    every annualised ratio downstream report nothing rather than a daily-scaled guess.
+    """
+    from quant_ai.analytics.metrics import annualisation_periods
+
+    try:
+        return annualisation_periods(interval, regular_session_length(market))
+    except (KeyError, ValueError):
+        return 0
+
+
 def default_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     return {GlobalVenue.USA: NYSE_HOLIDAYS_2026, GlobalVenue.INDIA: NSE_HOLIDAYS_2026}
 
@@ -131,10 +164,4 @@ class MarketCalendar:
 
     @staticmethod
     def _venue(market: Market | GlobalVenue) -> GlobalVenue:
-        if isinstance(market, GlobalVenue):
-            return market
-        if market == Market.INDIA:
-            return GlobalVenue.INDIA
-        if market == Market.USA:
-            return GlobalVenue.USA
-        raise ValueError("GLOBAL market requires an explicit GlobalVenue")
+        return venue_of(market)

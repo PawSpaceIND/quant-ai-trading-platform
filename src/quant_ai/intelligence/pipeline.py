@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -10,7 +10,6 @@ from quant_ai.agents.contracts import (
     DEFAULT_MAX_TIMEFRAME_BARS,
     MAX_EVIDENCE_BARS,
     MAX_EVIDENCE_HEADLINES,
-    MAX_HEADLINE_CHARS,
     MAX_LESSON_CHARS,
     MAX_LESSONS,
     MAX_TIMEFRAME_BARS,
@@ -31,11 +30,18 @@ from quant_ai.agents.swarm import (
 from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradingService
 from quant_ai.analytics.metrics import PerformanceMetrics, summarize_performance
 from quant_ai.domain.models import Instrument, PortfolioSnapshot, Side
+from quant_ai.execution.session import intraday_periods_per_year
 from quant_ai.intelligence.freshness import (
     DataCategory,
     FreshnessResult,
     FreshnessValidator,
     IntelligenceDataCache,
+)
+from quant_ai.intelligence.headline_sentiment import (
+    HeadlineScore,
+    HeadlineSentimentScorer,
+    keyword_score,
+    normalize_headline,
 )
 from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
@@ -75,6 +81,13 @@ _CONTEXT_FAILURES = (
     TimeoutError, OSError, RuntimeError, ValueError, TypeError, LookupError, AttributeError,
     ArithmeticError,
 )
+# The analytics block scores one-minute instrument returns, so it must annualise with the
+# number of one-minute bars in a trading year at that venue - not with trading days.
+ONE_MINUTE = timedelta(minutes=1)
+
+
+def _one_minute_periods(instrument: Instrument) -> int:
+    return intraday_periods_per_year(instrument.market, ONE_MINUTE)
 
 
 @dataclass(frozen=True)
@@ -173,6 +186,7 @@ class SwarmMarketAnalysisPipeline:
         history: DailyHistoryProvider | None = None,
         lessons_provider: Callable[[], Sequence[str]] | None = None,
         intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
+        headline_scorer: HeadlineSentimentScorer | None = None,
     ) -> None:
         if news_window <= timedelta(0):
             raise ValueError("news_window must be positive")
@@ -186,6 +200,9 @@ class SwarmMarketAnalysisPipeline:
         # signed off, never model self-talk, and they reach the prompt inside the block
         # that is labelled as data rather than instructions.
         self.lessons_provider = lessons_provider
+        # Headline sentiment for the async cadence. The default keyword-only scorer performs
+        # no I/O, so the pipeline behaves exactly as before until a model scorer is supplied.
+        self.headline_scorer = headline_scorer or HeadlineSentimentScorer()
         self.intraday_window = intraday_window
         self.market_feed = market_feed
         self.news = news
@@ -302,7 +319,9 @@ class SwarmMarketAnalysisPipeline:
         curve = [Decimal(100)]
         for item in returns:
             curve.append(curve[-1] * (Decimal(1) + item))
-        analytics = summarize_performance(returns, tuple(curve), returns)
+        analytics = summarize_performance(
+            returns, tuple(curve), returns, periods=_one_minute_periods(instrument)
+        )
         technical = self._technical_metrics(closes)
         market = self._market_context(instrument, candles, now)
         equity_news = self._recent_sentiment(news, now)
@@ -398,6 +417,13 @@ class SwarmMarketAnalysisPipeline:
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
         macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
+        # Every headline is re-scored against this instrument before anything reads its
+        # sentiment, so the specialists, the aggregate metrics and the consensus evidence
+        # all see the same number and the same scorer label.
+        scored_headlines = await self._score_headlines(instrument.symbol, news + geopolitical)
+        equity_count = len(news)
+        news = tuple(signal for signal, _ in scored_headlines[:equity_count])
+        geopolitical = tuple(signal for signal, _ in scored_headlines[equity_count:])
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
@@ -430,7 +456,9 @@ class SwarmMarketAnalysisPipeline:
         curve = [Decimal(100)]
         for item in returns:
             curve.append(curve[-1] * (Decimal(1) + item))
-        analytics = summarize_performance(returns, tuple(curve), returns)
+        analytics = summarize_performance(
+            returns, tuple(curve), returns, periods=_one_minute_periods(instrument)
+        )
         technical = self._technical_metrics(closes)
         market = self._market_context(instrument, candles, now)
         common: dict[str, Decimal | str] = dict(fundamentals.metrics)
@@ -485,7 +513,7 @@ class SwarmMarketAnalysisPipeline:
         # The same evidence the specialists scored, summarized and bounded, so the LLM
         # consensus can reason about it instead of only re-weighting five numbers.
         evidence_context = self._evidence_context(
-            candles, technical, news + geopolitical, macro, fundamentals, states,
+            candles, technical, scored_headlines, macro, fundamentals, states,
             timeframes=market.timeframe_evidence(), regime=market.regime_evidence(),
             lessons=self._approved_lessons(),
         )
@@ -618,11 +646,42 @@ class SwarmMarketAnalysisPipeline:
                 lessons.append(text)
         return tuple(lessons)
 
+    async def _score_headlines(
+        self, subject: str, headlines: tuple[NewsSignal, ...]
+    ) -> tuple[tuple[NewsSignal, HeadlineScore], ...]:
+        """Re-score fetched headlines against this instrument, paired with their scores.
+
+        The signals come back with the scored sentiment substituted, so downstream
+        aggregation is unchanged. A scorer that returns the wrong shape, or fails in a way
+        it did not already absorb, degrades every headline to the keyword score: news
+        sentiment is evidence, and evidence is never a reason to lose a tick.
+        """
+        if not headlines:
+            return ()
+        try:
+            scores = await self.headline_scorer.score(
+                subject, [item.headline for item in headlines]
+            )
+        except _CONTEXT_FAILURES as exc:
+            LOGGER.warning(
+                "headline scoring unavailable: subject=%s reason=%s",
+                subject, f"{type(exc).__name__}: {exc}",
+            )
+            scores = ()
+        if len(scores) != len(headlines):
+            scores = tuple(
+                keyword_score(normalize_headline(item.headline)) for item in headlines
+            )
+        return tuple(
+            (replace(signal, sentiment=score.sentiment), score)
+            for signal, score in zip(headlines, scores)
+        )
+
     @staticmethod
     def _evidence_context(
         candles: tuple[Candle, ...],
         technical: dict[str, Decimal],
-        headlines: tuple[NewsSignal, ...],
+        headlines: tuple[tuple[NewsSignal, HeadlineScore], ...],
         macro: MacroSnapshot,
         fundamentals: FundamentalSnapshot,
         states: PipelineFreshness,
@@ -636,20 +695,24 @@ class SwarmMarketAnalysisPipeline:
         """Pre-render the newest bars and headlines plus the metric maps for the prompt.
 
         Headline text is third-party data: it is collapsed to one line and cut to
-        ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize.
+        ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize. Each
+        headline arrives paired with the score that was taken for it, so the rendered
+        evidence says which scorer produced the number and why.
         ``timeframes`` and ``regime`` arrive already bounded from ``MarketContext``.
         """
         bars = tuple(_evidence_bar(candle) for candle in candles[-max_bars:])
-        newest = sorted(headlines, key=lambda item: item.published_at)[-max_headlines:]
+        newest = sorted(headlines, key=lambda item: item[0].published_at)[-max_headlines:]
         rendered_headlines = tuple(
             EvidenceHeadline(
-                item.subject,
-                " ".join(item.headline.split())[:MAX_HEADLINE_CHARS],
-                item.sentiment,
-                item.published_at.isoformat(),
-                item.source,
+                signal.subject,
+                normalize_headline(signal.headline),
+                score.sentiment,
+                signal.published_at.isoformat(),
+                signal.source,
+                score.scorer,
+                score.rationale,
             )
-            for item in newest
+            for signal, score in newest
         )
 
         def freshness(result: FreshnessResult) -> str:

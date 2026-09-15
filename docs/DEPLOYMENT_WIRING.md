@@ -14,6 +14,7 @@ Compose now passes the private research and company-event settings to the dashbo
 | `PRAMANA_REVIEW_DIR` | Release-bound operator attestations | Defaults to `/data/reviews`; override now honored |
 | `PRAMANA_DIRECTIVES_HOST_FILE` | Host file mounted read-only for the engine | Absolute host path; defaults to the supplied example in `deploy/` |
 | `PRAMANA_HOLIDAYS_JSON` | Engine, collector session label and risk-history calendar | Additive venue-to-date-list object, such as `{"INDIA":["2026-11-09"]}` |
+| `PRAMANA_EVENT_CALENDAR` | Engine entry blackouts on scheduled events | Path to an operator-written JSON file, such as `/data/event-calendar.json`; unset means no blackouts |
 
 The three private research/event settings remain empty by default. Publish actual reports for the configured tenant and populate the event database before enabling them. Paths for these dashboard settings refer to the filesystem **inside the container**, normally under the shared `/data` volume. A host filesystem path is not automatically mounted there. Restart the dashboard after changing its environment. Do not publish CI's synthetic fixtures to a real workspace.
 

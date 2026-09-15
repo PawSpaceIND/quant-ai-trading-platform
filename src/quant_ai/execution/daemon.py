@@ -28,6 +28,7 @@ from quant_ai.execution.protective_exits import (
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.execution.session import MarketState
 from quant_ai.governance.directives import country_for
+from quant_ai.governance.event_calendar import EventCalendar
 from quant_ai.notifications.trading import TradingAlertCode
 from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
@@ -62,6 +63,7 @@ class AutonomousTradingDaemon:
         exit_engine: ProtectiveExitEngine | None = None,
         halt_file: str | Path | None = None,
         instruments: Iterable[Instrument] | None = None,
+        event_calendar: EventCalendar | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -71,6 +73,9 @@ class AutonomousTradingDaemon:
         instrument = self.instruments[0]
         self.briefs: tuple[FounderExecutionBrief, ...] = ()
         self.halt_file = Path(halt_file) if halt_file is not None else None
+        # Operator-supplied scheduled events (earnings, policy decisions, budget day).
+        # None means no blackouts. It suppresses new entries only; exits never read it.
+        self.event_calendar = event_calendar
         self.scheduler = scheduler
         self.tracker = tracker
         self.instrument = instrument
@@ -153,6 +158,12 @@ class AutonomousTradingDaemon:
         if self.kill_switch.engaged and proposal.side != Side.SELL:
             return "pilot_halted"
         now = self.clock()
+        if proposal.side != Side.SELL and self.event_calendar is not None:
+            # A scheduled event suppresses a new entry and nothing else: an open position
+            # keeps its stops, and a SELL is never blocked by a blackout.
+            blackout = self.event_calendar.blackout_reason(proposal.symbol, now)
+            if blackout is not None:
+                return blackout
         instrument = next((i for i in self.instruments if i.symbol == proposal.symbol), None)
         if instrument is None or self.scheduler.calendar.state(instrument.market, now) != MarketState.REGULAR_HOURS:
             return "pilot_session_or_scope_blocked"

@@ -414,7 +414,8 @@ def test_report_carries_the_exact_schema_and_flags_a_thin_sample(tmp_path):
     assert sorted(report) == [
         "by_agent", "by_hour_ist", "by_mode", "by_regime", "calibration", "counts",
         "directional", "generated_at", "insufficient_sample", "limitations",
-        "minimum_sample", "recent", "rejections", "schema", "tenant_id", "trades", "window",
+        "minimum_sample", "recent", "rejections", "schema", "significance", "tenant_id",
+        "trades", "window",
     ]
     assert report["schema"] == "pramana.decision_quality.v1"
     assert report["tenant_id"] == TENANT

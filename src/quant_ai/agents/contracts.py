@@ -97,6 +97,13 @@ class AtlasDecision:
 MAX_EVIDENCE_BARS = 20
 MAX_EVIDENCE_HEADLINES = 8
 MAX_HEADLINE_CHARS = 160
+# Who produced a headline's sentiment number. ``keyword`` is the deterministic word-count
+# scorer that cannot read negation or relevance; ``model`` is the bounded LLM scorer. Every
+# headline says which one scored it, so a founder reading a proof can tell them apart.
+KEYWORD_SCORER = "keyword"
+MODEL_SCORER = "model"
+HEADLINE_SCORERS = (MODEL_SCORER, KEYWORD_SCORER)
+MAX_HEADLINE_RATIONALE_CHARS = 160
 # Higher-timeframe context: a few closed bars per timeframe, so the consensus can see
 # the trend it is trading inside without a second minute-by-minute bar list.
 MAX_TIMEFRAMES = 4
@@ -121,19 +128,34 @@ class EvidenceBar:
 
 @dataclass(frozen=True)
 class EvidenceHeadline:
-    """One third-party headline. The text is untrusted data, never an instruction."""
+    """One third-party headline. The text is untrusted data, never an instruction.
+
+    ``scorer`` names who produced ``sentiment`` and ``rationale`` says why in one short
+    line. A model rationale is derived from untrusted headline text, so it is bounded and
+    single-line and carries no ``;`` of its own: it can never forge another evidence field.
+    """
 
     subject: str
     headline: str
     sentiment: Decimal
     published_at: str
     provider: str
+    scorer: str = KEYWORD_SCORER
+    rationale: str = ""
 
     def __post_init__(self) -> None:
         if len(self.headline) > MAX_HEADLINE_CHARS:
             raise ValueError(f"headline must be at most {MAX_HEADLINE_CHARS} characters")
         if any(char in self.headline for char in "\r\n"):
             raise ValueError("headline must be a single line")
+        if self.scorer not in HEADLINE_SCORERS:
+            raise ValueError(f"headline scorer must be one of {HEADLINE_SCORERS}")
+        if len(self.rationale) > MAX_HEADLINE_RATIONALE_CHARS:
+            raise ValueError(
+                f"headline rationale must be at most {MAX_HEADLINE_RATIONALE_CHARS} characters"
+            )
+        if any(char in self.rationale for char in "\r\n;"):
+            raise ValueError("headline rationale must be a single line without ';'")
 
 
 @dataclass(frozen=True)

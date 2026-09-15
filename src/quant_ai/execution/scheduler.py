@@ -155,6 +155,7 @@ class AutonomousCadenceScheduler:
                 f"stress={stress.passed}:{stress.worst_scenario}",
                 f"risk={result.execution.risk_decision.approved}:{result.execution.risk_decision.reason}",
             ),
+            analytics_periods_per_year=result.analytics.periods_per_year,
         )
 
 
