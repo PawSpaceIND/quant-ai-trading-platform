@@ -94,11 +94,19 @@ export function CopilotPanel({
       if (!r.ok) throw new Error(d.error);
       setHistory((h) => [d, ...h]);
       choose(d);
+      if (d.status === "error") onDraft(prompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
       onDraft(prompt);
     } finally {
       setBusy(false);
+      // Refresh the server allowance, including any bounded recovery attempt.
+      void fetch("/api/copilot", { signal: AbortSignal.timeout(12000) })
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => {
+          if (d && typeof d.dailyRemaining === "number" && typeof d.dailyLimit === "number")
+            setAllowance({ remaining: Math.max(0, d.dailyRemaining), limit: d.dailyLimit });
+        }).catch(() => {});
     }
   }
   return (
@@ -140,6 +148,12 @@ export function CopilotPanel({
                   {active.error ||
                     "Response pending. Refresh this conversation to check its status."}
                 </p>
+              )}
+              {active.error && active.answer && <p className="error">{active.error}</p>}
+              {active.status === "error" && (
+                <button type="button" disabled={busy} onClick={() => onDraft(active.prompt)}>
+                  Retry this question
+                </button>
               )}
               <div className="footnote">
                 {active.model} · {new Date(active.created_at).toLocaleString()}

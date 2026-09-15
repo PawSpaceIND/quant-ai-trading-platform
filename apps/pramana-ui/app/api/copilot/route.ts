@@ -26,28 +26,6 @@ export async function POST(req: NextRequest) {
       { error: "Copilot limit reached. Please wait one minute." },
       { status: 429 },
     );
-  const limit = dailyLimit();
-  if (limit > 0) {
-    let budget: ReturnType<typeof dailyBudget>;
-    try {
-      budget = dailyBudget(budgetKey, limit);
-    } catch (e) {
-      // Fail closed: an unreadable budget refuses the paid call instead of unbounding spend.
-      console.error("copilot daily budget unavailable; refusing request", e);
-      return NextResponse.json(
-        { error: "Daily Atlas chat budget is unavailable. Request refused." },
-        { status: 503 },
-      );
-    }
-    if (!budget.allowed) {
-      if (budget.used === limit + 1)
-        audit("copilot.budget_exhausted", `Daily Atlas chat budget (${limit}) reached`);
-      return NextResponse.json(
-        { error: `Daily Atlas chat budget reached (${limit}). Resets at 00:00 UTC.` },
-        { status: 429 },
-      );
-    }
-  }
   try {
     const body = await boundedJson(req);
     if (
@@ -65,6 +43,28 @@ export async function POST(req: NextRequest) {
       throw new Error("Invalid request ID");
     if (body.companyAsOf !== undefined && typeof body.companyAsOf !== "string")
       throw new Error("Invalid company evidence cutoff");
+    const limit = dailyLimit();
+    if (limit > 0) {
+      let budget: ReturnType<typeof dailyBudget>;
+      try {
+        budget = dailyBudget(budgetKey, limit);
+      } catch (e) {
+        // Fail closed: an unreadable budget refuses the paid call instead of unbounding spend.
+        console.error("copilot daily budget unavailable; refusing request", e);
+        return NextResponse.json(
+          { error: "Daily Atlas chat budget is unavailable. Request refused." },
+          { status: 503 },
+        );
+      }
+      if (!budget.allowed) {
+        if (budget.used === limit + 1)
+          audit("copilot.budget_exhausted", `Daily Atlas chat budget (${limit}) reached`);
+        return NextResponse.json(
+          { error: `Daily Atlas chat budget reached (${limit}). Resets at 00:00 UTC.` },
+          { status: 429 },
+        );
+      }
+    }
     const row = await generateAnswer(
       body.prompt.trim(),
       body.parentId,
@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
       body.companyAsOf,
       body.brokerCapture,
       body.runComparisonSha256,
+      () => limit <= 0 || dailyBudget(budgetKey, limit).allowed,
     );
     return NextResponse.json(row);
   } catch (e) {
@@ -82,3 +83,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
