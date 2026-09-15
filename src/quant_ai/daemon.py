@@ -49,6 +49,7 @@ from quant_ai.intelligence.sandbox import (
     SandboxNewsSentimentProvider,
 )
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
+from quant_ai.llm.budget import budget_from_env
 from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
@@ -522,7 +523,9 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),
-        llm_client=AnthropicSwarmClient(),
+        llm_client=AnthropicSwarmClient(
+            budget=budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
+        ),
         instrument=instrument,
         include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
     )
