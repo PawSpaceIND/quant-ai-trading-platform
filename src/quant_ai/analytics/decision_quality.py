@@ -27,6 +27,10 @@ from quant_ai.analytics.decision_journal import (
     load_rows,
     parse_decimal,
 )
+from quant_ai.analytics.metrics import (
+    MINIMUM_SIGNIFICANCE_OBSERVATIONS,
+    mean_return_significance,
+)
 
 SCHEMA = "pramana.decision_quality.v1"
 HORIZON_MINUTES = 60
@@ -148,13 +152,44 @@ def closed_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if parse_decimal(row.get("realized_net_pnl")) is not None]
 
 
+def closed_pnls(rows: list[dict[str, Any]]) -> list[Decimal]:
+    """Realised net P&L of every closed entry decision, in Decimal, oldest first."""
+    return [parse_decimal(row["realized_net_pnl"]) for row in closed_trades(rows)]
+
+
+def expectancy_of(pnls: list[Decimal]) -> Decimal | None:
+    """Mean realised net P&L per closed trade; None when nothing closed."""
+    return mean(pnls)
+
+
+def profit_factor_of(pnls: list[Decimal]) -> Decimal | None:
+    """Gross wins over gross losses; None when no losing trade defines the denominator."""
+    gross_wins = sum((pnl for pnl in pnls if pnl > 0), Decimal(0))
+    gross_losses = sum((-pnl for pnl in pnls if pnl < 0), Decimal(0))
+    return gross_wins / gross_losses if gross_losses > 0 else None
+
+
+def profitable_regime_count(rows: list[dict[str, Any]]) -> int:
+    """Named regimes whose closed trades netted a profit. ``unknown`` never counts."""
+    totals: dict[str, Decimal] = {}
+    for row in closed_trades(rows):
+        regime = str(row.get("regime") or UNKNOWN)
+        if regime == UNKNOWN:
+            continue
+        totals[regime] = totals.get(regime, Decimal(0)) + parse_decimal(row["realized_net_pnl"])
+    return sum(1 for total in totals.values() if total > 0)
+
+
+def session_dates(rows: list[dict[str, Any]]) -> set[str]:
+    """Distinct IST calendar dates the journal has decisions for."""
+    return {date for row in rows if (date := session_date_of(row))}
+
+
 def trades(rows: list[dict[str, Any]]) -> dict[str, Any]:
     closed = closed_trades(rows)
     pnls = [parse_decimal(row["realized_net_pnl"]) for row in closed]
     wins = [pnl for pnl in pnls if pnl > 0]
     losses = [-pnl for pnl in pnls if pnl < 0]
-    gross_wins = sum(wins, Decimal(0))
-    gross_losses = sum(losses, Decimal(0))
     holding = [
         Decimal(int(row["holding_minutes"]))
         for row in closed
@@ -166,8 +201,8 @@ def trades(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "closed": len(closed),
         "win_rate": number(ratio(len(wins), len(pnls))),
-        "expectancy": number(mean(pnls)),
-        "profit_factor": number(gross_wins / gross_losses) if gross_losses > 0 else None,
+        "expectancy": number(expectancy_of(pnls)),
+        "profit_factor": number(profit_factor_of(pnls)),
         "average_win": number(mean(wins)),
         # Magnitude of the mean losing trade, as the trade-evidence summary reports it.
         "average_loss": number(mean(losses)),
@@ -179,6 +214,42 @@ def trades(rows: list[dict[str, Any]]) -> dict[str, Any]:
             {"trigger": trigger, "count": count}
             for trigger, count in sorted(exits.items(), key=lambda item: (-item[1], item[0]))
         ],
+    }
+
+
+def significance(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """One-sample t-statistics for the mean forward return and the mean closed-trade P&L.
+
+    A hit rate above one half and a positive expectancy are descriptions of a sample. The
+    t-statistic is the first question a reader should ask of them: how far is this mean
+    from zero in units of its own standard error. Both are null when the sample is too
+    small or has no dispersion, and neither is corrected for multiple testing - see
+    ``multiple_testing_correction``.
+    """
+    forward = tuple(value for _, _, value in evaluated(rows))
+    pnls = tuple(closed_pnls(rows))
+    return {
+        "minimum_observations": MINIMUM_SIGNIFICANCE_OBSERVATIONS,
+        "multiple_testing_correction": "none",
+        "forward_return_60m": _t_block(forward),
+        "trade_net_pnl": _t_block(pnls),
+    }
+
+
+def _t_block(values: tuple[Decimal, ...]) -> dict[str, Any]:
+    result = mean_return_significance(values)
+    if result is None:
+        return {
+            "observations": len(values),
+            "mean": None,
+            "standard_error": None,
+            "t_statistic": None,
+        }
+    return {
+        "observations": result.observations,
+        "mean": number(result.mean),
+        "standard_error": number(result.standard_error),
+        "t_statistic": number(result.t_statistic),
     }
 
 
@@ -342,6 +413,12 @@ def limitations(*, insufficient_sample: bool, minimum_sample: int) -> list[str]:
             "Decisions inside a session are serially correlated; counts and rates do not "
             "establish a repeatable edge."
         ),
+        (
+            "The t-statistics test each mean against zero on the observations shown and "
+            "are not corrected for multiple testing: they do not account for how many "
+            "candidate strategies, windows or parameter settings were tried, and serial "
+            "correlation inflates them further."
+        ),
     ]
     if insufficient_sample:
         notes.append(
@@ -377,6 +454,7 @@ def summarize(
         "rejections": rejections(rows),
         "directional": directional_section,
         "trades": trades(rows),
+        "significance": significance(rows),
         "calibration": calibration(rows),
         "by_regime": by_regime(rows),
         "by_hour_ist": by_hour_ist(rows),

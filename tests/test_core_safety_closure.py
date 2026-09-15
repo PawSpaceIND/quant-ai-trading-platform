@@ -249,7 +249,10 @@ def test_file_backed_risk_state_survives_restart_and_rolls_day(tmp_path) -> None
     second.close()
 
 
-def test_cli_resume_clears_persisted_breaker(tmp_path, monkeypatch) -> None:
+def test_cli_resume_releases_an_operator_halt_but_refuses_a_cadence_fault(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """``resume`` is a pause release, not a fault acknowledgement."""
     from quant_ai.cli import main as cli_main
 
     ledger = tmp_path / "ledger.sqlite"
@@ -259,7 +262,17 @@ def test_cli_resume_clears_persisted_breaker(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setenv("PRAMANA_LEDGER_PATH", str(ledger))
     monkeypatch.setenv("PRAMANA_TENANT_ID", "ghost")
+    monkeypatch.setenv("PRAMANA_HALT_FILE", str(tmp_path / "PRAMANA_HALT"))
+    assert cli_main(["resume"]) == 2
+    assert "refusing to clear fault halt" in capsys.readouterr().out
+
+    unchanged = SQLiteRiskStateStore(ledger)
+    assert unchanged.kill_switch_state("ghost") == (True, "cadence fault")
+    unchanged.set_kill_switch("ghost", True, "operator_halt_file: founder review")
+    unchanged.close()
+
     assert cli_main(["resume"]) == 0
+    assert "persisted operator halt released" in capsys.readouterr().out
 
     reopened = SQLiteRiskStateStore(ledger)
     assert reopened.kill_switch_state("ghost") == (False, None)
