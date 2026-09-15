@@ -1,7 +1,7 @@
 # India paper operation
 
-The local dashboard is http://localhost:3002. It monitors 13 NSE instruments
-and dated Economic Times headlines. The independent paper engine evaluates
+The local dashboard is http://localhost:3002. It monitors the default NSE watchlist
+plus BSE index/equity probes and dated Economic Times headlines. The independent paper engine evaluates
 INFY, RELIANCE and TCS with 100,000 INR simulated starting capital.
 
 ## Runtime boundaries
@@ -20,6 +20,23 @@ INFY, RELIANCE and TCS with 100,000 INR simulated starting capital.
 - Market closure permits monitoring/off-hours briefs, not paper order generation.
 - MCX is not enabled in the verified account. Metal shares and gold/silver ETFs
   obey NSE sessions. No commodity-futures or US broker integration is enabled.
+- The dashboard declares the major India research universe end to end: NSE and
+  BSE cash/index/ETF, debt, funds, IPO/SME, SLB and REIT/InvIT products; NFO/BFO
+  equity, commodity and interest-rate derivatives; CDS/BCD currency derivatives;
+  MCX metals, energy and agriculture; NCDEX agriculture; MSEI; and GIFT IFSC.
+  A group is marked observed only when a matching collector row exists. Every
+  other group stays planned or contract-needed and cannot widen the pilot gate.
+- To add a read-only extra quote, set
+  PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON to a JSON list containing the exact
+  broker symbol, exchange, INDIA scope and asset class (INR for domestic venues; IFSC may use USD). Derivative rows
+  (MCX, CDS, NCDEX, NFO, BFO, BCD and MSEI, or any FUTURE/OPTION/FX/COMMODITY/
+  METAL row) also require contract and ISO expiry; options require a positive
+  strike and optionType of CE or PE. Optional underlying, product, segment,
+  lotSize, tickSize and provider token are retained. The collector rejects
+  generic GOLD, CRUDEOIL, NIFTY or USDINR labels and queries each extra
+  independently. Rows remain read-only and do not widen the pilot order gate.
+  Contract, session, margin, settlement, source quality and broker entitlement
+  must be reviewed before any paper execution change.
 - The Mac must remain awake and connected. This is a foreground/background local
   deployment, not a reboot-managed server installation.
 - Kite access tokens are invalidated daily at about 06:00 IST and require renewed
@@ -66,7 +83,7 @@ repository for quotes and headlines. Do not run duplicate collectors.
 
 - 286 Python tests passed; Ruff passed; production UI build passed.
 - Real Zerodha account/quotes and an actual structured Claude response verified.
-- Monitor API: 13 instruments, 6 dated headlines; India CLOSED.
+- Monitor API: default NSE/BSE probes and dated headlines; India CLOSED.
 - Portfolio API: tenant india-paper, simulated equity 100000.
 - No live orders sent. Empty intelligence proof on a closed session is expected.
 - Open-session burn-in, licensed fundamentals/macro configuration and operational

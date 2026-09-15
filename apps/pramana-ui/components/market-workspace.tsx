@@ -9,11 +9,46 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { MarketSnapshot } from "@/lib/market";
+import type { MarketInstrument, MarketSnapshot } from "@/lib/market";
 const number = (v: number | undefined) =>
   v === undefined
     ? "—"
     : new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(v);
+const instrumentLabel = (instrument?: MarketInstrument) => {
+  if (!instrument) return "Venue unknown · Currency unknown · Asset unknown";
+  const parts = [
+    instrument.exchange,
+    instrument.currency,
+    instrument.assetClass,
+    instrument.segment,
+    instrument.contract,
+    instrument.expiry ? "expiry " + instrument.expiry : undefined,
+    instrument.optionType
+      ? instrument.optionType + (instrument.strike != null ? " " + instrument.strike : "")
+      : undefined,
+    instrument.underlying ? "underlying " + instrument.underlying : undefined,
+    instrument.product ? "product " + instrument.product : undefined,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+};
+const contractLabel = (instrument?: MarketInstrument) => {
+  if (!instrument?.contract) return "";
+  const parts = [
+    instrument.contract,
+    instrument.expiry ? "expiry " + instrument.expiry : undefined,
+    instrument.underlying ? "underlying " + instrument.underlying : undefined,
+    instrument.optionType
+      ? instrument.optionType + (instrument.strike != null ? " " + instrument.strike : "")
+      : undefined,
+    instrument.product ? "product " + instrument.product : undefined,
+    instrument.segment,
+    instrument.lotSize != null ? "lot " + instrument.lotSize : undefined,
+    instrument.tickSize != null ? "tick " + instrument.tickSize : undefined,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+};
+const rowIdentity = (row: { symbol: string; instrument?: MarketInstrument }) =>
+  (row.instrument?.exchange || "UNKNOWN") + ":" + row.symbol;
 export function MarketWorkspace({
   data,
   favorites,
@@ -53,7 +88,7 @@ export function MarketWorkspace({
         ),
     [data.rows, query, savedOnly, favorites, sort],
   );
-  const detail = data.rows.find((r) => r.symbol === selected) || rows[0];
+  const detail = data.rows.find((r) => rowIdentity(r) === selected) || rows[0];
   const history = (detail?.history || []).slice(-range);
   async function favorite(symbol: string) {
     setSaving(true);
@@ -136,9 +171,9 @@ export function MarketWorkspace({
                   span = Math.max(...values) - low || 1;
                 return (
                   <tr
-                    key={row.symbol}
+                    key={rowIdentity(row)}
                     className={
-                      detail?.symbol === row.symbol ? "active-row" : ""
+                      detail && rowIdentity(detail) === rowIdentity(row) ? "active-row" : ""
                     }
                   >
                     <td>
@@ -155,10 +190,10 @@ export function MarketWorkspace({
                     <td>
                       <button
                         className="symbol-button"
-                        onClick={() => setSelected(row.symbol)}
+                        onClick={() => setSelected(rowIdentity(row))}
                       >
                         {row.symbol}
-                        <small>NSE · INR</small>
+                        <small>{instrumentLabel(row.instrument)}</small>
                       </button>
                     </td>
                     <td className="numeric mono">
@@ -223,7 +258,7 @@ export function MarketWorkspace({
               <button
                 onClick={() =>
                   onAsk(
-                    `Explain the available evidence and risks for ${detail.symbol}. Identify any stale or missing inputs.`,
+                    `Explain the available evidence and risks for ${rowIdentity(detail)}. Identify any stale or missing inputs.`,
                   )
                 }
               >
@@ -231,7 +266,7 @@ export function MarketWorkspace({
               </button>
             </div>
             <div className="detail-price">
-              {number(detail.price)} <small>INR</small>
+              {number(detail.price)} <small>{detail.instrument?.currency || "quote units"}</small>
             </div>
             <p className="muted">
               Historical daily closes · last available prices
@@ -317,6 +352,10 @@ export function MarketWorkspace({
                     "Not supplied"}
                 </dd>
               </div>
+              {detail.instrument?.contract && <div>
+                <dt>Contract</dt>
+                <dd>{contractLabel(detail.instrument)}</dd>
+              </div>}
               <div>
                 <dt>Collector retrieved</dt>
                 <dd>
@@ -333,6 +372,34 @@ export function MarketWorkspace({
           </div>
         )}
       </div>
+      {data.coverage?.groups?.length ? (
+        <div className="market-coverage callout">
+          <div className="section-row">
+            <div>
+              <span className="eyebrow">INDIA COVERAGE</span>
+              <h3>{data.coverage.scope}</h3>
+            </div>
+            <span className="pill neutral">Paper only</span>
+          </div>
+          <div className="coverage-grid">
+            {data.coverage.groups.map((group) => (
+              <article key={group.id} className="coverage-card">
+                <div className="coverage-card-title">
+                  <strong>{group.label}</strong>
+                  <span className={`pill ${group.status === "observed" ? "green" : "amber"}`}>
+                    {group.status === "observed" ? "Observed" : group.mode === "requires_contract" ? "Contract needed" : "Planned"}
+                  </span>
+                </div>
+                <small>{group.exchange} · {group.currency} · {group.assetClasses.join(" / ")}</small>
+                <p className="coverage-examples">{group.examples.join(" · ")}</p>
+                <p className="footnote">{group.detail}</p>
+              </article>
+            ))}
+          </div>
+          <p className="footnote">{data.coverage.disclaimer}</p>
+          <p className="footnote"><strong>Atlas context:</strong> {data.coverage.aiContext}</p>
+        </div>
+      ) : null}
       <p className="panel-footnote">
         {data.source || "Market provider"} ·{" "}
         {data.note || "Collector freshness does not establish quote freshness."}

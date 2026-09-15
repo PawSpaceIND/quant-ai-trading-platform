@@ -136,6 +136,34 @@ test("malformed market records cannot break the dashboard", async () => {
   assert.equal(result.rows[0].symbol, "INFY");
 });
 
+test("market coverage separates observed NSE rows from unbound Indian contracts", async () => {
+  const { readMarket } = await import("../lib/market");
+  fs.writeFileSync(
+    process.env.PRAMANA_MARKET_SNAPSHOT!,
+    JSON.stringify({
+      status: "ok",
+      fetchedAt: new Date().toISOString(),
+      rows: [{
+        symbol: "INFY",
+        available: true,
+        price: 1500,
+        instrument: { symbol: "INFY", market: "INDIA", assetClass: "EQUITY", currency: "INR", exchange: "NSE" },
+      }],
+    }),
+  );
+  const result = await readMarket();
+  assert.equal(result.coverage?.paperOnly, true);
+  assert.equal(result.coverage?.groups.find((g) => g.id === "nse-cash")?.status, "observed");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "mcx-metals")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "bse-cash")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "nse-sme-ipo")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "nse-slb")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "bse-derivatives")?.mode, "requires_contract");
+  assert(result.coverage?.groups.some((g) => g.id === "gift-ifsc"));
+  assert.match(result.coverage?.disclaimer || "", /exact broker instrument/);
+  assert.match(result.coverage?.aiContext || "", /does not modify model weights/);
+});
+
 test("interrupted copilot requests become visible errors after restart", async () => {
   const { consoleDb } = await import("../lib/console-db");
   const db = consoleDb();

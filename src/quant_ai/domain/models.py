@@ -22,7 +22,13 @@ class AssetClass(str, Enum):
     COMMODITY = "COMMODITY"
     METAL = "METAL"
     BOND = "BOND"
+    DEBT = "DEBT"
     FUND = "FUND"
+    REIT = "REIT"
+    INVIT = "INVIT"
+    SLB = "SLB"
+    IPO = "IPO"
+    SGB = "SGB"
     CRYPTO = "CRYPTO"
 
 

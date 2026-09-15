@@ -132,6 +132,22 @@ def test_invalid_holiday_environment_is_rejected_by_engine(monkeypatch, value):
         _env_holidays()
 
 
+def test_risk_history_excludes_unqualified_venues_and_empty_rows():
+    now = datetime(2026, 9, 15, 12, tzinfo=ZoneInfo("Asia/Kolkata"))
+    rows = [
+        {"instrument": {"symbol": "INFY", "market": "INDIA", "assetClass": "EQUITY", "exchange": "NSE"},
+         "history": [{"date": "2026-09-12", "close": 100}]},
+        {"instrument": {"symbol": "RELIANCE", "market": "INDIA", "assetClass": "EQUITY", "exchange": "BSE"},
+         "history": [{"date": "2026-09-12", "close": 200}]},
+        {"instrument": {"symbol": "GOLD", "market": "INDIA", "assetClass": "METAL", "exchange": "MCX"},
+         "history": [{"date": "2026-09-12", "close": 300}]},
+        {"instrument": {"symbol": "TCS", "market": "INDIA", "assetClass": "EQUITY", "exchange": "NSE"},
+         "history": []},
+    ]
+    result = risk_history_input(rows, now)
+    assert [item["symbol"] for item in result["instruments"]] == ["INFY"]
+
+
 def test_risk_calendar_can_add_closures_but_cannot_invent_sessions():
     now = datetime(2026, 9, 15, 12, tzinfo=ZoneInfo("Asia/Kolkata"))
     closure = MarketCalendar(holidays_from_json({"INDIA":["2026-09-11"]}, default_holidays()))

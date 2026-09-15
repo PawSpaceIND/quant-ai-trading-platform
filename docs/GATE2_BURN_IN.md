@@ -27,8 +27,10 @@ governance faithfully; it does **not** test the intelligence layer's judgement.
   mode 0600) and the instrument tokens you are licensed to consume. Kite issues one
   access token per interactive login and invalidates it every day at about 06:00 IST;
   `pramana zerodha-login` performs that login and records when the token was issued.
-  Kite carries NSE/BSE equities and indices, NFO, MCX metals and commodities, and
-  CDS currency pairs; the daemon subscribes to whatever tokens you list.
+  The collector can query exact read-only symbols on the configured NSE/BSE/NFO/BFO/
+  CDS/BCD/MCX/NCDEX segments. Availability depends on the account, provider
+  instrument master and venue entitlement; unsupported products remain planned rather
+  than inventing quotes.
 - US instruments need IB Gateway/TWS reachable and `PRAMANA_IBKR_ENABLED=true`.
 - `ANTHROPIC_API_KEY` for LLM consensus (without it Atlas runs deterministically).
 
