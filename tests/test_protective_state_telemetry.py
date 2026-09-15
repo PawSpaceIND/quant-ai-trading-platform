@@ -182,3 +182,23 @@ def test_a_non_finite_halt_clock_is_published_as_absent_not_as_zero(tmp_path, mo
     publish_tick(runner, "100", NOW)
     runner.daemon.protection_tick(NOW)
     assert runtime(runner)["protectionSweep"]["haltAfterSeconds"] is None
+
+
+def test_a_book_that_has_never_been_swept_is_not_published_as_clean(tmp_path):
+    """The other half of the distinction, and the one that fails silently.
+
+    Before the first sweep ``unprotected`` and ``rebased`` are empty for the same reason
+    they are empty after a clean one, so the lists alone cannot separate "the engine
+    looked and found nothing" from "the engine has not looked". Only a null ``sweptAt``
+    carries that, which makes filling it in with the publish time - the obvious tidy-up -
+    the exact change that would report silence as safety. Pinned so it cannot be made.
+    """
+    runner = runner_for(tmp_path)
+    publish_tick(runner, "100", NOW)
+    buy(runner)
+    runner.daemon.telemetry.publish(NOW)  # publish without a protection sweep
+
+    sweep = runtime(runner)["protectionSweep"]
+    assert sweep["sweptAt"] is None, "an unswept engine must not claim a sweep"
+    assert sweep["unprotected"] == [] and sweep["rebased"] == []
+    assert sweep["checkedAt"] == NOW.isoformat(), "the publish still happened"
