@@ -4,7 +4,11 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from quant_ai.operations.pilot_gate import EXTERNAL_GATES, evidence_bundle_digest, external_gate_report
+from quant_ai.operations.pilot_gate import (
+    EXTERNAL_GATES,
+    evidence_bundle_digest,
+    external_gate_report,
+)
 
 
 class ExternalGateAuditTests(unittest.TestCase):
