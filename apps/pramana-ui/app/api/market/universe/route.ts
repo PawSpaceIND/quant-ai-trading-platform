@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   const expiry = (request.nextUrl.searchParams.get("expiry") || "").trim();
   const optionType = (request.nextUrl.searchParams.get("optionType") || "").trim().toUpperCase();
   try {
-    const raw = JSON.parse(await fs.readFile(path.resolve(configured), "utf8")) as {schema?: unknown; fetchedAt?: unknown; rows?: unknown};
+    const raw = JSON.parse(await fs.readFile(path.resolve(/* turbopackIgnore: true */ configured), "utf8")) as {schema?: unknown; fetchedAt?: unknown; rows?: unknown};
     if (raw.schema !== "pramana.instrument_universe.v1" || !Array.isArray(raw.rows)) throw new Error("invalid universe");
     const rows = raw.rows.filter((item): item is Record<string, unknown> => {
       if (!item || typeof item !== "object") return false;
