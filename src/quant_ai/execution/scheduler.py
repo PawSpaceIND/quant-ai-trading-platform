@@ -44,7 +44,7 @@ class AutonomousCadenceScheduler:
         tenant_id: str = "default",
         country_exposure: dict[str, Decimal] | None = None,
     ) -> FounderExecutionBrief:
-        state = self.calendar.state(instrument.market, now)
+        state = self.calendar.state(instrument.market, now, exchange=instrument.exchange)
         self.last_run_at = now
         self.last_result = None
         if state != MarketState.REGULAR_HOURS:
@@ -74,7 +74,7 @@ class AutonomousCadenceScheduler:
         tenant_id: str = "default",
         country_exposure: dict[str, Decimal] | None = None,
     ) -> FounderExecutionBrief:
-        state = self.calendar.state(instrument.market, now)
+        state = self.calendar.state(instrument.market, now, exchange=instrument.exchange)
         self.last_run_at = now
         self.last_result = None
         if state != MarketState.REGULAR_HOURS:

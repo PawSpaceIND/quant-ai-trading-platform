@@ -63,9 +63,9 @@ from zoneinfo import ZoneInfo
 
 from quant_ai.domain.models import OrderIntent, PortfolioSnapshot
 from quant_ai.execution.session import (
-    SESSIONS,
     MarketCalendar,
     MarketState,
+    SessionDefinition,
     default_holidays,
     venue_of,
 )
@@ -155,14 +155,19 @@ class OvernightExposureFirewall:
         if portfolio.equity <= 0:
             return RiskDecision(False, "overnight_risk_unavailable:invalid_equity")
         try:
-            venue = venue_of(order.market)
+            venue_of(order.market)
         except (ValueError, KeyError):
             return RiskDecision(False, "overnight_risk_unavailable:unknown_venue")
-        state = self.calendar.state(order.market, now)
+        # An order carries no exchange, so the session comes from the calendar's own
+        # symbol map. Judging an MCX metal by NSE hours would refuse every entry in its
+        # evening session as "outside session" and put the closing window eight hours
+        # before the book actually closes.
+        session = self.calendar.session(order.market, symbol=order.symbol)
+        state = self.calendar.state(order.market, now, symbol=order.symbol)
         if state != MarketState.REGULAR_HOURS:
             if self.policy.refuse_outside_session:
                 return RiskDecision(False, "overnight_entry_outside_session")
-        elif self._within_closing_window(now, venue):
+        elif self._within_closing_window(now, session):
             return RiskDecision(False, "overnight_closing_window")
         notional = order.reference_price * order.quantity
         current = portfolio.symbol_exposure.get(order.symbol, Decimal(0))
@@ -172,14 +177,16 @@ class OvernightExposureFirewall:
             return RiskDecision(False, "overnight_gross_limit")
         return RiskDecision(True, "approved_overnight_risk")
 
-    def _within_closing_window(self, now: datetime, venue) -> bool:
+    def _within_closing_window(self, now: datetime, session: SessionDefinition) -> bool:
         """Whether ``now`` falls inside the final ``closing_window`` of the session."""
         if self.policy.closing_window <= timedelta(0):
             return False
-        session = SESSIONS[venue]
         zone = ZoneInfo(session.timezone)
         local = now.astimezone(zone)
-        close = datetime.combine(local.date(), session.regular_close, tzinfo=zone)
+        # The close in force on this date: MCX shuts 25 minutes later under US DST, and a
+        # window measured from the wrong close either opens late or never opens at all.
+        regular_close, _ = session.closes_on(local.date())
+        close = datetime.combine(local.date(), regular_close, tzinfo=zone)
         return close - self.policy.closing_window <= local < close
 
 

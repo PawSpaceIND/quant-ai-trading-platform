@@ -646,7 +646,10 @@ def test_a_zero_equity_book_refuses_rather_than_dividing_by_it() -> None:
 
 def test_a_raising_calendar_is_a_refusal_and_never_an_exception() -> None:
     class Broken(MarketCalendar):
-        def state(self, market, timestamp):
+        # ``**kwargs`` so this double keeps failing the way the real calendar would and
+        # not with a TypeError from an out-of-date signature, which would pass this test
+        # while proving nothing about how a raising calendar is handled.
+        def state(self, market, timestamp, **kwargs):
             raise RuntimeError("calendar down")
 
     firewall = OvernightExposureFirewall(calendar=Broken())
