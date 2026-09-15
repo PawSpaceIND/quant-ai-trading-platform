@@ -15,6 +15,7 @@ from typing import Any
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.analytics.attribution import restore_from_journal
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
@@ -329,6 +330,15 @@ def build_ghost_runner(
         xai_logger=XAITraceLogger(xai_directory),
         max_open_positions=directives.max_open_positions,
     )
+    # What the specialists earned in past sessions, recovered from the journal. The daily
+    # token restart would otherwise reset every score each morning, so the engine could
+    # never learn anything that outlived one session.
+    try:
+        restore_from_journal(runtime.attribution, broker, tenant_id=tenant_id)
+    except Exception:  # a cold start beats a daemon that will not boot
+        logging.getLogger("quant_ai.ghost_runner").exception(
+            "attribution_restore_failed tenant=%s", tenant_id
+        )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
         news_provider or SandboxNewsSentimentProvider(),

@@ -87,6 +87,34 @@ the environment rather than hardcoded, so the page and the running build cannot 
 apart. They describe configuration, not health: freshness lives in the heartbeat and in
 each proof.
 
+## What actually learns
+
+Most of this engine does not learn. The language model's weights are frozen, and the five
+specialists apply fixed thresholds; more sessions make their edge *measurable*, not
+better. Two things do adapt, and both are bounded and inspectable.
+
+**Attribution.** Every closed trade is attributed to the specialists that argued for the
+entry. An agent's realised hit rate scales its confidence on later decisions, between
+0.75x and 1.25x. The band is deliberately narrow: no run of luck can hand one agent the
+book. Scores are kept per regime as well as blended, because an agent that reads trends
+well is often useless in a range; a regime score is only trusted after ten closed trades
+in that regime, and until then the blended record governs. Each proof records which
+weight applied and where it came from (`attribution_weight=1.08:blended`).
+
+Attribution is rebuilt at every boot from the decision journal, so it survives the daily
+restart that the Zerodha token renewal forces. It has no store of its own: the journal is
+the record of what each agent said and what the trade earned, so a rebuild is also a
+correction, scoring the agents that argued for the entry in the regime the entry was made
+in rather than whoever happened to speak when the position closed. An unreadable history
+is a cold start, never a failed boot.
+
+**Approved lessons.** The post-mortem loop described above. A session review reaches the
+next decision only after you approve it.
+
+Nothing else carries information between sessions. If you want the engine to genuinely
+improve rather than merely be measured, these two loops are where that happens, and both
+are designed so a bad lesson is bounded and visible rather than silently compounding.
+
 ## Gate 2 pass criteria
 
 Hold the paper pilot to all of the following over at least 20 sessions before any
