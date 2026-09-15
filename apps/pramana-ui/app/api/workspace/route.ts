@@ -130,6 +130,7 @@ export async function GET() {
         title: gate.title,
         pass: gate.pass,
         detail: gate.detail,
+        external: true,
       })),
     ];
     return NextResponse.json(

@@ -87,7 +87,7 @@ export type Workspace = {
     source: string;
   };
   intelligence: Intelligence;
-  checks: { id: string; title: string; pass: boolean; detail: string }[];
+  checks: { id: string; title: string; pass: boolean; detail: string; external?: boolean }[];
   audit: { action: string; detail: string; at: string }[];
   tenantId: string;
   haltRequested: boolean;

@@ -447,6 +447,21 @@ main {
 .panel-title button {
   font-size: 10px;
 }
+.readiness-summary {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  text-align: right;
+}
+.readiness-summary small,
+.readiness-explanation {
+  color: var(--muted);
+  font-size: 11px;
+}
+.readiness-explanation {
+  margin: -8px 0 4px;
+  line-height: 1.5;
+}
 .chart {
   width: 100%;
   min-width: 0;

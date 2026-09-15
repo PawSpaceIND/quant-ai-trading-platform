@@ -569,11 +569,24 @@ export function PilotWorkspace() {
                           </span>
                           <h2>Pilot readiness</h2>
                         </div>
-                        <span className="pill amber">
-                          {data.checks.filter((c) => c.pass).length}/
-                          {data.checks.length} observed checks
-                        </span>
+                        {(() => {
+                          const engineering = data.checks.filter((c) => !c.external);
+                          const external = data.checks.filter((c) => c.external);
+                          const verified = data.checks.filter((c) => c.pass).length;
+                          const externalPending = external.filter((c) => !c.pass).length;
+                          return (
+                            <div className="readiness-summary" aria-label="Pilot readiness summary">
+                              <span className={`pill ${externalPending || verified !== data.checks.length ? "amber" : "green"}`}>
+                                {externalPending || verified !== data.checks.length ? "Launch blocked" : "Pilot gates clear"}
+                              </span>
+                              <small>{engineering.filter((c) => c.pass).length}/{engineering.length} engineering · {external.filter((c) => c.pass).length}/{external.length} external</small>
+                            </div>
+                          );
+                        })()}
                       </div>
+                      <p className="readiness-explanation">
+                        Engineering checks show what this build verifies. External checks require reviewed evidence from the real feed, target host and forward paper results.
+                      </p>
                       <div className="check-list">
                         {data.checks.map((c) => (
                           <div key={c.id}>
@@ -583,7 +596,7 @@ export function PilotWorkspace() {
                               {c.pass ? "✓" : "○"}
                             </span>
                             <div>
-                              <strong>{c.title}</strong>
+                              <strong>{c.title}{c.external ? " · External gate" : ""}</strong>
                               <p>{c.detail}</p>
                             </div>
                             <span
