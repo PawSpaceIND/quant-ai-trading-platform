@@ -33,3 +33,6 @@ apps/pramana-ui/node_modules
 apps/pramana-ui/test-results/
 
 .wrangler/
+
+# Fetched market data: bulk historical bars and the resume chunk cache (never commit prices)
+var/
