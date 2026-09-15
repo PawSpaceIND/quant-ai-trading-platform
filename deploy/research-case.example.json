@@ -1,0 +1,22 @@
+{
+  "decision_at": "2026-09-16T10:00:00+05:30",
+  "quote_at": "2026-09-16T09:59:30+05:30",
+  "exchange": "NSE",
+  "asset_class": "EQUITY",
+  "currency": "INR",
+  "symbol": "INFY",
+  "reference_price": "1500.25",
+  "adjustment_status": "unverified",
+  "sources": [
+    {
+      "id": "quote",
+      "available_at": "2026-09-16T09:59:30+05:30",
+      "provenance": "zerodha-kite-websocket"
+    },
+    {
+      "id": "daily-history",
+      "available_at": "2026-09-16T09:00:00+05:30",
+      "provenance": "yahoo-finance-daily-closes"
+    }
+  ]
+}

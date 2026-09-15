@@ -1,0 +1,40 @@
+{
+  "candidates": [
+    "claude",
+    "astra",
+    "cash"
+  ],
+  "baseline": "cash",
+  "mode": "forward_paper",
+  "expected_cases": 60,
+  "max_quantity": 10,
+  "max_quote_age_seconds": 120,
+  "capital_per_case": "10000",
+  "fee_bps": "35",
+  "slippage_bps": "15",
+  "protocol_version": "pramana-claude-vs-astra-v1",
+  "providers": {
+    "claude": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5"
+    },
+    "astra": {
+      "provider": "openai",
+      "model": "gpt-5"
+    }
+  },
+  "provider_rates": {
+    "claude": {
+      "input_per_million": "3.00",
+      "output_per_million": "15.00",
+      "cached_input_per_million": "0.30",
+      "cache_creation_per_million": "3.75"
+    },
+    "astra": {
+      "input_per_million": "1.25",
+      "output_per_million": "10.00",
+      "cached_input_per_million": "0.125",
+      "cache_creation_per_million": "0"
+    }
+  }
+}

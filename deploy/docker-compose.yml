@@ -38,6 +38,11 @@ services:
       PRAMANA_IBKR_ENABLED: "false"
       PRAMANA_NEWS_RSS_URLS: ${PRAMANA_NEWS_RSS_URLS:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
+      # Second candidate in the research comparison only. The engine never calls OpenAI:
+      # `quant_ai.research` is offline by construction and touches no broker credential,
+      # no ledger and no cadence. Optional - with it unset, `research_extensions compare`
+      # refuses the paid call and records `credential_missing` rather than guessing.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PRAMANA_FUNDAMENTALS_PROVIDER: ${PRAMANA_FUNDAMENTALS_PROVIDER:-yahoo}
       PRAMANA_AI_DAILY_CALL_LIMIT: ${PRAMANA_AI_DAILY_CALL_LIMIT:-500}
       PRAMANA_AI_DAILY_TOKEN_LIMIT: ${PRAMANA_AI_DAILY_TOKEN_LIMIT:-2000000}
