@@ -115,6 +115,7 @@ class ProtectiveExitEngine:
         self.corporate_calendar = corporate_calendar
         self.discontinuity_fraction = discontinuity_fraction
         self._last_mark: dict[str, Decimal] = {}
+        self._suspended: set[str] = set()
         self._sweep_at: datetime | None = None
         # Classifies the same step the guard above measures, and keeps an unexplained one
         # in front of the operator. It may narrow a suspension - never widen one, and never
@@ -207,14 +208,20 @@ class ProtectiveExitEngine:
         """
         symbol = position.symbol
         previous = self._last_mark.get(symbol)
-        self._last_mark[symbol] = mark
+        # Deliberately not updated here. The stored mark is the last quote that was
+        # comparable with the cost basis, so overwriting it with a re-based one erases the
+        # evidence: the next sweep would compare the new price with itself, find no step,
+        # and liquidate against the old basis - the fabricated loss this guard exists to
+        # prevent, one sweep late. Keeping it means the suspension holds until the quote
+        # and the basis agree again, which is a human reconciling the position.
         if self.corporate_calendar is not None:
             try:
                 declared = self.corporate_calendar.action_on(symbol, self._sweep_at)
             except (ValueError, AttributeError):
                 declared = None
             if declared:
-                LOGGER.warning(
+                self._log_suspension(
+                    symbol,
                     "protective_exit_suspended symbol=%s reason=declared_corporate_action:%s",
                     symbol, declared,
                 )
@@ -225,13 +232,30 @@ class ProtectiveExitEngine:
                     "protective_exit_armed_through_step symbol=%s reason=%s previous=%s current=%s",
                     symbol, assessment.describe(), previous, mark,
                 )
+                # The unit did not change, so this quote is the new comparison basis.
+                self._last_mark[symbol] = mark
                 return False
-            LOGGER.warning(
+            self._log_suspension(
+                symbol,
                 "protective_exit_suspended symbol=%s reason=price_rebased previous=%s current=%s",
                 symbol, previous, mark,
             )
             return True
+        self._suspended.discard(symbol)
+        self._last_mark[symbol] = mark
         return False
+
+    def _log_suspension(self, symbol: str, message: str, *args: object) -> None:
+        """Warn once per suspension, not once per sweep.
+
+        The sweep runs every second and a suspension now holds until an operator acts, so
+        logging each one would bury the line that matters under thousands of copies of
+        itself. Escalation past this first line is the gap monitor's job.
+        """
+        if symbol in self._suspended:
+            return
+        self._suspended.add(symbol)
+        LOGGER.warning(message, *args)
 
     def _observe_gap(
         self, position: BrokerPosition, mark: Decimal

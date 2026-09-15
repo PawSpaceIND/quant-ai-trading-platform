@@ -140,19 +140,21 @@ def test_a_stop_does_not_survive_the_gap_it_was_sized_for() -> None:
     assert -exits[0].realized_pnl == intended * 5, "the gap is paid in full, not at the stop"
 
 
-def test_an_undeclared_discontinuity_suspends_the_stop_for_exactly_one_sweep() -> None:
-    """What the re-based-quote guard actually does to an undeclared step.
+def test_an_undeclared_discontinuity_holds_the_stop_until_the_basis_agrees_again() -> None:
+    """The suspension lasts as long as the quote and the cost basis disagree.
 
-    ``price_discontinuity`` compares each mark with the previous one, and the previous one
-    is updated on the sweep that suspends. So the second sweep sees 70 against 70, no step
-    at all, and liquidates against the pre-adjustment cost basis - the fabricated loss the
-    guard exists to prevent, one second late. The suspension is a one-sweep pause, not a
-    hold, and only a declared ex-date (re-asserted from the calendar every sweep) actually
-    holds for a session.
+    ``price_discontinuity`` compares each mark with the last one that was *comparable* with
+    the basis, so the stored mark is deliberately not advanced while a step is being
+    refused. Advancing it would erase the evidence: the next sweep would compare 70 with
+    70, find no step, and liquidate against the pre-adjustment basis - the fabricated loss
+    this guard exists to prevent, one sweep later.
 
-    Pinned deliberately. The behaviour is worth an operator's decision, not a silent
-    change: lengthening it leaves a genuinely collapsing position unprotected for a whole
-    session, and shortening it books a loss the market never caused.
+    Which way this fails is a real choice and it is made here. A split and a crash of the
+    same size are indistinguishable to a size test, so holding leaves a genuinely
+    collapsing position unprotected until an operator acts. That is the safer direction on
+    a step across a session boundary, where an exchange price band makes a corporate action
+    far likelier than a real move, and it is why a step *inside* one session re-arms the
+    stop instead. The gap monitor is what puts the open question in front of a human.
     """
     broker = StubBroker([position(stop=Decimal(95))])
     marks = {"INFY": Decimal(100)}
@@ -160,13 +162,37 @@ def test_an_undeclared_discontinuity_suspends_the_stop_for_exactly_one_sweep() -
     engine.evaluate(AFTERNOON)
 
     marks["INFY"] = Decimal(70)
-    assert engine.evaluate(NEXT_MORNING) == (), "the first sweep suspends"
-    assert engine.rebased == ("INFY",)
-    assert broker.positions, "and the position is still held"
+    moment = NEXT_MORNING
+    for sweep in range(5):
+        assert engine.evaluate(moment) == (), f"sweep {sweep} must not liquidate"
+        assert engine.rebased == ("INFY",)
+        assert broker.positions, "the position is still held"
+        moment += timedelta(seconds=1)
 
-    exits = engine.evaluate(NEXT_MORNING + timedelta(seconds=1))
-    assert [item.mark_price for item in exits] == [Decimal(70)], "the next sweep liquidates"
-    assert engine.rebased == (), "the step is gone: 70 against 70 is not a discontinuity"
+
+def test_a_reconciled_position_leaves_the_suspension_behind() -> None:
+    """The hold is on the disagreement, not on the symbol.
+
+    Once the quote is comparable with the basis again - an operator having re-based the
+    position, or the price simply having come back - the stop arms itself without anyone
+    clearing a flag, and a later breach is acted on normally.
+    """
+    broker = StubBroker([position(stop=Decimal(95))])
+    marks = {"INFY": Decimal(100)}
+    engine = engine_over(marks, broker)
+    engine.evaluate(AFTERNOON)
+
+    marks["INFY"] = Decimal(70)
+    assert engine.evaluate(NEXT_MORNING) == ()
+    assert engine.rebased == ("INFY",)
+
+    marks["INFY"] = Decimal(99)  # back inside the band of the last comparable mark
+    assert engine.evaluate(NEXT_MORNING + timedelta(seconds=1)) == ()
+    assert engine.rebased == (), "the quote and the basis agree again"
+
+    marks["INFY"] = Decimal(94)  # an ordinary move through the stop
+    exits = engine.evaluate(NEXT_MORNING + timedelta(seconds=2))
+    assert [item.mark_price for item in exits] == [Decimal(94)]
 
 
 def test_the_engine_has_no_opinion_about_carrying_a_position_through_a_close() -> None:
