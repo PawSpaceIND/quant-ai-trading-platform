@@ -130,11 +130,13 @@ def test_a_scored_agent_is_reported_with_the_weight_it_earned(capsys):
 def test_the_market_is_named_so_a_default_us_run_on_an_india_pilot_is_visible(capsys):
     """The failure this line exists to make visible.
 
-    ``--market`` defaults to ``us``, so ``cli analytics`` with no arguments builds an AAPL
-    instrument. Run that against an India pilot and every ratio describes a stock the
-    watchlist does not contain, while the only tell is an annualisation of 98280 rather
-    than 94500 - a difference nobody reads. Naming the instrument and its market puts it
-    in the first line of the output instead.
+    ``cli analytics`` builds a hardcoded AAPL instrument whatever the operator asks for,
+    so on an India pilot every ratio describes a stock the watchlist does not contain. The
+    only tell was an annualisation of 98280 rather than 94500 - a difference nobody reads.
+    Naming the instrument and its market puts it in the first line of output instead, which
+    is how that mismatch was found; refusing the flag outright is the separate guard in
+    ``test_cli_runtime_reporting``. This one stays because the mismatch can return without
+    the flag: any change to the instrument this runtime builds is silent otherwise.
     """
     aapl = Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     daemon = daemon_over(RISING)
