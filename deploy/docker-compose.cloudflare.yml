@@ -1,0 +1,14 @@
+# Combine with docker-compose.yml; see docs/CLOUDFLARE_PRIVATE_PILOT.md.
+services:
+  cloudflare-tunnel:
+    image: ${PRAMANA_CLOUDFLARED_IMAGE:?required reviewed cloudflare/cloudflared image digest}
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/cloudflare_tunnel_token"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [dashboard]
+    secrets: [cloudflare_tunnel_token]
+secrets:
+  cloudflare_tunnel_token:
+    file: ${PRAMANA_TUNNEL_TOKEN_FILE:?required absolute path to private tunnel token file}
