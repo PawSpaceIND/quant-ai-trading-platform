@@ -41,7 +41,7 @@ These are useful foundations. A passed test proves the behavior tested; it does 
 | Portfolio dashboard | Ledger-fill marks outside replay snapshot mode | Persist current engine marks, timestamps and source; reconcile displayed risk to engine |
 | Historical research | Replay, fee/slippage modeling and lookahead tests | Licensed point-in-time history, survivorship/corporate-action handling and realistic stress scenarios |
 | Walk-forward / Monte Carlo | Window-splitting and terminal-P&L bootstrap utilities | Complete experiment runner, untouched holdout, trial accounting, path/drawdown and dependence-aware simulation |
-| Promotion policy | Numeric policy exists; call sites found in tests, not production runtime | Durable evidence artifacts and an enforced approval workflow for future live release |
+| Promotion policy | Release-bound review validates numeric policy, exact strategy evidence, and SHA-bound holdout/forward/stress/calibration artifacts; live execution remains disabled | External reviewer acceptance and authentic forward evidence for the qualified release |
 | Strategy effectiveness | Consensus logic and strategy modules exist | Net-of-cost out-of-sample results and forward-paper evidence; no proven edge established |
 | AI reliability | Structured output, fallback/veto paths and proof logging | Empirical calibration, prompt/model version pinning, drift checks and comparison against deterministic baseline |
 | Broker execution | Read-only real-broker adapters; submissions route to paper | Real lifecycle, acknowledgements, partial fills, rejection/cancel races and continuous reconciliation |
