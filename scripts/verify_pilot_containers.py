@@ -59,7 +59,15 @@ def main():
     try:
         directives_file = Path(fixture_directory.name) / "reviewed-directives.json"
         directives = json.loads((ROOT / "deploy/founder-directives.example.json").read_text())
-        directives.update(starting_capital=123456, max_open_positions=3)
+        # The synthetic tick fixture feeds one instrument, so narrow the shipped example
+        # watchlist to it. A watchlist symbol with no websocket mapping is permanently
+        # vetoed as missing market data, which would fail the feed check for reasons that
+        # have nothing to do with the container build this job exists to verify.
+        directives.update(
+            starting_capital=123456,
+            max_open_positions=3,
+            watchlist=[item for item in directives["watchlist"] if item["symbol"] == "INFY"],
+        )
         directives_file.write_text(json.dumps(directives))
         directives_file.chmod(0o644)  # Synthetic data read by UID 10001 through a single-file mount.
         external_fixture = json.loads((ROOT / "tests/fixtures/external-account-ghost.json").read_text())
