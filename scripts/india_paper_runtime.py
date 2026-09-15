@@ -12,7 +12,7 @@ import certifi
 from kiteconnect import KiteConnect
 
 CONFIG = Path.home() / ".config/pramana"
-RUNTIME = CONFIG / "india-paper"
+RUNTIME = Path(os.environ.get("PRAMANA_PILOT_RUNTIME", str(CONFIG / "india-paper")))
 SYMBOLS = ("INFY", "RELIANCE", "TCS")
 
 

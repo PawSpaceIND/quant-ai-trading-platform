@@ -184,6 +184,7 @@ class TradeProposal:
     expected_return: Decimal
     expected_risk: Decimal
     rationale: tuple[str, ...]
+    provenance: dict | None = None
 
 
 class AtlasCIOAgent:
@@ -256,4 +257,5 @@ class AtlasCIOAgent:
             take_profit_price, decision.confidence,
             decision.expected_return, decision.expected_risk,
             decision.rationale,
+            getattr(decision, "provenance", None),
         )

@@ -26,6 +26,7 @@ def main():
             "event-fetch",
             "event-import",
             "event-map",
+            "event-revoke",
             "event-sources",
             "event-status",
         ),
@@ -107,7 +108,9 @@ def main():
         finally:
             journal.close()
     else:
-        store = CompanyEvents(args.database)
+        if args.operation == "event-revoke" and not args.database.is_file():
+            parser.error("event-revoke requires an existing company-event database")
+        store = CompanyEvents(args.database, readonly=args.operation in ("event-sources", "event-status"))
         try:
             if args.operation == "event-fetch":
                 result = store.fetch()
@@ -120,6 +123,10 @@ def main():
                     parser.error("event-map requires --file JSON mapping")
                 store.map_company(**json.loads(args.file.read_text()))
                 result = store.status()
+            elif args.operation == "event-revoke":
+                if args.file is None:
+                    parser.error("event-revoke requires --file JSON withdrawal review")
+                result = store.revoke_company(**json.loads(args.file.read_text()))
             elif args.operation == "event-sources":
                 if not args.symbol or not args.at:
                     parser.error(

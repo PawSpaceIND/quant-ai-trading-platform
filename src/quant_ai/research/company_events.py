@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import quote, urlparse
 from xml.etree import ElementTree
 
 import httpx
@@ -21,6 +23,7 @@ from quant_ai.research.lab import canonical, identity, instant
 NSE_ANNOUNCEMENTS = "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"
 ALLOWED_HOSTS = {"www.nseindia.com", "nsearchives.nseindia.com", "archives.nseindia.com"}
 MAX_BYTES = 5_000_000
+NSE_SYMBOL = re.compile(r"NSE:[A-Z0-9][A-Z0-9&._-]{0,35}\Z")
 
 
 def official_link(url):
@@ -103,14 +106,19 @@ def parse_feed(raw, observed_at):
 
 
 class CompanyEvents:
-    def __init__(self, path):
-        self.db = sqlite3.connect(path)
+    def __init__(self, path, *, readonly=False):
+        self.db = sqlite3.connect(
+            "file:" + quote(str(Path(path).resolve()), safe="/") + "?mode=ro", uri=True
+        ) if readonly else sqlite3.connect(path)
         tables = {
             r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        if tables and tables != {"event_revisions", "feed_captures", "symbol_mappings"}:
+        if (tables or readonly) and tables != {"event_revisions", "feed_captures", "symbol_mappings"}:
             self.db.close()
             raise ValueError("not_an_event_database")
+        if readonly:
+            self.db.execute("PRAGMA query_only=ON")
+            return
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS event_revisions (digest TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS feed_captures (id TEXT PRIMARY KEY, body TEXT NOT NULL, raw BLOB);
@@ -124,7 +132,7 @@ class CompanyEvents:
     def map_company(self, exact_title, symbol, verified_at, provenance):
         identity(exact_title)
         identity(provenance)
-        if not symbol.startswith("NSE:") or len(symbol) <= 4:
+        if not isinstance(symbol, str) or not NSE_SYMBOL.fullmatch(symbol):
             raise ValueError("nse_symbol_required")
         at = instant(verified_at).isoformat()
         with self.db:
@@ -132,6 +140,37 @@ class CompanyEvents:
                 "INSERT INTO symbol_mappings VALUES (?,?,?,?)",
                 (exact_title, at, symbol, provenance),
             )
+
+    def revoke_company(self, exact_title, provenance, expected_verified_at):
+        """Append a server-timed withdrawal, preserving the four-column journal.
+
+        An empty symbol is the reserved withdrawal marker. Older Python readers
+        also exclude it from NSE evidence; older dashboard readers reject it.
+        """
+        identity(exact_title)
+        identity(provenance)
+        instant(expected_verified_at)
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            rows = self.db.execute(
+                "SELECT verified_at,symbol FROM symbol_mappings WHERE title=?",
+                (exact_title,),
+            ).fetchall()
+            rows.sort(key=lambda row: (instant(row[0]), row[0]), reverse=True)
+            if not rows or rows[0][0] != expected_verified_at:
+                raise ValueError("mapping_changed_refresh_required")
+            at = datetime.now(timezone.utc)
+            if any(instant(row[0]) >= at for row in rows):
+                raise ValueError("mapping_time_not_before_server_time")
+            latest = [row for row in rows if instant(row[0]) == instant(rows[0][0])]
+            if not any(row[1] for row in latest):
+                raise ValueError("mapping_already_revoked")
+            self.db.execute(
+                "INSERT INTO symbol_mappings VALUES (?,?,?,?)",
+                (exact_title, at.isoformat(), "", provenance),
+            )
+        return {"title": exact_title, "status": "revoked", "verified_at": at.isoformat(),
+                "provenance": provenance}
 
     def ingest(self, raw, *, observed_at, capture_kind="imported"):
         if capture_kind not in ("imported", "direct_https"):
@@ -207,13 +246,20 @@ class CompanyEvents:
 
     def sources_as_of(self, symbol, decision_at):
         """Only known-at-the-time revisions AND mappings become model evidence."""
+        if not isinstance(symbol, str) or not NSE_SYMBOL.fullmatch(symbol):
+            raise ValueError("nse_symbol_required")
         cutoff = instant(decision_at)
-        mappings = {}
+        mappings, mapping_conflicts = {}, set()
         for title, at, mapped, provenance in self.db.execute("SELECT * FROM symbol_mappings"):
+            if mapped != "" and (not isinstance(mapped, str) or not NSE_SYMBOL.fullmatch(mapped)):
+                raise ValueError("invalid_mapping_symbol")
             when = instant(at)
             if when <= cutoff and (title not in mappings or when > mappings[title][0]):
                 mappings[title] = (when, mapped, provenance)
-        latest = {}
+                mapping_conflicts.discard(title)
+            elif when <= cutoff and when == mappings[title][0]:
+                mapping_conflicts.add(title)
+        latest, ambiguous = {}, set()
         for (encoded,) in self.db.execute("SELECT body FROM event_revisions"):
             event = json.loads(encoded)
             original = {
@@ -225,18 +271,25 @@ class CompanyEvents:
             seen = instant(event["first_seen_at"])
             if seen > cutoff or instant(event["published_at"]) > cutoff:
                 continue
-            mapping = mappings.get(event["title"])
-            if mapping is None or mapping[1] != symbol:
-                continue
             key = event["guid"]
             # Corrections with the same GUID supersede only from their own first-seen time.
-            if key in latest and instant(latest[key]["first_seen_at"]) >= seen:
+            if key in latest:
+                previous = instant(latest[key]["first_seen_at"])
+                if previous == seen:
+                    ambiguous.add(key)
+                    continue
+                if previous > seen:
+                    continue
+            latest[key] = event
+            ambiguous.discard(key)
+        mapped = []
+        for key, event in latest.items():
+            mapping = mappings.get(event["title"])
+            if (key in ambiguous or event["title"] in mapping_conflicts
+                    or mapping is None or mapping[1] != symbol):
                 continue
-            latest[key] = {
-                **event,
-                "mapping_at": mapping[0].isoformat(),
-                "mapping_provenance": mapping[2],
-            }
+            mapped.append({**event, "mapping_at": mapping[0].isoformat(),
+                           "mapping_provenance": mapping[2]})
         return [
             {
                 "id": "nse-event:" + e["revision_sha256"],
@@ -247,7 +300,7 @@ class CompanyEvents:
                 "data": e,
             }
             for e in sorted(
-                latest.values(), key=lambda e: (e["first_seen_at"], e["revision_sha256"])
+                mapped, key=lambda e: (e["first_seen_at"], e["revision_sha256"])
             )
         ]
 
@@ -259,5 +312,8 @@ class CompanyEvents:
             "revisions": self.db.execute("SELECT count(*) FROM event_revisions").fetchone()[0],
             "captures": self.db.execute("SELECT count(*) FROM feed_captures").fetchone()[0],
             "mappings": self.db.execute("SELECT count(*) FROM symbol_mappings").fetchone()[0],
+            "mapping_revocations": self.db.execute(
+                "SELECT count(*) FROM symbol_mappings WHERE symbol=''"
+            ).fetchone()[0],
             "coverage": "NSE announcement RSS only; not a complete corporate-actions database",
         }

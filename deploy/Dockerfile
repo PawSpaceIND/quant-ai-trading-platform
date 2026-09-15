@@ -11,8 +11,9 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY scripts ./scripts
 
-RUN pip install --no-cache-dir . kiteconnect ib_async \
+RUN pip install --no-cache-dir ".[pilot]" \
     && useradd --create-home --uid 10001 pramana \
     && mkdir -p /data/xai \
     && chown -R pramana:pramana /app /data

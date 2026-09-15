@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from enum import Enum
 from typing import Callable
+from uuid import uuid4
 
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
@@ -14,6 +15,7 @@ from quant_ai.execution.paper_ledger import (
     PaperBrokerDatabaseLockedError,
     PaperBrokerService,
 )
+from quant_ai.execution.protection_state import positive_level
 from quant_ai.notifications.trading import (
     TradingAlertCode,
     TradingNotificationDispatcher,
@@ -71,6 +73,7 @@ class ProtectiveExitEngine:
     ) -> None:
         self.broker = broker
         self.mark_resolver = mark_resolver
+        self.strategy_manifest_provider = None
         self.tenant_id = tenant_id
         self.dispatcher = dispatcher or TradingNotificationDispatcher()
         self.strategy_id = strategy_id
@@ -83,7 +86,7 @@ class ProtectiveExitEngine:
         """Check every open position and liquidate the ones whose thresholds are breached."""
         observed_at = now or datetime.now(timezone.utc)
         exits: list[ProtectiveExit] = []
-        for position in self.broker.get_positions(self.tenant_id):
+        for position in self.broker.get_protection_positions(self.tenant_id):
             decision = self._breach(position)
             if decision is None:
                 continue
@@ -96,23 +99,24 @@ class ProtectiveExitEngine:
     ) -> tuple[ExitTrigger, Decimal, Decimal] | None:
         if position.quantity <= 0:
             return None
-        if position.stop_price is None and position.take_profit_price is None:
+        stop, target = positive_level(position.stop_price), positive_level(position.take_profit_price)
+        if stop is None and target is None:
             return None
         mark = self._mark(position)
-        if mark is None or mark <= 0:
+        if mark is None:
             return None
         # Long-only ledger: a stop sits below entry and a target above it. The stop is
         # evaluated first so a bar that spans both thresholds resolves conservatively.
-        if position.stop_price is not None and mark <= position.stop_price:
-            return ExitTrigger.STOP_LOSS, position.stop_price, mark
-        if position.take_profit_price is not None and mark >= position.take_profit_price:
-            return ExitTrigger.TAKE_PROFIT, position.take_profit_price, mark
+        if stop is not None and mark <= stop:
+            return ExitTrigger.STOP_LOSS, stop, mark
+        if target is not None and mark >= target:
+            return ExitTrigger.TAKE_PROFIT, target, mark
         return None
 
     def _mark(self, position: BrokerPosition) -> Decimal | None:
         try:
-            return self.mark_resolver(position)
-        except (RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as error:
+            return positive_level(self.mark_resolver(position))
+        except (RuntimeError, ValueError, DecimalException, TimeoutError, ConnectionError, OSError) as error:
             # An unknown price is never treated as a safe price: skip, log, retry next tick.
             LOGGER.warning(
                 "protective_exit_mark_unavailable symbol=%s error=%s", position.symbol, error
@@ -136,11 +140,39 @@ class ProtectiveExitEngine:
             self.strategy_id,
             position.asset_class,
             self.tenant_id,
-            stop_price=position.stop_price,
-            take_profit_price=position.take_profit_price,
+            stop_price=positive_level(position.stop_price),
+            take_profit_price=positive_level(position.take_profit_price),
         )
+        observation = getattr(self.mark_resolver, "last_observation", {})
+        if not isinstance(observation, dict) or observation.get("symbol") != position.symbol or observation.get("price") != str(mark):
+            observation = {"symbol": position.symbol, "price": str(mark),
+                "source": "custom_resolver_unverified", "source_timestamp": None}
+        observation = {"symbol": position.symbol, "price": str(mark),
+            "source": str(observation.get("source", "unavailable"))[:128],
+            "source_timestamp": str(observation["source_timestamp"]) if observation.get("source_timestamp") else None}
+        binding = None
+        if self.strategy_manifest_provider is not None:
+            try:
+                binding = self.strategy_manifest_provider(now)
+            except Exception as error:  # noqa: BLE001 - metadata failure must never suppress protection
+                LOGGER.warning("protective_strategy_evidence_unavailable error=%s", type(error).__name__)
+                binding = {"status": "unavailable", "issues": ["evidence_capture_failed"]}
+        proof = {
+            "runtime_strategy": binding,
+            "schema": "pramana.protective_exit.v1", "event_type": "protective_exit",
+            "decision_id": "PROTECTION-" + uuid4().hex,
+            "generated_at": now.isoformat(), "trigger": trigger.value, "threshold": str(threshold),
+            "mark_observation": observation,
+            "proposal": {"side": "SELL", "quantity": str(position.quantity), "reference_price": str(mark)},
+            "declared_rationales": [f"Deterministic {trigger.value}: observed mark {mark} crossed stored threshold {threshold}.",
+                f"Price source: {observation.get('source')}; source timestamp: {observation.get('source_timestamp') or 'unavailable'}.",
+                "Covered paper liquidation independent of AI votes. Fill includes broker friction; stop price is not guaranteed."],
+            "risk_verdict": {"approved": "true", "reason": "covered_protective_liquidation"},
+            "stress_verdict": {"passed": "not_applicable", "reason": "risk_reducing_exit; no AI stress vote"},
+        }
+        cooldown_until = now + self.re_entry_cooldown if self.re_entry_cooldown > timedelta(0) else None
         try:
-            fill: ExecutionResult = self.broker.sell(order)
+            fill: ExecutionResult = self.broker.sell_protected(order, proof, cooldown_until)
         except (ValueError, PaperBrokerDatabaseLockedError) as error:
             LOGGER.error(
                 "protective_exit_failed symbol=%s trigger=%s error=%s",
@@ -157,14 +189,6 @@ class ProtectiveExitEngine:
             "protective_exit_executed symbol=%s trigger=%s threshold=%s mark=%s order=%s",
             position.symbol, trigger.value, threshold, mark, fill.order_id,
         )
-        if self.re_entry_cooldown > timedelta(0):
-            self.broker.record_exit_cooldown(
-                position.symbol,
-                position.market,
-                position.asset_class,
-                now + self.re_entry_cooldown,
-                self.tenant_id,
-            )
         self._notify(position, trigger, threshold, mark, filled=True, detail=fill.order_id)
         return ProtectiveExit(
             position.symbol, position.market, position.asset_class, position.quantity,
@@ -219,9 +243,21 @@ def market_feed_mark_resolver(
     now = clock or (lambda: datetime.now(timezone.utc))
 
     def resolve(position: BrokerPosition) -> Decimal | None:
+        resolve.last_observation = {}  # type: ignore[attr-defined]
         if tick_reader is not None:
             tick, veto = tick_reader.market_data_status(position.symbol, now())  # type: ignore[attr-defined]
-            if tick is not None and tick.ltp > 0:
+            age = None
+            if tick is not None:
+                observed = tick.observed_at
+                current = now()
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                if current.tzinfo is None:
+                    current = current.replace(tzinfo=timezone.utc)
+                age = (current - observed).total_seconds()
+            if tick is not None and age is not None and 0 <= age <= 120 and positive_level(tick.ltp) is not None:
+                resolve.last_observation = {"symbol": position.symbol, "price": str(tick.ltp),  # type: ignore[attr-defined]
+                    "source": tick.source, "source_timestamp": tick.observed_at.isoformat()}
                 return tick.ltp
             # A live source is configured but has nothing fresh. The historical feed is not
             # a substitute for it - in the ghost wiring that feed is synthetic - and a
@@ -232,6 +268,11 @@ def market_feed_mark_resolver(
             )
             return None
         tick = market_feed.latest_tick(instrument_resolver(position))  # type: ignore[attr-defined]
+        age = (now() - tick.timestamp).total_seconds()
+        if not 0 <= age <= 120:
+            return None
+        resolve.last_observation = {"symbol": position.symbol, "price": str(tick.last_price),  # type: ignore[attr-defined]
+            "source": type(market_feed).__name__, "source_timestamp": tick.timestamp.isoformat()}
         return tick.last_price
 
     return resolve

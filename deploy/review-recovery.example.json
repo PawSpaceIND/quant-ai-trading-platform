@@ -1,0 +1,13 @@
+{
+  "tenant_id": "ghost",
+  "release_revision": "",
+  "evidence_references": [],
+  "schema": "pramana.recovery.review.v1",
+  "target_host": "",
+  "clean_start": false,
+  "private_access": false,
+  "token_renewal": false,
+  "independent_alert_received": false,
+  "full_bundle_restored": false,
+  "rollback_verified": false
+}

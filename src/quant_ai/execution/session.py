@@ -79,15 +79,25 @@ def default_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     return {GlobalVenue.USA: NYSE_HOLIDAYS_2026, GlobalVenue.INDIA: NSE_HOLIDAYS_2026}
 
 
+def default_special_sessions() -> dict[Market | GlobalVenue, frozenset[date]]:
+    # NSE/CMTR/72349: normal 09:15–15:30 cash session on Budget Sunday.
+    # https://nsearchives.nseindia.com/content/circulars/CMTR72349.pdf
+    return {GlobalVenue.INDIA: frozenset({date(2026, 2, 1)})}
+
+
 def holidays_from_json(
     payload: dict[str, list[str]],
     base: dict[Market | GlobalVenue, frozenset[date]] | None = None,
 ) -> dict[Market | GlobalVenue, frozenset[date]]:
     """Merge ``{"INDIA": ["2026-11-09", ...], "USA": [...]}`` over ``base``."""
+    if not isinstance(payload, dict):
+        raise TypeError("Holiday overrides must be a venue-to-date-list object")
     merged: dict[Market | GlobalVenue, frozenset[date]] = dict(base or {})
     for key, values in payload.items():
+        if not isinstance(key, str) or not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            raise TypeError("Holiday overrides require string venues and lists of ISO date strings")
         venue = GlobalVenue(key.strip().upper())
-        parsed = frozenset(date.fromisoformat(str(item)) for item in values)
+        parsed = frozenset(date.fromisoformat(item) for item in values)
         merged[venue] = merged.get(venue, frozenset()) | parsed
     return merged
 
@@ -95,6 +105,7 @@ def holidays_from_json(
 @dataclass(frozen=True)
 class MarketCalendar:
     holidays: dict[Market | GlobalVenue, frozenset[date]] = field(default_factory=dict)
+    special_sessions: dict[Market | GlobalVenue, frozenset[date]] = field(default_factory=default_special_sessions)
 
     def state(self, market: Market | GlobalVenue, timestamp: datetime) -> MarketState:
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
@@ -103,7 +114,8 @@ class MarketCalendar:
         session = SESSIONS[venue]
         local = timestamp.astimezone(ZoneInfo(session.timezone))
         holidays = self.holidays.get(market, self.holidays.get(venue, frozenset()))
-        if local.weekday() >= 5 or local.date() in holidays:
+        special = self.special_sessions.get(market, self.special_sessions.get(venue, frozenset()))
+        if (local.weekday() >= 5 and local.date() not in special) or local.date() in holidays:
             return MarketState.CLOSED
         local_time = local.time().replace(tzinfo=None)
         if session.pre_open <= local_time < session.regular_open:

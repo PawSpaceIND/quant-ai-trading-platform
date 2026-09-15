@@ -25,6 +25,7 @@ class FounderExecutionBrief:
     sharpe_ratio: Decimal = Decimal(0)
     sortino_ratio: Decimal = Decimal(0)
     xai_rationales: tuple[str, ...] = ()
+    analytics_source: str = "instrument_price_returns_not_strategy"
 
     def to_json(self) -> str:
         payload = asdict(self)

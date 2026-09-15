@@ -6,13 +6,26 @@ import os
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
-from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
+from quant_ai.domain.models import OrderIntent, Side
 from quant_ai.execution.broker import BrokerAccountSummary
+from quant_ai.execution.broker_reads import (
+    BrokerReadError,
+    ExternalBrokerFunds,
+    ExternalBrokerPosition,
+    amount,
+    ib_funds,
+    ib_position,
+    identifier,
+    integer,
+    kite_data,
+    kite_funds,
+    kite_positions,
+)
 from quant_ai.execution.live_guard import LiveTradingDisabled
 from quant_ai.execution.paper_ledger import PaperBrokerService
 
@@ -26,31 +39,19 @@ def _env_requests_live_money() -> bool:
     return os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "true"
 
 
-def _decimal(value: Any, default: str = "0") -> Decimal:
-    if value is None or value == "":
-        return Decimal(default)
-    return Decimal(str(value))
-
-
-def _market_decimal(value: Any) -> Decimal:
-    text = str(value or "0").strip()
+def _quote_amount(value: Any) -> Decimal:
+    text = str(value).strip()
     if text[:1] in {"C", "H"}:
         text = text[1:]
-    return Decimal(text or "0")
+    result = amount(text, "quote price")
+    if result <= 0:
+        raise BrokerReadError("Broker quote price is not positive")
+    return result
 
 
-def _ib_asset_class(row: dict[str, Any]) -> AssetClass:
-    code = str(row.get("assetClass") or row.get("secType") or "STK").upper()
-    return {
-        "STK": AssetClass.EQUITY,
-        "CASH": AssetClass.FX,
-        "FX": AssetClass.FX,
-        "FUT": AssetClass.FUTURE,
-        "OPT": AssetClass.OPTION,
-        "BOND": AssetClass.BOND,
-        "FUND": AssetClass.FUND,
-        "CRYPTO": AssetClass.CRYPTO,
-    }.get(code, AssetClass.EQUITY)
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise BrokerReadError("Broker read redirected; credentials were not forwarded")
 
 
 @dataclass(frozen=True)
@@ -66,22 +67,39 @@ class ReadOnlyJsonTransport:
     """HTTP transport deliberately exposing GET only; order writes cannot be expressed."""
 
     def __init__(self, base_url: str, headers: dict[str, str] | None = None) -> None:
+        parsed = urlsplit(base_url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise BrokerReadError("Broker base URL must be HTTPS without credentials, query or fragment")
         self.base_url = base_url.rstrip("/")
         self.headers = dict(headers or {})
 
     def get(self, path: str, params: dict[str, str] | None = None) -> Any:
+        if not path.startswith("/") or path.startswith("//") or ".." in path or "?" in path or "#" in path or "\\" in path or any(ord(c) < 32 for c in path):
+            raise BrokerReadError("Invalid broker read path")
         suffix = f"?{urlencode(params)}" if params else ""
         request = Request(
             f"{self.base_url}{path}{suffix}",
             headers=self.headers,
             method="GET",
         )
-        with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with build_opener(_NoRedirect()).open(request, timeout=10) as response:
+            body = response.read(8_000_001)
+            if len(body) > 8_000_000:
+                raise BrokerReadError("Broker response exceeds 8 MB")
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    if key in result:
+                        raise BrokerReadError("Duplicate broker JSON key")
+                    result[key] = value
+                return result
+            def invalid_constant(value):
+                raise BrokerReadError("Nonfinite broker JSON value")
+            return json.loads(body.decode("utf-8"), object_pairs_hook=pairs, parse_constant=invalid_constant, parse_float=Decimal)
 
 
 class _GhostLiveBrokerAdapter(BrokerAdapter):
-    """Read live state, but irrevocably route executions to the local paper ledger."""
+    """Paper execution and account state; external reads have an explicit separate API."""
 
     broker_name = "live-broker"
 
@@ -127,14 +145,13 @@ class _GhostLiveBrokerAdapter(BrokerAdapter):
         return self.cancel_order(order_id, tenant_id)
 
     def get_margin(self, tenant_id: str = "default") -> BrokerMargin:
-        summary = self.get_account_summary(tenant_id)
-        return BrokerMargin(
-            tenant_id=tenant_id,
-            starting_capital=summary.net_liquidation,
-            cash_balance=summary.cash_balance,
-            gross_position_value=max(Decimal(0), summary.net_liquidation - summary.cash_balance),
-            available_margin=summary.available_margin,
-        )
+        return self.paper_broker.get_margin(tenant_id)
+
+    def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+        return self.paper_broker.get_positions(tenant_id)
+
+    def get_account_summary(self, tenant_id: str = "default") -> BrokerAccountSummary:
+        return self.paper_broker.get_account_summary(tenant_id)
 
 
 class ZerodhaKiteAdapter(_GhostLiveBrokerAdapter):
@@ -157,57 +174,39 @@ class ZerodhaKiteAdapter(_GhostLiveBrokerAdapter):
             },
         )
 
-    def get_account_summary(self, tenant_id: str = "default") -> BrokerAccountSummary:
-        payload = self.transport.get("/user/margins")
-        equity = payload.get("data", payload).get("equity", {})
-        available = equity.get("available", {})
-        cash = _decimal(available.get("cash"))
-        net = _decimal(equity.get("net"), str(cash))
-        opening = _decimal(available.get("opening_balance"), str(cash))
-        return BrokerAccountSummary(
-            tenant_id=tenant_id,
-            currency="INR",
-            cash_balance=cash,
-            net_liquidation=net if net else opening,
-            available_margin=_decimal(available.get("live_balance"), str(cash)),
-            raw=equity,
-        )
+    def external_account_id(self, expected_account_id: str) -> str:
+        expected = identifier(expected_account_id, "expected account ID")
+        data = kite_data(self.transport.get("/user/profile"))
+        if not isinstance(data, dict) or data.get("user_id") != expected:
+            raise BrokerReadError("Kite account identity does not match the selected external account")
+        return expected
 
-    def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
-        payload = self.transport.get("/portfolio/positions")
-        rows = payload.get("data", payload).get("net", [])
-        positions = []
-        for row in rows:
-            quantity = int(row.get("quantity", 0))
-            if quantity == 0:
-                continue
-            positions.append(
-                BrokerPosition(
-                    tenant_id=tenant_id,
-                    symbol=str(row.get("tradingsymbol", "")),
-                    market=Market.INDIA,
-                    asset_class=(
-                        AssetClass.COMMODITY
-                        if str(row.get("exchange", "")).upper() == "MCX"
-                        else AssetClass.EQUITY
-                    ),
-                    quantity=quantity,
-                    average_price=_decimal(row.get("average_price")),
-                )
-            )
-        return tuple(positions)
+    def read_external_funds(self, expected_account_id: str) -> ExternalBrokerFunds:
+        account_id = self.external_account_id(expected_account_id)
+        funds = kite_funds(self.transport.get("/user/margins"), account_id)
+        self.external_account_id(expected_account_id)
+        return funds
+
+    def read_external_positions(self, expected_account_id: str) -> tuple[ExternalBrokerPosition, ...]:
+        account_id = self.external_account_id(expected_account_id)
+        positions = kite_positions(self.transport.get("/portfolio/positions"), account_id)
+        self.external_account_id(expected_account_id)
+        return positions
 
     def get_market_data_quote(self, instrument: str) -> MarketQuote:
         payload = self.transport.get("/quote", {"i": instrument})
-        row = payload.get("data", payload).get(instrument, {})
+        data = kite_data(payload)
+        row = data.get(instrument) if isinstance(data, dict) else None
+        if not isinstance(row, dict):
+            raise BrokerReadError("Kite quote is missing")
         depth = row.get("depth", {})
         buy = depth.get("buy", [])
         sell = depth.get("sell", [])
         return MarketQuote(
             symbol=instrument,
-            last_price=_decimal(row.get("last_price")),
-            bid=_decimal(buy[0].get("price")) if buy else None,
-            ask=_decimal(sell[0].get("price")) if sell else None,
+            last_price=_quote_amount(row.get("last_price")),
+            bid=_quote_amount(buy[0].get("price")) if buy else None,
+            ask=_quote_amount(sell[0].get("price")) if sell else None,
             raw=row,
         )
 
@@ -224,76 +223,60 @@ class InteractiveBrokersAdapter(_GhostLiveBrokerAdapter):
         transport: ReadOnlyJsonTransport | None = None,
     ) -> None:
         super().__init__(paper_broker)
-        self.account_id = account_id
+        self.account_id = identifier(account_id, "account ID")
+        if not account_id.isascii() or not account_id.isalnum():
+            raise BrokerReadError("IBKR account ID must be ASCII alphanumeric")
         self.transport = transport or ReadOnlyJsonTransport(base_url)
-        self._portfolio_ready = False
-        self._marketdata_ready = False
 
     def _ensure_portfolio_ready(self) -> None:
-        if not self._portfolio_ready:
-            self.transport.get("/portfolio/accounts")
-            self._portfolio_ready = True
+        accounts = self.transport.get("/portfolio/accounts")
+        if not isinstance(accounts, list) or not any(isinstance(row, dict) and row.get("id") == self.account_id for row in accounts):
+            raise BrokerReadError("Selected IBKR account is not in the portfolio account response")
 
     def _ensure_marketdata_ready(self) -> None:
-        if not self._marketdata_ready:
-            self.transport.get("/iserver/accounts")
-            self._marketdata_ready = True
+        payload = self.transport.get("/iserver/accounts")
+        if not isinstance(payload, dict) or not isinstance(payload.get("accounts"), list) or self.account_id not in payload["accounts"]:
+            raise BrokerReadError("Selected IBKR account is not in the brokerage account response")
 
-    def get_account_summary(self, tenant_id: str = "default") -> BrokerAccountSummary:
+    def read_external_funds(self) -> ExternalBrokerFunds:
         self._ensure_portfolio_ready()
-        payload = self.transport.get(f"/portfolio/{self.account_id}/summary")
+        return ib_funds(self.transport.get(f"/portfolio/{self.account_id}/summary"), self.account_id)
 
-        def value(key: str) -> Any:
-            item = payload.get(key, {})
-            return item.get("amount", item) if isinstance(item, dict) else item
-
-        currency_item = payload.get("currency", {})
-        currency = (
-            str(currency_item.get("currency", "USD"))
-            if isinstance(currency_item, dict)
-            else str(currency_item or "USD")
-        )
-        return BrokerAccountSummary(
-            tenant_id=tenant_id,
-            currency=currency,
-            cash_balance=_decimal(value("totalcashvalue")),
-            net_liquidation=_decimal(value("netliquidation")),
-            available_margin=_decimal(value("availablefunds")),
-            raw=payload,
-        )
-
-    def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+    def read_external_positions(self) -> tuple[ExternalBrokerPosition, ...]:
         self._ensure_portfolio_ready()
-        payload = self.transport.get(f"/portfolio/{self.account_id}/positions/0")
-        rows = payload if isinstance(payload, list) else payload.get("positions", [])
-        positions = []
-        for row in rows:
-            quantity = int(_decimal(row.get("position")))
-            if quantity == 0:
-                continue
-            positions.append(
-                BrokerPosition(
-                    tenant_id=tenant_id,
-                    symbol=str(row.get("ticker") or row.get("contractDesc") or row.get("conid", "")),
-                    market=Market.GLOBAL,
-                    asset_class=_ib_asset_class(row),
-                    quantity=quantity,
-                    average_price=_decimal(row.get("avgCost")),
-                )
-            )
-        return tuple(positions)
+        positions, seen = [], set()
+        for page in range(101):
+            rows = self.transport.get(f"/portfolio/{self.account_id}/positions/{page}")
+            if not isinstance(rows, list) or len(rows) > 100:
+                raise BrokerReadError("Invalid IBKR position page")
+            if not rows:
+                return tuple(positions)
+            if page == 100:
+                raise BrokerReadError("IBKR positions exceed the 100-page capture limit")
+            for row in rows:
+                position = ib_position(row, self.account_id)
+                key = (position.instrument_id, position.model)
+                if key in seen:
+                    raise BrokerReadError("Duplicate IBKR contract/model or repeated position page")
+                seen.add(key)
+                if position.quantity:
+                    positions.append(position)
+        raise BrokerReadError("IBKR position pagination did not finish")
 
     def get_market_data_quote(self, conid: str) -> MarketQuote:
+        conid = str(integer(conid, "contract ID", positive=True))
         self._ensure_marketdata_ready()
         payload = self.transport.get(
             "/iserver/marketdata/snapshot",
             {"conids": conid, "fields": "31,84,86"},
         )
-        row = payload[0] if isinstance(payload, list) and payload else {}
+        if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict) or str(payload[0].get("conid")) != conid:
+            raise BrokerReadError("IBKR quote identity is missing or different")
+        row = payload[0]
         return MarketQuote(
             symbol=conid,
-            last_price=_market_decimal(row.get("31")),
-            bid=_market_decimal(row.get("84")) if row.get("84") not in (None, "") else None,
-            ask=_market_decimal(row.get("86")) if row.get("86") not in (None, "") else None,
+            last_price=_quote_amount(row.get("31")),
+            bid=_quote_amount(row.get("84")) if row.get("84") not in (None, "") else None,
+            ask=_quote_amount(row.get("86")) if row.get("86") not in (None, "") else None,
             raw=row,
         )

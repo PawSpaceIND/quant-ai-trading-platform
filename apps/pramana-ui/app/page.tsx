@@ -1,5 +1,4 @@
-import { CommandCenter } from "@/components/command-center";
-
+import { PilotWorkspace } from "@/components/pilot-workspace";
 export default function Page() {
-  return <CommandCenter />;
+  return <PilotWorkspace />;
 }

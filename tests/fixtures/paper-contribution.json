@@ -1,0 +1,478 @@
+{
+  "account": {
+    "starting_capital": "10000",
+    "cash_balance": "9644.396260"
+  },
+  "fills": [
+    {
+      "id": 1,
+      "order_id": "PAPER-0000000000000000",
+      "tenant_id": "default",
+      "symbol": "TCS",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "side": "BUY",
+      "quantity": 4,
+      "fill_price": "101.100",
+      "notional": "404.400",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:40+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "id": 2,
+      "order_id": "PAPER-0000000000000001",
+      "tenant_id": "default",
+      "symbol": "TCS",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "side": "BUY",
+      "quantity": 2,
+      "fill_price": "121.320",
+      "notional": "242.640",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:41+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "id": 3,
+      "order_id": "PAPER-0000000000000002",
+      "tenant_id": "default",
+      "symbol": "TCS",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "side": "SELL",
+      "quantity": 3,
+      "fill_price": "128.570",
+      "notional": "385.710",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:42+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "id": 4,
+      "order_id": "PAPER-0000000000000003",
+      "tenant_id": "default",
+      "symbol": "INFY",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "side": "BUY",
+      "quantity": 2,
+      "fill_price": "50.550",
+      "notional": "101.100",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:43+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "id": 5,
+      "order_id": "PAPER-0000000000000004",
+      "tenant_id": "default",
+      "symbol": "INFY",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "side": "SELL",
+      "quantity": 2,
+      "fill_price": "44.505",
+      "notional": "89.010",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:44+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "id": 6,
+      "order_id": "PAPER-0000000000000005",
+      "tenant_id": "default",
+      "symbol": "NIFTY",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "side": "BUY",
+      "quantity": 1,
+      "fill_price": "80.880",
+      "notional": "80.880",
+      "status": "FILLED",
+      "created_at": "2000-01-01T04:00:45+00:00",
+      "stop_price": null,
+      "take_profit_price": null
+    }
+  ],
+  "costs": [
+    {
+      "id": 1,
+      "order_id": "PAPER-0000000000000000",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "4.00",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:40+00:00"
+    },
+    {
+      "id": 2,
+      "order_id": "PAPER-0000000000000000",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.400",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:40+00:00"
+    },
+    {
+      "id": 3,
+      "order_id": "PAPER-0000000000000000",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.404400",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:40+00:00"
+    },
+    {
+      "id": 4,
+      "order_id": "PAPER-0000000000000001",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "2.40",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:41+00:00"
+    },
+    {
+      "id": 5,
+      "order_id": "PAPER-0000000000000001",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.240",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:41+00:00"
+    },
+    {
+      "id": 6,
+      "order_id": "PAPER-0000000000000001",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.242640",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:41+00:00"
+    },
+    {
+      "id": 7,
+      "order_id": "PAPER-0000000000000002",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "3.90",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:42+00:00"
+    },
+    {
+      "id": 8,
+      "order_id": "PAPER-0000000000000002",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.390",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:42+00:00"
+    },
+    {
+      "id": 9,
+      "order_id": "PAPER-0000000000000002",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.385710",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:42+00:00"
+    },
+    {
+      "id": 10,
+      "order_id": "PAPER-0000000000000003",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "1.00",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:43+00:00"
+    },
+    {
+      "id": 11,
+      "order_id": "PAPER-0000000000000003",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.100",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:43+00:00"
+    },
+    {
+      "id": 12,
+      "order_id": "PAPER-0000000000000003",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.101100",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:43+00:00"
+    },
+    {
+      "id": 13,
+      "order_id": "PAPER-0000000000000004",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "0.90",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:44+00:00"
+    },
+    {
+      "id": 14,
+      "order_id": "PAPER-0000000000000004",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.090",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:44+00:00"
+    },
+    {
+      "id": 15,
+      "order_id": "PAPER-0000000000000004",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.089010",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:44+00:00"
+    },
+    {
+      "id": 16,
+      "order_id": "PAPER-0000000000000005",
+      "tenant_id": "default",
+      "code": "SPREAD",
+      "amount": "0.80",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:45+00:00"
+    },
+    {
+      "id": 17,
+      "order_id": "PAPER-0000000000000005",
+      "tenant_id": "default",
+      "code": "SLIPPAGE",
+      "amount": "0.080",
+      "cash_debit": 0,
+      "created_at": "2000-01-01T04:00:45+00:00"
+    },
+    {
+      "id": 18,
+      "order_id": "PAPER-0000000000000005",
+      "tenant_id": "default",
+      "code": "EXCHANGE",
+      "amount": "0.080880",
+      "cash_debit": 1,
+      "created_at": "2000-01-01T04:00:45+00:00"
+    }
+  ],
+  "positions": [
+    {
+      "tenant_id": "default",
+      "symbol": "NIFTY",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "quantity": 1,
+      "average_price": "80.880",
+      "stop_price": null,
+      "take_profit_price": null
+    },
+    {
+      "tenant_id": "default",
+      "symbol": "TCS",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "quantity": 3,
+      "average_price": "107.840",
+      "stop_price": null,
+      "take_profit_price": null
+    }
+  ],
+  "valuations": {
+    "fresh": {
+      "status": "ok",
+      "tenantId": "default",
+      "currency": "INR",
+      "markMode": "engine_live",
+      "markDisclaimer": "Engine valuations from timestamped ticks. Stale marks are flagged; no guarantee of fill price.",
+      "cash": 9644.39626,
+      "totalEquity": 10098.39626,
+      "startingCapital": 10000.0,
+      "realizedPnl": 48.79626,
+      "unrealizedPnl": 49.6,
+      "dailyPnl": 0.0,
+      "highWaterMark": 10098.39626,
+      "drawdown": 0.0,
+      "holdings": [
+        {
+          "symbol": "NIFTY",
+          "market": "INDIA",
+          "assetClass": "ETF",
+          "currency": "INR",
+          "quantity": 1,
+          "averageEntry": 80.88,
+          "markPrice": 79.0,
+          "marketValue": 79.0,
+          "unrealizedPnl": -1.88,
+          "markSource": "live_tick",
+          "markTimestamp": "2000-01-01T04:01:00+00:00",
+          "fresh": true,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        },
+        {
+          "symbol": "TCS",
+          "market": "INDIA",
+          "assetClass": "EQUITY",
+          "currency": "INR",
+          "quantity": 3,
+          "averageEntry": 107.84,
+          "markPrice": 125.0,
+          "marketValue": 375.0,
+          "unrealizedPnl": 51.48,
+          "markSource": "live_tick",
+          "markTimestamp": "2000-01-01T04:01:00+00:00",
+          "fresh": true,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        }
+      ],
+      "updatedAt": "2000-01-01T04:01:00+00:00",
+      "allMarksFresh": true,
+      "previousSessionDate": "1999-12-31",
+      "sessionDate": "2000-01-01",
+      "strategyObservation": {
+        "manifestSha256": null,
+        "eligible": false
+      },
+      "qualifyingSession": true
+    },
+    "stale": {
+      "status": "degraded",
+      "tenantId": "default",
+      "currency": "INR",
+      "markMode": "engine_live",
+      "markDisclaimer": "Engine valuations from timestamped ticks. Stale marks are flagged; no guarantee of fill price.",
+      "cash": 9644.39626,
+      "totalEquity": 10098.39626,
+      "startingCapital": 10000.0,
+      "realizedPnl": 48.79626,
+      "unrealizedPnl": 49.6,
+      "dailyPnl": 0.0,
+      "highWaterMark": 10098.39626,
+      "drawdown": 0.0,
+      "holdings": [
+        {
+          "symbol": "NIFTY",
+          "market": "INDIA",
+          "assetClass": "ETF",
+          "currency": "INR",
+          "quantity": 1,
+          "averageEntry": 80.88,
+          "markPrice": 79.0,
+          "marketValue": 79.0,
+          "unrealizedPnl": -1.88,
+          "markSource": "stale_or_entry_fallback",
+          "markTimestamp": "2000-01-01T04:01:00+00:00",
+          "fresh": false,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        },
+        {
+          "symbol": "TCS",
+          "market": "INDIA",
+          "assetClass": "EQUITY",
+          "currency": "INR",
+          "quantity": 3,
+          "averageEntry": 107.84,
+          "markPrice": 125.0,
+          "marketValue": 375.0,
+          "unrealizedPnl": 51.48,
+          "markSource": "stale_or_entry_fallback",
+          "markTimestamp": "2000-01-01T04:01:00+00:00",
+          "fresh": false,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        }
+      ],
+      "updatedAt": "2000-01-01T04:04:00+00:00",
+      "allMarksFresh": false,
+      "previousSessionDate": "1999-12-31",
+      "sessionDate": "2000-01-01",
+      "strategyObservation": {
+        "manifestSha256": null,
+        "eligible": false
+      },
+      "qualifyingSession": false
+    },
+    "partial": {
+      "status": "degraded",
+      "tenantId": "default",
+      "currency": "INR",
+      "markMode": "engine_live",
+      "markDisclaimer": "Engine valuations from timestamped ticks. Stale marks are flagged; no guarantee of fill price.",
+      "cash": 9644.39626,
+      "totalEquity": 10098.39626,
+      "startingCapital": 10000.0,
+      "realizedPnl": 48.79626,
+      "unrealizedPnl": 49.6,
+      "dailyPnl": 0.0,
+      "highWaterMark": 10098.39626,
+      "drawdown": 0.0,
+      "holdings": [
+        {
+          "symbol": "NIFTY",
+          "market": "INDIA",
+          "assetClass": "ETF",
+          "currency": "INR",
+          "quantity": 1,
+          "averageEntry": 80.88,
+          "markPrice": 79.0,
+          "marketValue": 79.0,
+          "unrealizedPnl": -1.88,
+          "markSource": "stale_or_entry_fallback",
+          "markTimestamp": "2000-01-01T04:01:00+00:00",
+          "fresh": false,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        },
+        {
+          "symbol": "TCS",
+          "market": "INDIA",
+          "assetClass": "EQUITY",
+          "currency": "INR",
+          "quantity": 3,
+          "averageEntry": 107.84,
+          "markPrice": 125.0,
+          "marketValue": 375.0,
+          "unrealizedPnl": 51.48,
+          "markSource": "live_tick",
+          "markTimestamp": "2000-01-01T04:04:01+00:00",
+          "fresh": true,
+          "stopPrice": null,
+          "takeProfitPrice": null
+        }
+      ],
+      "updatedAt": "2000-01-01T04:04:01+00:00",
+      "allMarksFresh": false,
+      "previousSessionDate": "1999-12-31",
+      "sessionDate": "2000-01-01",
+      "strategyObservation": {
+        "manifestSha256": null,
+        "eligible": false
+      },
+      "qualifyingSession": false
+    }
+  },
+  "reconciliation": {
+    "status": "matched",
+    "tenantId": "default",
+    "ledgerId": 6,
+    "fills": 6,
+    "costRows": 18,
+    "expectedCash": "9644.396260",
+    "observedCash": "9644.396260",
+    "issueCount": 0,
+    "issues": [],
+    "scope": "internal_paper_ledger; not external_broker_or_price_reconciliation"
+  }
+}

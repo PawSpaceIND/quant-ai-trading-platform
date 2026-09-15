@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from quant_ai.marketdata.tick_integrity import tick_value_issue, utc_time
 from quant_ai.marketdata.ticker_stream import LiveTick, TickBuffer
 
 
@@ -34,12 +35,15 @@ class CadenceMarketReader:
         tick = self.buffer.latest(symbol)
         if tick is None:
             return None, "Missing Market Data"
-        current = now or datetime.now(timezone.utc)
-        observed = tick.observed_at
-        if observed.tzinfo is None:
-            observed = observed.replace(tzinfo=timezone.utc)
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
+        current = utc_time(now or datetime.now(timezone.utc))
+        try:
+            observed = utc_time(tick.observed_at)
+        except (TypeError, ValueError):
+            return None, "Invalid Market Data"
+        if tick_value_issue(tick):
+            return None, "Invalid Market Data"
+        if observed > current:
+            return None, "Future Market Data"
         if current - observed > self.max_tick_age:
             return None, "Stale Market Data"
         return tick, None

@@ -21,3 +21,66 @@ test("failed snapshot is visibly unavailable",async()=>{
  const r=await worker.fetch(new Request("https://test/api/market",{headers:{Authorization:auth}}),env());
  assert.equal(r.status,503);
 });
+
+test("research lab and operator notes are excluded before cloud snapshot storage",async()=>{
+ const snapshots={};for(const p of ["market","portfolio/mtm","intelligence/swarm","execution/friction","execution/trades"])snapshots["/api/"+p]={};
+ snapshots["/api/portfolio/mtm"].tenantId="india-paper";
+ snapshots["/api/workspace"]={tenantId:"india-paper",researchLab:{private:"RESEARCH_SENTINEL"},researchPortfolio:{private:"PORTFOLIO_SENTINEL"},runComparison:{private:"RUN_SENTINEL"},paperContribution:{private:"CONTRIBUTION_SENTINEL"},historicalRisk:{private:"RISK_SENTINEL"},brokerObservation:{private:"BROKER_SENTINEL"},benchmarkPerformance:{private:"BENCHMARK_SENTINEL"},companyEvents:{private:"EVENT_SENTINEL"},audit:["NOTES_SENTINEL"],runtime:{status:"running"}};
+ let stored;const target=env();target.DB.prepare=()=>({bind(body){stored=JSON.parse(body);return this;},run:async()=>({success:true})});
+ const response=await worker.fetch(new Request("https://test/_ingest",{method:"POST",headers:{Authorization:"Bearer test-only-token"},body:JSON.stringify({sourceAt:new Date().toISOString(),snapshots})}),target);
+ assert.equal(response.status,200);assert.equal(stored["/api/workspace"].researchLab,undefined);assert.equal(stored["/api/workspace"].researchPortfolio,undefined);assert.equal(stored["/api/workspace"].runComparison,undefined);assert.equal(stored["/api/workspace"].paperContribution,undefined);assert.equal(stored["/api/workspace"].historicalRisk,undefined);assert.equal(stored["/api/workspace"].benchmarkPerformance,undefined);assert.equal(stored["/api/workspace"].brokerObservation,undefined);assert.equal(stored["/api/workspace"].companyEvents,undefined);assert.deepEqual(stored["/api/workspace"].audit,[]);
+ assert.equal(stored["/api/workspace"].runtime.status,"running");
+ assert(!JSON.stringify(stored).includes("SENTINEL"));
+});
+
+test("shared workspace keeps hosted marks and controls read-only",async()=>{
+ const sourceAt=new Date().toISOString();const body={"/api/portfolio/mtm":{tenantId:"india-paper",totalEquity:100000,holdings:[{symbol:"INFY",fresh:true,markSource:"live_tick"}]},"/api/market":{rows:[],fetchedAt:sourceAt},"/api/intelligence/swarm":{agents:[]},"/api/workspace":{tenantId:"india-paper",runtime:{status:"running"},copilotConfigured:true}};
+ const r=await worker.fetch(new Request("https://test/api/workspace",{headers:{Authorization:auth}}),env({body:JSON.stringify(body),source_at:sourceAt}));
+ const data=await r.json();assert.equal(data.runtime.status,"snapshot");assert.equal(data.portfolio.holdings[0].fresh,false);assert.equal(data.copilotConfigured,false);assert.equal(data.liveEnabled,false);
+ for(const route of ["/api/control","/api/copilot","/api/watchlist"]){assert.equal((await worker.fetch(new Request("https://test"+route,{method:"POST",headers:{Authorization:auth},body:"{}"}),env())).status,405);}
+});
+
+function healthyRow() {
+ const at=new Date().toISOString();
+ return {source_at:at,received_at:at,body:JSON.stringify({"/api/workspace":{
+  tenantId:"india-paper",runtime:{status:"running",mode:"paper",halted:false,updatedAt:at}
+ }})};
+}
+function monitorEnv(row=healthyRow()) {return {...env(row),MONITOR_TOKEN:"dummy-monitor-only"};}
+function probe(headers={Authorization:"Bearer dummy-monitor-only"},method="GET") {
+ return new Request("https://test/healthz",{headers,method});
+}
+test("monitor credential is separate and cannot access dashboard or ingest",async()=>{
+ for(const authorization of [auth,"Bearer test-only-token",""]) {
+  assert.equal((await worker.fetch(probe({Authorization:authorization}),monitorEnv())).status,401);
+ }
+ assert.equal((await worker.fetch(probe(),env(healthyRow()))).status,401);
+ for(const path of ["/api/workspace","/_ingest"]) {
+  assert.equal((await worker.fetch(new Request("https://test"+path,{method:path==="/_ingest"?"POST":"GET",headers:{Authorization:"Bearer dummy-monitor-only"}}),monitorEnv())).status,401);
+ }
+});
+test("monitor returns bounded evidence and never portfolio or operator notes",async()=>{
+ const result=await worker.fetch(probe(),monitorEnv());
+ assert.equal(result.status,200);assert.equal(result.headers.get("Cache-Control"),"no-store");
+ const body=await result.json();assert.equal(body.status,"observation_ok");assert.deepEqual(body.reasons,[]);
+ assert.equal(body.runtime,undefined);assert.equal(body.portfolio,undefined);
+ assert.equal((await worker.fetch(probe({},"POST"),monitorEnv())).status,401);
+ assert.equal((await worker.fetch(probe(undefined,"POST"),monitorEnv())).status,405);
+ const head=await worker.fetch(probe(undefined,"HEAD"),monitorEnv());assert.equal(head.status,200);assert.equal(await head.text(),"");
+});
+test("fresh publication cannot hide stale engine heartbeat",async()=>{
+ const row=healthyRow();const body=JSON.parse(row.body);
+ body["/api/workspace"].runtime.updatedAt=new Date(Date.now()-151000).toISOString();row.body=JSON.stringify(body);
+ const result=await worker.fetch(probe(),monitorEnv(row));assert.equal(result.status,503);
+ assert.ok((await result.json()).reasons.includes("engine_heartbeat_stale_or_invalid"));
+});
+test("monitor fails closed on absent invalid future halted or mismatched evidence",async()=>{
+ const rows=[null,{...healthyRow(),body:"invalid"}];
+ for(const field of ["source_at","received_at"])for(const value of ["invalid",new Date(Date.now()-181000).toISOString(),new Date(Date.now()+10000).toISOString()])rows.push({...healthyRow(),[field]:value});
+ for(const change of [{halted:true},{halted:undefined},{status:"snapshot"},{mode:"live"},{updatedAt:new Date(Date.now()+10000).toISOString()}]){
+  const row=healthyRow(),body=JSON.parse(row.body);Object.assign(body["/api/workspace"].runtime,change);row.body=JSON.stringify(body);rows.push(row);
+ }
+ for(const row of rows)assert.equal((await worker.fetch(probe(),monitorEnv(row))).status,503);
+ const broken=monitorEnv();broken.DB.prepare=()=>{throw new Error("private database error")};
+ const result=await worker.fetch(probe(),broken);assert.equal(result.status,503);assert.deepEqual((await result.json()).reasons,["monitor_storage_unavailable"]);
+});

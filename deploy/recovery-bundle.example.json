@@ -1,0 +1,51 @@
+{
+  "tenant": "ghost",
+  "revision": "REPLACE_WITH_EXACT_40_CHARACTER_DEPLOYED_GIT_SHA",
+  "sources": {
+    "ledger": "/data/pramana.db",
+    "console": "/data/pilot-console.sqlite",
+    "proofs": "/data/xai",
+    "reviews": "/data/reviews",
+    "directives": "/app/directives.json",
+    "halt": "/data/PRAMANA_HALT",
+    "research": "/data/research-report.json"
+  },
+  "research_state": {
+    "market-snapshot": {
+      "kind": "file",
+      "path": "/data/market-monitor.json"
+    },
+    "experiments": {
+      "kind": "experiment_journal",
+      "path": "/data/research/research.sqlite"
+    },
+    "portfolios": {
+      "kind": "portfolio_journal",
+      "path": "/data/research/portfolio.sqlite"
+    },
+    "company-events": {
+      "kind": "company_events",
+      "path": "/data/research/events.sqlite"
+    },
+    "provider-receipts": {
+      "kind": "directory",
+      "path": "/data/research/provider-receipts"
+    },
+    "comparison-report": {
+      "kind": "file",
+      "path": "/data/research/comparison-001.json"
+    },
+    "portfolio-report": {
+      "kind": "file",
+      "path": "/data/research/portfolio-001.json"
+    },
+    "input-archive": {
+      "kind": "directory",
+      "path": "/data/research/input-archive"
+    },
+    "benchmark-attribution-report": {
+      "kind": "file",
+      "path": "/data/research/attribution-report.json"
+    }
+  }
+}

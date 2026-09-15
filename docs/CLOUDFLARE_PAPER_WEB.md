@@ -60,3 +60,13 @@ failure; after token rotation update the private config and restart.
 
 Moving the trading engine to an always-on server, completing open-session paper
 validation, and adding licensed macro/fundamental sources remain separate work.
+
+## Pilot workspace compatibility update
+
+The shared dashboard now exports in explicit hosted read-only mode. The Worker adapts the original five snapshots to `/api/workspace` and can retain an optional richer workspace snapshot from an updated publisher. Hosted portfolio marks and runtime status are labelled snapshots, never a current protection heartbeat. Atlas, halt and watchlist editing remain in the authenticated engine workspace; the Worker has no Claude/broker key and rejects all viewer mutations. The richer payload omits operator audit notes and downsamples equity curves to at most 240 points while retaining first/last values.
+
+Before upgrading the local API used by the publisher, set `PRAMANA_SOURCE_DASHBOARD_SECRET` in the publisher process to the source dashboard's access key. The publisher obtains an HttpOnly session through the local sign-in endpoint, then reads its allowed API snapshots. An authentication failure stops that publish attempt; authentication is never bypassed. The source origin remains `http://localhost:3002` and must match the local dashboard's configured origin.
+
+Cloud export removes the Node-only proxy and login page because the Worker authenticates pages/assets/APIs with its existing private viewer credential. Both the Worker and the normal Node dashboard retain their own authentication paths. Static exports are never intended to be served publicly without the Worker.
+
+This compatibility update has not been deployed to the public Worker by this task. The earlier deployed revision and its credentials were left in place.

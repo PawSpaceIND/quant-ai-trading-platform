@@ -1,0 +1,94 @@
+{
+  "schema": "pramana.benchmark_attribution.v1",
+  "method": "single_period_brinson_fachler",
+  "portfolioId": "example-portfolio",
+  "benchmarkId": "example-benchmark",
+  "periodStart": "2026-08-01",
+  "periodEnd": "2026-09-01",
+  "sourceQualified": false,
+  "currency": "INR",
+  "portfolioReturn": "0.0300",
+  "benchmarkReturn": "0.0375",
+  "activeReturn": "-0.0075",
+  "reconciliationDifference": "0.000000",
+  "sectors": [
+    {
+      "name": "Materials",
+      "allocation": "0.002125",
+      "selection": "-0.0040",
+      "interaction": "-0.0010",
+      "total": "-0.002875"
+    },
+    {
+      "name": "Industrials",
+      "allocation": "0.003250",
+      "selection": "0.0000",
+      "interaction": "0.0000",
+      "total": "0.003250"
+    },
+    {
+      "name": "Energy",
+      "allocation": "-0.000000",
+      "selection": "-0.0050",
+      "interaction": "-0.0000",
+      "total": "-0.005000"
+    },
+    {
+      "name": "Financials",
+      "allocation": "-0.000375",
+      "selection": "-0.0040",
+      "interaction": "0.0015",
+      "total": "-0.002875"
+    }
+  ],
+  "totals": {
+    "allocation": "0.005000",
+    "selection": "-0.0130",
+    "interaction": "0.0005",
+    "total": "-0.007500"
+  },
+  "scope": "Arithmetic verification of supplied inputs; source qualification and dashboard publication remain separate.",
+  "input": {
+    "schema": "pramana.benchmark_attribution_input.v1",
+    "currency": "INR",
+    "portfolioId": "example-portfolio",
+    "benchmarkId": "example-benchmark",
+    "periodStart": "2026-08-01",
+    "periodEnd": "2026-09-01",
+    "basis": "beginning_weights_same_period_total_returns",
+    "portfolioReturn": "0.03",
+    "benchmarkReturn": "0.0375",
+    "sectors": [
+      {
+        "name": "Materials",
+        "portfolioWeight": ".25",
+        "benchmarkWeight": ".20",
+        "portfolioReturn": ".06",
+        "benchmarkReturn": ".08"
+      },
+      {
+        "name": "Industrials",
+        "portfolioWeight": ".25",
+        "benchmarkWeight": ".15",
+        "portfolioReturn": ".07",
+        "benchmarkReturn": ".07"
+      },
+      {
+        "name": "Energy",
+        "portfolioWeight": ".25",
+        "benchmarkWeight": ".25",
+        "portfolioReturn": "-.04",
+        "benchmarkReturn": "-.02"
+      },
+      {
+        "name": "Financials",
+        "portfolioWeight": ".25",
+        "benchmarkWeight": ".40",
+        "portfolioReturn": ".03",
+        "benchmarkReturn": ".04"
+      }
+    ]
+  },
+  "inputPayload": "{\"schema\": \"pramana.benchmark_attribution_input.v1\", \"currency\": \"INR\", \"portfolioId\": \"example-portfolio\", \"benchmarkId\": \"example-benchmark\", \"periodStart\": \"2026-08-01\", \"periodEnd\": \"2026-09-01\", \"basis\": \"beginning_weights_same_period_total_returns\", \"portfolioReturn\": \"0.03\", \"benchmarkReturn\": \"0.0375\", \"sectors\": [{\"name\": \"Materials\", \"portfolioWeight\": \".25\", \"benchmarkWeight\": \".20\", \"portfolioReturn\": \".06\", \"benchmarkReturn\": \".08\"}, {\"name\": \"Industrials\", \"portfolioWeight\": \".25\", \"benchmarkWeight\": \".15\", \"portfolioReturn\": \".07\", \"benchmarkReturn\": \".07\"}, {\"name\": \"Energy\", \"portfolioWeight\": \".25\", \"benchmarkWeight\": \".25\", \"portfolioReturn\": \"-.04\", \"benchmarkReturn\": \"-.02\"}, {\"name\": \"Financials\", \"portfolioWeight\": \".25\", \"benchmarkWeight\": \".40\", \"portfolioReturn\": \".03\", \"benchmarkReturn\": \".04\"}]}",
+  "inputSha256": "7c9c36fadc2a2a6b6c06b3b51aa3109a6938d0b53a2ec880fcca89394d4372a6"
+}

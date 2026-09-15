@@ -6,15 +6,16 @@ import signal
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from pathlib import Path
 from time import monotonic
 from typing import Callable
 
 from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.brokers.adapter import BrokerPosition
-from quant_ai.domain.models import Instrument, Market
+from quant_ai.domain.models import Instrument, Market, Side
 from quant_ai.execution.briefing import FounderExecutionBrief
+from quant_ai.execution.ledger_integrity import PaperLedgerDataError
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.protective_exits import (
@@ -85,12 +86,117 @@ class AutonomousTradingDaemon:
         self._stop_requested = False
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
+        self.telemetry = None
+        self.reconciliation = None
+        self.protection_coverage = None
+        self.trade_evidence = None
+        self.strategy_manifest = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
         engaged, reason = self.tracker.risk_state.kill_switch_state(self.tenant_id)
         if engaged:
             self.kill_switch.engage(reason or "persisted risk halt")
+
+    def enable_pilot_monitoring(self) -> None:
+        from quant_ai.execution.telemetry import PilotTelemetry
+        self.telemetry = PilotTelemetry(self)
+        runtime = self.scheduler.pipeline.runtime
+        runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
+        runtime.pre_submit_check = self._pilot_pre_submit
+        self.tracker.broker.get_starting_capital(self.tenant_id)
+        self.check_protection_coverage(self.clock())
+        self._reconcile_pilot()
+
+    def check_protection_coverage(self, now: datetime) -> bool:
+        self.protection_coverage = self.tracker.broker.protection_coverage(self.tenant_id, now)
+        complete = self.protection_coverage["status"] == "complete"
+        if not complete:
+            self.engage_kill_switch("paper_position_protection_incomplete")
+        return complete
+
+    def _reconcile_pilot(self) -> bool:
+        self.reconciliation = self.tracker.broker.reconcile(self.tenant_id)
+        if self.reconciliation["status"] != "matched":
+            self.trade_evidence = None
+            self.engage_kill_switch("paper_ledger_reconciliation_failed")
+            return False
+        from quant_ai.validation.trade_evidence import build_trade_evidence
+        with self.tracker.broker._lock:
+            self.trade_evidence = build_trade_evidence(self.tracker.broker._connection, self.tenant_id)
+        return True
+
+    def _pilot_pre_submit(self, proposal) -> str | None:
+        self.apply_operator_halt()
+        if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
+            return "pilot_protection_incomplete"
+        if self.strategy_manifest is not None:
+            manifest = self.strategy_manifest.check(self.clock(), force_source=True)
+            if manifest['status'] in {'changed', 'unavailable'} and proposal.side != Side.SELL:
+                self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
+                return 'pilot_strategy_manifest_unverified'
+        if proposal.side != Side.SELL and not self._reconcile_pilot():
+            return "pilot_reconciliation_failed"
+        if self.kill_switch.engaged and proposal.side != Side.SELL:
+            return "pilot_halted"
+        now = self.clock()
+        instrument = next((i for i in self.instruments if i.symbol == proposal.symbol), None)
+        if instrument is None or self.scheduler.calendar.state(instrument.market, now) != MarketState.REGULAR_HOURS:
+            return "pilot_session_or_scope_blocked"
+        if not self.telemetry.fresh(instrument, now)[0]:
+            return "pilot_stale_entry_price"
+        mark = self.tracker.market_feed.latest_tick(instrument).last_price
+        if proposal.reference_price <= 0 or abs(mark / proposal.reference_price - 1) > Decimal(".002"):
+            return "pilot_price_moved_during_analysis"
+        for position in self.tracker.broker.get_positions(self.tenant_id):
+            resolved = self.tracker.instrument_resolver(position)
+            if not self.telemetry.fresh(resolved, now)[0]:
+                return "pilot_stale_portfolio_mark"
+        return None
+
+    def protection_tick(self, now: datetime | None = None) -> None:
+        timestamp = now or self.clock()
+        with self.tracker.broker._lock:
+            self.apply_operator_halt()
+            if self.telemetry is not None:
+                self.check_protection_coverage(timestamp)
+            try:
+                self.protective_exits = self.sweep_protective_exits(timestamp)
+            except Exception:
+                # Durably halt before the runner reports/retries an unexpected failure.
+                self.engage_kill_switch("protective_exit_failed")
+                raise
+            if any(not exit.filled for exit in self.protective_exits):
+                self.engage_kill_switch("protective_exit_failed")
+            if self.telemetry is not None:
+                if any(exit.filled for exit in self.protective_exits):
+                    self._reconcile_pilot()
+                if self.strategy_manifest is not None:
+                    manifest = self.strategy_manifest.check(timestamp)
+                    if manifest['status'] in {'changed', 'unavailable'}:
+                        self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
+                try:
+                    metrics = self.tracker.metrics(timestamp)
+                except (ValueError, DecimalException, OverflowError) as error:
+                    reason = str(error) if isinstance(error, PaperLedgerDataError) else "invalid_account_or_valuation"
+                    self.telemetry.publish_unavailable(timestamp, reason)
+                    return
+                daily_limit = min(self.plan.max_daily_loss_fraction, Decimal(".02"))
+                opening = metrics.total_equity - metrics.daily_total_pnl
+                if metrics.drawdown_fraction >= min(self.plan.max_drawdown_fraction, Decimal(".10")):
+                    self.engage_kill_switch("portfolio_drawdown_limit")
+                elif opening > 0 and -metrics.daily_total_pnl / opening >= daily_limit:
+                    self.engage_kill_switch("portfolio_daily_loss_limit")
+                self.telemetry.publish(timestamp)
+
+    def bind_strategy_manifest(self, streams=(), **options) -> None:
+        from quant_ai.governance.runtime_manifest import RuntimeManifest
+        self.strategy_manifest = RuntimeManifest(self, streams, **options)
+        self.strategy_manifest.check(self.clock())
+        self.scheduler.pipeline.runtime.strategy_manifest_provider = lambda: self.strategy_manifest.summary
+        self.exit_engine.strategy_manifest_provider = lambda now: self.strategy_manifest.check(now, force_source=True)
+        if self.telemetry is not None:
+            self._reconcile_pilot()
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
         return ProtectiveExitEngine(
@@ -99,7 +205,7 @@ class AutonomousTradingDaemon:
                 self.tracker.market_feed,
                 self.tracker.instrument_resolver,
                 getattr(self.scheduler.pipeline, "tick_reader", None),
-                self.clock,
+                lambda: self.clock(),
             ),
             tenant_id=self.tenant_id,
             dispatcher=self.notifications,
@@ -245,8 +351,9 @@ class AutonomousTradingDaemon:
         timestamp = now or self.clock()
         self._in_flight = True
         try:
-            self.apply_operator_halt()
-            self.protective_exits = self.sweep_protective_exits(timestamp)
+            with self.tracker.broker._lock:
+                self.apply_operator_halt()
+                self.protective_exits = self.sweep_protective_exits(timestamp)
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []
@@ -276,6 +383,8 @@ class AutonomousTradingDaemon:
                         country_exposure=exposure,
                     )
                 briefs.append(brief)
+            if self.telemetry is not None:
+                self._reconcile_pilot()
             self.briefs = tuple(briefs)
             brief = self._primary_brief(briefs)
             metrics = self.tracker.metrics(timestamp)

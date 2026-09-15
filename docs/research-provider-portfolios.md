@@ -161,3 +161,13 @@ Sources: [OpenAI structured output documentation](https://developers.openai.com/
 - Temporary merge with PR #50 at 3900aa9ff70d0706ae913a6b41b1183ae53a7f5b
   was conflict-free; the combined Python suite passed all 448 tests. The temporary
   merge was discarded after verification; PR #50's branch was not modified.
+
+
+## Private workspace integration in PR #50
+
+The continuous journal now has a [read-only publication and dashboard workflow](PORTFOLIO_RESEARCH_WORKSPACE.md), with candidate equity/drawdown curves, preserved gaps, holdings, fills/orders, authenticated export and bounded Atlas context. Synthetic arithmetic and desktop/mobile/API verification pass. This updates the earlier CLI-only status; the company-event UI is now connected as described below; real two-provider/live-source qualification remains unfinished. [Recovery schema 2](RECOVERY_BUNDLE.md) now supports the explicitly selected research journals, published files and provider receipts; complete deployment inventory and off-host/target-host restoration remain unqualified.
+
+
+## Private company-event workspace
+
+The [announcement workflow](COMPANY_EVENT_WORKSPACE.md) now connects the same store to Markets: search/watchlist, revision/capture history, historical cutoff, append-only mapping review, export and cutoff-scoped Atlas. Python and Node eligibility agree on synthetic cases. A newer unmapped correction suppresses the old mapped revision and equally recent conflicting revisions are withheld. The browser records mapping time on the server; it cannot backdate reviews. The subsequent [mapping lifecycle workflow](COMPANY_MAPPING_LIFECYCLE.md) also supports withdrawal, re-review and microsecond cutoff comparisons. Independent source/mapping certification and real feed/provider qualification remain open.

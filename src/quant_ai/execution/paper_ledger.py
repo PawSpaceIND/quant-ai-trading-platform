@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import sqlite3
 import time
@@ -15,6 +16,13 @@ from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
 from quant_ai.execution.friction import FrictionContext, FrictionResult, MarketFrictionModel
+from quant_ai.execution.ledger_integrity import (
+    PaperLedgerDataError,
+    finite_amount,
+    position_geometry_issues,
+    whole_quantity,
+)
+from quant_ai.execution.protection_state import positive_level, protection_coverage
 
 
 class PaperBrokerDatabaseLockedError(RuntimeError):
@@ -146,6 +154,12 @@ class PaperBrokerService(BrokerAdapter):
                     cash_debit INTEGER NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_protection_evidence (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS paper_decision_evidence (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS paper_idempotency (
                     key TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
@@ -207,6 +221,74 @@ class PaperBrokerService(BrokerAdapter):
             delivery=True,
         )
 
+    def configure_pilot(self, instruments, tenant_id: str) -> None:
+        from quant_ai.governance.pilot import validate_pilot_instruments
+        instruments = tuple(instruments)
+        validate_pilot_instruments(instruments)
+        symbols = {item.symbol: item.asset_class.value for item in instruments}
+        with self._lock, self._connection:
+            self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
+                tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
+                symbols TEXT NOT NULL)""")
+            positions = self._connection.execute(
+                "SELECT symbol,market,asset_class FROM paper_positions WHERE tenant_id=?", (tenant_id,)
+            ).fetchall()
+            if any(p["market"] != Market.INDIA.value or symbols.get(p["symbol"]) != p["asset_class"] for p in positions):
+                raise ValueError("pilot_existing_positions_out_of_scope")
+            previous = self._connection.execute(
+                "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
+            ).fetchone()
+            if previous and (previous["currency"], previous["market"]) != ("INR", "INDIA"):
+                raise ValueError("pilot_account_currency_mismatch")
+            # Legacy mixed-market accounts cannot be relabeled as INR.
+            markets = self._connection.execute("SELECT DISTINCT market FROM paper_ledger WHERE tenant_id=?", (tenant_id,))
+            if any(row["market"] != Market.INDIA.value for row in markets):
+                raise ValueError("pilot_legacy_currency_ambiguous")
+            self._connection.execute("INSERT OR REPLACE INTO pilot_scope VALUES (?, 'INR', 'INDIA', ?)",
+                                     (tenant_id, json.dumps(symbols, sort_keys=True)))
+
+    def _assert_pilot_order(self, order: OrderIntent) -> bool:
+        exists = self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pilot_scope'"
+        ).fetchone()
+        if not exists:
+            return False
+        scope = self._connection.execute("SELECT * FROM pilot_scope WHERE tenant_id=?",
+                                         (order.tenant_id,)).fetchone()
+        symbols = json.loads(scope["symbols"]) if scope else {}
+        if scope and (order.market.value != scope["market"]
+                      or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
+                      or order.symbol not in symbols
+                      or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)):
+            raise ValueError("pilot_order_out_of_scope")
+        if scope and order.side == Side.BUY:
+            if not isinstance(symbols, dict):
+                # Older scopes recorded symbols only. The normal pilot factory refreshes
+                # this from configured instruments; never guess a contract for new risk.
+                raise ValueError("pilot_scope_requires_instrument_configuration")
+            controls = self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='risk_control_state'"
+            ).fetchone()
+            state = self._connection.execute(
+                "SELECT kill_switch_engaged FROM risk_control_state WHERE tenant_id=?", (order.tenant_id,)
+            ).fetchone() if controls else None
+            if state is not None and state[0] != 0:
+                raise ValueError("pilot_halted")
+            if self.protection_coverage(order.tenant_id)["status"] != "complete":
+                raise ValueError("pilot_protection_incomplete")
+            if self.reconcile(order.tenant_id)["status"] != "matched":
+                raise ValueError("pilot_reconciliation_failed")
+        return scope is not None
+
+    def protection_coverage(self, tenant_id: str = "default", now: datetime | None = None) -> dict:
+        with self._lock:
+            return protection_coverage(self._connection, tenant_id, now)
+
+    def reconcile(self, tenant_id: str = "default") -> dict:
+        from quant_ai.execution.reconciliation import reconcile_paper
+        with self._lock:
+            return reconcile_paper(self._connection, tenant_id)
+
     def buy(self, order: OrderIntent) -> ExecutionResult:
         if order.side != Side.BUY:
             raise ValueError("buy requires BUY side")
@@ -217,18 +299,38 @@ class PaperBrokerService(BrokerAdapter):
             raise ValueError("sell requires SELL side")
         return self._execute(order)
 
-    def _execute(self, order: OrderIntent) -> ExecutionResult:
-        if order.quantity <= 0 or order.reference_price <= 0:
+    def sell_protected(self, order: OrderIntent, evidence: dict, cooldown_until: datetime | None) -> ExecutionResult:
+        if order.side != Side.SELL or evidence.get("schema") != "pramana.protective_exit.v1":
+            raise ValueError("invalid_protective_exit")
+        # Serialize before any state mutation, with reserved fill fields added by the broker.
+        json.dumps(evidence, allow_nan=False)
+        return self._execute(order, evidence=evidence, cooldown_until=cooldown_until)
+
+    def submit_with_evidence(self, order: OrderIntent, evidence: dict, idempotency_key: str) -> ExecutionResult:
+        """Commit a governed paper fill, decision evidence and replay guard together."""
+        if (not idempotency_key or evidence.get("schema") != "pramana.swarm_fill.v1"
+                or evidence.get("event_type") != "swarm_fill"):
+            raise ValueError("invalid_swarm_fill_evidence")
+        json.dumps(evidence, allow_nan=False)
+        return self._execute(order, evidence=evidence, idempotency_key=idempotency_key)
+
+    def _execute(self, order: OrderIntent, *, evidence: dict | None = None,
+                 cooldown_until: datetime | None = None, idempotency_key: str | None = None) -> ExecutionResult:
+        whole_quantity(order.quantity, "positive quantity and reference_price required")
+        if positive_level(order.reference_price) is None:
             raise ValueError("positive quantity and reference_price required")
         friction = self.friction_model.evaluate(order, self._context_for(order))
         fill_price = friction.execution_price
+        if positive_level(fill_price) is None:
+            raise ValueError("positive finite fill_price required")
         notional = fill_price * order.quantity
         order_id = f"PAPER-{uuid4().hex[:16].upper()}"
         now = self._execution_time or datetime.now(timezone.utc)
         for attempt in range(self.lock_retries + 1):
             try:
                 return self._execute_once(
-                    order, friction, fill_price, notional, order_id, now
+                    order, friction, fill_price, notional, order_id, now,
+                    evidence=evidence, cooldown_until=cooldown_until, idempotency_key=idempotency_key,
                 )
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).lower():
@@ -251,23 +353,37 @@ class PaperBrokerService(BrokerAdapter):
         notional: Decimal,
         order_id: str,
         now: datetime,
+        *, evidence: dict | None = None, cooldown_until: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> ExecutionResult:
         tenant_id = order.tenant_id
-        statutory_fees = friction.statutory_fees
+        statutory_fees = finite_amount(friction.statutory_fees, "invalid_execution_fees", nonnegative=True)
+        finite_amount(notional, "invalid_execution_notional", positive=True)
         with self._lock, self._connection:
+            # Acquire the write transaction before reading scope or risk state. The
+            # final checks and fill cannot race another connection's configuration/halt.
             self._ensure_account(tenant_id)
+            pilot_order = self._assert_pilot_order(order)
+            if idempotency_key is not None:
+                inserted = self._connection.execute(
+                    "INSERT OR IGNORE INTO paper_idempotency (key,tenant_id,claimed_at) VALUES (?,?,?)",
+                    (idempotency_key, tenant_id, now.isoformat()),
+                )
+                if inserted.rowcount != 1:
+                    raise ValueError("duplicate_order")
             account = self._connection.execute(
-                "SELECT cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
+                "SELECT starting_capital,cash_balance FROM paper_accounts WHERE tenant_id = ?", (tenant_id,)
             ).fetchone()
-            cash = Decimal(account["cash_balance"])
+            finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True)
+            cash = finite_amount(account["cash_balance"], "invalid_account_cash")
             position = self._connection.execute(
                 """SELECT quantity, average_price, stop_price, take_profit_price
                 FROM paper_positions
                 WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
                 (tenant_id, order.symbol, order.market.value, order.asset_class.value),
             ).fetchone()
-            current_qty = int(position["quantity"]) if position else 0
-            current_avg = Decimal(position["average_price"]) if position else Decimal(0)
+            current_qty = whole_quantity(position["quantity"]) if position else 0
+            current_avg = finite_amount(position["average_price"], "invalid_position_average", positive=True) if position else Decimal(0)
             held_stop = position["stop_price"] if position else None
             held_take_profit = position["take_profit_price"] if position else None
             # A BUY carries the protective levels forward onto the position; a SELL that only
@@ -281,6 +397,16 @@ class PaperBrokerService(BrokerAdapter):
                 )
             else:
                 new_stop, new_take_profit = held_stop, held_take_profit
+            if pilot_order and order.side == Side.BUY:
+                stop, target = positive_level(order.stop_price), positive_level(new_take_profit)
+                if stop is None:
+                    raise ValueError("pilot_valid_stop_required")
+                if stop >= min(order.reference_price, fill_price):
+                    raise ValueError("pilot_stop_must_be_below_entry")
+                if new_take_profit is not None and (target is None or target <= max(order.reference_price, fill_price)):
+                    raise ValueError("pilot_target_must_be_above_entry")
+                if held_stop is not None and stop < positive_level(held_stop):
+                    raise ValueError("pilot_cannot_loosen_held_stop")
             if order.side == Side.BUY:
                 if notional + statutory_fees > cash:
                     raise ValueError("insufficient_paper_cash")
@@ -293,6 +419,10 @@ class PaperBrokerService(BrokerAdapter):
                 new_qty = current_qty - order.quantity
                 new_avg = current_avg if new_qty else Decimal(0)
                 new_cash = cash + notional - statutory_fees
+            finite_amount(new_cash, "invalid_resulting_cash")
+            if new_qty:
+                whole_quantity(new_qty, "invalid_resulting_quantity")
+                finite_amount(new_avg, "invalid_resulting_average", positive=True)
             self._connection.execute(
                 "UPDATE paper_accounts SET cash_balance = ?, updated_at = ? WHERE tenant_id = ?",
                 (str(new_cash), now.isoformat(), tenant_id),
@@ -362,6 +492,20 @@ class PaperBrokerService(BrokerAdapter):
                     if amount > 0
                 ],
             )
+            if evidence is not None:
+                payload = {**evidence, "order_id": order_id, "tenant_id": tenant_id,
+                    "subject": order.symbol, "filled_at": now.isoformat(),
+                    "fill": {"quantity": order.quantity, "price": str(fill_price),
+                        "cash_fees": str(statutory_fees), "status": "FILLED"}}
+                if idempotency_key is not None:
+                    payload["idempotency_key"] = idempotency_key
+                # Names are fixed here, never taken from the evidence or an API parameter.
+                table = "paper_decision_evidence" if evidence.get("schema") == "pramana.swarm_fill.v1" else "paper_protection_evidence"
+                self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?)",
+                    (order_id, tenant_id, json.dumps(payload, allow_nan=False, sort_keys=True)))
+                if cooldown_until is not None:
+                    self._connection.execute("INSERT OR REPLACE INTO paper_exit_cooldowns VALUES (?,?,?,?,?)",
+                        (tenant_id, order.symbol, order.market.value, order.asset_class.value, cooldown_until.isoformat()))
         return ExecutionResult(order_id, "FILLED", order.quantity, fill_price)
 
     def cancel(self, order_id: str, tenant_id: str = "default") -> bool:
@@ -379,26 +523,52 @@ class PaperBrokerService(BrokerAdapter):
             return True
 
     def get_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+        """Complete position book. Any invalid row fails, never a partial valuation."""
+        return tuple(self._decode_position(row) for row in self._position_rows(tenant_id))
+
+    def get_protection_positions(self, tenant_id: str = "default") -> tuple[BrokerPosition, ...]:
+        """Valid rows for independent exits only, never for totals or sizing.
+
+        Excluded rows are reported by protection_coverage and halt pilot entries.
+        No quantity, cost basis or instrument identity is guessed for a corrupt row.
+        """
+        return tuple(self._decode_position(row) for row in self._position_rows(tenant_id)
+                     if not position_geometry_issues(row))
+
+    def _position_rows(self, tenant_id: str):
         with self._lock:
-            rows = self._connection.execute(
+            return self._connection.execute(
                 """SELECT tenant_id, symbol, market, asset_class, quantity, average_price,
                 stop_price, take_profit_price
                 FROM paper_positions WHERE tenant_id = ? ORDER BY symbol""",
                 (tenant_id,),
             ).fetchall()
-        return tuple(
-            BrokerPosition(
+    @staticmethod
+    def _decode_position(row) -> BrokerPosition:
+        issues = position_geometry_issues(row)
+        if issues:
+            raise PaperLedgerDataError(issues[0])
+        return BrokerPosition(
                 row["tenant_id"],
                 row["symbol"],
                 Market(row["market"]),
                 AssetClass(row["asset_class"]),
-                int(row["quantity"]),
+                row["quantity"],
                 Decimal(row["average_price"]),
-                _optional_decimal(row["stop_price"]),
-                _optional_decimal(row["take_profit_price"]),
-            )
-            for row in rows
+                # Raw invalid values remain visible in protection_coverage. Exclude them
+                # from comparisons so one corrupt threshold cannot suppress other exits.
+                positive_level(row["stop_price"]),
+                positive_level(row["take_profit_price"]),
         )
+
+    def get_starting_capital(self, tenant_id: str = "default") -> Decimal:
+        """Initialize/read capital without projecting possibly damaged positions."""
+        with self._lock, self._connection:
+            self._ensure_account(tenant_id)
+            row = self._connection.execute(
+                "SELECT starting_capital FROM paper_accounts WHERE tenant_id=?", (tenant_id,)
+            ).fetchone()
+        return finite_amount(row[0], "invalid_starting_capital", positive=True)
 
     def get_peak_equity(self, tenant_id: str = "default") -> Decimal | None:
         """Durable high-water mark. None when the tenant has never been marked."""
@@ -481,20 +651,17 @@ class PaperBrokerService(BrokerAdapter):
                 "SELECT starting_capital, cash_balance FROM paper_accounts WHERE tenant_id = ?",
                 (tenant_id,),
             ).fetchone()
-            rows = self._connection.execute(
-                "SELECT quantity, average_price FROM paper_positions WHERE tenant_id = ?",
-                (tenant_id,),
-            ).fetchall()
+            positions = self.get_positions(tenant_id)
         gross = sum(
-            (Decimal(row["average_price"]) * int(row["quantity"]) for row in rows),
+            (row.average_price * row.quantity for row in positions),
             Decimal(0),
         )
-        cash = Decimal(account["cash_balance"])
+        cash = finite_amount(account["cash_balance"], "invalid_account_cash")
         return BrokerMargin(
             tenant_id,
-            Decimal(account["starting_capital"]),
+            finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True),
             cash,
-            gross,
+            finite_amount(gross, "invalid_gross_position_value", nonnegative=True),
             cash,
         )
 
@@ -514,9 +681,9 @@ class PaperBrokerService(BrokerAdapter):
                 Market(row["market"]),
                 AssetClass(row["asset_class"]),
                 Side(row["side"]),
-                int(row["quantity"]),
-                Decimal(row["fill_price"]),
-                Decimal(row["notional"]),
+                whole_quantity(row["quantity"], "invalid_fill_quantity"),
+                finite_amount(row["fill_price"], "invalid_fill_price", positive=True),
+                finite_amount(row["notional"], "invalid_fill_notional", positive=True),
                 row["status"],
                 datetime.fromisoformat(row["created_at"]),
                 _optional_decimal(row["stop_price"]),
@@ -537,7 +704,7 @@ class PaperBrokerService(BrokerAdapter):
                 row["order_id"],
                 row["tenant_id"],
                 row["code"],
-                Decimal(row["amount"]),
+                finite_amount(row["amount"], "invalid_cost_amount", nonnegative=True),
                 bool(row["cash_debit"]),
                 datetime.fromisoformat(row["created_at"]),
             )
@@ -549,7 +716,7 @@ class PaperBrokerService(BrokerAdapter):
         for entry in self.cost_entries(tenant_id):
             totals[entry.code] = totals.get(entry.code, Decimal(0)) + entry.amount
         return totals
-    def record_replay_valuation(self, timestamp: str, payload: str, tenant_id: str) -> None:
+    def record_replay_valuation(self, timestamp: str, payload: str, tenant_id: str, run_id: str | None = None) -> None:
         """Persist one complete replay valuation without altering trading state."""
         with self._lock, self._connection:
             self._connection.execute(
@@ -572,6 +739,12 @@ class PaperBrokerService(BrokerAdapter):
                    ledger_id=excluded.ledger_id, payload=excluded.payload""",
                 (tenant_id, timestamp, ledger_id, payload),
             )
+            if run_id is not None:
+                run = self._connection.execute("SELECT tenant_id,status FROM paper_replay_runs WHERE run_id=?", (run_id,)).fetchone()
+                if run is None or tuple(run) != (tenant_id, "running"):
+                    raise ValueError("replay_run_not_active_for_tenant")
+                sequence = self._connection.execute("SELECT coalesce(max(sequence),0)+1 FROM paper_replay_run_points WHERE run_id=?", (run_id,)).fetchone()[0]
+                self._connection.execute("INSERT INTO paper_replay_run_points VALUES (?,?,?,?)", (run_id, sequence, ledger_id, payload))
 
     def flush(self) -> None:
         with self._lock:
@@ -581,4 +754,3 @@ class PaperBrokerService(BrokerAdapter):
         with self._lock:
             self._connection.commit()
             self._connection.close()
-

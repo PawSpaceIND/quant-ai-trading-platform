@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +10,8 @@ from decimal import Decimal, InvalidOperation
 from importlib import import_module
 from threading import RLock
 from typing import Any, Callable
+
+from quant_ai.marketdata.tick_integrity import tick_value_issue, utc_time
 
 
 @dataclass(frozen=True)
@@ -39,26 +41,62 @@ class OrderBookUpdate:
 
 
 class TickBuffer:
-    def __init__(self, maxlen: int = 10_000) -> None:
+    def __init__(self, maxlen: int = 10_000, *, clock: Callable[[], datetime] | None = None) -> None:
         if maxlen < 1:
             raise ValueError("maxlen must be positive")
         self._ticks: deque[LiveTick] = deque(maxlen=maxlen)
         self._latest: dict[str, LiveTick] = {}
         self._listeners: list[Callable[[LiveTick], None]] = []
         self._lock = RLock()
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self._accepted = 0
+        self._rejected: Counter[str] = Counter()
+        self._last_rejection: dict | None = None
 
     def subscribe(self, listener: Callable[[LiveTick], None]) -> None:
-        """Register a callback invoked for every tick after it is buffered."""
+        """Register a synchronous callback for accepted ticks, in acceptance order."""
         with self._lock:
             self._listeners.append(listener)
 
-    def put(self, tick: LiveTick) -> None:
+    def reject(self, reason: str, symbol: str, observed_at: datetime | None = None) -> None:
         with self._lock:
+            self._rejected[reason] += 1
+            self._last_rejection = {"reason": reason, "symbol": str(symbol)[:80],
+                "observedAt": utc_time(observed_at).isoformat() if isinstance(observed_at, datetime) else None,
+                "receivedAt": utc_time(self.clock()).isoformat()}
+
+    def integrity(self) -> dict:
+        with self._lock:
+            return {"schema": "pramana.tick_integrity.v1", "accepted": self._accepted,
+                "rejected": dict(self._rejected), "lastRejection": dict(self._last_rejection) if self._last_rejection else None,
+                "scope": "current_process; rejected_ticks_do_not_refresh_quotes; no_exchange_sequence_reconstruction"}
+
+    def put(self, tick: LiveTick) -> bool:
+        with self._lock:
+            issue = tick_value_issue(tick)
+            try:
+                observed = utc_time(tick.observed_at)
+            except (TypeError, ValueError):
+                self.reject("invalid_tick_timestamp", tick.symbol)
+                return False
+            if issue or observed > utc_time(self.clock()):
+                self.reject(issue or "future_tick", tick.symbol, observed)
+                return False
+            previous = self._latest.get(tick.symbol)
+            if previous and observed < utc_time(previous.observed_at):
+                self.reject("out_of_order_tick", tick.symbol, observed)
+                return False
+            if previous == tick:
+                self.reject("duplicate_tick", tick.symbol, observed)
+                return False
             self._ticks.append(tick)
             self._latest[tick.symbol] = tick
-            listeners = tuple(self._listeners)
-        for listener in listeners:
-            listener(tick)
+            self._accepted += 1
+            # Keep callbacks ordered across producer threads. Callbacks must be
+            # short and must not wait for another thread to acquire this buffer.
+            for listener in tuple(self._listeners):
+                listener(tick)
+            return True
 
     def latest(self, symbol: str) -> LiveTick | None:
         with self._lock:
@@ -145,29 +183,31 @@ class ZerodhaKiteTicker(AbstractTickerStream):
         if self._loop is None:
             return
         for payload in ticks:
-            token = int(payload["instrument_token"])
-            symbol = self.symbol_by_token.get(token, str(token))
-            depth = payload.get("depth") or {}
-            bids = depth.get("buy") or []
-            asks = depth.get("sell") or []
-            tick = LiveTick(
-                symbol=symbol,
-                ltp=Decimal(str(payload.get("last_price", 0))),
-                volume=Decimal(str(payload.get("volume_traded", payload.get("volume", 0)))),
-                bid=_depth_price(bids),
-                ask=_depth_price(asks),
-                observed_at=_coerce_time(payload.get("timestamp")),
-                source="zerodha",
-            )
-            asyncio.run_coroutine_threadsafe(self.on_tick(tick), self._loop)
-            if bids or asks:
-                book = OrderBookUpdate(
+            symbol = "unmapped"
+            try:
+                token = payload["instrument_token"]
+                if type(token) is not int:
+                    raise ValueError("invalid_instrument_token")
+                symbol = self.symbol_by_token.get(token, "unmapped")
+                if symbol == "unmapped":
+                    self.buffer.reject("unmapped_tick", symbol)
+                    continue
+                observed = _coerce_time(payload.get("exchange_timestamp"))
+                depth = payload.get("depth") or {}
+                bids = depth.get("buy") or []
+                asks = depth.get("sell") or []
+                tick = LiveTick(
                     symbol=symbol,
-                    bids=_depth_levels(bids),
-                    asks=_depth_levels(asks),
-                    observed_at=tick.observed_at,
-                    source="zerodha",
+                    ltp=Decimal(str(payload.get("last_price", 0))),
+                    volume=Decimal(str(payload.get("volume_traded", payload.get("volume", 0)))),
+                    bid=_depth_price(bids), ask=_depth_price(asks), observed_at=observed, source="zerodha",
                 )
+                book = OrderBookUpdate(symbol, _depth_levels(bids), _depth_levels(asks), observed, "zerodha") if bids or asks else None
+            except (ValueError, TypeError, KeyError, AttributeError, InvalidOperation, OverflowError):
+                self.buffer.reject("invalid_zerodha_payload", symbol)
+                continue
+            asyncio.run_coroutine_threadsafe(self.on_tick(tick), self._loop)
+            if book:
                 asyncio.run_coroutine_threadsafe(self.on_orderbook_update(book), self._loop)
 
     def _on_error(self, ws: Any, code: Any, reason: Any) -> None:
@@ -306,10 +346,10 @@ def _depth_levels(levels: list[dict[str, Any]]) -> tuple[tuple[Decimal, Decimal]
 
 def _coerce_time(value: Any) -> datetime:
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+        # Kite's SDK uses datetime.fromtimestamp(epoch), which returns HOST-local
+        # naive time. astimezone reverses that conversion, including its DST fold.
         return value.astimezone(timezone.utc)
-    return datetime.now(timezone.utc)
+    raise ValueError("missing_exchange_timestamp")
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:

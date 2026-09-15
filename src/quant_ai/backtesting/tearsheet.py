@@ -20,10 +20,16 @@ class TearSheet:
     realized_slippage_drag: Decimal
     realized_spread_drag: Decimal
     trades: int
+    protection_model: str = "not_simulated"
+    intrabar_exits: tuple[dict, ...] = ()
+    replay_run_id: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(
-            {key: str(value) if isinstance(value, Decimal) else value for key, value in asdict(self).items()},
+            {
+                key: str(value) if isinstance(value, Decimal) else value
+                for key, value in asdict(self).items()
+            },
             sort_keys=True,
         )
 
@@ -55,6 +61,9 @@ def build_tearsheet(
         slippage,
         spread,
         len(result.order_ids),
+        result.protection_model,
+        result.intrabar_exits,
+        result.replay_run_id,
     )
 
 

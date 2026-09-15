@@ -1,0 +1,15 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+COPY apps/pramana-ui/package*.json ./
+RUN npm ci
+COPY apps/pramana-ui/ ./
+RUN npm run build
+
+FROM node:24-bookworm-slim
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+RUN groupadd --gid 10001 pramana && useradd --uid 10001 --gid 10001 pramana && mkdir /data && chown pramana:pramana /data
+COPY --from=build --chown=pramana:pramana /app ./
+USER pramana
+EXPOSE 3000
+CMD ["npm", "start", "--", "--hostname", "0.0.0.0"]

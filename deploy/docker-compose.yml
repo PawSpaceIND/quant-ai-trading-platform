@@ -1,3 +1,11 @@
+# Run: docker compose --env-file ../.env -f docker-compose.yml up -d --build
+x-shared: &shared
+  PRAMANA_TENANT_ID: ghost
+  PRAMANA_LEDGER_PATH: /data/pramana.db
+  PRAMANA_PROOF_DIR: /data/xai
+  PRAMANA_HALT_FILE: /data/PRAMANA_HALT
+  PRAMANA_MARKET_SNAPSHOT: /data/market-monitor.json
+  TRADING_LIVE_MONEY_ACTIVE: "false"
 services:
   pramana-ghost:
     build:
@@ -5,31 +13,90 @@ services:
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     environment:
-      TRADING_LIVE_MONEY_ACTIVE: "false"
-      PRAMANA_PAPER_DB: /data/pramana.db
-      PRAMANA_XAI_DIR: /data/xai
+      <<: *shared
+      PRAMANA_PILOT_MODE: "true"
+      PRAMANA_RELEASE_REVISION: ${PRAMANA_RELEASE_REVISION:-}
       PRAMANA_GHOST_LOG: /data/pramana-ghost.log
-      PRAMANA_TENANT_ID: ghost
+      PRAMANA_FOUNDER_DIRECTIVES_FILE: /app/directives.json
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}
       ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
       ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
-      PRAMANA_ZERODHA_TOKENS_JSON: ${PRAMANA_ZERODHA_TOKENS_JSON:-}
-      PRAMANA_ZERODHA_SYMBOLS_JSON: ${PRAMANA_ZERODHA_SYMBOLS_JSON:-}
-      PRAMANA_TARGET_SYMBOL: ${PRAMANA_TARGET_SYMBOL:-AAPL}
-      PRAMANA_TARGET_MARKET: ${PRAMANA_TARGET_MARKET:-USA}
-      PRAMANA_TARGET_ASSET_CLASS: ${PRAMANA_TARGET_ASSET_CLASS:-EQUITY}
-      PRAMANA_TARGET_CURRENCY: ${PRAMANA_TARGET_CURRENCY:-USD}
-      PRAMANA_TARGET_EXCHANGE: ${PRAMANA_TARGET_EXCHANGE:-NASDAQ}
-      PRAMANA_IBKR_ENABLED: ${PRAMANA_IBKR_ENABLED:-false}
-      PRAMANA_IB_HOST: ${PRAMANA_IB_HOST:-127.0.0.1}
-      PRAMANA_IB_PORT: ${PRAMANA_IB_PORT:-7497}
-      PRAMANA_IB_CLIENT_ID: ${PRAMANA_IB_CLIENT_ID:-17}
-      PRAMANA_IB_CONTRACTS_JSON: ${PRAMANA_IB_CONTRACTS_JSON:-}
+      PRAMANA_ZERODHA_TOKENS_JSON: ${PRAMANA_ZERODHA_TOKENS_JSON:?required}
+      PRAMANA_ZERODHA_SYMBOLS_JSON: ${PRAMANA_ZERODHA_SYMBOLS_JSON:?required}
+      PRAMANA_TARGET_SYMBOL: ${PRAMANA_TARGET_SYMBOL:-INFY}
+      PRAMANA_TARGET_MARKET: INDIA
+      PRAMANA_TARGET_ASSET_CLASS: EQUITY
+      PRAMANA_TARGET_CURRENCY: INR
+      PRAMANA_TARGET_EXCHANGE: NSE
+      PRAMANA_IBKR_ENABLED: "false"
+      PRAMANA_NEWS_RSS_URLS: ${PRAMANA_NEWS_RSS_URLS:-}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
     volumes:
       - pramana-data:/data
-    mem_limit: 1g
-    mem_reservation: 768m
-    stop_grace_period: 30s
-
+      - type: bind
+        source: ${PRAMANA_DIRECTIVES_HOST_FILE:-./founder-directives.example.json}
+        target: /app/directives.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/pilot_ops.py", "health", "--database", "/data/pramana.db", "--tenant", "ghost"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 45s
+  dashboard:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ui
+    restart: unless-stopped
+    environment:
+      <<: *shared
+      PRAMANA_CONSOLE_DB: /data/pilot-console.sqlite
+      PRAMANA_REVIEW_DIR: ${PRAMANA_REVIEW_DIR:-/data/reviews}
+      PRAMANA_RESEARCH_REPORT: ${PRAMANA_RESEARCH_REPORT:-/data/research-report.json}
+      PRAMANA_BENCHMARK_ATTRIBUTION_REPORT: ${PRAMANA_BENCHMARK_ATTRIBUTION_REPORT:-}
+      PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO: ${PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO:-}
+      PRAMANA_RESEARCH_LAB_REPORT: ${PRAMANA_RESEARCH_LAB_REPORT:-}
+      PRAMANA_RUN_COMPARISON: ${PRAMANA_RUN_COMPARISON:-}
+      PRAMANA_BROKER_JOURNAL: ${PRAMANA_BROKER_JOURNAL:-}
+      PRAMANA_EXTERNAL_ACCOUNT_SNAPSHOT: ${PRAMANA_EXTERNAL_ACCOUNT_SNAPSHOT:-}
+      PRAMANA_EXTERNAL_ACCOUNT_REF: ${PRAMANA_EXTERNAL_ACCOUNT_REF:-}
+      PRAMANA_BROKER_OBSERVATION: ${PRAMANA_BROKER_OBSERVATION:-}
+      PRAMANA_BROKER_ACCOUNT_REF: ${PRAMANA_BROKER_ACCOUNT_REF:-}
+      PRAMANA_PORTFOLIO_RESEARCH_REPORT: ${PRAMANA_PORTFOLIO_RESEARCH_REPORT:-}
+      PRAMANA_COMPANY_EVENTS_DB: ${PRAMANA_COMPANY_EVENTS_DB:-}
+      PRAMANA_REVIEW_SECRET: ${PRAMANA_REVIEW_SECRET:-}
+      PRAMANA_RELEASE_REVISION: ${PRAMANA_RELEASE_REVISION:-}
+      PRAMANA_EXTERNAL_GATE_REPORT: ${PRAMANA_EXTERNAL_GATE_REPORT:-}
+      PRAMANA_PORTFOLIO_RISK_METADATA_FILE: /data/portfolio-risk-metadata.json
+      PRAMANA_STRATEGY_CONFIG_SHA256: ${PRAMANA_STRATEGY_CONFIG_SHA256:-}
+      PRAMANA_CHAT_MODEL: ${PRAMANA_CHAT_MODEL:-claude-sonnet-5}
+      PRAMANA_DASHBOARD_SECRET: ${PRAMANA_DASHBOARD_SECRET:?required at least 32 characters}
+      PRAMANA_PUBLIC_ORIGIN: ${PRAMANA_PUBLIC_ORIGIN:-http://localhost:3000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - pramana-data:/data
+      - type: bind
+        source: ${PRAMANA_RISK_METADATA_HOST_FILE:-./portfolio-risk-metadata.example.json}
+        target: /data/portfolio-risk-metadata.json
+        read_only: true
+        bind:
+          create_host_path: false
+  market-monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python", "/app/scripts/market_monitor.py"]
+    environment:
+      <<: *shared
+      ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
+      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
+      PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
+    volumes: ["pramana-data:/data"]
 volumes:
   pramana-data:
