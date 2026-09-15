@@ -1,5 +1,5 @@
-import {ExternalAccountPanel} from "./external-account";
 "use client";
+import {ExternalAccountPanel} from "./external-account";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {ageWorkspace,sourceAge,within} from "@/lib/freshness";
 import {EngineFeedStatus} from "./engine-feed-status";
