@@ -7,6 +7,7 @@ import { currentStrategyEvidence, strategyObservationDays } from "@/lib/strategy
 import { reviewedGate, verifiedRuntimeManifest } from "@/lib/review";
 import { readResearch } from "@/lib/research";
 import { readResearchLab } from "@/lib/research-lab";
+import { readResearchDashboard } from "@/lib/research-dashboard";
 import { readPortfolioResearch } from "@/lib/research-portfolio";
 import {readCompanyEvents} from "@/lib/company-events";
 import fs from "node:fs";
@@ -150,6 +151,7 @@ export async function GET() {
         research: readResearch(),
         benchmarkAttribution: readBenchmarkAttribution(),
         researchLab: readResearchLab(),
+        researchDashboard: readResearchDashboard(),
         researchPortfolio: readPortfolioResearch(),
         runComparison: readRunComparison(),
         companyEvents: readCompanyEvents(),
