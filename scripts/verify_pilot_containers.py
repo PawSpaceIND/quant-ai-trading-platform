@@ -62,6 +62,8 @@ def main():
         directives.update(starting_capital=123456, max_open_positions=3)
         directives_file.write_text(json.dumps(directives))
         directives_file.chmod(0o644)  # Synthetic data read by UID 10001 through a single-file mount.
+        attribution_config = {"PRAMANA_BENCHMARK_ATTRIBUTION_REPORT":"/qa-benchmark-attribution.json",
+                              "PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO":"example-portfolio"}
         research_paths = {"PRAMANA_RESEARCH_LAB_REPORT":"/data/research/comparison-001.json",
                           "PRAMANA_PORTFOLIO_RESEARCH_REPORT":"/data/research/portfolio-001.json",
                           "PRAMANA_COMPANY_EVENTS_DB":"/data/research/events.sqlite"}
@@ -73,7 +75,7 @@ def main():
                        "PRAMANA_DASHBOARD_SECRET":"synthetic-container-smoke-session-key-only",
                        "PRAMANA_PUBLIC_ORIGIN":"http://localhost:3000", "PRAMANA_RELEASE_REVISION":revision,
                        "PRAMANA_HOLIDAYS_JSON":'{"INDIA":["2026-09-11"]}',
-                       "PRAMANA_DIRECTIVES_HOST_FILE":str(directives_file), **research_paths}
+                       "PRAMANA_DIRECTIVES_HOST_FILE":str(directives_file), **research_paths, **attribution_config}
         rendered = subprocess.run(["docker", "compose", "--env-file", str(ROOT / ".env.example"),
                                    "-f", str(ROOT / "deploy/docker-compose.yml"), "config", "--format", "json"],
                                   env=compose_env, capture_output=True, text=True, check=True, timeout=30)
@@ -83,7 +85,7 @@ def main():
             assert service["environment"]["PRAMANA_LEDGER_PATH"] == "/data/pramana.db"
         assert services["dashboard"]["ports"][0]["host_ip"] == "127.0.0.1"
         assert services["pramana-ghost"]["healthcheck"]["test"][3] == "health"
-        for key, value in research_paths.items():
+        for key, value in {**research_paths, **attribution_config}.items():
             assert services["dashboard"]["environment"][key] == value
         assert services["market-monitor"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == services["pramana-ghost"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == compose_env["PRAMANA_HOLIDAYS_JSON"]
         directives_mount = next(v for v in services["pramana-ghost"]["volumes"] if v["target"] == "/app/directives.json")
@@ -157,7 +159,8 @@ def main():
                   "import json; print(json.dumps({p:version(p) for p in ['kiteconnect','ib_async','certifi']}))")
         report["pilotDependencies"] = json.loads(sdk)
         report["checks"].append(json.loads(run("docker", "exec", engine, "python", "/qa/kite_timestamp_smoke.py")))
-        run("docker", "run", "-d", "--name", ui, *shared, *environment("dashboard"), image_ui)
+        run("docker", "run", "-d", "--name", ui, *shared, *environment("dashboard"),
+            "--mount", f"type=bind,src={ROOT / 'apps/pramana-ui/tests/fixtures/benchmark-attribution.json'},dst=/qa-benchmark-attribution.json,readonly", image_ui)
         created_containers.append(ui)
 
         def ready():

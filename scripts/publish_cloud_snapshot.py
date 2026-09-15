@@ -33,6 +33,7 @@ def publish():
         if detail.get("tenantId") != "india-paper":
             raise ValueError("Workspace tenant mismatch")
         detail["audit"] = []  # Operator notes remain on the engine host.
+        detail.pop("benchmarkAttribution", None)  # Imported benchmark research stays in the private workspace.
         detail.pop("researchLab", None)  # Experiment comparisons stay in the private engine UI.
         detail.pop("companyEvents", None)  # Mapping references and event research remain private.
         detail.pop("researchPortfolio", None)  # Portfolio journals remain private research evidence.
