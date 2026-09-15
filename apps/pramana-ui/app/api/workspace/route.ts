@@ -19,6 +19,7 @@ import {protectionCoverageCheck} from "@/lib/protection-coverage";
 import { consoleDb } from "@/lib/console-db";
 import { ledgerPath, tenantId } from "@/lib/db";
 import { externalGateChecks } from "@/lib/external-gates";
+import { portfolioAttribution } from "@/lib/portfolio-attribution";
 export const dynamic = "force-dynamic";
 export async function GET() {
   try {
@@ -140,6 +141,7 @@ export async function GET() {
         benchmarkPerformance,
         brokerObservation: readBrokerObservation(),
         historicalRisk: historicalRisk(portfolio, riskHistoryInput),
+        attribution: portfolioAttribution(portfolio),
         market: displayMarket,
         runtime,
         research: readResearch(),

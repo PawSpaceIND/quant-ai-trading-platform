@@ -1066,7 +1066,17 @@ function RiskLab({
           <Metric label="Downside to recorded stops" value={money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
         </div>
         <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. Portfolio valuation status: {p.status}.</p>
-        <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector, factor and options-Greeks risk remain unavailable. The separate historical diagnostic below estimates correlations only when its data-coverage checks pass.</p>
+        <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector/factor exposure appears below when reviewed metadata is complete; options Greeks and margin remain unavailable. The separate historical diagnostic below estimates correlations only when its data-coverage checks pass.</p>
+      </section>
+      <section className="panel">
+        <span className="eyebrow">PORTFOLIO ATTRIBUTION</span>
+        <h2>Sector and factor exposure</h2>
+        {data.attribution?.status === "available" ? <>
+          <p className="muted">Reviewed metadata as of {data.attribution.asOf}. These are exposure diagnostics, not realized return attribution or a margin model.</p>
+          <div className="table-scroll"><table><thead><tr><th>Sector</th><th>Market value</th><th>Weight</th></tr></thead><tbody>{data.attribution.sectors?.map(row => <tr key={row.name}><td>{row.name}</td><td>{money(row.marketValue)}</td><td>{pct(row.weight)}</td></tr>)}</tbody></table></div>
+          <div className="tag-list">{data.attribution.factors?.map(row => <span className="pill neutral" key={row.name}>{row.name}: {row.exposure.toFixed(2)}</span>)}</div>
+        </> : <p className="empty">{data.attribution?.detail || "Attribution is unavailable until reviewed metadata is configured."}</p>}
+        <p className="footnote">{data.attribution?.detail}</p>
       </section>
       {!hosted && <HistoricalRisk state={data.historicalRisk} onAsk={onAsk} />}
       <Holdings portfolio={p} onAsk={onAsk} />

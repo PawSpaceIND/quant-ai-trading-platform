@@ -68,6 +68,7 @@ export type Workspace = {
   brokerObservation?: import("./broker-observation").BrokerObservationState;
   benchmarkPerformance?: import("./benchmark-comparison").AccountBenchmarkState;
   historicalRisk?: HistoricalRiskState;
+  attribution?: import("./portfolio-attribution").AttributionState;
   paperContribution?: PaperContributionState;
   researchLab?: ResearchLabState;
   researchPortfolio?: PortfolioResearchState;

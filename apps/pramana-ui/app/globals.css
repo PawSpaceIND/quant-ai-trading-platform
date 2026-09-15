@@ -1070,6 +1070,12 @@ td .pill {
   color: #d7b982;
   font-size: 17px;
 }
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
 .callout {
   margin-top: 20px;
   padding: 15px;
