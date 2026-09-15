@@ -11,6 +11,11 @@ export type MarketInstrument = {
   providerInstrumentId?: string;
   contract?: string;
   expiry?: string;
+  underlying?: string;
+  optionType?: string;
+  strike?: number;
+  product?: string;
+  segment?: string;
   lotSize?: number;
   tickSize?: number;
 };
@@ -78,6 +83,11 @@ export async function readMarket(): Promise<MarketSnapshot> {
               providerInstrumentId: typeof item.providerInstrumentId === "string" ? item.providerInstrumentId : undefined,
               contract: typeof item.contract === "string" ? item.contract : undefined,
               expiry: typeof item.expiry === "string" ? item.expiry : undefined,
+              underlying: typeof item.underlying === "string" ? item.underlying : undefined,
+              optionType: typeof item.optionType === "string" ? item.optionType : undefined,
+              strike: typeof item.strike === "number" && Number.isFinite(item.strike) ? item.strike : undefined,
+              product: typeof item.product === "string" ? item.product : undefined,
+              segment: typeof item.segment === "string" ? item.segment : undefined,
               lotSize: typeof item.lotSize === "number" && Number.isFinite(item.lotSize) ? item.lotSize : undefined,
               tickSize: typeof item.tickSize === "number" && Number.isFinite(item.tickSize) ? item.tickSize : undefined,
             }

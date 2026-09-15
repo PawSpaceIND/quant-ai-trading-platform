@@ -9,11 +9,46 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { MarketSnapshot } from "@/lib/market";
+import type { MarketInstrument, MarketSnapshot } from "@/lib/market";
 const number = (v: number | undefined) =>
   v === undefined
     ? "—"
     : new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(v);
+const instrumentLabel = (instrument?: MarketInstrument) => {
+  if (!instrument) return "Venue unknown · Currency unknown · Asset unknown";
+  const parts = [
+    instrument.exchange,
+    instrument.currency,
+    instrument.assetClass,
+    instrument.segment,
+    instrument.contract,
+    instrument.expiry ? "expiry " + instrument.expiry : undefined,
+    instrument.optionType
+      ? instrument.optionType + (instrument.strike != null ? " " + instrument.strike : "")
+      : undefined,
+    instrument.underlying ? "underlying " + instrument.underlying : undefined,
+    instrument.product ? "product " + instrument.product : undefined,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+};
+const contractLabel = (instrument?: MarketInstrument) => {
+  if (!instrument?.contract) return "";
+  const parts = [
+    instrument.contract,
+    instrument.expiry ? "expiry " + instrument.expiry : undefined,
+    instrument.underlying ? "underlying " + instrument.underlying : undefined,
+    instrument.optionType
+      ? instrument.optionType + (instrument.strike != null ? " " + instrument.strike : "")
+      : undefined,
+    instrument.product ? "product " + instrument.product : undefined,
+    instrument.segment,
+    instrument.lotSize != null ? "lot " + instrument.lotSize : undefined,
+    instrument.tickSize != null ? "tick " + instrument.tickSize : undefined,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+};
+const rowIdentity = (row: { symbol: string; instrument?: MarketInstrument }) =>
+  (row.instrument?.exchange || "UNKNOWN") + ":" + row.symbol;
 export function MarketWorkspace({
   data,
   favorites,
@@ -53,7 +88,7 @@ export function MarketWorkspace({
         ),
     [data.rows, query, savedOnly, favorites, sort],
   );
-  const detail = data.rows.find((r) => r.symbol === selected) || rows[0];
+  const detail = data.rows.find((r) => rowIdentity(r) === selected) || rows[0];
   const history = (detail?.history || []).slice(-range);
   async function favorite(symbol: string) {
     setSaving(true);
@@ -136,9 +171,9 @@ export function MarketWorkspace({
                   span = Math.max(...values) - low || 1;
                 return (
                   <tr
-                    key={row.symbol}
+                    key={rowIdentity(row)}
                     className={
-                      detail?.symbol === row.symbol ? "active-row" : ""
+                      detail && rowIdentity(detail) === rowIdentity(row) ? "active-row" : ""
                     }
                   >
                     <td>
@@ -155,10 +190,10 @@ export function MarketWorkspace({
                     <td>
                       <button
                         className="symbol-button"
-                        onClick={() => setSelected(row.symbol)}
+                        onClick={() => setSelected(rowIdentity(row))}
                       >
                         {row.symbol}
-                        <small>{row.instrument?.exchange || "Venue unknown"} · {row.instrument?.currency || "Currency unknown"} · {row.instrument?.assetClass || "Asset unknown"}{row.instrument?.contract ? ` · ${row.instrument.contract}${row.instrument.expiry ? ` · ${row.instrument.expiry}` : ""}` : ""}</small>
+                        <small>{instrumentLabel(row.instrument)}</small>
                       </button>
                     </td>
                     <td className="numeric mono">
@@ -223,7 +258,7 @@ export function MarketWorkspace({
               <button
                 onClick={() =>
                   onAsk(
-                    `Explain the available evidence and risks for ${detail.symbol}. Identify any stale or missing inputs.`,
+                    `Explain the available evidence and risks for ${rowIdentity(detail)}. Identify any stale or missing inputs.`,
                   )
                 }
               >
@@ -319,7 +354,7 @@ export function MarketWorkspace({
               </div>
               {detail.instrument?.contract && <div>
                 <dt>Contract</dt>
-                <dd>{detail.instrument.contract}{detail.instrument.expiry ? ` · expiry ${detail.instrument.expiry}` : ""}{detail.instrument.lotSize ? ` · lot ${detail.instrument.lotSize}` : ""}{detail.instrument.tickSize ? ` · tick ${detail.instrument.tickSize}` : ""}</dd>
+                <dd>{contractLabel(detail.instrument)}</dd>
               </div>}
               <div>
                 <dt>Collector retrieved</dt>

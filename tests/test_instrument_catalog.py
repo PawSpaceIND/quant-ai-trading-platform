@@ -14,3 +14,11 @@ def test_catalog_spans_multiple_asset_classes() -> None:
     for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "USDINR", "EURINR", "GBPINR", "JPYINR"):
         assert by_symbol[symbol].tradable is False
         assert by_symbol[symbol].metadata["requires_contract"] == "true"
+    assert by_symbol["SENSEX"].exchange == "BSE"
+    assert by_symbol["SENSEX"].metadata["research_only"] == "true"
+    for symbol in ("NIFTY", "BANKNIFTY", "SENSEX-FUT", "GUARSEED", "BCD-USDINR", "NFO-NIFTY", "BFO-SENSEX", "MCX-COTTON", "NCDEX-COTTON", "GIFT-NIFTY"):
+        assert by_symbol[symbol].tradable is False
+        assert by_symbol[symbol].metadata["requires_contract"] == "true"
+    for symbol in ("BSE-GSEC", "NSE-MF", "BSE-MF", "NSE-IPO", "BSE-IPO", "NSE-SLB", "SGB", "REIT", "INVIT"):
+        assert by_symbol[symbol].tradable is False
+        assert by_symbol[symbol].metadata["research_only"] == "true"

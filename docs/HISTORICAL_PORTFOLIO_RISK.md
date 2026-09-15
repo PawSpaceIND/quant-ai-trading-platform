@@ -9,6 +9,7 @@ The market collector publishes `riskHistory` schema `pramana.risk_history.v1` al
 Each instrument carries symbol, market, asset class, currency, exchange and provider token. The collector's fixed mapping distinguishes indices, equities and the existing gold/silver ETFs. This mapping is a declaration, not an independently maintained security master. Every held instrument must match exactly; an index or differently named ETF cannot stand in for a missing holding.
 
 The producer includes the bundled NSE cash-session calendar, including the documented 1 February Budget session and only dates strictly before the capture's Asia/Kolkata date. Today's candle is excluded even after market close. The calendar is maintained for 2026; other years produce an explicit unavailable state until extended and qualified. Other special sessions and independently verified calendar completeness remain outside this diagnostic.
+The market collector may display BSE and other Indian venue rows for observation, but this risk input retains only NSE cash rows until a venue-specific calendar and qualification are supplied. It never applies the NSE calendar to derivatives, commodities, funds, IFSC or BSE data.
 
 Prices are labelled `provider_close_adjustments_unverified`. No split/dividend/total-return correctness, licensing, survivorship coverage or market-source qualification is asserted. The UI keeps this warning next to the results. A recent capture does not prove that its price observations or calendar are complete or correct.
 

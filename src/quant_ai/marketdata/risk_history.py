@@ -44,6 +44,25 @@ def risk_history_input(rows: list[dict], captured_at: datetime, *, calendar: Mar
         identity = row.get("instrument")
         if not identity:
             continue
+        # Risk history uses the bundled NSE cash-session calendar. Keep
+        # unlabelled legacy fixtures, but exclude explicitly identified BSE
+        # rows and all derivatives, commodities, funds and IFSC rows rather
+        # than assigning them an unqualified equity calendar.
+        if (
+            identity.get("market") is not None and identity.get("market") != "INDIA"
+        ) or (
+            identity.get("exchange") is not None
+            and identity.get("exchange") not in {"NSE"}
+        ) or (
+            identity.get("assetClass") is not None
+            and identity.get("assetClass") not in {"EQUITY", "ETF", "INDEX"}
+        ):
+            continue
+        # An unavailable quote has no historical evidence. Keep it visible in
+        # the market snapshot, but do not create an empty risk instrument that
+        # could be mistaken for a zero-return series.
+        if not row.get("history"):
+            continue
         observations = []
         for bar in row.get("history", []):
             # Preserve invalid records for the consumer to reject; do not filter

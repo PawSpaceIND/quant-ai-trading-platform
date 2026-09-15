@@ -8,6 +8,70 @@ def starter_catalog() -> tuple[Instrument, ...]:
         Instrument("RELIANCE", Market.INDIA, AssetClass.EQUITY, "INR", "NSE"),
         Instrument("GOLDBEES", Market.INDIA, AssetClass.ETF, "INR", "NSE"),
         Instrument(
+            "SENSEX", Market.INDIA, AssetClass.INDEX, "INR", "BSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "BANKEX", Market.INDIA, AssetClass.INDEX, "INR", "BSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "G-SEC", Market.INDIA, AssetClass.BOND, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "BSE-GSEC", Market.INDIA, AssetClass.DEBT, "INR", "BSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "NSE-MF", Market.INDIA, AssetClass.FUND, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "BSE-MF", Market.INDIA, AssetClass.FUND, "INR", "BSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "NSE-IPO", Market.INDIA, AssetClass.IPO, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "BSE-IPO", Market.INDIA, AssetClass.IPO, "INR", "BSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "NSE-SLB", Market.INDIA, AssetClass.SLB, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "SGB", Market.INDIA, AssetClass.SGB, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "REIT", Market.INDIA, AssetClass.REIT, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "INVIT", Market.INDIA, AssetClass.INVIT, "INR", "NSE", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "NIFTY", Market.INDIA, AssetClass.FUTURE, "INR", "NFO", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "BANKNIFTY", Market.INDIA, AssetClass.FUTURE, "INR", "NFO", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "SENSEX-FUT", Market.INDIA, AssetClass.FUTURE, "INR", "BFO", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "GUARSEED", Market.INDIA, AssetClass.COMMODITY, "INR", "NCDEX", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
             "GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX", False,
             {"requires_contract": "true"},
         ),
@@ -49,6 +113,30 @@ def starter_catalog() -> tuple[Instrument, ...]:
         ),
         Instrument(
             "JPYINR", Market.INDIA, AssetClass.FX, "INR", "CDS", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "BCD-USDINR", Market.INDIA, AssetClass.FX, "INR", "BCD", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "NFO-NIFTY", Market.INDIA, AssetClass.FUTURE, "INR", "NFO", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "BFO-SENSEX", Market.INDIA, AssetClass.FUTURE, "INR", "BFO", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "MCX-COTTON", Market.INDIA, AssetClass.COMMODITY, "INR", "MCX", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "NCDEX-COTTON", Market.INDIA, AssetClass.COMMODITY, "INR", "NCDEX", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
+            "GIFT-NIFTY", Market.INDIA, AssetClass.FUTURE, "USD", "IFSC", False,
             {"requires_contract": "true"},
         ),
         Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ"),

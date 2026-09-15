@@ -155,7 +155,12 @@ test("market coverage separates observed NSE rows from unbound Indian contracts"
   assert.equal(result.coverage?.paperOnly, true);
   assert.equal(result.coverage?.groups.find((g) => g.id === "nse-cash")?.status, "observed");
   assert.equal(result.coverage?.groups.find((g) => g.id === "mcx-metals")?.status, "planned");
-  assert.match(result.coverage?.disclaimer || "", /exact broker contract/);
+  assert.equal(result.coverage?.groups.find((g) => g.id === "bse-cash")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "nse-sme-ipo")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "nse-slb")?.status, "planned");
+  assert.equal(result.coverage?.groups.find((g) => g.id === "bse-derivatives")?.mode, "requires_contract");
+  assert(result.coverage?.groups.some((g) => g.id === "gift-ifsc"));
+  assert.match(result.coverage?.disclaimer || "", /exact broker instrument/);
   assert.match(result.coverage?.aiContext || "", /does not modify model weights/);
 });
 
