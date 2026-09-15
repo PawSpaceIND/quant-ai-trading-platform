@@ -8,6 +8,19 @@ type Attempt = {
   outputTokens?: number | null;
 };
 
+/** One deadline across both attempts, including the backoff delay between them.
+ *
+ * 30s was too short for the questions this chat exists to answer. The system prompt carries
+ * the whole evidence snapshot, the answer is allowed 1400 tokens, and a max_tokens stop
+ * retries asking for double that - all inside this budget. Short questions finished and long
+ * analytical ones timed out, which read as "Atlas is unreliable" rather than "the deadline is
+ * too tight". Sized so two attempts at the doubled token count fit with room to spare.
+ *
+ * CONVERSATION_STALE_MS in lib/copilot.ts must stay well above this: that sweep marks any
+ * still-pending row failed, so a shorter one would fail requests that are still running.
+ */
+export const REQUEST_DEADLINE_MS = 120_000;
+
 /** Never store raw provider bodies: errors can contain submitted private context. */
 export async function requestClaude(
   payload: { model: string; max_tokens: number; system: string; messages: ChatMessage[] },
@@ -16,7 +29,7 @@ export async function requestClaude(
   reserveRetry: () => boolean = () => false,
 ) {
   const attempts: Attempt[] = [];
-  const signal = AbortSignal.timeout(30000); // One deadline across both attempts.
+  const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
   let request = payload;
   let answer: string | null = null;
   let error: string | null = null;

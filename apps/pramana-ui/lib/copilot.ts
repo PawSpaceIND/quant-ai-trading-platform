@@ -1,5 +1,5 @@
 import { STRATEGY_CATALOG } from "./strategy-catalog";
-import { requestClaude } from "./claude-response";
+import { requestClaude, REQUEST_DEADLINE_MS } from "./claude-response";
 import {externalAccountContext} from "./external-account";
 import {benchmarkAttributionContext} from "./benchmark-attribution-store";
 import {runComparisonContext} from "./run-comparison";
@@ -31,12 +31,22 @@ export type Conversation = {
   error: string | null;
   context?: string;
 };
+/** How long a pending row may sit before the next read calls it failed.
+ *
+ * The sweep below cannot tell a request that died from one still waiting on the provider, so
+ * it must outlast the longest a request can legitimately take. It sat at 120s while the
+ * request deadline was 30s; raising that deadline without raising this would have had the
+ * sweep marking live requests failed. Kept a clear multiple above REQUEST_DEADLINE_MS, and a
+ * test pins the relationship so the two cannot be changed apart.
+ */
+export const CONVERSATION_STALE_MS = REQUEST_DEADLINE_MS * 2.5;
+
 export function conversations(id?: string) {
   const db = consoleDb();
   try {
     db.prepare(
       "UPDATE conversations SET status='error',error='The request was interrupted or timed out. Provider completion and billing may be unknown. Start a new request if needed.' WHERE tenant=? AND status='pending' AND created_at<?",
-    ).run(tenantId, new Date(Date.now() - 120000).toISOString());
+    ).run(tenantId, new Date(Date.now() - CONVERSATION_STALE_MS).toISOString());
     return (
       id
         ? db

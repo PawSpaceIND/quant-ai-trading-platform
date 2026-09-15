@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { requestClaude } from "../lib/claude-response";
+import { requestClaude, REQUEST_DEADLINE_MS } from "../lib/claude-response";
+import { CONVERSATION_STALE_MS } from "../lib/copilot";
 
 const payload = { model: "test-model", max_tokens: 1400, system: "Evidence only", messages: [{ role: "user" as const, content: "Explain feed status" }] };
 function reply(content: unknown, stop_reason = "end_turn") {
@@ -90,4 +91,18 @@ test("partial text is visibly labelled incomplete", async () => {
   const m = mock([reply([{ type: "text", text: "Partial" }], "max_tokens")]);
   const result = await requestClaude(payload, "test-key", m.transport);
   assert.match(result.answer!, /may be incomplete/);
+});
+
+test("the stale sweep outlives the request deadline, so a live request is never called failed", () => {
+  // These two are a pair. The sweep cannot tell a request that died from one still waiting on
+  // the provider, so it marks any row still pending past its threshold as failed. If that
+  // threshold ever drops to or below the request deadline, a request that is still legitimately
+  // running gets reported to the operator as an error - which is what "Atlas keeps failing"
+  // looked like when the deadline was 30s and long answers could not finish inside it.
+  assert.ok(
+    CONVERSATION_STALE_MS > REQUEST_DEADLINE_MS,
+    `sweep ${CONVERSATION_STALE_MS}ms must outlast the request deadline ${REQUEST_DEADLINE_MS}ms`,
+  );
+  // Two attempts plus the backoff between them have to fit, or the retry path is dead on arrival.
+  assert.ok(REQUEST_DEADLINE_MS >= 60_000, "a 1400-token answer over a full snapshot needs room");
 });
