@@ -90,6 +90,38 @@ def main():
         assert directives_mount["source"] == str(directives_file) and directives_mount["read_only"]
         report["checks"].append({"composeConfiguration":"pass", "liveEnabled":False, "dashboardBind":"loopback",
                                  "researchPaths":research_paths, "customDirectivesMount":"read_only"})
+        # Render the optional private ingress with synthetic credentials only.
+        token_file = Path(fixture_directory.name) / "tunnel-token"
+        token_file.write_text("synthetic-never-connect")
+        token_file.chmod(0o600)
+        tunnel_env = {**compose_env,
+                      "PRAMANA_CLOUDFLARED_IMAGE": "cloudflare/cloudflared@sha256:" + "a" * 64,
+                      "PRAMANA_TUNNEL_TOKEN_FILE": str(token_file)}
+        tunnel_command = ["docker", "compose", "--env-file", str(ROOT / ".env.example"),
+                          "-f", str(ROOT / "deploy/docker-compose.yml"),
+                          "-f", str(ROOT / "deploy/docker-compose.cloudflare.yml"),
+                          "config", "--format", "json"]
+        tunnel_rendered = subprocess.run(tunnel_command, env=tunnel_env, capture_output=True,
+                                         text=True, check=True, timeout=30)
+        tunnel_config = json.loads(tunnel_rendered.stdout)
+        tunnel = tunnel_config["services"]["cloudflare-tunnel"]
+        assert not tunnel.get("ports") and not tunnel.get("volumes")
+        assert not tunnel.get("environment")
+        assert tunnel["read_only"] is True and "ALL" in tunnel["cap_drop"]
+        assert tunnel["command"] == ["tunnel", "--no-autoupdate", "run", "--token-file",
+                                      "/run/secrets/cloudflare_tunnel_token"]
+        assert tunnel["secrets"] == [{"source": "cloudflare_tunnel_token", "target": "cloudflare_tunnel_token"}]
+        assert tunnel_config["secrets"]["cloudflare_tunnel_token"]["file"] == str(token_file)
+        for service_name, service in services.items():
+            assert tunnel_config["services"][service_name] == service
+        for required in ("PRAMANA_CLOUDFLARED_IMAGE", "PRAMANA_TUNNEL_TOKEN_FILE"):
+            incomplete = {key: value for key, value in tunnel_env.items() if key != required}
+            rejected = subprocess.run(tunnel_command, env=incomplete, capture_output=True,
+                                      text=True, check=False, timeout=30)
+            assert rejected.returncode != 0, f"Missing {required} was accepted"
+        report["checks"].append({"cloudflareComposeConfiguration": "pass",
+                                 "scope": "Configuration only; no tunnel connection or Access policy tested",
+                                 "missingSettingsRejected": True, "additionalPublishedPorts": 0})
         for dockerfile, image in [("Dockerfile", image_engine), ("Dockerfile.ui", image_ui)]:
             print(f"Building {dockerfile}", flush=True)
             subprocess.run(["docker", "build", "--label", f"org.opencontainers.image.revision={revision}",
