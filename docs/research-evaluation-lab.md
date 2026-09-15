@@ -179,3 +179,77 @@ now have a separate [private Research panel](PORTFOLIO_RESEARCH_WORKSPACE.md).
 Company-event mapping controls, real two-provider and live NSE-source qualification
 remain open. The original #51
 limitations above describe its independent-case lab, not absence of the later simulator.
+
+## Running the Claude-vs-Astra comparison on the pilot host
+
+`astra` is this experiment's OpenAI-backed candidate; `claude` is the Anthropic one.
+Both are candidate *labels*, not separate services: the only vendors
+`quant_ai.research.providers.Provider` builds are `anthropic` and `openai`, and the
+manifest in the experiment config decides which label maps to which.
+
+Two shipped templates, both exercised against the real lab by
+`tests/test_shipped_research_templates.py` so neither can drift into a shape the lab
+refuses:
+
+- `deploy/research-experiment.example.json` — candidates, cash baseline, case budget,
+  NSE delivery friction (35 bps fee, 15 bps slippage) and the per-candidate rate table
+  the spend calculation reads.
+- `deploy/research-case.example.json` — one input packet: symbol, reference price,
+  quote and decision timestamps, and source provenance.
+
+Set `OPENAI_API_KEY` in `.env` alongside `ANTHROPIC_API_KEY` (see `.env.example`), then
+from the repository root on the host:
+
+The image contains `src/` and `scripts/` but not `deploy/`, so the templates are copied
+into the shared volume first rather than referenced at a path that does not exist inside
+the container.
+
+```bash
+COMPOSE="docker compose --env-file .env -f deploy/docker-compose.yml"
+C="$COMPOSE exec pramana-ghost"
+
+# 0. Put the templates where the container can read them. Edit the case packet first:
+#    the symbol, the price and both timestamps must be real, and `decision_at` must be
+#    within max_quote_age_seconds of `quote_at` or the lab refuses the case.
+$COMPOSE cp deploy/research-experiment.example.json pramana-ghost:/data/experiment.json
+$COMPOSE cp deploy/research-case.example.json pramana-ghost:/data/case.json
+
+# 1. Create the experiment. Local only; contacts nobody.
+$C python -m quant_ai.research.lab /data/research.sqlite create claude-vs-astra \
+    --file /data/experiment.json
+
+# 2. Add one case.
+$C python -m quant_ai.research.lab /data/research.sqlite case claude-vs-astra \
+    --case-id infy-2026-09-16 --file /data/case.json
+
+# 3. Ask both models. THIS SPENDS MONEY: one paid call per candidate, never retried.
+#    The cash baseline is answered locally at zero cost.
+$C python scripts/research_extensions.py compare /data/research.sqlite \
+    --experiment claude-vs-astra --case-id infy-2026-09-16 --receipts /data/research-receipts
+
+# 4. Record what actually happened, once the exit is known. The lab refuses this until
+#    every candidate has a decision or a recorded failure.
+$C python -m quant_ai.research.lab /data/research.sqlite outcome claude-vs-astra \
+    --case-id infy-2026-09-16 --file /data/outcome.json
+
+# 5. Read the comparison.
+$C python -m quant_ai.research.lab /data/research.sqlite report claude-vs-astra
+```
+
+`/data` is the shared volume, so the database, the receipts and the report survive
+`up -d --build`. Receipts are per candidate and per case and are written before the
+request leaves, so a crash mid-call leaves a `pending` receipt for review rather than an
+unexplained charge.
+
+### What this is not
+
+It is not two AIs learning. Nothing here trains anything, adjusts a conviction weight or
+feeds the swarm: the lab scores two decision streams on identical frozen input. That is
+the right way to look for an edge, and it is a measurement rather than an education.
+
+It is not connected to the running engine. The lab holds no broker credential, writes no
+order, reads no ledger and runs on no cadence — it acts only when an operator invokes it,
+which is why cases do not accumulate by themselves.
+
+It is not a portfolio. Each case resets to `capital_per_case` and runs flat to flat, so
+summed case P&L is not a return, and a missing or unresolved case is not a zero.
