@@ -17,6 +17,11 @@ from quant_ai.analytics.metrics import (
     mean_return_significance,
     summarize_performance,
 )
+from quant_ai.backtesting.baselines import (
+    BaselineEvaluator,
+    default_baselines,
+    format_comparison,
+)
 from quant_ai.backtesting.replay import (
     HistoricalReplayDataset,
     HistoricalReplayHarness,
@@ -232,16 +237,16 @@ def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
         print(f"{code.lower()}={totals[code]}")
 
 
-def _backtest(args: argparse.Namespace) -> None:
-    if not args.data:
-        raise SystemExit("backtest requires --data")
-    market = Market.INDIA if (args.market or "us") == "india" else Market.USA
-    instrument = (
-        Instrument("RELIANCE", market, AssetClass.EQUITY, "INR", "NSE")
-        if market == Market.INDIA
-        else Instrument("AAPL", market, AssetClass.EQUITY, "USD", "NASDAQ")
+def _replay_instrument(market: str | None) -> Instrument:
+    resolved = Market.INDIA if (market or "us") == "india" else Market.USA
+    return (
+        Instrument("RELIANCE", resolved, AssetClass.EQUITY, "INR", "NSE")
+        if resolved == Market.INDIA
+        else Instrument("AAPL", resolved, AssetClass.EQUITY, "USD", "NASDAQ")
     )
-    dataset = load_replay_dataset(args.data, instrument)
+
+
+def _windowed_bars(dataset: HistoricalReplayDataset, args: argparse.Namespace, command: str):
     start_date = datetime.fromisoformat(args.start).date() if args.start else None
     end_date = datetime.fromisoformat(args.end).date() if args.end else None
     bars = tuple(
@@ -250,7 +255,72 @@ def _backtest(args: argparse.Namespace) -> None:
         and (end_date is None or bar.timestamp.date() <= end_date)
     )
     if not bars:
-        raise SystemExit("no bars in requested backtest range")
+        raise SystemExit(f"no bars in requested {command} range")
+    return bars
+
+
+def _baselines(args: argparse.Namespace) -> None:
+    """Score the deterministic, price-only floors the swarm has to beat.
+
+    Nothing here consults a model, a headline or a fundamental: these are the numbers a
+    reader needs before "the AI decided X" can be read as anything. The run is registered
+    as five candidate evaluations for the same reason a replay is - a sweep of windows
+    must not be reportable as one lucky look.
+    """
+    if not args.data:
+        raise SystemExit("baselines requires --data")
+    instrument = _replay_instrument(args.market)
+    bars = _windowed_bars(load_replay_dataset(args.data, instrument), args, "baselines")
+    strategies = default_baselines()
+    register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    record_trials(
+        register,
+        study=f"baselines:{instrument.symbol}:{instrument.market.value}",
+        candidate_trials=len(strategies),
+        configuration={
+            "baselines": [item.baseline_id for item in strategies],
+            "bars": len(bars),
+            "start": bars[0].timestamp.isoformat(),
+            "end": bars[-1].timestamp.isoformat(),
+            "market": args.market,
+        },
+        data_sha256=_bar_digest(bars),
+    )
+    reports = BaselineEvaluator(instrument=instrument).evaluate(bars, strategies)
+    print(format_comparison(reports))
+    payload = {
+        "schema": "pramana.baseline_comparison.v1",
+        "instrument": {"symbol": instrument.symbol, "market": instrument.market.value},
+        "bars": len(bars),
+        "start": bars[0].timestamp.isoformat(),
+        "end": bars[-1].timestamp.isoformat(),
+        "registeredTrials": register_summary(register),
+        "reports": [item.to_dict() for item in reports],
+    }
+    proof_dir = paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR")
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    document = json.dumps(payload, sort_keys=True, allow_nan=False)
+    (proof_dir / "latest-baselines.json").write_text(document)
+    print(document)
+
+
+def _bar_digest(bars) -> str:
+    return hashlib.sha256(
+        "|".join(
+            f"{bar.timestamp.isoformat()}:{bar.open}:{bar.high}:"
+            f"{bar.low}:{bar.close}:{bar.volume}"
+            for bar in bars
+        ).encode()
+    ).hexdigest()
+
+
+def _backtest(args: argparse.Namespace) -> None:
+    if not args.data:
+        raise SystemExit("backtest requires --data")
+    instrument = _replay_instrument(args.market)
+    market = instrument.market
+    dataset = load_replay_dataset(args.data, instrument)
+    bars = _windowed_bars(dataset, args, "backtest")
     end_time = bars[-1].timestamp
     dataset = HistoricalReplayDataset(
         bars,
@@ -277,13 +347,7 @@ def _backtest(args: argparse.Namespace) -> None:
             "requested_end": args.end,
             "market": args.market,
         },
-        data_sha256=hashlib.sha256(
-            "|".join(
-                f"{bar.timestamp.isoformat()}:{bar.open}:{bar.high}:"
-                f"{bar.low}:{bar.close}:{bar.volume}"
-                for bar in bars
-            ).encode()
-        ).hexdigest(),
+        data_sha256=_bar_digest(bars),
     )
     database = os.environ.get("QUANT_AI_BACKTEST_DB", "").strip() or ":memory:"
     if database == "shared":
@@ -441,8 +505,8 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "friction-audit", "halt", "resume", "zerodha-login",
-            "decision-quality", "post-mortem",
+            "backtest", "baselines", "friction-audit", "halt", "resume",
+            "zerodha-login", "decision-quality", "post-mortem",
         ),
     )
     parser.add_argument("--data")
@@ -492,10 +556,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         _backtest(args)
         return 0
+    if args.command == "baselines":
+        _baselines(args)
+        return 0
     if args.market is not None:
         raise SystemExit(
             f"--market does not apply to {args.command}: this runtime is a US sandbox. "
-            "Only backtest reads --market; the pilot watchlist is set by founder directives."
+            "Only backtest and baselines read --market; the pilot watchlist is set by "
+            "founder directives."
         )
     daemon = build_runtime()
     if args.command == "run-once":
