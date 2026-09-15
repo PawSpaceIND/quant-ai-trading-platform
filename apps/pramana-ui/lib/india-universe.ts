@@ -108,6 +108,7 @@ export type IndiaCoverage = {
   paperOnly: true;
   groups: (IndiaCoverageGroup & { status: "observed" | "planned" })[];
   disclaimer: string;
+  aiContext: string;
 };
 
 export function indiaCoverage(rows: MarketRow[]): IndiaCoverage {
@@ -128,5 +129,6 @@ export function indiaCoverage(rows: MarketRow[]): IndiaCoverage {
     paperOnly: true,
     groups,
     disclaimer: "Only groups marked observed have current collector rows. Planned groups are not executable: bind an exact broker contract and complete a separate paper qualification before widening the pilot gate.",
+    aiContext: "Atlas receives this catalog and the current observed rows as prompt context. It does not modify model weights or certify a strategy.",
   };
 }

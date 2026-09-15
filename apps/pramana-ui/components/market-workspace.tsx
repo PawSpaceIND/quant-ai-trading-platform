@@ -362,6 +362,7 @@ export function MarketWorkspace({
             ))}
           </div>
           <p className="footnote">{data.coverage.disclaimer}</p>
+          <p className="footnote"><strong>Atlas context:</strong> {data.coverage.aiContext}</p>
         </div>
       ) : null}
       <p className="panel-footnote">
