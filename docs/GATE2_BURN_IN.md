@@ -13,7 +13,7 @@ controls that exist today.
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` (keyword sentiment) | Real if set, else sandbox constants |
 | Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY) | `FRED_API_KEY` | Real if set, else sandbox constants |
-| Fundamentals (P/E, margin, FCF) | none | **Sandbox** — valuation agents abstain on unknown symbols |
+| Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
 | Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
@@ -121,8 +121,13 @@ positions and cooldowns must survive; no duplicate fill on the next tick.
 
 ## Known limits of this build
 
-- Fundamentals are sandbox constants; valuation agents abstain on symbols the sandbox
-  does not know. A licensed fundamentals provider is a founder decision.
+- Fundamentals come from Yahoo Finance's public `quoteSummary` endpoint (crumb-and-cookie
+  session, no API key, no data licence). The provider returns all four ratios or nothing:
+  valuation agents abstain when Yahoo omits a field (trailing P/E is absent for loss-making
+  companies), when the endpoint changes shape or rate-limits, or when the symbol is outside
+  the watchlist/target. Snapshots are cached six hours per symbol, so a new filing reaches
+  the engine up to six hours late. A licensed fundamentals provider remains a founder
+  decision.
 - RSS sentiment is keyword-based. It is real data, not a strong signal.
 - Exposure is keyed by symbol; the directives reject duplicate symbols across markets
   for that reason.

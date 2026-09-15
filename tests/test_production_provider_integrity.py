@@ -8,6 +8,7 @@ from quant_ai.execution.session import MarketCalendar, MarketState, default_holi
 def test_unconfigured_production_providers_never_invent_inputs(monkeypatch):
     monkeypatch.delenv("PRAMANA_NEWS_RSS_URLS", raising=False)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setenv("PRAMANA_FUNDAMENTALS_PROVIDER", "none")
     news, fundamentals, macro = _env_intelligence_providers()
     now = datetime.now(timezone.utc)
     assert news.fetch("GEOPOLITICAL", now) == ()

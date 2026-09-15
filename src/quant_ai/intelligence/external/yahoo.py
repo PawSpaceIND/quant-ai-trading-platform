@@ -9,6 +9,13 @@ from quant_ai.marketdata.feed import MarketDataFeed, MarketTick
 from quant_ai.marketdata.models import Candle
 
 
+def yahoo_symbol(symbol: str, market: Market) -> str:
+    """Yahoo ticker for a canonical symbol: NSE listings carry the ``.NS`` suffix."""
+    if market == Market.INDIA and not symbol.endswith(".NS"):
+        return f"{symbol}.NS"
+    return symbol
+
+
 class YahooFinanceMarketDataAdapter(MarketDataFeed):
     """Read-only Yahoo chart adapter with canonical Candle/MarketTick normalization."""
 
@@ -19,9 +26,7 @@ class YahooFinanceMarketDataAdapter(MarketDataFeed):
 
     @staticmethod
     def _provider_symbol(instrument: Instrument) -> str:
-        if instrument.market == Market.INDIA and not instrument.symbol.endswith(".NS"):
-            return f"{instrument.symbol}.NS"
-        return instrument.symbol
+        return yahoo_symbol(instrument.symbol, instrument.market)
 
     def fetch_ohlcv(
         self,

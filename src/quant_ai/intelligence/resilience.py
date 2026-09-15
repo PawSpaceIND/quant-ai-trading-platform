@@ -197,13 +197,20 @@ class ResilientHttpClient:
         self.max_payload_bytes = max_payload_bytes
         self.sleeper = sleeper
 
-    def get_bytes(
+    def get_response(
         self,
         url: str,
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> bytes:
+        accept_statuses: frozenset[int] = frozenset(),
+    ) -> HttpResponse:
+        """Guarded GET returning status, body and headers.
+
+        ``accept_statuses`` lists 4xx codes that are the endpoint's normal answer rather than
+        a failure (Yahoo's cookie bootstrap replies 404 while setting the session cookie).
+        429 and 5xx are always failures.
+        """
         last_error: Exception | None = None
         for attempt in range(self.max_attempts):
             self.circuit_breaker.before_request()
@@ -222,12 +229,12 @@ class ResilientHttpClient:
                     raise ProviderHttpError(429, "provider_rate_limited")
                 if response.status_code >= 500:
                     raise ProviderHttpError(response.status_code, "provider_server_error")
-                if response.status_code >= 400:
+                if response.status_code >= 400 and response.status_code not in accept_statuses:
                     raise ProviderHttpError(response.status_code, "provider_request_rejected")
                 if len(response.body) > self.max_payload_bytes:
                     raise PayloadTooLargeError("provider_payload_exceeds_limit")
                 self.circuit_breaker.record_success()
-                return response.body
+                return response
             except (TimeoutError, OSError, PayloadTooLargeError, ProviderHttpError) as exc:
                 last_error = exc
                 if isinstance(exc, ProviderHttpError) and exc.status_code == 429:
@@ -240,6 +247,15 @@ class ResilientHttpClient:
                     self.sleeper(0.1 * (2**attempt))
         assert last_error is not None
         raise last_error
+
+    def get_bytes(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        return self.get_response(url, params=params, headers=headers).body
 
     def get_json(
         self,

@@ -36,6 +36,7 @@ from quant_ai.execution.session import (
 from quant_ai.governance.directives import FounderDirectives, country_for
 from quant_ai.intelligence.external.fred import FredMacroProvider
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
+from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
@@ -438,6 +439,23 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _env_fundamentals_markets() -> dict[str, Market]:
+    """Symbol → market for every instrument the cadence can evaluate.
+
+    Mirrors ``build_ghost_runner``: the founder watchlist when one is set, else the
+    ``PRAMANA_TARGET_*`` instrument. The pipeline hands providers a bare symbol and Yahoo
+    needs the market to pick the listing (``INFY`` versus ``INFY.NS``); any other subject
+    abstains. Directives are re-read from the environment here so the provider wiring
+    stays self-contained; the file is small and parsing it twice at boot is harmless.
+    """
+    directives = FounderDirectives.from_env()
+    if directives is not None and directives.watchlist:
+        return {item.symbol: item.market for item in directives.watchlist}
+    symbol = os.getenv("PRAMANA_TARGET_SYMBOL", "INFY").strip() or "INFY"
+    market = Market(os.getenv("PRAMANA_TARGET_MARKET", "INDIA").strip().upper())
+    return {symbol: market}
+
+
 def _env_intelligence_providers() -> tuple[
     NewsSentimentProvider, FundamentalDataProvider, MacroIndicatorProvider
 ]:
@@ -458,6 +476,18 @@ def _env_intelligence_providers() -> tuple[
     fred_key = os.getenv("FRED_API_KEY", "").strip()
     if fred_key:
         registry.register(ProviderCategory.MACRO, FredMacroProvider(client, fred_key))
+    fundamentals_source = os.getenv("PRAMANA_FUNDAMENTALS_PROVIDER", "yahoo").strip().lower()
+    if fundamentals_source in {"", "yahoo"}:
+        # Own client so a Yahoo rate-limit opens Yahoo's circuit, not the news/macro one.
+        # Construction performs no I/O; the cookie, crumb and quoteSummary load on first use.
+        registry.register(
+            ProviderCategory.FUNDAMENTALS,
+            YahooFundamentalsProvider(
+                ResilientHttpClient(UrllibTransport()), _env_fundamentals_markets()
+            ),
+        )
+    elif fundamentals_source != "none":
+        raise RuntimeError(f"unsupported PRAMANA_FUNDAMENTALS_PROVIDER: {fundamentals_source}")
     return (
         FailoverNewsProvider(registry),
         FailoverFundamentalProvider(registry),
