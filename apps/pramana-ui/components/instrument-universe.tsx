@@ -5,6 +5,15 @@ import { STRATEGY_CATALOG } from "@/lib/strategy-catalog";
 const top = (values: Record<string, number> | undefined, limit = 8) =>
   Object.entries(values || {}).sort((a,b)=>b[1]-a[1]).slice(0, limit);
 
+// A literal array of [label, counts] pairs widens to (string | Record<string, number>)[],
+// which makes the label unrenderable as a ReactNode and the counts unusable without a
+// cast. Naming the tuple keeps both halves typed, so neither needs one.
+const GROUPS: readonly [string, (u: InstrumentUniverse) => Record<string, number>][] = [
+  ["Venues", (u) => u.byExchange],
+  ["Segments", (u) => u.bySegment],
+  ["Asset classes", (u) => u.byAssetClass],
+];
+
 export function InstrumentUniversePanel({universe}: {universe?: InstrumentUniverse}) {
   if (!universe) return null;
   const available = universe.status === "available";
@@ -15,7 +24,7 @@ export function InstrumentUniversePanel({universe}: {universe?: InstrumentUniver
     </div>
     <p className="footnote">{available ? `Source: ${universe.source} · refreshed ${universe.fetchedAt || "—"}` : (universe.entitlement || "Configure the broker instrument master.")}</p>
     {available ? <><div className="coverage-grid">
-      {[["Venues", universe.byExchange],["Segments", universe.bySegment],["Asset classes", universe.byAssetClass]].map(([label, values]) => <article key={String(label)} className="coverage-card"><strong>{label}</strong>{top(values as Record<string,number>).map(([name,count])=><p key={name} className="coverage-examples">{name} <span className="muted">· {count.toLocaleString("en-IN")}</span></p>)}</article>)}
+      {GROUPS.map(([label, of]) => <article key={label} className="coverage-card"><strong>{label}</strong>{top(of(universe)).map(([name,count])=><p key={name} className="coverage-examples">{name} <span className="muted">· {count.toLocaleString("en-IN")}</span></p>)}</article>)}
     </div>
     <div className="details mt-3"><div><dt>Options</dt><dd>{universe.optionContracts.toLocaleString("en-IN")}</dd></div><div><dt>Futures / FX / commodities</dt><dd>{universe.futureContracts.toLocaleString("en-IN")}</dd></div><div><dt>Expiring contract dates</dt><dd>{universe.expiringContracts.toLocaleString("en-IN")}</dd></div></div>
     {universe.sample?.length ? <p className="footnote">Sample exact broker contracts: {universe.sample.slice(0,8).map((item)=><span key={item.exchange+":"+item.contract} className="mr-2 inline-block">{item.exchange}:{item.contract}{item.expiry ? ` (${item.expiry})` : ""}</span>)}</p> : null}</> : null}

@@ -15,9 +15,10 @@ import io
 import json
 import os
 from collections import Counter
+from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 INSTRUMENT_MASTER_FILE_ENV = "PRAMANA_ZERODHA_INSTRUMENTS_FILE"
 INSTRUMENT_MASTER_CACHE_ENV = "PRAMANA_ZERODHA_INSTRUMENTS_CACHE"
