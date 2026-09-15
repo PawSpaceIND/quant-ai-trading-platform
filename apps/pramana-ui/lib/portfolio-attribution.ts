@@ -1,5 +1,6 @@
 import type {Portfolio} from "./types";
 import fs from "node:fs";
+import {agePortfolio} from "./freshness";
 
 type Metadata = {schema: "pramana.risk_metadata.v1"; asOf: string; symbols: Record<string, {sector: string; factors: Record<string, number>}>};
 export type AttributionState = {
@@ -39,10 +40,18 @@ function configuredMetadata(): string | undefined {
 }
 
 export function portfolioAttribution(portfolio: Portfolio, raw = configuredMetadata()): AttributionState {
+  portfolio = agePortfolio(portfolio);
+  if (portfolio.markMode !== "engine_live" || portfolio.status !== "ok" || portfolio.holdings.some(h => h.fresh !== true)) {
+    return {status: "unavailable", detail: "Current, complete engine valuations are required for sector/factor exposure."};
+  }
   const metadata = parseMetadata(raw);
   if (!metadata) return {status: "unavailable", detail: "Sector/factor metadata is missing or invalid; attribution is withheld rather than inferred."};
   if (!portfolio.totalEquity || !Number.isFinite(portfolio.totalEquity) || portfolio.totalEquity <= 0 || portfolio.holdings.some((h) => !metadata.symbols[h.symbol] || !Number.isFinite(h.marketValue) || h.marketValue < 0)) {
     return {status: "unavailable", asOf: metadata.asOf, detail: "Every held symbol needs a reviewed sector/factor mapping and a valid current market value."};
+  }
+  const factorNames = new Set(portfolio.holdings.flatMap(h => Object.keys(metadata.symbols[h.symbol].factors)));
+  if (portfolio.holdings.some(h => [...factorNames].some(name => !Object.hasOwn(metadata.symbols[h.symbol].factors, name)))) {
+    return {status: "unavailable", asOf: metadata.asOf, detail: "Every holding must have an explicit loading for each reported factor; missing loadings are not zero."};
   }
   const sectors = new Map<string, number>();
   const factors = new Map<string, number>();

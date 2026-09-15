@@ -80,6 +80,7 @@ export function ageWorkspace(snapshot:Workspace,now=Date.now()):Workspace {
   const contribution=snapshot.paperContribution;
   const contributionCurrent=responseCurrent&&within(sourceAge(portfolio.updatedAt,now),30,5)&&contribution?.report?.rows.every(r=>r.markState!=="fresh"||portfolio.holdings.some(h=>h.market===r.market&&h.assetClass===r.assetClass&&h.symbol===r.symbol&&h.fresh));
   return {...snapshot,runtime,portfolio,market,checks,
+    attribution:currentBook?snapshot.attribution:snapshot.attribution?{status:"unavailable",detail:"Portfolio marks expired or are incomplete. Refresh before using sector/factor exposure."}:undefined,
     historicalRisk:currentBook?snapshot.historicalRisk:snapshot.historicalRisk?{status:"unavailable",detail:"Current portfolio evidence expired or is incomplete. Refresh before using current-holding historical risk estimates.",rows:[],report:null}:undefined,
     paperContribution:contribution?.report&&!contributionCurrent?{status:"incomplete",detail:"Current contribution evidence expired. Refresh source valuations before using current P&L totals.",report:null}:contribution};
 }

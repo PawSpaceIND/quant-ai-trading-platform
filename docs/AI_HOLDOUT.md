@@ -36,3 +36,5 @@ result when any held symbol is unmapped or has invalid market value.
 The evaluator deliberately does not model intrabar queue priority, latency,
 market impact, corporate actions or provider authenticity. Those are separate
 qualification requirements in the pilot closure register.
+
+Sector/factor exposure requires current engine valuations and current source timestamps on every held mark. Cached dashboard exposure is withheld when those marks expire. Every reported factor must have an explicit loading for every holding; an omitted loading is unavailable, while an explicit zero is valid. This prevents incomplete coverage from understating portfolio exposure.

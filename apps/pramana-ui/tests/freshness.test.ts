@@ -49,9 +49,12 @@ test("held marks expire independently before the valuation snapshot expires",()=
 
 test("cached workspace claims expire without polling and only new evidence recovers them",()=>{
  const base={generatedAt:stamp(),runtime:runtime(),portfolio:portfolio(),market:{status:"ok",fetchedAt:stamp(),rows:[],collectorStale:false},checks:["engine","ticks","quotes","marks","scope","recovery","strategy_manifest","evidence"].map(id=>({id,title:id,pass:true,detail:"recorded"})),historicalRisk:{status:"available",detail:"recorded",rows:[],report:{valuationAsOf:stamp()}},paperContribution:{status:"available",detail:"recorded",report:{marksCurrent:true,rows:[{market:"INDIA",assetClass:"EQUITY",symbol:"INFY",markState:"fresh"}]}},runComparison:{status:"published",detail:"historical",report:{id:"immutable"}}} as unknown as Workspace;
+ base.attribution={status:"available",detail:"current",factors:[{name:"market",exposure:1}]};
+ assert.equal(ageWorkspace(base,now).attribution?.status,"available");
  assert(ageWorkspace(base,now).checks.every(c=>c.pass));
  const stopped=ageWorkspace(base,now+10001);assert(!stopped.checks.find(c=>c.id==="engine")!.pass);assert(!stopped.checks.find(c=>c.id==="ticks")!.pass);
  const expired=ageWorkspace(base,now+30001);assert(expired.checks.every(c=>!c.pass));assert.equal(expired.portfolio.holdings[0].fresh,false);
+ assert.equal(expired.attribution?.status,"unavailable");assert.equal(expired.attribution?.factors,undefined);
  assert.equal(expired.historicalRisk!.report,null);assert.equal(expired.paperContribution!.report,null);assert.equal(expired.runComparison,base.runComparison);
  assert.equal(ageWorkspace(expired,now).runtime.watchlist![0].fresh,false); // A clock rollback cannot resurrect flags.
  const recovered=structuredClone(base),later=now+31000;recovered.generatedAt=stamp(later);recovered.runtime.updatedAt=stamp(later);recovered.runtime.watchlist![0].tickTimestamp=stamp(later);recovered.portfolio.updatedAt=stamp(later);recovered.portfolio.holdings[0].markTimestamp=stamp(later);recovered.runtime.strategyManifest!.checkedAt=stamp(later);
