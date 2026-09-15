@@ -27,6 +27,7 @@ export default defineConfig({
       PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO:"example-portfolio",
       PRAMANA_EXTERNAL_ACCOUNT_SNAPSHOT:externalFixture,
       PRAMANA_EXTERNAL_ACCOUNT_REF:externalRef,
+      PRAMANA_MARKET_SNAPSHOT:path.resolve("tests/fixtures/browser-market.json"),
       TRADING_LIVE_MONEY_ACTIVE:"false",
     },
   },

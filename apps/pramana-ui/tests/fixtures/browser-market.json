@@ -1,0 +1,11 @@
+{
+  "status": "historical-fixture",
+  "source": "synthetic-browser-fixture",
+  "fetchedAt": "2026-09-11T10:00:00+05:30",
+  "session": "Historical fixture",
+  "note": "Synthetic browser verification only; not current market evidence.",
+  "rows": [
+    {"symbol":"NSE:INFY","available":true,"price":1482.25,"change":0.9,"lastTrade":"2026-09-11T10:00:00+05:30","history":[{"date":"2026-09-08","close":1460.0},{"date":"2026-09-09","close":1471.5},{"date":"2026-09-10","close":1482.25}]},
+    {"symbol":"NSE:TCS","available":true,"price":3210.5,"change":-0.2,"lastTrade":"2026-09-11T10:00:00+05:30","history":[{"date":"2026-09-08","close":3240.0},{"date":"2026-09-09","close":3220.0},{"date":"2026-09-10","close":3210.5}]}
+  ]
+}
