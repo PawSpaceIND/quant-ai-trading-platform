@@ -8,6 +8,8 @@ from quant_ai.analytics.benchmark_attribution import benchmark_attribution
 
 def fixture():
     return {"schema": "pramana.benchmark_attribution_input.v1", "currency": "INR",
+            "portfolioId": "example-portfolio", "benchmarkId": "example-benchmark",
+            "periodStart": "2026-08-01", "periodEnd": "2026-09-01",
             "basis": "beginning_weights_same_period_total_returns", "portfolioReturn": "0.03", "benchmarkReturn": "0.0375",
             "sectors": [dict(zip(("name", "portfolioWeight", "benchmarkWeight", "portfolioReturn", "benchmarkReturn"), row)) for row in [
                 ("Materials", ".25", ".20", ".06", ".08"), ("Industrials", ".25", ".15", ".07", ".07"),
@@ -72,3 +74,19 @@ def test_private_cli_binds_exact_input_and_refuses_overwrite(tmp_path):
     command[-1] = str(tmp_path / "invalid.json")
     assert subprocess.run(command, capture_output=True, check=False).returncode == 2
     assert not Path(command[-1]).exists()
+
+
+@pytest.mark.parametrize("key,value", [("portfolioId", ""), ("benchmarkId", None),
+    ("periodStart", "2026-09-01"), ("periodStart", "2026-09-02"),
+    ("periodStart", "2026-02-30"), ("periodEnd", "20260901"), ("benchmarkId", "bad\nname")])
+def test_missing_or_invalid_period_identity_rejected(key, value):
+    data = fixture(); data[key] = value
+    with pytest.raises(ValueError):
+        benchmark_attribution(data)
+
+
+def test_report_retains_identity_and_does_not_claim_source_qualification():
+    data = fixture(); result = benchmark_attribution(data)
+    for key in ("portfolioId", "benchmarkId", "periodStart", "periodEnd"):
+        assert result[key] == data[key]
+    assert result["sourceQualified"] is False

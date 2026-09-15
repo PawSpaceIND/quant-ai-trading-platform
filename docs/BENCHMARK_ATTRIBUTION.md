@@ -17,3 +17,5 @@ python scripts/benchmark_attribution.py --input /data/reviews/attribution-input.
 ```
 
 The command limits input to 1 MB, includes the supplied inputs and their exact byte SHA-256, writes with mode 0600, and refuses to overwrite an existing output. Invalid inputs exit 2 without creating a report. The source hash identifies the reviewed file; it does not authenticate its contents. Keep source and report in a private review directory. This command does not automatically publish to the dashboard or qualify a pilot gate.
+
+Inputs also require `portfolioId`, `benchmarkId`, `periodStart` and `periodEnd`. Dates use exact YYYY-MM-DD format and must increase. They label the beginning and ending valuation dates; the caller must qualify that every sector return and beginning weight uses this same interval. These fields are retained in the report, which explicitly sets `sourceQualified: false`. Identifiers are descriptive labels, not authenticated account bindings. The numerical regression uses synthetic labels/dates around the published arithmetic example.

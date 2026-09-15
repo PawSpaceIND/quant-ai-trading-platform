@@ -3,6 +3,7 @@
 Beginning weights and same-period total returns, one currency, long-only and
 fully invested including cash. No inferred sector returns or multi-period linking.
 """
+from datetime import date
 from decimal import Decimal, InvalidOperation, localcontext
 
 
@@ -25,6 +26,24 @@ def benchmark_attribution(document: dict) -> dict:
     require(document.get("schema") == "pramana.benchmark_attribution_input.v1", "invalid_schema")
     require(document.get("basis") == "beginning_weights_same_period_total_returns", "unsupported_basis")
     require(document.get("currency") == "INR", "unsupported_currency")
+    identity = {}
+    for key in ("portfolioId", "benchmarkId"):
+        value = document.get(key)
+        require(isinstance(value, str) and value == value.strip() and 0 < len(value) <= 100
+                and all(character.isprintable() for character in value), "invalid_" + key)
+        identity[key] = value
+    dates = []
+    for key in ("periodStart", "periodEnd"):
+        value = document.get(key)
+        require(isinstance(value, str) and len(value) == 10, "invalid_" + key)
+        try:
+            parsed_date = date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError("invalid_" + key) from error
+        require(parsed_date.isoformat() == value, "invalid_" + key)
+        dates.append(parsed_date)
+        identity[key] = value
+    require(dates[0] < dates[1], "invalid_period_order")
     rows = document.get("sectors")
     require(isinstance(rows, list) and 0 < len(rows) <= 500, "invalid_sectors")
     with localcontext() as context:
@@ -56,7 +75,7 @@ def benchmark_attribution(document: dict) -> dict:
         active = portfolio_return - benchmark_return
         require(totals["total"] == active, "attribution_not_reconciled")
         return {"schema": "pramana.benchmark_attribution.v1", "method": "single_period_brinson_fachler",
-                "currency": "INR", "portfolioReturn": str(portfolio_return), "benchmarkReturn": str(benchmark_return),
+                **identity, "sourceQualified": False, "currency": "INR", "portfolioReturn": str(portfolio_return), "benchmarkReturn": str(benchmark_return),
                 "activeReturn": str(active), "reconciliationDifference": str(totals["total"] - active),
                 "sectors": [{key: str(value) if isinstance(value, Decimal) else value for key, value in row.items()} for row in effects],
                 "totals": {key: str(value) for key, value in totals.items()},
