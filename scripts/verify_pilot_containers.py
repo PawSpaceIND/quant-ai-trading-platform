@@ -100,8 +100,28 @@ def main():
         assert services["market-monitor"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == services["pramana-ghost"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == compose_env["PRAMANA_HOLIDAYS_JSON"]
         directives_mount = next(v for v in services["pramana-ghost"]["volumes"] if v["target"] == "/app/directives.json")
         assert directives_mount["source"] == str(directives_file) and directives_mount["read_only"]
+        # Operational blindness is a deployment fault: alerts must be durable, logs bounded,
+        # memory capped and backups scheduled, in the rendered configuration itself.
+        assert services["pramana-ghost"]["environment"]["PRAMANA_ALERT_LOG"] == "/data/alerts.jsonl"
+        for optional in ("PRAMANA_TELEGRAM_BOT_TOKEN", "PRAMANA_TELEGRAM_CHAT_ID"):
+            assert services["pramana-ghost"]["environment"][optional] == ""
+        limits = {}
+        for name, service in services.items():
+            assert service["logging"]["driver"] == "json-file"
+            assert service["logging"]["options"] == {"max-size":"10m", "max-file":"5"}
+            # Every service is capped, and no single cap exceeds a small instance's memory.
+            # Compose renders the limit as a byte count, as a string in some versions.
+            limits[name] = int(service["mem_limit"])
+            assert 0 < limits[name] <= 1024 ** 3
+        backup_service = services["backup"]
+        assert backup_service["entrypoint"] == ["python", "/app/scripts/scheduled_backup.py"]
+        assert backup_service["command"] == ["--database", "/data/pramana.db", "--directory", "/data/backups",
+                                             "--interval-seconds", "86400", "--keep", "14"]
         report["checks"].append({"composeConfiguration":"pass", "liveEnabled":False, "dashboardBind":"loopback",
-                                 "researchPaths":research_paths, "customDirectivesMount":"read_only"})
+                                 "researchPaths":research_paths, "customDirectivesMount":"read_only",
+                                 "memoryLimitBytes":limits, "logRotation":{"max-size":"10m", "max-file":"5"},
+                                 "durableAlertLog":"/data/alerts.jsonl",
+                                 "scheduledBackup":{"command":backup_service["command"], "schedule":"daily"}})
         # Render the optional private ingress with synthetic credentials only.
         token_file = Path(fixture_directory.name) / "tunnel-token"
         token_file.write_text("synthetic-never-connect")
@@ -164,6 +184,18 @@ def main():
             return json.loads(run(*health_command, expected=expected))
 
         report["checks"].append({"initialEngineHealth":wait_for(health, "engine heartbeat")})
+        # The backup service's own command against the live ledger: one cycle must leave a
+        # verified copy plus its manifest, taken while the engine keeps writing.
+        run("docker", "exec", engine, "python", "/app/scripts/scheduled_backup.py",
+            "--database", services["pramana-ghost"]["environment"]["PRAMANA_LEDGER_PATH"],
+            "--directory", "/data/backups", "--keep", "14", "--once")
+        report["checks"].append(json.loads(run("docker", "exec", engine, "python", "-c",
+            "import hashlib,json; from pathlib import Path; "
+            "copies=sorted(Path('/data/backups').glob('pramana-*.db')); assert len(copies)==1, copies; "
+            "manifest=json.loads(Path(str(copies[0])+'.manifest.json').read_text()); "
+            "assert manifest['integrity']=='ok' and manifest['sha256']==hashlib.sha256(copies[0].read_bytes()).hexdigest(); "
+            "print(json.dumps({'scheduledBackupCycle':'pass', 'backup':manifest['backup'], "
+            "'integrity':manifest['integrity'], 'engineInterrupted':False}))")))
         sdk = run("docker", "exec", engine, "python", "-c",
                   "import kiteconnect, ib_async, certifi; from importlib.metadata import version; "
                   "import json; print(json.dumps({p:version(p) for p in ['kiteconnect','ib_async','certifi']}))")
