@@ -18,7 +18,12 @@ from quant_ai.backtesting.replay import (
 )
 from quant_ai.domain.models import AssetClass, Instrument, Market, OrderIntent, RiskMode, Side
 from quant_ai.execution.audit import XAITraceLogger
-from quant_ai.execution.friction import FeeSchedule, MarketFrictionModel
+from quant_ai.execution.friction import (
+    BrokerageSchedule,
+    FeeSchedule,
+    FrictionContext,
+    MarketFrictionModel,
+)
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.session import MarketCalendar, default_holidays
@@ -190,10 +195,14 @@ def fixture(folder, mature_history=False):
                 )
             ]
         assert len(fills) == 2
+        # The paper leg is a deliberately synthetic cost world: one synthetic exchange
+        # rate, no spread, no slippage and no broker charges, so the comparison isolates
+        # size and price differences rather than cost-model differences.
         model = MarketFrictionModel(
             fee_schedule=replace(
                 FeeSchedule.zero(), name="synthetic", india_exchange_rate=Decimal(".001")
             ),
+            brokerage_schedule=BrokerageSchedule.zero(),
             gamma=Decimal(0),
             spread_atr_multiplier=Decimal(0),
             fixed_slippage_bps=Decimal(0),
@@ -241,7 +250,8 @@ def fixture(folder, mature_history=False):
                     # Deliberate size and price differences, not independent live strategy performance.
                     price = Decimal(f["fill_price"]) * Decimal("1.01")
                     broker.set_friction_context(
-                        None, execution_time=datetime.fromisoformat(f["created_at"])
+                        FrictionContext(Decimal(0), Decimal(1000000)),
+                        execution_time=datetime.fromisoformat(f["created_at"]),
                     )
                     order = OrderIntent(
                         f["symbol"],
