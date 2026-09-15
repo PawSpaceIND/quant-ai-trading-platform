@@ -36,6 +36,13 @@ assert.equal(workspace.tenantId, process.env.PRAMANA_TENANT_ID);
 assert.equal(workspace.liveEnabled, false);
 assert.equal(workspace.copilotConfigured, false);
 assert.equal(workspace.runtime.mode, "paper");
+assert.equal(workspace.benchmarkAttribution.status, "published");
+assert.equal(workspace.benchmarkAttribution.report.portfolioId, "example-portfolio");
+assert.equal(workspace.benchmarkAttribution.report.sourceQualified, false);
+assert.equal(Number(workspace.benchmarkAttribution.report.activeReturn), -0.0075);
+assert.equal(workspace.benchmarkAttribution.report.sectors.length, 4);
+assert.equal(Object.hasOwn(workspace.benchmarkAttribution.report, "inputPayload"), false);
+assert.equal(Object.hasOwn(workspace.benchmarkAttribution.report, "input"), false);
 const feedCheck = workspace.checks.find(c => c.id === "ticks");
 assert.ok(feedCheck);
 if (phase === "stale") {

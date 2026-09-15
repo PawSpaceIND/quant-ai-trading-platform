@@ -62,7 +62,9 @@ def main():
         directives.update(starting_capital=123456, max_open_positions=3)
         directives_file.write_text(json.dumps(directives))
         directives_file.chmod(0o644)  # Synthetic data read by UID 10001 through a single-file mount.
-        research_paths = {"PRAMANA_RESEARCH_LAB_REPORT":"/data/research/comparison-001.json",
+        research_paths = {"PRAMANA_BENCHMARK_ATTRIBUTION_REPORT":"/qa-benchmark-attribution.json",
+                          "PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO":"example-portfolio",
+                          "PRAMANA_RESEARCH_LAB_REPORT":"/data/research/comparison-001.json",
                           "PRAMANA_PORTFOLIO_RESEARCH_REPORT":"/data/research/portfolio-001.json",
                           "PRAMANA_COMPANY_EVENTS_DB":"/data/research/events.sqlite"}
         safe_environment = {key:value for key, value in os.environ.items()
@@ -157,7 +159,8 @@ def main():
                   "import json; print(json.dumps({p:version(p) for p in ['kiteconnect','ib_async','certifi']}))")
         report["pilotDependencies"] = json.loads(sdk)
         report["checks"].append(json.loads(run("docker", "exec", engine, "python", "/qa/kite_timestamp_smoke.py")))
-        run("docker", "run", "-d", "--name", ui, *shared, *environment("dashboard"), image_ui)
+        run("docker", "run", "-d", "--name", ui, *shared, *environment("dashboard"),
+            "--mount", f"type=bind,src={ROOT / 'apps/pramana-ui/tests/fixtures/benchmark-attribution.json'},dst=/qa-benchmark-attribution.json,readonly", image_ui)
         created_containers.append(ui)
 
         def ready():
