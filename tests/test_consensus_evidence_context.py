@@ -67,7 +67,7 @@ def _bar(minute: int) -> EvidenceBar:
 
 def _headline(text: str, minute: int = 0) -> EvidenceHeadline:
     return EvidenceHeadline("AAPL", text, Decimal("0.3"), (NOW + timedelta(minutes=minute)).isoformat(),
-                            "test-news")
+                            "test-news", "keyword", "word count")
 
 
 def _context(bars: int = 3, headlines: int = 2, **overrides) -> EvidenceContext:
@@ -118,8 +118,8 @@ def test_prompt_contains_each_section_when_provided() -> None:
     assert "regime=label=trending_up;timeframe=1d;trend_strength=0.4200" in block
     assert "technical=momentum=0.002;rsi=55;sma_spread=0.001" in block
     assert "headlines=2, oldest first" in block
-    assert ("headline=subject=AAPL;sentiment=0.3;published_at=" + NOW.isoformat()
-            + ";provider=test-news;text=headline number 0") in block
+    assert ("headline=subject=AAPL;sentiment=0.3;scorer=keyword;published_at=" + NOW.isoformat()
+            + ";provider=test-news;rationale=word count;text=headline number 0") in block
     assert f"macro=observed_at={NOW.isoformat()};BRENT=78;US10Y=4.10" in block
     assert f"fundamentals=observed_at={NOW.isoformat()};pe=31" in block
     assert ("freshness=price=FRESH(age_seconds=30);news=STALE(age_seconds=7200);"
@@ -217,7 +217,7 @@ def test_prompt_size_is_hard_bounded_dropping_bars_before_headlines() -> None:
     assert "omitted for prompt size" not in fits
 
     # Moderate overflow: bars go first, every headline survives.
-    moderate = _atlas_prompt("AAPL", _evidence(), None, _long_directive(2600), context=full)
+    moderate = _atlas_prompt("AAPL", _evidence(), None, _long_directive(2200), context=full)
     assert len(moderate) <= MAX_PROMPT_CHARS
     assert 0 < moderate.count("\nbar=") < MAX_EVIDENCE_BARS
     assert moderate.count("\nheadline=") == MAX_EVIDENCE_HEADLINES

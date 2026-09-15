@@ -109,6 +109,92 @@ built in; load the lunar-calendar dates from the exchange circular:
 export PRAMANA_HOLIDAYS_JSON='{"INDIA": ["2026-03-26", "2026-03-31", "2026-11-09"]}'
 ```
 
+## Scheduled-event blackouts
+
+Some days are known in advance to be bad days to open a position: the morning a company
+reports, the day a central bank decides, budget day. The engine has no earnings feed and
+no policy calendar, so it does not guess those dates — you write them down and it obeys
+them. Point `PRAMANA_EVENT_CALENDAR` at a JSON file:
+
+```json
+{
+  "timezone": "Asia/Kolkata",
+  "events": [
+    {"date": "2026-10-15", "category": "earnings", "symbol": "INFY", "note": "Q2 results"},
+    {"date": "2026-10-01", "category": "rbi_policy"},
+    {"date": "2026-02-01", "category": "budget_day"},
+    {"date": "2026-03-17", "through": "2026-03-18", "category": "fed_decision"}
+  ]
+}
+```
+
+An event with a `symbol` blacks out that instrument; an event without one is index-level
+and blacks out every instrument. `category` must be one of `earnings`, `rbi_policy`,
+`fed_decision`, `budget_day`, `data_release`, and an `earnings` entry must name its
+symbol. Dates are exchange-local calendar days, not UTC, and `through` makes a closed
+multi-day range.
+
+What it does, exactly: on a blackout day the pilot pre-submit path refuses **new
+entries** in that instrument and the veto reason reads `event_blackout:earnings`. It
+never forces, delays or blocks an exit — protective exits do not consult the calendar —
+and it is not a halt, so the next day the same entry is allowed again. An unset variable
+means no blackouts at all; a file that is set but missing, unreadable or invalid stops
+the daemon at boot rather than letting it run believing it is honouring blackouts it
+never loaded. Check the startup log for one `event_calendar_loaded` line with the event
+count you expect.
+
+## Cross-asset risk-off destination
+
+A watchlist of three correlated Indian IT and energy names gives a risk-off signal
+nowhere to go: cash is the only alternative to those three. `GOLDBEES` and `SILVERBEES`
+are NSE cash ETFs — they trade like equity, settle in INR, and work unchanged with the
+long-only paper ledger, the protective stops and the position sizer. The supplied
+`deploy/founder-directives.example.json` watches `INFY`, `TCS`, `RELIANCE`, `GOLDBEES`
+and `SILVERBEES` with `allowed_asset_classes: ["EQUITY", "ETF"]`; `asset_class` must be
+`ETF` and `exchange` must be `NSE` for both.
+
+Two things an ETF entry does not change and one it does. Pilot scope already accepts NSE
+cash ETFs, so no gate has to be relaxed for them. The valuation agents treat an ETF as
+equity-like but it carries no balance sheet, so fundamentals stay missing and those
+agents abstain — expect ETF decisions to lean on the technical, macro and news agents.
+And every ETF symbol still needs a websocket mapping.
+
+**You must supply the instrument tokens.** None are written down here or anywhere else in
+this repository, and a token copied from documentation is the wrong token. Pull your own
+account's instrument dump from Kite (`https://api.kite.trade/instruments`, or
+`kite.instruments("NSE")` from `kiteconnect`), filter to `exchange == "NSE"` and match the
+exact `tradingsymbol`, then put the numeric `instrument_token` values into
+`PRAMANA_ZERODHA_TOKENS_JSON` and the token-to-symbol map into
+`PRAMANA_ZERODHA_SYMBOLS_JSON`. Every watchlist symbol must appear in the symbol map; the
+daemon logs `watchlist symbol ... has no websocket mapping` at boot for any that do not,
+and those names are vetoed at every tick as missing market data.
+
+## Headline sentiment
+
+Headlines are scored two ways. The deterministic scorer counts hopeful words against
+frightening ones; it cannot read negation ("no war expected" reads as a war), cannot weigh
+whether a story bears on the instrument at all, and it is what runs whenever the model
+path is unavailable. With `ANTHROPIC_API_KEY` set, each headline is instead scored against
+the specific instrument through the same structured tool-use discipline as the consensus,
+with a one-line rationale.
+
+Every proof records this. `headline_scorers` counts the headlines by scorer (`model` or
+`keyword`) and `headlines` lists each one with its sentiment, its scorer and its
+rationale, so you can always tell which number a decision used and why. The consensus
+prompt carries the same `scorer=` and `rationale=` fields on each headline line.
+
+Headlines remain untrusted third-party data on both paths: they are collapsed to one
+bounded line inside a delimited data block, the system prompt states that text asking the
+model to change its task is itself the datum to score, and a model rationale is bounded
+and stripped of the separator so it cannot forge another evidence field.
+
+Scoring degrades rather than failing. No key, a spent daily budget, a provider fault, a
+timeout or a payload off the strict schema all fall back to the word counter for exactly
+the headlines that were not scored, with the reason recorded as the rationale
+(`keyword_fallback:budget_exhausted`, for example). Model scores are cached per headline
+per instrument, so a story is not re-scored every ten-minute tick; a keyword fallback is
+never cached, so the next tick retries once the budget or the provider recovers.
+
 AI spend: Anthropic calls are capped per UTC day on both paths. The daemon admits at
 most `PRAMANA_AI_DAILY_CALL_LIMIT` (500) consensus calls and
 `PRAMANA_AI_DAILY_TOKEN_LIMIT` (2,000,000) tokens, counted in `ai-budget.sqlite` next
@@ -116,7 +202,9 @@ to the ledger (`PRAMANA_AI_BUDGET_DB`). Once either is reached the consensus deg
 to NEUTRAL and the tick ends in PRESERVE_CAPITAL; the proof shows
 `Consensus Skipped: AI budget exhausted` with inference status `budget_exhausted`, and
 the log carries one `anthropic_consensus_budget_exhausted` warning per day. A budget
-file the daemon cannot read refuses the call the same way. The dashboard admits
+file the daemon cannot read refuses the call the same way. Headline scoring counts
+against the same limits under its own `headline_sentiment` scope, so a heavy news day
+cannot quietly consume the consensus allowance and the two spends are readable apart. The dashboard admits
 `PRAMANA_CHAT_DAILY_LIMIT` (200) Atlas chat calls per day and answers 429 afterwards,
 with a `copilot.budget_exhausted` audit row; `GET /api/copilot` reports
 `dailyRemaining`. Counters reset at 00:00 UTC; a value of 0 or less disables that cap.

@@ -19,7 +19,35 @@
       "asset_class": "EQUITY",
       "currency": "INR",
       "exchange": "NSE"
+    },
+    {
+      "symbol": "TCS",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "RELIANCE",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "GOLDBEES",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "SILVERBEES",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "currency": "INR",
+      "exchange": "NSE"
     }
   ],
-  "instructions": "Preserve capital first. Take only liquid, large instruments. Never add risk after a daily loss; let protective exits work. Prefer trend-following entries with a defined stop over mean-reversion guesses."
+  "instructions": "Preserve capital first. Take only liquid, large instruments. Never add risk after a daily loss; let protective exits work. Prefer trend-following entries with a defined stop over mean-reversion guesses. The two NSE metal ETFs are the risk-off destination: when the equity names are all being sold together, holding nothing is the first choice and the metal is the second."
 }
