@@ -88,6 +88,9 @@ def main():
             assert service["environment"]["TRADING_LIVE_MONEY_ACTIVE"] == "false"
             assert service["environment"]["PRAMANA_LEDGER_PATH"] == "/data/pramana.db"
         assert services["dashboard"]["ports"][0]["host_ip"] == "127.0.0.1"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_AI_BUDGET_DB"] == "/data/ai-budget.sqlite"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_FUNDAMENTALS_PROVIDER"] == "yahoo"
+        assert services["dashboard"]["environment"]["PRAMANA_CHAT_DAILY_LIMIT"] == "200"
         assert services["pramana-ghost"]["healthcheck"]["test"][3] == "health"
         for key, value in {**research_paths, **attribution_config}.items():
             assert services["dashboard"]["environment"][key] == value
