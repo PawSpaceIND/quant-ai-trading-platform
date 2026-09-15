@@ -57,7 +57,8 @@ test("selected external account remains historical and private",async({page})=>{
 test("private market watchlist persists and hands a selected instrument to Atlas",async({page,request})=>{
  const errors:string[]=[];
  page.on("pageerror",error=>errors.push(error.message));
- expect((await request.put("/api/watchlist",{data:{symbols:["NSE:INFY"]}})).status()).toBe(401);
+ expect((await request.get("/api/watchlist")).status()).toBe(401);
+ expect((await request.put("/api/watchlist",{data:{symbols:["NSE:INFY"]}})).status()).toBe(403);
  await page.goto("/login");
  await page.getByLabel("Workspace access key").fill(secret);
  await page.getByRole("button",{name:/Open workspace/}).click();
