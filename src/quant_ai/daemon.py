@@ -72,6 +72,8 @@ from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
+from quant_ai.risk.book_history import DailyCloseHistory, sector_map_from_env
+from quant_ai.risk.policy import BookRiskFirewall
 from quant_ai.risk.warden import RiskWarden
 
 Clock = Callable[[], datetime]
@@ -323,6 +325,7 @@ def build_ghost_runner(
     pilot_mode: bool = False,
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
+    book_risk_history: DailyHistoryProvider | None = None,
     post_mortem_directory: str | Path | None = None,
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
@@ -344,9 +347,24 @@ def build_ghost_runner(
     cio = AtlasCIOAgent(
         AtlasInvestmentAgent(llm_client=llm_client, founder_instructions=directives.instructions)
     )
+    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
+    instruments = directives.instruments_or(instrument)
+    # Cross-position controls. The group limit arms from the operator's mapping alone;
+    # the correlation and expected-shortfall limits need a return history and are armed
+    # only when the operator passes one, because once armed an unusable measurement
+    # blocks every entry by design. See ``quant_ai.risk.policy.BookRiskFirewall``.
+    book_history = (
+        DailyCloseHistory(book_risk_history, instruments) if book_risk_history is not None else None
+    )
+    book_risk = BookRiskFirewall(
+        history_provider=book_history,
+        sector_map=directives.sector_map or sector_map_from_env(),
+    )
     runtime = SwarmPaperTradingService(
         cio=cio,
-        warden=RiskWarden(blocked_asset_classes=directives.blocked_asset_classes()),
+        warden=RiskWarden(
+            blocked_asset_classes=directives.blocked_asset_classes(), book_risk=book_risk
+        ),
         broker=broker,
         xai_logger=XAITraceLogger(xai_directory),
         max_open_positions=directives.max_open_positions,
@@ -381,11 +399,10 @@ def build_ghost_runner(
     )
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
     plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
-    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
-    instruments = directives.instruments_or(instrument)
     # Price live fills from the market that was actually observed: ATR and volume from the
     # closed tick bars, the half spread from the tick's own bid/ask. The clock is read
-    # through the buffer because the daemon rebinds it below.
+    # through the buffer because the daemon rebinds it below. ``instruments`` is resolved
+    # further up, where the book-risk history needs it.
     broker.set_friction_context_provider(
         LiveFrictionContextProvider(
             feed, buffer, instruments, clock=lambda: buffer.clock()
@@ -418,6 +435,8 @@ def build_ghost_runner(
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
     feed.clock = lambda: daemon.clock()
+    if book_history is not None:
+        book_history.clock = lambda: daemon.clock()
     if pilot_mode:
         daemon.enable_pilot_monitoring()
     streams: list[AbstractTickerStream] = [
@@ -587,6 +606,29 @@ def _env_daily_history_provider() -> DailyHistoryProvider | None:
     raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
 
 
+def _env_book_risk_history_provider(
+    shared: DailyHistoryProvider | None,
+) -> DailyHistoryProvider | None:
+    """Return history for the warden's correlation and expected-shortfall limits.
+
+    Off unless ``PRAMANA_BOOK_RISK_HISTORY=daily``. Arming these limits is a
+    deliberate operator act: they fail closed, so a provider that abstains stops
+    new entries rather than letting the engine trade a book it cannot measure.
+    Exits are never affected.
+
+    The regime-context provider is reused when one is configured. It already
+    caches closed daily bars once per instrument per UTC day, so the book
+    measure costs no additional request; a second provider would double the
+    request rate against the same endpoint and make a rate limit more likely.
+    """
+    source = os.getenv("PRAMANA_BOOK_RISK_HISTORY", "none").strip().lower()
+    if source in {"", "none"}:
+        return None
+    if source == "daily":
+        return shared or DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
+    raise RuntimeError(f"unsupported PRAMANA_BOOK_RISK_HISTORY: {source}")
+
+
 def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     payload = _env_json("PRAMANA_HOLIDAYS_JSON", {})
     return holidays_from_json(payload, default_holidays())
@@ -631,6 +673,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         os.getenv("PRAMANA_TARGET_EXCHANGE", "NSE").strip().upper(),
     )
     news, fundamentals, macro = _env_intelligence_providers()
+    daily_history = _env_daily_history_provider()
     budget = budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
@@ -638,7 +681,8 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,
-        history_provider=_env_daily_history_provider(),
+        history_provider=daily_history,
+        book_risk_history=_env_book_risk_history_provider(daily_history),
         holidays=_env_holidays(),
         notifications=_env_notifications(),
         halt_file=paths.halt_file(),

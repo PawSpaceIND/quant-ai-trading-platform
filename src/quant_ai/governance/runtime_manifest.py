@@ -46,9 +46,14 @@ FIELDS = {
         "founder_policy",
         "founder_instructions",
     ),
-    "quant_ai.risk.warden.RiskWarden": ("blocked_asset_classes",),
+    "quant_ai.risk.warden.RiskWarden": (
+        "blocked_asset_classes",
+        "book_risk_policy",
+        "book_risk_armed",
+    ),
     "quant_ai.intelligence.adversarial.AdversarialStressAgent": (
         "tolerance_fraction",
+        "book_tolerance_fraction",
         "DEFAULT_SCENARIOS",
     ),
     "quant_ai.portfolio.sizing.PositionSizer": ("policy",),

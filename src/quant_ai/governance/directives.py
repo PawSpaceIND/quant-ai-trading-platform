@@ -17,6 +17,7 @@ Supplied as inline JSON (``PRAMANA_FOUNDER_DIRECTIVES_JSON``) or a file
       "allowed_markets": ["INDIA", "USA"],
       "allowed_asset_classes": ["EQUITY", "INDEX", "METAL", "FX", "COMMODITY"],
       "max_open_positions": 5,
+      "sector_map": {"TCS": "IT_SERVICES", "INFY": "IT_SERVICES"},
       "watchlist": [
         {"symbol": "NIFTY", "market": "INDIA", "asset_class": "INDEX", "currency": "INR", "exchange": "NSE"},
         {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX"},
@@ -25,6 +26,12 @@ Supplied as inline JSON (``PRAMANA_FOUNDER_DIRECTIVES_JSON``) or a file
       ],
       "instructions": "Preserve capital first. Prefer liquid, large instruments."
     }
+
+``sector_map`` is the operator's symbol-to-group mapping for the warden's group
+concentration limit. There is no security master here and no defensible way to
+infer one, so an absent mapping means no grouping rather than a guessed one. It
+can also be supplied through ``PRAMANA_SECTOR_MAP_JSON`` / ``PRAMANA_SECTOR_MAP_FILE``
+(see ``quant_ai.risk.book_history``).
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from typing import Any
 
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode
 from quant_ai.planning.capital import CapitalPlanRequest
+from quant_ai.risk.book_history import normalize_sector_map
 
 DIRECTIVES_JSON_ENV = "PRAMANA_FOUNDER_DIRECTIVES_JSON"
 DIRECTIVES_FILE_ENV = "PRAMANA_FOUNDER_DIRECTIVES_FILE"
@@ -63,6 +71,9 @@ class FounderDirectives:
     max_open_positions: int = 5
     watchlist: tuple[Instrument, ...] = field(default_factory=tuple)
     instructions: str = ""
+    # Operator-supplied symbol-to-group mapping for the warden's group limit.
+    # Empty means ungrouped; nothing is inferred from a symbol or an exchange.
+    sector_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.starting_capital <= 0:
@@ -125,6 +136,7 @@ class FounderDirectives:
             max_open_positions=int(payload.get("max_open_positions", 5)),
             watchlist=watchlist,
             instructions=str(payload.get("instructions", "")).strip(),
+            sector_map=normalize_sector_map(payload.get("sector_map") or {}),
         )
 
     @classmethod

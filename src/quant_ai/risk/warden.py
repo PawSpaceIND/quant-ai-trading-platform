@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -7,7 +8,9 @@ from quant_ai.agents.swarm import TradeProposal
 from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.notifications.trading import TradingAlertCode, TradingNotificationDispatcher
 from quant_ai.planning.capital import CapitalPlan
-from quant_ai.risk.policy import RiskFirewall, RiskPolicy
+from quant_ai.risk.policy import BookRiskFirewall, BookRiskPolicy, RiskFirewall, RiskPolicy
+
+LOGGER = logging.getLogger("quant_ai.risk.warden")
 
 
 @dataclass(frozen=True)
@@ -25,9 +28,29 @@ class RiskWarden:
         dispatcher: TradingNotificationDispatcher | None = None,
         *,
         blocked_asset_classes: tuple[AssetClass, ...] = (),
+        book_risk: BookRiskFirewall | None = None,
     ) -> None:
         self.dispatcher = dispatcher or TradingNotificationDispatcher()
         self.blocked_asset_classes = tuple(blocked_asset_classes)
+        # Cross-position controls. Unarmed unless an operator supplied a return
+        # history source or a symbol grouping, in which case the entry path is
+        # unchanged; see ``risk.policy.BookRiskFirewall``.
+        self.book_risk = book_risk or BookRiskFirewall()
+
+    @property
+    def book_risk_policy(self) -> BookRiskPolicy:
+        """Thresholds of the cross-position controls, for the runtime manifest."""
+        return self.book_risk.policy
+
+    @property
+    def book_risk_armed(self) -> tuple[str, ...]:
+        """Which cross-position inputs the operator supplied, for the manifest."""
+        armed = []
+        if self.book_risk.history_provider is not None:
+            armed.append("return_history")
+        if self.book_risk.sector_map:
+            armed.append("sector_map")
+        return tuple(armed)
 
     def evaluate(
         self,
@@ -94,6 +117,21 @@ class RiskWarden:
         decision = RiskFirewall(policy).evaluate(order, portfolio)
         if not decision.approved:
             return self._reject(decision.reason, proposal, tenant_id)
+        # A pure unwind has already been approved on the grounds that it removes
+        # risk. It must never be blocked by a cross-position measurement, so the
+        # book gates only ever see exposure-adding orders.
+        if decision.reason == "approved_risk_reducing" or pure_de_risking_sell:
+            return WardenDecision(True, "approved", order)
+        book = self.book_risk.evaluate(order, portfolio)
+        if not book.approved:
+            if book.reason.startswith("book_risk_measure_unavailable"):
+                # Failing closed is the whole point, but an operator has to be
+                # able to see that a measurement, not the book, stopped the trade.
+                LOGGER.warning(
+                    "book_risk_unavailable symbol=%s reason=%s: entry blocked",
+                    proposal.symbol, book.reason,
+                )
+            return self._reject(book.reason, proposal, tenant_id)
         return WardenDecision(True, "approved", order)
 
     @staticmethod
