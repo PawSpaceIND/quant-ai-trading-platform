@@ -359,6 +359,17 @@ class AutonomousTradingDaemon:
                 self.engage_kill_switch(f"protection_unreachable:{symbol}")
                 return
 
+    @property
+    def unprotected_since(self) -> dict[str, datetime]:
+        """When each currently-unpriceable symbol first went unpriced, by symbol.
+
+        The same clock ``_check_protection_reachable`` halts on, exposed read-only so a
+        surface can say how long a stop has been unenforceable rather than only that the
+        halt has already fired. A copy, because nothing outside that check may move the
+        moment a halt is measured from.
+        """
+        return dict(self._unprotected_since)
+
     def _check_overnight_gap(self, now: datetime) -> None:
         """Halt when a price discontinuity has gone a full session without an explanation.
 

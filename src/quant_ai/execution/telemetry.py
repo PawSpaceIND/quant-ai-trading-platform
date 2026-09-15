@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, DecimalException
 from zoneinfo import ZoneInfo
@@ -102,7 +103,11 @@ class PilotTelemetry:
                     and daemon.scheduler.calendar.state(daemon.instruments[0].market, now) == MarketState.REGULAR_HOURS,
             }
             runtime = self._runtime_payload(now, ledger_id, strategy_evidence,
-                {"status": "available", "checkedAt": now.isoformat(), "ledgerId": ledger_id})
+                {"status": "available", "checkedAt": now.isoformat(), "ledgerId": ledger_id},
+                # Gross exposure as the snapshot provider computes it, so the figure the
+                # overnight cap is reported against is the one the gate actually judges.
+                book={"grossExposure": sum((item.market_value for item in metrics.positions), Decimal(0)),
+                      "equity": metrics.total_equity})
             self._write_valuation(now, ledger_id, payload)
             self.broker._connection.execute("INSERT OR REPLACE INTO pilot_runtime VALUES (?,?,?)",
                                             (daemon.tenant_id, now.isoformat(), json.dumps(runtime, allow_nan=False)))
@@ -120,7 +125,7 @@ class PilotTelemetry:
         self.broker._connection.execute("INSERT OR REPLACE INTO paper_live_valuations VALUES (?,?,?,?)",
             (self.daemon.tenant_id, bucket, ledger_id, json.dumps(payload, allow_nan=False)))
 
-    def _runtime_payload(self, now, ledger_id, strategy_evidence, valuation):
+    def _runtime_payload(self, now, ledger_id, strategy_evidence, valuation, book=None):
         daemon = self.daemon
         watchlist = []
         for instrument in daemon.instruments:
@@ -138,6 +143,8 @@ class PilotTelemetry:
             "marketDataIntegrity": (daemon.tracker.market_feed.buffer.integrity()
                 if hasattr(daemon.tracker.market_feed, "buffer") else None),
             "protectionCoverage": daemon.protection_coverage,
+            "protectionSweep": self._protection_sweep(now),
+            "riskGates": self._risk_gates(now, book),
             "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
                 if key not in {"episodes", "openPositions", "strategyAttribution"}}
                 if daemon.trade_evidence and daemon.trade_evidence["ledgerId"] == ledger_id else None),
@@ -155,6 +162,167 @@ class PilotTelemetry:
                        "drawdown": float(min(daemon.plan.max_drawdown_fraction, Decimal('.10'))),
                        "maxPositions": daemon.scheduler.pipeline.runtime.max_open_positions},
         }
+
+    def _protection_sweep(self, now: datetime) -> dict:
+        """Whether each stored stop can currently be acted on, symbol by symbol.
+
+        ``protectionCoverage`` proves a stop is *stored*. This is the other half: whether
+        the engine was able to evaluate it on the last sweep. A symbol it could not price,
+        or one whose quote a corporate action re-based, is carrying an unenforced stop
+        right now, and nothing says so today until the grace period expires and a halt
+        reason appears. By then the position has been unprotected for minutes.
+
+        ``sweptAt`` is published because an empty list means two different things - swept
+        and clean, or never swept - and a page that rendered them alike would be reporting
+        the engine's silence as safety.
+        """
+        daemon = self.daemon
+        # Every read here is defensive on purpose. This block only ever describes the
+        # protection machinery; a daemon assembled without a piece of it must produce a
+        # payload that says so, not an exception that costs the publish its valuation.
+        engine = getattr(daemon, "exit_engine", None)
+        monitor = getattr(engine, "gap_monitor", None)
+        swept_at = getattr(engine, "last_sweep_at", None)
+        since = getattr(daemon, "unprotected_since", None) or {}
+        halt_after = getattr(daemon, "unprotected_halt_seconds", None)
+        return {
+            "schema": "pramana.protection_sweep.v1",
+            "tenantId": getattr(daemon, "tenant_id", None),
+            "checkedAt": now.isoformat(),
+            "sweptAt": swept_at.isoformat() if swept_at is not None else None,
+            "unprotected": [
+                {"symbol": symbol,
+                 "unpricedSince": since[symbol].isoformat() if symbol in since else None}
+                for symbol in sorted(getattr(engine, "unprotected", ()) or ())
+            ],
+            "rebased": sorted(getattr(engine, "rebased", ()) or ()),
+            # None where the operator disabled the clock with a non-finite value: a
+            # missing deadline is not a deadline of zero.
+            "haltAfterSeconds": halt_after if isinstance(halt_after, (int, float))
+                and math.isfinite(halt_after) else None,
+            "gapMonitor": {"armed": monitor is not None,
+                "unresolved": list(monitor.unresolved_state()) if monitor is not None else []},
+        }
+
+    def _risk_gates(self, now: datetime, book: dict | None) -> dict:
+        """Which opt-in entry gates are armed, and what each one measures against.
+
+        Every control here arms on data an operator supplies, and an unarmed gate is
+        silent in precisely the way an armed gate that found nothing is silent. On a page
+        those two must never look alike: "no refusals" from a control that is switched off
+        is not evidence about the book. So arming is published as its own fact, beside the
+        setting that turns it on, instead of being inferred from an absence.
+
+        ``records`` counts what the operator actually supplied - mapped symbols, declared
+        events, declared ex-dates - because armed with an empty file is a third state
+        again. Nothing here is estimated: a figure the account cannot support is withheld
+        with its cause, the way ``valuation`` already withholds equity.
+        """
+        daemon = self.daemon
+        engine = getattr(daemon, "exit_engine", None)
+        pipeline = getattr(getattr(daemon, "scheduler", None), "pipeline", None)
+        warden = getattr(getattr(pipeline, "runtime", None), "warden", None)
+        book_risk = getattr(warden, "book_risk", None)
+        book_policy = getattr(book_risk, "policy", None)
+        overnight = getattr(warden, "overnight_risk", None)
+        overnight_policy = getattr(overnight, "policy", None)
+        sector_map = dict(getattr(book_risk, "sector_map", None) or {})
+        history_armed = getattr(book_risk, "history_provider", None) is not None
+        corporate = getattr(engine, "corporate_calendar", None)
+        try:
+            declared = len(corporate) if corporate is not None else 0
+        except TypeError:  # an operator's own lookup need not be sized
+            declared = None
+        calendar = getattr(daemon, "event_calendar", None)
+        window = getattr(overnight_policy, "closing_window", None)
+        gates = [
+            {"id": "sector_concentration", "setting": "PRAMANA_SECTOR_MAP_JSON",
+             "armed": bool(sector_map), "records": len(sector_map),
+             "groups": len(set(sector_map.values())),
+             "limit": self._finite(getattr(book_policy, "max_sector_exposure", None))},
+            {"id": "correlation_adjusted_gross", "setting": "PRAMANA_BOOK_RISK_HISTORY",
+             "armed": history_armed,
+             "limit": self._finite(getattr(book_policy, "max_correlation_adjusted_gross", None))},
+            {"id": "book_expected_shortfall", "setting": "PRAMANA_BOOK_RISK_HISTORY",
+             "armed": history_armed,
+             "limit": self._finite(getattr(book_policy, "max_book_expected_shortfall", None))},
+            {"id": "overnight_exposure", "setting": "PRAMANA_OVERNIGHT_GROSS_CAP",
+             "armed": bool(getattr(overnight, "armed", False)),
+             "limit": self._finite(getattr(overnight_policy, "max_overnight_gross", None)),
+             "closingWindowSeconds": self._finite(
+                 window.total_seconds() if window is not None else None),
+             **self._observed_gross(book)},
+            {"id": "overnight_gap_monitor", "setting": "PRAMANA_OVERNIGHT_GAP_MONITOR",
+             "armed": getattr(engine, "gap_monitor", None) is not None},
+            {"id": "event_blackout", "setting": "PRAMANA_EVENT_CALENDAR",
+             "armed": calendar is not None,
+             "records": len(getattr(calendar, "events", ()) or ()) if calendar is not None else 0,
+             "blackouts": self._blackouts(calendar, now)},
+            {"id": "corporate_actions", "setting": "PRAMANA_CORPORATE_ACTIONS",
+             # The step guard suspends an undeclared re-basing without this file; what
+             # the calendar adds is the declaration that resolves one.
+             "armed": bool(declared), "records": declared},
+        ]
+        return {"schema": "pramana.risk_gates.v1",
+                "tenantId": getattr(daemon, "tenant_id", None),
+                "checkedAt": now.isoformat(), "gates": gates}
+
+    @staticmethod
+    def _finite(value) -> float | None:
+        """A published number as a finite float, or None when the gate declared none.
+
+        None rather than zero, always: these travel to a page that compares them against
+        an observed figure, and a zero threshold reads as a control that refuses
+        everything rather than as one that never stated a limit.
+        """
+        try:
+            number = float(value)
+        except (TypeError, ValueError, DecimalException):
+            return None
+        return number if math.isfinite(number) else None
+
+    @staticmethod
+    def _observed_gross(book: dict | None) -> dict:
+        """Gross exposure as a fraction of equity, or the reason it cannot be stated.
+
+        Never a zero standing in for an unknown: against a cap, zero reads as an empty
+        book, which is the most reassuring thing the number can say and the one thing an
+        unusable account does not entitle it to say.
+        """
+        if not book:
+            return {"observed": None, "observedUnavailable": "no_account_snapshot"}
+        if book.get("unavailable"):
+            return {"observed": None, "observedUnavailable": str(book["unavailable"])[:200]}
+        try:
+            equity, gross = book["equity"], book["grossExposure"]
+            if equity is None or equity <= 0:
+                return {"observed": None, "observedUnavailable": "invalid_equity"}
+            observed = float(Decimal(gross) / Decimal(equity))
+        except (KeyError, TypeError, ValueError, ArithmeticError, DecimalException):
+            return {"observed": None, "observedUnavailable": "invalid_account_or_valuation"}
+        return ({"observed": observed, "observedUnavailable": None} if math.isfinite(observed)
+                else {"observed": None, "observedUnavailable": "invalid_account_or_valuation"})
+
+    @staticmethod
+    def _blackouts(calendar, now: datetime) -> list:
+        """Events the operator's calendar is suppressing entries under right now.
+
+        A journalled refusal says a blackout fired once; this says one is in force, which
+        is what stops an operator reading a deliberately quiet engine as a broken one.
+        Reporting must never break the tick, and ``EventCalendarError`` is a
+        ``ValueError``, so a bad calendar here would otherwise reach the publish guard,
+        be read as an invalid valuation and halt the pilot.
+        """
+        if calendar is None:
+            return []
+        try:
+            day = calendar.local_day(now)
+            return [{"category": str(event.category)[:60],
+                     "symbol": str(event.symbol)[:40] if event.symbol else None}
+                    for event in calendar.events[:2000]
+                    if event.start <= day <= event.end][:50]
+        except Exception:  # noqa: BLE001 - an operator's file is not a dependency
+            return []
 
     def publish_unavailable(self, now: datetime, reason: str) -> dict:
         """Publish liveness and an explicit valuation gap, never partial/zero equity.
@@ -182,7 +350,10 @@ class PilotTelemetry:
                 "highWaterMark": None, "drawdown": None,
             }
             runtime = self._runtime_payload(now, ledger_id, None,
-                {"status": "unavailable", "reason": reason, "checkedAt": now.isoformat(), "ledgerId": ledger_id})
+                {"status": "unavailable", "reason": reason, "checkedAt": now.isoformat(), "ledgerId": ledger_id},
+                # No usable account: the overnight gate's observed exposure is withheld
+                # and says why, rather than reporting a zero that reads as headroom.
+                book={"unavailable": reason})
             self._write_valuation(now, ledger_id, payload)
             self.broker._connection.execute("INSERT OR REPLACE INTO pilot_runtime VALUES (?,?,?)",
                 (daemon.tenant_id, now.isoformat(), json.dumps(runtime, allow_nan=False)))

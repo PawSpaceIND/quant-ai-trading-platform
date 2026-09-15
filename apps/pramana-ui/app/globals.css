@@ -1594,3 +1594,31 @@ td .pill {
 .post-mortem ul, .quality-limitations { margin: 10px 0 0; padding-left: 18px; font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
 .quality-limitations { color: #b3c6d0; }
 @media (max-width: 780px) { .calibration-bin { grid-template-columns: 52px minmax(0, 1fr) 48px; gap: 8px; } .quality-meta { margin-top: 0; } }
+
+/* Protective controls. Arming is the load-bearing distinction, so the state word sits in
+   the card header where it cannot be scrolled past, and an exposed stop gets a colour of
+   its own rather than sharing the halt banner's. */
+.protection-banner { border-color: #a4524a; background: #33211f; }
+.gate-alert { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; margin: 4px 0 18px; }
+.gate-alert strong { font-size: 14px; letter-spacing: -0.2px; }
+.gate-alert p { font-size: 12px; line-height: 1.65; margin: 0; overflow-wrap: anywhere; }
+.gate-alert.exposed { border-color: #a4524a; background: #33211f; color: #f3d6d2; }
+.gate-alert.unverified { border-color: #8a7439; background: #2b271b; color: #efe2c4; }
+.gate-alert.clear { border-color: #4f7a68; background: #1d3932; color: #d3f1e5; }
+.gate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; margin-top: 16px; }
+.gate-card { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: #12202a; overflow-wrap: anywhere; }
+.gate-card.unarmed { opacity: 0.92; border-style: dashed; }
+.gate-card header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.gate-card header strong { font-size: 13px; }
+.gate-card p { margin: 6px 0 0; font-size: 11px; line-height: 1.6; }
+.gate-card .gate-source { color: var(--text); font-size: 12px; }
+.gate-card .gate-measure { font-variant-numeric: tabular-nums; font-size: 12px; }
+.gate-active { margin: 8px 0 0; padding-left: 16px; font-size: 11px; line-height: 1.6; color: #efe2c4; }
+.gate-refusals code { font-size: 10px; background: #12202a; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.gate-refusals table { font-size: 11px; }
+.gate-refusals > button { margin-top: 12px; white-space: normal; text-align: left; }
+@media (max-width: 780px) {
+  .gate-grid { grid-template-columns: minmax(0, 1fr); }
+  .gate-card header { flex-direction: column; align-items: flex-start; }
+  .gate-refusals th, .gate-refusals td { white-space: normal; }
+}

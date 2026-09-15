@@ -99,6 +99,31 @@ assert.equal(workspace.runtime.protectionCoverage.tenantId, workspace.tenantId);
 assert.equal(workspace.runtime.protectionCoverage.positionCount, 1);
 if (!invalidLedger) assert.equal(workspace.runtime.protectionCoverage.ledgerId, workspace.portfolio.ledgerId);
 assert.equal(workspace.checks.find(c => c.id === "protection_coverage").pass, phase !== "stale" && !protectionMissing && !invalidLedger);
+// Stored protection and enforceable protection are separate claims, and the dashboard
+// reads both. Pin the enforcement payload's shape rather than a verdict that depends on
+// where in the sweep the request landed.
+const sweep = workspace.runtime.protectionSweep;
+assert.equal(sweep.schema, "pramana.protection_sweep.v1");
+assert.equal(sweep.tenantId, workspace.tenantId);
+assert.ok(Array.isArray(sweep.unprotected) && Array.isArray(sweep.rebased));
+assert.equal(typeof sweep.gapMonitor.armed, "boolean");
+assert.ok(Array.isArray(sweep.gapMonitor.unresolved));
+assert.ok(workspace.checks.find(c => c.id === "protection_sweep"));
+// Arming is the fact the panel leads with, so every gate must publish it as a boolean
+// alongside the setting that turns it on. None of these is armed in this deployment, and
+// the payload has to say that rather than omit the gate.
+const gates = workspace.runtime.riskGates;
+assert.equal(gates.schema, "pramana.risk_gates.v1");
+assert.ok(gates.gates.length >= 7);
+for (const item of gates.gates) {
+  assert.equal(typeof item.armed, "boolean", item.id);
+  assert.match(item.setting, /^PRAMANA_/);
+}
+assert.deepEqual(gates.gates.filter(item => item.armed).map(item => item.id), []);
+// Journaled refusals come from the decision journal in this same ledger. An engine that
+// has journaled nothing must report the absence, never an empty list of refusals.
+assert.ok(["available", "unavailable"].includes(workspace.gateRefusals.status));
+assert.ok(workspace.gateRefusals.detail.length > 0);
 if (protectionMissing) assert.equal(workspace.runtime.protectionCoverage.issues[0].code, "missing_stop");
 if (faultHalted) assert.equal(workspace.runtime.haltReason, "paper_position_protection_incomplete");
 const researchMissing = phase === "missing-research";
@@ -166,6 +191,9 @@ console.log(JSON.stringify({phase, status:"pass", authenticated:true, liveEnable
   valuationStatus:workspace.runtime.valuation?.status, portfolioStatus:workspace.portfolio.status,
   protectionCoverage:workspace.runtime.protectionCoverage.status,
   protectionCheck:workspace.checks.find(c => c.id === "protection_coverage").pass,
+  protectionSweep:{swept:sweep.sweptAt !== null, unprotected:sweep.unprotected.length, rebased:sweep.rebased.length,
+    gapMonitorArmed:sweep.gapMonitor.armed},
+  armedRiskGates:gates.gates.filter(item => item.armed).length, gateRefusals:workspace.gateRefusals.status,
   runtime:workspace.runtime.status, halted:workspace.runtime.halted, savedWatchlist:["INFY"],
   accountQuantity:invalidLedger ? null : 2, operatorAcceptance:false, customDirectives:{startingCapital:123456,maxPositions:3},
   research:{comparison:workspace.researchLab.status, portfolio:workspace.researchPortfolio.status,

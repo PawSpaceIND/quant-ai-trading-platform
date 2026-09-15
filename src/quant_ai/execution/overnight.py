@@ -252,6 +252,52 @@ class OvernightGapMonitor:
                 resolved=False, detail=f"unresolved_for={now - existing.first_seen}",
             )
 
+    def unresolved_state(self) -> tuple[dict[str, object], ...]:
+        """Each open discontinuity as plain JSON values, for an operator-facing surface.
+
+        The alert path already puts these in front of whoever reads notifications. A page
+        is the other half of that: an operator who was not watching a dispatcher when the
+        step appeared still has to be able to see that a protected position is carrying
+        one, and for how much longer before it stops new risk.
+
+        Every value here was recorded when the step was classified. Nothing is estimated:
+        a deadline the venue's session length cannot answer is reported as absent rather
+        than guessed, and a symbol with no deadline still appears, because it is still
+        unresolved. Never raises - this is read from the telemetry publish that runs
+        inside the protection sweep.
+        """
+        rows: list[dict[str, object]] = []
+        for key in sorted(self._open):
+            observation = self._open[key]
+            try:
+                deadline = self.resolve_deadline or regular_session_length(observation.venue)
+            except Exception as error:  # noqa: BLE001 - reporting never breaks the sweep
+                LOGGER.warning(
+                    "overnight_gap_deadline_unavailable symbol=%s error=%s",
+                    key, type(error).__name__,
+                )
+                deadline = None
+            rows.append({
+                "symbol": key,
+                "verdict": observation.assessment.verdict.value,
+                "venue": observation.venue.value,
+                # Exact text, the way the decision journal stores money: a mark that
+                # travels through a float stops being the number the engine compared.
+                "previousMark": str(observation.previous_mark),
+                "currentMark": str(observation.current_mark),
+                "stepFraction": str(observation.assessment.step_fraction),
+                "nearestAction": observation.assessment.nearest_action,
+                "firstSeenAt": observation.first_seen.isoformat(),
+                "lastAlertAt": observation.last_alert_at.isoformat(),
+                # When new risk stops unless an operator resolves this. Absent means the
+                # venue could not be asked, which is not the same as "no deadline".
+                "haltsAt": (
+                    (observation.first_seen + deadline).isoformat()
+                    if deadline is not None else None
+                ),
+            })
+        return tuple(rows)
+
     def halt_reason(self, now: datetime) -> str | None:
         """The first discontinuity left unresolved past its deadline, if any.
 
