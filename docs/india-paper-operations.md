@@ -22,11 +22,34 @@ INFY, RELIANCE and TCS with 100,000 INR simulated starting capital.
   obey NSE sessions. No commodity-futures or US broker integration is enabled.
 - The Mac must remain awake and connected. This is a foreground/background local
   deployment, not a reboot-managed server installation.
-- Kite access tokens require renewed interactive authentication. Saving a new
-  token does not update an already-running engine: stop/restart the launcher
+- Kite access tokens are invalidated daily at about 06:00 IST and require renewed
+  interactive authentication (`pramana zerodha-login`; see Daily routine). Saving a
+  new token does not update an already-running engine: stop/restart the launcher
   after login. The quote collector reloads the saved session on every poll.
 - A green process heartbeat proves the process is alive, not that every provider
   is connected. Check collector freshness, exchange timestamps and cadence errors.
+
+## Daily routine
+
+Kite invalidates every access token at about 06:00 IST, so each trading day:
+
+1. After 06:00 IST and before the 09:15 IST open, run `pramana zerodha-login`
+   (or `.venv/bin/python scripts/zerodha_login.py`) from the repository. It prints
+   the Kite login URL; complete the login in a browser and paste the redirect URL
+   (or its `request_token`) back. The command validates the new token against
+   `kite.profile()`, writes `~/.config/pramana/zerodha-session.json` (mode 0600,
+   `issued_at` recorded) and prints the next expected expiry. It never prints the
+   token or the secret, and it refuses to run if `TRADING_LIVE_MONEY_ACTIVE` is set.
+2. Restart the launcher: `.venv/bin/python scripts/india_paper_runtime.py`. It
+   refuses a session issued before the most recent 06:00 IST cutoff with
+   `Zerodha session expired at 06:00 IST; run: pramana zerodha-login` instead of
+   connecting with a dead token. A session file without `issued_at` is refused the
+   same way; re-create it with the login command.
+3. Check status: `~/.config/pramana/india-paper/status.json` should show
+   `"status": "running"` with a recent `updatedAt`, and its `providers` entry
+   states which optional providers are configured. After the open, confirm on the
+   dashboard that collector freshness and exchange timestamps advance. A `blocked`
+   status carries the exception type; the launcher terminal shows the message.
 
 ## Start the dashboard against this ledger
 
