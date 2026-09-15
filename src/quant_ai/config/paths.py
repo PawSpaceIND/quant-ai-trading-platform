@@ -27,6 +27,7 @@ TENANT_ENV = "PRAMANA_TENANT_ID"
 HALT_FILE_ENV = "PRAMANA_HALT_FILE"
 DECISION_QUALITY_ENV = "PRAMANA_DECISION_QUALITY_REPORT"
 POST_MORTEM_DIR_ENV = "PRAMANA_POST_MORTEM_DIR"
+ALERT_LOG_ENV = "PRAMANA_ALERT_LOG"
 
 DEFAULT_LEDGER_NAME = "pramana_ledger.sqlite"
 DEFAULT_PROOF_DIRECTORY_NAME = "pramana-proofs"
@@ -34,6 +35,7 @@ DEFAULT_TENANT_ID = "default"
 DEFAULT_HALT_FILE_NAME = "PRAMANA_HALT"
 DEFAULT_DECISION_QUALITY_NAME = "decision-quality.json"
 DEFAULT_POST_MORTEM_DIRECTORY_NAME = "post-mortems"
+DEFAULT_ALERT_LOG_NAME = "alerts.jsonl"
 
 _ROOT_MARKERS = ("pyproject.toml", ".git")
 
@@ -102,3 +104,16 @@ def post_mortem_directory(*legacy_env: str) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return ledger_path(*legacy_env).parent / DEFAULT_POST_MORTEM_DIRECTORY_NAME
+
+
+def alert_log(*legacy_env: str) -> Path:
+    """Durable JSON-lines alert log; ``alerts.jsonl`` next to the ledger by default.
+
+    It lives beside the ledger on purpose: the shared data volume is the only place in
+    the deployment that outlives the container, and an alert nobody can read after a
+    rebuild is not an alert.
+    """
+    configured = _from_env(ALERT_LOG_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_ALERT_LOG_NAME

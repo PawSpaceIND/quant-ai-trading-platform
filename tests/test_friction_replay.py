@@ -37,16 +37,23 @@ def test_india_current_2026_contract_note_math_and_legacy_profile() -> None:
     buy = current.evaluate(_order(Market.INDIA, Side.BUY), _zero_context())
     sell = current.evaluate(_order(Market.INDIA, Side.SELL), _zero_context())
     buy_charges = {item.code: item.amount for item in buy.charges}
+    # Brokerage and the depository charge joined the note, and GST is charged on them:
+    # 18% of (brokerage + exchange + SEBI + DP), never on STT or stamp duty.
+    assert buy_charges["BROKERAGE"] == Decimal(20)
     assert buy_charges["STT"] == Decimal("10.000")
     assert buy_charges["EXCHANGE"] == Decimal("0.306990000")
     assert buy_charges["SEBI"] == Decimal("0.010000")
-    assert buy_charges["GST"] == Decimal("0.05705820000")
+    assert buy_charges["GST"] == Decimal("3.65705820000")
     assert buy_charges["STAMP"] == Decimal("1.50000")
-    assert sell.statutory_fees == Decimal("10.37404820000")
+    assert "DP" not in buy_charges
+    sell_charges = {item.code: item.amount for item in sell.charges}
+    assert sell_charges["DP"] == Decimal("15.34")
+    assert sell_charges["GST"] == Decimal("6.41825820000")
+    assert sell.statutory_fees == Decimal("52.07524820000")
 
     legacy = MarketFrictionModel(fee_schedule=FeeSchedule.legacy_prompt_rates())
     legacy_buy = legacy.evaluate(_order(Market.INDIA, Side.BUY), _zero_context())
-    assert legacy_buy.statutory_fees == Decimal("11.86226000")
+    assert legacy_buy.statutory_fees == Decimal("35.46226000")
 
 
 def test_us_fees_sell_only_and_current_rates() -> None:
@@ -81,9 +88,12 @@ def test_broker_logs_statutory_costs_as_separate_cash_debits(tmp_path) -> None:
     broker.set_friction_context(_zero_context())
     broker.submit(_order(Market.INDIA, Side.BUY))
     costs = broker.cost_entries("tenant")
-    assert {item.code for item in costs} == {"STT", "EXCHANGE", "SEBI", "GST", "STAMP"}
+    assert {item.code for item in costs} == {
+        "BROKERAGE", "STT", "EXCHANGE", "SEBI", "GST", "STAMP"
+    }
     assert all(item.cash_debit for item in costs)
-    assert broker.get_margin("tenant").cash_balance == Decimal("89988.12595180000")
+    # Brokerage (INR 20) and the GST charged on it now leave the account with the fill.
+    assert broker.get_margin("tenant").cash_balance == Decimal("89964.52595180000")
 
 
 def _dataset() -> HistoricalReplayDataset:

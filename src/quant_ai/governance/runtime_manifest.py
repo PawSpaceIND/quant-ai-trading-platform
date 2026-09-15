@@ -94,6 +94,7 @@ FIELDS = {
     "quant_ai.intelligence.resilience.UrllibTransport": (),
     "quant_ai.execution.friction.MarketFrictionModel": (
         "fee_schedule",
+        "brokerage_schedule",
         "gamma",
         "spread_atr_multiplier",
         "max_slippage_fraction",

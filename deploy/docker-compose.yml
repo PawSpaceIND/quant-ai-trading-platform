@@ -6,6 +6,13 @@ x-shared: &shared
   PRAMANA_HALT_FILE: /data/PRAMANA_HALT
   PRAMANA_MARKET_SNAPSHOT: /data/market-monitor.json
   TRADING_LIVE_MONEY_ACTIVE: "false"
+# Container logs are capped so a chatty week cannot fill a small instance's disk and take
+# the engine down with it. The engine's own alert log and proofs live in the volume.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 services:
   pramana-ghost:
     build:
@@ -39,6 +46,12 @@ services:
       PRAMANA_DECISION_QUALITY_REPORT: /data/decision-quality.json
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
+      # Every dispatched alert is appended to this file in the shared volume, so an alert
+      # outlives the container that `up -d --build` replaces. Telegram is optional push
+      # delivery on top; set both values in .env to enable it.
+      PRAMANA_ALERT_LOG: /data/alerts.jsonl
+      PRAMANA_TELEGRAM_BOT_TOKEN: ${PRAMANA_TELEGRAM_BOT_TOKEN:-}
+      PRAMANA_TELEGRAM_CHAT_ID: ${PRAMANA_TELEGRAM_CHAT_ID:-}
     volumes:
       - pramana-data:/data
       - type: bind
@@ -54,6 +67,10 @@ services:
       retries: 3
       start_period: 60s
     stop_grace_period: 45s
+    # Sized for a small (2 GB) Lightsail instance and matched to the systemd unit's
+    # MemoryMax. Caps are not reservations; the four services do not all peak together.
+    mem_limit: 1g
+    logging: *logging
   dashboard:
     build:
       context: ..
@@ -97,6 +114,8 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    mem_limit: 512m
+    logging: *logging
   market-monitor:
     build:
       context: ..
@@ -115,5 +134,32 @@ services:
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       PRAMANA_IBKR_ENABLED: "false"
     volumes: ["pramana-data:/data"]
+    mem_limit: 256m
+    logging: *logging
+  # Daily consistent ledger backups without host cron: the same image, a sleep loop and
+  # the existing pilot_ops backup (SQLite online backup API, integrity check, sha256
+  # manifest). It reads the ledger through a read-only connection and never pauses the
+  # engine. An on-instance backup is not a backup - copy /data/backups off the host too
+  # (docs/VPS_GHOST_DEPLOYMENT.md).
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python", "/app/scripts/scheduled_backup.py"]
+    command:
+      - --database
+      - /data/pramana.db
+      - --directory
+      - /data/backups
+      - --interval-seconds
+      - ${PRAMANA_BACKUP_INTERVAL_SECONDS:-86400}
+      - --keep
+      - ${PRAMANA_BACKUP_KEEP:-14}
+    environment:
+      <<: *shared
+    volumes: ["pramana-data:/data"]
+    mem_limit: 256m
+    logging: *logging
 volumes:
   pramana-data:
