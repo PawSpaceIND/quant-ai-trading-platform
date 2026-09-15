@@ -18,6 +18,7 @@ from quant_ai.domain.models import Instrument, Market, Side
 from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.ledger_integrity import PaperLedgerDataError
 from quant_ai.execution.notifications import TradingNotificationDispatcher
+from quant_ai.execution.overnight import DeclaredActionLookup, OvernightGapMonitor
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.protection_state import positive_level
 from quant_ai.execution.protective_exits import (
@@ -65,6 +66,7 @@ class AutonomousTradingDaemon:
         halt_file: str | Path | None = None,
         instruments: Iterable[Instrument] | None = None,
         event_calendar: EventCalendar | None = None,
+        declared_action_lookup: DeclaredActionLookup | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -88,6 +90,11 @@ class AutonomousTradingDaemon:
         self.audit = audit or InMemoryAuditJournal()
         self.idle_sleep_seconds = idle_sleep_seconds
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # Declared ex-dates, when the operator keeps any: the only evidence that resolves
+        # a price discontinuity outright. A callable rather than a calendar type so an
+        # operator's own source attaches without the daemon owning a file format. None
+        # means every large step across a session boundary stays an open question.
+        self.declared_action_lookup = declared_action_lookup
         self.exit_engine = exit_engine or self._default_exit_engine()
         self.protective_exits: tuple[ProtectiveExit, ...] = ()
         self._started_monotonic = monotonic()
@@ -194,6 +201,7 @@ class AutonomousTradingDaemon:
             if any(not exit.filled for exit in self.protective_exits):
                 self.engage_kill_switch("protective_exit_failed")
             self._check_protection_reachable(timestamp)
+            self._check_overnight_gap(timestamp)
             if self.telemetry is not None:
                 if any(exit.filled for exit in self.protective_exits):
                     self._reconcile_pilot()
@@ -225,6 +233,11 @@ class AutonomousTradingDaemon:
             self._reconcile_pilot()
 
     def _default_exit_engine(self) -> ProtectiveExitEngine:
+        # One calendar for both readers: the guard that suspends a stop on a declared
+        # ex-date, and the monitor that decides whether a suspension is explained.
+        calendar = CorporateActionCalendar.from_file(
+            os.getenv("PRAMANA_CORPORATE_ACTIONS") or None
+        )
         return ProtectiveExitEngine(
             self.tracker.broker,
             market_feed_mark_resolver(
@@ -235,9 +248,32 @@ class AutonomousTradingDaemon:
             ),
             tenant_id=self.tenant_id,
             dispatcher=self.notifications,
-            corporate_calendar=CorporateActionCalendar.from_file(
-                os.getenv("PRAMANA_CORPORATE_ACTIONS") or None
-            ),
+            corporate_calendar=calendar,
+            gap_monitor=self._env_gap_monitor(calendar),
+        )
+
+    def _env_gap_monitor(self, calendar: CorporateActionCalendar) -> OvernightGapMonitor | None:
+        """The overnight gap monitor, when the operator armed it.
+
+        Off unless ``PRAMANA_OVERNIGHT_GAP_MONITOR=session``. Arming it is a deliberate
+        act because it ends in a halt: a discontinuity nobody explains within a full
+        trading session stops new risk. Unarmed, the daemon behaves exactly as it did
+        before - the step guard still suspends a re-based quote, it just never says so and
+        never stops doing it.
+
+        It reads the same declared ex-dates the suspension guard reads, so the two can
+        never disagree about whether today's quote was re-based on purpose. An explicitly
+        supplied lookup wins, for an operator whose ex-dates live somewhere else.
+        """
+        source = os.getenv("PRAMANA_OVERNIGHT_GAP_MONITOR", "none").strip().lower()
+        if source in {"", "none"}:
+            return None
+        if source != "session":
+            raise RuntimeError(f"unsupported PRAMANA_OVERNIGHT_GAP_MONITOR: {source}")
+        return OvernightGapMonitor(
+            dispatcher=self.notifications,
+            tenant_id=self.tenant_id,
+            declared_action_lookup=self.declared_action_lookup or calendar.action_on,
         )
 
     @property
@@ -322,6 +358,29 @@ class AutonomousTradingDaemon:
             if (now - first_seen).total_seconds() >= self.unprotected_halt_seconds:
                 self.engage_kill_switch(f"protection_unreachable:{symbol}")
                 return
+
+    def _check_overnight_gap(self, now: datetime) -> None:
+        """Halt when a price discontinuity has gone a full session without an explanation.
+
+        A step across a session boundary that is larger than the exchange band is either a
+        corporate action, which makes the stored stop and cost basis refer to a different
+        unit, or a catastrophic gap, which makes them refer to a position that has already
+        lost most of its value. The engine cannot tell those apart, and the monitor has
+        been saying so on a bounded cadence since the step appeared. Once a whole trading
+        session has passed without an operator resolving it, the book is being run on
+        numbers nobody has stood behind, and that is where new risk stops.
+
+        The halt blocks entries rather than liquidating, for the same reason the
+        unpriceable-mark halt does: acting on a quote the engine has just admitted it
+        cannot interpret is how the ambiguity turns into a booked loss. Protective exits
+        keep running throughout, against the levels they always used.
+        """
+        monitor = getattr(self.exit_engine, "gap_monitor", None)
+        if monitor is None:
+            return
+        reason = monitor.halt_reason(now)
+        if reason is not None:
+            self.engage_kill_switch(reason)
 
     def sweep_protective_exits(
         self, now: datetime | None = None

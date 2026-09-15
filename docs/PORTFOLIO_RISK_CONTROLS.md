@@ -220,6 +220,11 @@ kept as a test
 
 ## Known limits
 
+* Every limit here is an intraday limit. All of them, and the stress veto, assume a
+  stop that can act, and a stop cannot act on a price that never traded. The gap across
+  a session boundary is governed separately, by
+  [the overnight gap policy](OVERNIGHT_GAP_POLICY.md), whose gross cap is derived from
+  the same −8% scenario and 2% book tolerance used above.
 * Beta, factor exposure and a security master are still absent. The group limit
   is a declaration by an operator, not a maintained industry classification.
 * The correlation measure is a sample estimate from an unqualified provider's

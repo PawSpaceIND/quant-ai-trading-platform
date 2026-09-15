@@ -23,6 +23,7 @@ from quant_ai.governance.directives import FounderDirectives
 from quant_ai.governance.runtime_manifest import describe
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.risk.book_history import sector_map_from_env
+from quant_ai.risk.overnight import OvernightExposureFirewall, overnight_risk_from_env
 from quant_ai.risk.policy import BookRiskFirewall
 from quant_ai.risk.warden import RiskWarden
 
@@ -81,15 +82,19 @@ def build_traded_runtime(
     llm_client: AnthropicSwarmClient | None = None,
     xai_logger: XAITraceLogger | None = None,
     book_risk_history=None,
+    overnight_risk: OvernightExposureFirewall | None = None,
     attribution_journal_tenant: str | None = None,
 ) -> SwarmPaperTradingService:
     """The sanctioned execution runtime under one set of founder directives.
 
     ``book_risk_history`` arms the correlation and expected-shortfall limits and is left
     unset by callers that have no return history, because once armed an unusable
-    measurement blocks every entry by design. ``attribution_journal_tenant`` rebuilds the
-    specialist scores from that tenant's closed trades; a caller that cannot bound those
-    outcomes to its own window must leave it unset rather than import a future.
+    measurement blocks every entry by design. ``overnight_risk`` bounds what may be
+    carried through a close; it is read from the environment here when the caller has no
+    calendar of its own, so the daemon and the replay can never arm it differently.
+    ``attribution_journal_tenant`` rebuilds the specialist scores from that tenant's
+    closed trades; a caller that cannot bound those outcomes to its own window must leave
+    it unset rather than import a future.
     """
     directives = directives or FounderDirectives()
     runtime = SwarmPaperTradingService(
@@ -104,6 +109,7 @@ def build_traded_runtime(
                 history_provider=book_risk_history,
                 sector_map=directives.sector_map or sector_map_from_env(),
             ),
+            overnight_risk=overnight_risk or overnight_risk_from_env(),
         ),
         broker=broker,
         xai_logger=xai_logger,

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.notifications.trading import TradingAlertCode, TradingNotificationDispatcher
 from quant_ai.planning.capital import CapitalPlan
+from quant_ai.risk.overnight import OvernightExposureFirewall, OvernightRiskPolicy
 from quant_ai.risk.policy import BookRiskFirewall, BookRiskPolicy, RiskFirewall, RiskPolicy
 
 LOGGER = logging.getLogger("quant_ai.risk.warden")
@@ -29,6 +31,7 @@ class RiskWarden:
         *,
         blocked_asset_classes: tuple[AssetClass, ...] = (),
         book_risk: BookRiskFirewall | None = None,
+        overnight_risk: OvernightExposureFirewall | None = None,
     ) -> None:
         self.dispatcher = dispatcher or TradingNotificationDispatcher()
         self.blocked_asset_classes = tuple(blocked_asset_classes)
@@ -36,6 +39,9 @@ class RiskWarden:
         # history source or a symbol grouping, in which case the entry path is
         # unchanged; see ``risk.policy.BookRiskFirewall``.
         self.book_risk = book_risk or BookRiskFirewall()
+        # Overnight controls. Unarmed unless an operator supplied a session calendar;
+        # see ``risk.overnight.OvernightExposureFirewall``.
+        self.overnight_risk = overnight_risk or OvernightExposureFirewall()
 
     @property
     def book_risk_policy(self) -> BookRiskPolicy:
@@ -50,7 +56,14 @@ class RiskWarden:
             armed.append("return_history")
         if self.book_risk.sector_map:
             armed.append("sector_map")
+        if self.overnight_risk.armed:
+            armed.append("overnight_session_calendar")
         return tuple(armed)
+
+    @property
+    def overnight_risk_policy(self) -> OvernightRiskPolicy:
+        """Thresholds of the overnight controls, for the runtime manifest."""
+        return self.overnight_risk.policy
 
     def evaluate(
         self,
@@ -60,6 +73,7 @@ class RiskWarden:
         *,
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
+        now: datetime | None = None,
     ) -> WardenDecision:
         if proposal.side is None:
             return self._reject("atlas_non_actionable_proposal", proposal, tenant_id)
@@ -132,6 +146,18 @@ class RiskWarden:
                     proposal.symbol, book.reason,
                 )
             return self._reject(book.reason, proposal, tenant_id)
+        # Last, and conjunctive with everything above: what this fill would leave the book
+        # carrying through the next close, where no stop can act on it.
+        overnight = self.overnight_risk.evaluate(order, portfolio, now)
+        if not overnight.approved:
+            if overnight.reason.startswith("overnight_risk_unavailable"):
+                # Same discipline as the book gates: failing closed is the point, but an
+                # operator must see that the policy, not the book, stopped the trade.
+                LOGGER.warning(
+                    "overnight_risk_unavailable symbol=%s reason=%s: entry blocked",
+                    proposal.symbol, overnight.reason,
+                )
+            return self._reject(overnight.reason, proposal, tenant_id)
         return WardenDecision(True, "approved", order)
 
     @staticmethod

@@ -11,6 +11,7 @@ from uuid import uuid4
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Instrument, Market, OrderIntent, Side
+from quant_ai.execution.overnight import OvernightGapMonitor
 from quant_ai.execution.paper_ledger import (
     PaperBrokerDatabaseLockedError,
     PaperBrokerService,
@@ -20,6 +21,7 @@ from quant_ai.marketdata.corporate_calendar import (
     DEFAULT_DISCONTINUITY_FRACTION,
     price_discontinuity,
 )
+from quant_ai.marketdata.gap import GapAssessment, GapVerdict
 from quant_ai.notifications.trading import (
     TradingAlertCode,
     TradingNotificationDispatcher,
@@ -84,7 +86,6 @@ class ProtectiveExitEngine:
     corporate_calendar: object | None = None
     discontinuity_fraction: Decimal = DEFAULT_DISCONTINUITY_FRACTION
 
-
     def __init__(
         self,
         broker: PaperBrokerService,
@@ -96,6 +97,7 @@ class ProtectiveExitEngine:
         re_entry_cooldown: timedelta = timedelta(minutes=30),
         corporate_calendar: object | None = None,
         discontinuity_fraction: Decimal = DEFAULT_DISCONTINUITY_FRACTION,
+        gap_monitor: OvernightGapMonitor | None = None,
     ) -> None:
         self.broker = broker
         self.mark_resolver = mark_resolver
@@ -113,7 +115,12 @@ class ProtectiveExitEngine:
         self.corporate_calendar = corporate_calendar
         self.discontinuity_fraction = discontinuity_fraction
         self._last_mark: dict[str, Decimal] = {}
+        self._suspended: set[str] = set()
         self._sweep_at: datetime | None = None
+        # Classifies the same step the guard above measures, and keeps an unexplained one
+        # in front of the operator. It may narrow a suspension - never widen one, and never
+        # suppress an exit the stored levels call for. See ``_rebased``.
+        self.gap_monitor = gap_monitor
 
     def evaluate(self, now: datetime | None = None) -> tuple[ProtectiveExit, ...]:
         """Check every open position and liquidate the ones whose thresholds are breached.
@@ -129,7 +136,9 @@ class ProtectiveExitEngine:
         exits: list[ProtectiveExit] = []
         unprotected: list[str] = []
         rebased: list[str] = []
+        held: list[str] = []
         for position in self.broker.get_protection_positions(self.tenant_id):
+            held.append(position.symbol)
             decision = self._breach(position)
             if decision is MARK_UNAVAILABLE:
                 unprotected.append(position.symbol)
@@ -143,6 +152,12 @@ class ProtectiveExitEngine:
             exits.append(self._liquidate(position, trigger, threshold, mark, observed_at))
         self.unprotected = tuple(unprotected)
         self.rebased = tuple(rebased)
+        if self.gap_monitor is not None:
+            # A position that has left the book cannot still be carrying an unexplained
+            # gap, so it stops escalating. Symbols this sweep liquidated are dropped with
+            # it; an exit that failed to fill is still held and still escalates.
+            closed = {item.symbol for item in exits if item.filled}
+            self.gap_monitor.forget(tuple(item for item in held if item not in closed))
         return tuple(exits)
 
     def _breach(
@@ -156,7 +171,7 @@ class ProtectiveExitEngine:
         mark = self._mark(position)
         if mark is None:
             return MARK_UNAVAILABLE
-        if self._rebased(position, mark):
+        if self._rebased(position, mark, self._observe_gap(position, mark)):
             return PRICE_REBASED
         # Long-only ledger: a stop sits below entry and a target above it. The stop is
         # evaluated first so a bar that spans both thresholds resolves conservatively.
@@ -166,35 +181,96 @@ class ProtectiveExitEngine:
             return ExitTrigger.TAKE_PROFIT, target, mark
         return None
 
-    def _rebased(self, position: BrokerPosition, mark: Decimal) -> bool:
+    def _rebased(
+        self, position: BrokerPosition, mark: Decimal, assessment: GapAssessment | None
+    ) -> bool:
         """True when this quote cannot be compared with the stored stop and cost basis.
 
         A declared ex-date says so outright. Failing that, a step larger than the exchange
         band means the quote was re-based by an action nobody recorded. Either way the
         stored levels refer to a different unit, and acting on the comparison would book a
         loss the market never caused.
+
+        The step guard is a size test, and a size test cannot tell a 1:5 split from a
+        company that lost four fifths of its value: both take the quote to a fifth of where
+        it was. So a catastrophic gap is silenced by the same rule that protects a split -
+        precisely the gap that most needs the stop. ``assessment`` is the one thing that
+        can narrow that, and only where it can *prove* an action is impossible: a corporate
+        action re-bases at an open, so a step this large between two marks inside one
+        session was not one, and the quote still refers to the same unit the stop does.
+        Suspending there would leave a genuinely collapsing position naked.
+
+        Nothing the assessment says ever *creates* a suspension, and it cannot reach the
+        declared-ex-date branch at all - a declaration classifies as ``DECLARED_ACTION``,
+        never as an intrasession break. Where a split and a crash are genuinely
+        indistinguishable the suspension stands, and the monitor keeps it in front of an
+        operator until they close it.
         """
         symbol = position.symbol
         previous = self._last_mark.get(symbol)
-        self._last_mark[symbol] = mark
+        # Deliberately not updated here. The stored mark is the last quote that was
+        # comparable with the cost basis, so overwriting it with a re-based one erases the
+        # evidence: the next sweep would compare the new price with itself, find no step,
+        # and liquidate against the old basis - the fabricated loss this guard exists to
+        # prevent, one sweep late. Keeping it means the suspension holds until the quote
+        # and the basis agree again, which is a human reconciling the position.
         if self.corporate_calendar is not None:
             try:
                 declared = self.corporate_calendar.action_on(symbol, self._sweep_at)
             except (ValueError, AttributeError):
                 declared = None
             if declared:
-                LOGGER.warning(
+                self._log_suspension(
+                    symbol,
                     "protective_exit_suspended symbol=%s reason=declared_corporate_action:%s",
                     symbol, declared,
                 )
                 return True
         if price_discontinuity(previous, mark, fraction=self.discontinuity_fraction):
-            LOGGER.warning(
+            if assessment is not None and assessment.verdict is GapVerdict.INTRASESSION_BREAK:
+                LOGGER.warning(
+                    "protective_exit_armed_through_step symbol=%s reason=%s previous=%s current=%s",
+                    symbol, assessment.describe(), previous, mark,
+                )
+                # The unit did not change, so this quote is the new comparison basis.
+                self._last_mark[symbol] = mark
+                return False
+            self._log_suspension(
+                symbol,
                 "protective_exit_suspended symbol=%s reason=price_rebased previous=%s current=%s",
                 symbol, previous, mark,
             )
             return True
+        self._suspended.discard(symbol)
+        self._last_mark[symbol] = mark
         return False
+
+    def _log_suspension(self, symbol: str, message: str, *args: object) -> None:
+        """Warn once per suspension, not once per sweep.
+
+        The sweep runs every second and a suspension now holds until an operator acts, so
+        logging each one would bury the line that matters under thousands of copies of
+        itself. Escalation past this first line is the gap monitor's job.
+        """
+        if symbol in self._suspended:
+            return
+        self._suspended.add(symbol)
+        LOGGER.warning(message, *args)
+
+    def _observe_gap(
+        self, position: BrokerPosition, mark: Decimal
+    ) -> GapAssessment | None:
+        """Classify what this sweep priced and put an unexplained step before the operator.
+
+        The verdict travels back for one narrow purpose only, described in ``_rebased``:
+        it may re-arm a stop the step guard would have suspended, never suspend one the
+        stored levels say is breached.
+        """
+        if self.gap_monitor is None or self._sweep_at is None:
+            return None
+        return self.gap_monitor.observe(
+            position.symbol, position.market, mark, self._sweep_at
+        )
 
     def _mark(self, position: BrokerPosition) -> Decimal | None:
         try:

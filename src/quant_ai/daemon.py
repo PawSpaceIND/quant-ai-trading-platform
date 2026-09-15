@@ -70,6 +70,7 @@ from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSin
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.book_history import DailyCloseHistory
+from quant_ai.risk.overnight import overnight_risk_from_env
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
@@ -348,6 +349,10 @@ def build_ghost_runner(
     book_history = (
         DailyCloseHistory(book_risk_history, instruments) if book_risk_history is not None else None
     )
+    # Built here rather than beside the scheduler because the overnight limits are the
+    # same calendar read from the entry side: what the warden must know about the close is
+    # exactly what the scheduler knows about the session, and two calendars could disagree.
+    calendar = MarketCalendar(holidays=holidays if holidays is not None else default_holidays())
     # The historical replay assembles its runtime through this same builder, so a
     # backtest cannot quietly run a looser configuration than the one that trades.
     runtime = build_traded_runtime(
@@ -356,6 +361,9 @@ def build_ghost_runner(
         llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
         book_risk_history=book_history,
+        # The operator's own calendar, holiday overrides included, so the close the
+        # overnight limits measure against is the one the scheduler runs to.
+        overnight_risk=overnight_risk_from_env(calendar),
         # What the specialists earned in past sessions, recovered from the journal. The
         # daily token restart would otherwise reset every score each morning, so the
         # engine could never learn anything that outlived one session.
@@ -376,9 +384,7 @@ def build_ghost_runner(
         headline_scorer=headline_scorer or scorer_for(llm_client),
     )
     scheduler = AutonomousCadenceScheduler(
-        pipeline,
-        cadence=timedelta(minutes=10),
-        calendar=MarketCalendar(holidays=holidays if holidays is not None else default_holidays()),
+        pipeline, cadence=timedelta(minutes=10), calendar=calendar
     )
     tracker = PortfolioTracker(broker, feed, tenant_id=tenant_id)
     plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
