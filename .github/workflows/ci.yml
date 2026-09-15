@@ -101,27 +101,79 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-    env:
-      # gitleaks-action requires a (free) license key for organization-owned repositories.
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # gitleaks scans the pushed/PR commit range, not only the checkout
+          fetch-depth: 0  # gitleaks scans the full commit history, not only the checked-out tip
+
+      # Runs before any dependency install so that a leaked secret fails fast and so
+      # that node_modules / site-packages never enter the scan surface.
+      #
+      # This uses the gitleaks CLI (MIT licensed, no key) instead of
+      # gitleaks/gitleaks-action, which requires a GITLEAKS_LICENSE for
+      # organization-owned repositories. That action was previously skipped whenever
+      # the secret was unset, which left this public repository with no secret
+      # scanning at all while CI still reported green. The CLI has no such
+      # requirement, so this step always runs and always blocks.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          # sha256 of gitleaks_8.30.1_linux_x64.tar.gz, taken from that release's
+          # published gitleaks_8.30.1_checksums.txt. Bump both values together.
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error --location \
+            --output "$tmp/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          # Verify before extracting; never pipe a download into a shell.
+          (cd "$tmp" && echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict -)
+          tar -xzf "$tmp/gitleaks.tar.gz" -C "$tmp" gitleaks
+          "$tmp/gitleaks" version
+          # The full history is a superset of the pushed / pull-request commit range,
+          # and unlike a base..head diff it can never silently scan nothing (first
+          # push of a branch, force-push, or a zeroed github.event.before). It also
+          # catches a secret that was committed and later deleted.
+          "$tmp/gitleaks" git . --redact --no-banner --log-level info
+          # ...and the checked-out tree, which catches a secret that is live in the
+          # current code even if the commit that introduced it is outside the range.
+          "$tmp/gitleaks" dir . --redact --no-banner --log-level info
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[dev,pilot]'
       - run: pip install pip-audit
-      # pip-audit fails on a fresh resolve of '.[dev,pilot]' as of 2026-09-15:
-      #   autobahn 19.11.2   PYSEC-2020-25    fix 20.12.3  (kiteconnect 5.2.2 pins autobahn[twisted]==19.11.2)
-      #   setuptools 79.0.1  PYSEC-2026-3447  fix 83.0.0   (environment package, not a project dependency)
-      # Non-blocking until those two are decided; remove continue-on-error once the audit is clean.
       - name: Python dependency audit (pip-audit)
-        run: pip-audit
-        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Blocking. Exactly two findings are accepted, by ID, each with the reason
+          # it is accepted and the condition that retires it. Any third vulnerability
+          # fails this job. Do not add --strict: this project is not published to
+          # PyPI, so pip-audit always reports itself as a skipped dependency.
+          #
+          # PYSEC-2020-25 (CVE-2020-35678) - autobahn 19.11.2, redirect header
+          #   injection in the WebSocket client. Fixed in autobahn 20.12.3.
+          #   Accepted: kiteconnect 5.2.2 requires autobahn[twisted]==19.11.2 as an
+          #   exact pin, so autobahn cannot be raised without dropping the Zerodha
+          #   client that the 'pilot' extra exists to provide. Reachable only via the
+          #   fixed first-party wss:// Kite endpoint used by ZerodhaKiteTicker.
+          #   Remove when: pykiteconnect ships a release that relaxes that pin, or
+          #   the pilot extra stops depending on kiteconnect.
+          #
+          # PYSEC-2026-3447 (CVE-2026-59890) - setuptools 79.0.1, MANIFEST.in exclude
+          #   rules bypassed by Unicode NFD/NFC file names when building an sdist on
+          #   macOS APFS/HFS+. Fixed in setuptools 83.0.0.
+          #   Accepted: setuptools is not a dependency of this project, it is
+          #   preinstalled in the actions/setup-python environment, and nothing here
+          #   builds an sdist, ships a MANIFEST.in, or runs on macOS.
+          #   Remove when: the runner image ships setuptools >= 83.0.0. The ignore is
+          #   inert in the meantime - an ID that matches nothing is not an error.
+          pip-audit \
+            --ignore-vuln PYSEC-2020-25 \
+            --ignore-vuln PYSEC-2026-3447
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -132,11 +184,3 @@ jobs:
         run: |
           npm ci
           npm audit --audit-level=high
-      - name: Secret scan (gitleaks)
-        if: env.GITLEAKS_LICENSE != ''
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e  # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Secret scan skipped
-        if: env.GITLEAKS_LICENSE == ''
-        run: echo "::warning::GITLEAKS_LICENSE secret is not set; gitleaks secret scan skipped (organization repos need the free key from gitleaks.io)"
