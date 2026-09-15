@@ -15,6 +15,7 @@ export function BenchmarkAttributionPanel({state,onAsk}:{state?:BenchmarkAttribu
       <p>Allocation {pct(r.totals.allocation)} · Selection {pct(r.totals.selection)} · Interaction {pct(r.totals.interaction)}</p>
       <div style={{overflowX:"auto"}}><table><caption>Sector effects in percentage points</caption><thead><tr><th scope="col">Sector</th><th scope="col">Allocation</th><th scope="col">Selection</th><th scope="col">Interaction</th><th scope="col">Total</th></tr></thead><tbody>{r.sectors.slice(current*20,current*20+20).map(s=><tr key={s.name}><th scope="row">{s.name}</th><td>{pct(s.allocation)}</td><td>{pct(s.selection)}</td><td>{pct(s.interaction)}</td><td>{pct(s.total)}</td></tr>)}</tbody></table></div>
       {r.sectors.length>20&&<div><button disabled={current===0} onClick={()=>setPage(current-1)}>Previous sectors</button><span> Page {current+1} of {Math.ceil(r.sectors.length/20)} </span><button disabled={(current+1)*20>=r.sectors.length} onClick={()=>setPage(current+1)}>Next sectors</button></div>}
+      <a href="/api/research/attribution" download>Download attribution JSON</a>
       <button onClick={()=>onAsk(`Explain the historical benchmark attribution for ${r.portfolioId} versus ${r.benchmarkId} from ${r.periodStart} to ${r.periodEnd}. Distinguish calculation results from unverified source quality.`)}>Ask Atlas about attribution</button>
     </>}
   </section>;

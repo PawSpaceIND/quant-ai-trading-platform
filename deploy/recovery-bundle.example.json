@@ -42,6 +42,10 @@
     "input-archive": {
       "kind": "directory",
       "path": "/data/research/input-archive"
+    },
+    "benchmark-attribution-report": {
+      "kind": "file",
+      "path": "/data/research/attribution-report.json"
     }
   }
 }
