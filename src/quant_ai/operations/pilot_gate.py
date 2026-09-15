@@ -1,10 +1,13 @@
 """Fail-closed external evidence gate for paper-pilot acceptance."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,28 @@ def _aware_timestamp(value: object) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
-def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, ...]:
+def evidence_bundle_digest(paths: list[str], root: Path) -> str:
+    """Hash a canonical path/content manifest rooted beside the review document."""
+    base = root.resolve(strict=True)
+    manifest = []
+    if len(set(paths)) != len(paths):
+        raise ValueError("duplicate evidence path")
+    for name in sorted(paths):
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("evidence path must stay within review directory")
+        target = (base / relative).resolve(strict=True)
+        if not target.is_relative_to(base) or not target.is_file():
+            raise ValueError("evidence must be a file within review directory")
+        digest = hashlib.sha256()
+        with target.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        manifest.append({"path": name, "sha256": digest.hexdigest()})
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
+def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path | None = None) -> tuple[GateResult, ...]:
     """Assess a signed-off evidence document without granting any execution permission."""
     revision = document.get("revision")
     host = document.get("targetHost")
@@ -68,6 +92,14 @@ def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, .
         digest = item.get("evidenceSha256")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
             missing.append("evidenceSha256")
+        if evidence_root is None:
+            missing.append("evidence_root")
+        elif "evidence_attachments" not in missing and "evidenceSha256" not in missing:
+            try:
+                if evidence_bundle_digest(attachments, evidence_root) != digest.lower():
+                    missing.append("evidence_digest_mismatch")
+            except (OSError, ValueError, RuntimeError):
+                missing.append("evidence_unreadable_or_unsafe")
         if not isinstance(item.get("reviewer"), str) or not item["reviewer"].strip():
             missing.append("reviewer")
         if not _aware_timestamp(item.get("observedAt")):
@@ -81,8 +113,8 @@ def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, .
     return tuple(results)
 
 
-def external_gate_report(document: Mapping[str, object]) -> dict[str, object]:
-    results = assess_external_gates(document)
+def external_gate_report(document: Mapping[str, object], *, evidence_root: Path | None = None) -> dict[str, object]:
+    results = assess_external_gates(document, evidence_root=evidence_root)
     source_gates = document.get("gates")
     return {
         "schema": "pramana.external_gate_report.v1",

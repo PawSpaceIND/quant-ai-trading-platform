@@ -51,7 +51,7 @@ if __name__ == "__main__":
             parser.error("pilot-check requires --evidence external-gates.json")
         from quant_ai.operations.pilot_gate import external_gate_report
         evidence = json.loads(args.evidence.read_text())
-        result = external_gate_report(evidence)
+        result = external_gate_report(evidence, evidence_root=args.evidence.resolve().parent)
         if args.destination:
             # Create privately from the first byte; never replace reviewed evidence.
             fd = os.open(args.destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
