@@ -14,6 +14,11 @@ report together with calibration/drift, execution-cost stress and forward
 paper evidence before X03 can pass. This artifact is evidence plumbing, not a
 profit forecast or a live-execution permission.
 
+`quant_ai.validation.ai_quality.assess_calibration_drift` produces a paired
+`pramana.ai_quality.v1` report from recorded probabilities and binary outcomes.
+It reports Brier score, calibration error and first-versus-latest-window drift.
+It rejects malformed or undersized samples and also never approves promotion.
+
 The evaluator deliberately does not model intrabar queue priority, latency,
 market impact, corporate actions or provider authenticity. Those are separate
 qualification requirements in the pilot closure register.
