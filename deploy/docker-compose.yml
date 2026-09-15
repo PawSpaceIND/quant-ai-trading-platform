@@ -138,7 +138,14 @@ services:
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       PRAMANA_IBKR_ENABLED: "false"
     volumes: ["pramana-data:/data"]
-    mem_limit: 256m
+    # 256m was sized when this service polled a dozen quotes. It now also loads the broker's
+    # complete contract master, and on a ~110k-contract dump that peaks at 343 MB measured -
+    # the raw list, a 28 MB JSON string for the cache and a second parsed list, all live at
+    # once - so the kernel killed it (OOMKilled=true, exit 137) on every start, cache included.
+    # 512m clears the measured peak with margin and still leaves the engine's 1g untouched on
+    # a 4 GB host. The peak itself is the real defect: the summary needs counters and a small
+    # sample, not three full copies. Bring this back down once that load is a single pass.
+    mem_limit: 512m
     logging: *logging
   # Daily consistent ledger backups without host cron: the same image, a sleep loop and
   # the existing pilot_ops backup (SQLite online backup API, integrity check, sha256
