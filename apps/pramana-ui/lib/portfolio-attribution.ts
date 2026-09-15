@@ -1,4 +1,5 @@
 import type {Portfolio} from "./types";
+import fs from "node:fs";
 
 type Metadata = {schema: "pramana.risk_metadata.v1"; asOf: string; symbols: Record<string, {sector: string; factors: Record<string, number>}>};
 export type AttributionState = {
@@ -28,7 +29,15 @@ function parseMetadata(raw: string | undefined): Metadata | null {
   } catch { return null; }
 }
 
-export function portfolioAttribution(portfolio: Portfolio, raw = process.env.PRAMANA_PORTFOLIO_RISK_METADATA): AttributionState {
+function configuredMetadata(): string | undefined {
+  const inline = process.env.PRAMANA_PORTFOLIO_RISK_METADATA;
+  if (inline) return inline;
+  const file = process.env.PRAMANA_PORTFOLIO_RISK_METADATA_FILE;
+  if (!file) return undefined;
+  try { return fs.readFileSync(file, "utf8"); } catch { return undefined; }
+}
+
+export function portfolioAttribution(portfolio: Portfolio, raw = configuredMetadata()): AttributionState {
   const metadata = parseMetadata(raw);
   if (!metadata) return {status: "unavailable", detail: "Sector/factor metadata is missing or invalid; attribution is withheld rather than inferred."};
   if (!portfolio.totalEquity || !Number.isFinite(portfolio.totalEquity) || portfolio.totalEquity <= 0 || portfolio.holdings.some((h) => !metadata.symbols[h.symbol] || !Number.isFinite(h.marketValue) || h.marketValue < 0)) {

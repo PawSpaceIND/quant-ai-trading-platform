@@ -19,6 +19,12 @@ profit forecast or a live-execution permission.
 It reports Brier score, calibration error and first-versus-latest-window drift.
 It rejects malformed or undersized samples and also never approves promotion.
 
+Risk Lab attribution reads `PRAMANA_PORTFOLIO_RISK_METADATA_FILE` (or the
+bounded inline override) and is wired into Compose through the read-only
+`deploy/portfolio-risk-metadata.example.json` binding. The example is empty by
+design: operators must replace it with a reviewed, timestamped source before
+any sector/factor result can qualify as evidence.
+
 The evaluator deliberately does not model intrabar queue priority, latency,
 market impact, corporate actions or provider authenticity. Those are separate
 qualification requirements in the pilot closure register.

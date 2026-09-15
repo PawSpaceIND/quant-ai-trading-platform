@@ -67,13 +67,21 @@ services:
       PRAMANA_REVIEW_SECRET: ${PRAMANA_REVIEW_SECRET:-}
       PRAMANA_RELEASE_REVISION: ${PRAMANA_RELEASE_REVISION:-}
       PRAMANA_EXTERNAL_GATE_REPORT: ${PRAMANA_EXTERNAL_GATE_REPORT:-}
+      PRAMANA_PORTFOLIO_RISK_METADATA_FILE: /data/portfolio-risk-metadata.json
       PRAMANA_STRATEGY_CONFIG_SHA256: ${PRAMANA_STRATEGY_CONFIG_SHA256:-}
       PRAMANA_CHAT_MODEL: ${PRAMANA_CHAT_MODEL:-claude-sonnet-5}
       PRAMANA_DASHBOARD_SECRET: ${PRAMANA_DASHBOARD_SECRET:?required at least 32 characters}
       PRAMANA_PUBLIC_ORIGIN: ${PRAMANA_PUBLIC_ORIGIN:-http://localhost:3000}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}
     ports: ["127.0.0.1:3000:3000"]
-    volumes: ["pramana-data:/data"]
+    volumes:
+      - pramana-data:/data
+      - type: bind
+        source: ${PRAMANA_RISK_METADATA_HOST_FILE:-./portfolio-risk-metadata.example.json}
+        target: /data/portfolio-risk-metadata.json
+        read_only: true
+        bind:
+          create_host_path: false
   market-monitor:
     build:
       context: ..
