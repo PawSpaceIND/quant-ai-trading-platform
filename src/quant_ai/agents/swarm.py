@@ -99,8 +99,13 @@ class CommodityYieldAgent(SwarmAgent):
         yields = request.metrics.get("yield_change", Decimal(0))
         dxy = request.metrics.get("dxy_change", Decimal(0))
         inflation_headwind = max(Decimal(0), crude) + max(Decimal(0), yields)
-        defensive_support = max(Decimal(0), gold) / Decimal(2)
-        score = defensive_support - inflation_headwind - max(Decimal(0), dxy) / Decimal(2)
+        # Sign corrected: a rising gold price is a risk-off bid, not support for the equity
+        # being analysed. Capital rotating into the metal is capital leaving equity risk, so
+        # gold strength is a headwind on a long-only cash book and gold weakness is the mild
+        # risk-on tailwind. The term previously added a flight to safety to the score, which
+        # read every risk-off day as a reason to buy the stock.
+        risk_off_bid = gold / Decimal(2)
+        score = -risk_off_bid - inflation_headwind - max(Decimal(0), dxy) / Decimal(2)
         return self._evidence(request, score, Decimal("0.74"), "crude_gold_yield_and_dollar_regime")
 
 

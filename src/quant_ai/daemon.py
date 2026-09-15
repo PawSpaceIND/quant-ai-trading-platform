@@ -38,9 +38,14 @@ from quant_ai.execution.session import (
     holidays_from_json,
 )
 from quant_ai.governance.directives import FounderDirectives, country_for
+from quant_ai.governance.event_calendar import EventCalendar, event_calendar_from_env
 from quant_ai.intelligence.external.fred import FredMacroProvider
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
+from quant_ai.intelligence.headline_sentiment import (
+    HeadlineSentimentScorer,
+    scorer_for,
+)
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
@@ -319,6 +324,8 @@ def build_ghost_runner(
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     post_mortem_directory: str | Path | None = None,
+    headline_scorer: HeadlineSentimentScorer | None = None,
+    event_calendar: EventCalendar | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -362,6 +369,10 @@ def build_ghost_runner(
         tick_reader=CadenceMarketReader(buffer),
         history=history_provider,
         lessons_provider=_lessons_provider(database, post_mortem_directory),
+        # Headline scoring rides the consensus client and its daily budget. Without a
+        # client (no API key) the scorer is the deterministic word counter and no
+        # headline ever leaves the process.
+        headline_scorer=headline_scorer or scorer_for(llm_client),
     )
     scheduler = AutonomousCadenceScheduler(
         pipeline,
@@ -402,6 +413,7 @@ def build_ghost_runner(
         notifications=notifications,
         halt_file=halt_file,
         instruments=instruments,
+        event_calendar=event_calendar,
     )
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
@@ -619,6 +631,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         os.getenv("PRAMANA_TARGET_EXCHANGE", "NSE").strip().upper(),
     )
     news, fundamentals, macro = _env_intelligence_providers()
+    budget = budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
         pilot_mode=_env_flag("PRAMANA_PILOT_MODE", True),
@@ -643,9 +656,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),
-        llm_client=AnthropicSwarmClient(
-            budget=budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
-        ),
+        # One client and one budget ledger for the consensus and for headline scoring,
+        # which counts under its own scope inside that same daily cap.
+        llm_client=AnthropicSwarmClient(budget=budget),
+        event_calendar=event_calendar_from_env(),
         instrument=instrument,
         include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
     )
