@@ -16,4 +16,6 @@ test("portfolio attribution aggregates reviewed sector and factor exposure", () 
 test("portfolio attribution fails closed without complete mappings", () => {
   assert.equal(portfolioAttribution(portfolio).status, "unavailable");
   assert.equal(portfolioAttribution(portfolio, metadata.replace('"TCS"', '"MISSING"')).status, "unavailable");
+  assert.equal(portfolioAttribution(portfolio, metadata.replace("2026-09-15T00:00:00+00:00", "2026-09-15T00:00:00")).status, "unavailable");
+  assert.equal(portfolioAttribution(portfolio, metadata.replace('"symbols":', '"unexpected":true,"symbols":')).status, "unavailable");
 });

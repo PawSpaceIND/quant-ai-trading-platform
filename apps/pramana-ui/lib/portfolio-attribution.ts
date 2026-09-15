@@ -14,7 +14,8 @@ function parseMetadata(raw: string | undefined): Metadata | null {
   if (!raw || raw.length > 1_000_000) return null;
   try {
     const value = JSON.parse(raw) as Partial<Metadata>;
-    if (value.schema !== "pramana.risk_metadata.v1" || typeof value.asOf !== "string" || !value.asOf || !value.symbols || typeof value.symbols !== "object") return null;
+    if (value.schema !== "pramana.risk_metadata.v1" || typeof value.asOf !== "string" || !value.asOf || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value.asOf) || !Number.isFinite(Date.parse(value.asOf)) || !value.symbols || typeof value.symbols !== "object" || Object.keys(value).some((key) => !["schema", "asOf", "symbols"].includes(key))) return null;
+    if (Object.keys(value.symbols).length > 500) return null;
     const symbols: Metadata["symbols"] = {};
     for (const [symbol, item] of Object.entries(value.symbols)) {
       if (!item || typeof item !== "object" || typeof item.sector !== "string" || !item.sector.trim() || !item.factors || typeof item.factors !== "object") return null;

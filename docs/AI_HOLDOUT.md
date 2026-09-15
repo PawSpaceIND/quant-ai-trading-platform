@@ -25,6 +25,10 @@ bounded inline override) and is wired into Compose through the read-only
 design: operators must replace it with a reviewed, timestamped source before
 any sector/factor result can qualify as evidence.
 
+The reader requires an ISO-8601 timestamp with an explicit offset, rejects
+unknown fields, caps the source at 500 symbols/1 MB, and withholds the whole
+result when any held symbol is unmapped or has invalid market value.
+
 The evaluator deliberately does not model intrabar queue priority, latency,
 market impact, corporate actions or provider authenticity. Those are separate
 qualification requirements in the pilot closure register.
