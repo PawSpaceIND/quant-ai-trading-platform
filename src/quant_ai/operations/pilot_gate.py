@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -43,14 +43,15 @@ EXTERNAL_GATES = (
 )
 
 
-def _aware_timestamp(value: object) -> bool:
+def _aware_timestamp(value: object, *, now: datetime) -> bool:
     if not isinstance(value, str):
         return False
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+    return (parsed.tzinfo is not None and parsed.utcoffset() is not None
+            and parsed <= now + timedelta(seconds=5))
 
 
 def evidence_bundle_digest(paths: list[str], root: Path) -> str:
@@ -74,8 +75,11 @@ def evidence_bundle_digest(paths: list[str], root: Path) -> str:
     return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
 
-def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path | None = None) -> tuple[GateResult, ...]:
+def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path | None = None, now: datetime | None = None) -> tuple[GateResult, ...]:
     """Assess a signed-off evidence document without granting any execution permission."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Evidence clock must be timezone-aware")
     revision = document.get("revision")
     host = document.get("targetHost")
     gates = document.get("gates")
@@ -85,7 +89,7 @@ def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path
         if not isinstance(item, Mapping):
             results.append(GateResult(gate, False, "missing gate evidence"))
             continue
-        missing = [name for name in gate.required_evidence if item.get(name) not in (True, "passed")]
+        missing = [name for name in gate.required_evidence if not (item.get(name) is True or item.get(name) == "passed")]
         attachments = item.get("evidence")
         if not isinstance(attachments, list) or not attachments or not all(isinstance(path, str) and path for path in attachments):
             missing.append("evidence_attachments")
@@ -102,7 +106,7 @@ def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path
                 missing.append("evidence_unreadable_or_unsafe")
         if not isinstance(item.get("reviewer"), str) or not item["reviewer"].strip():
             missing.append("reviewer")
-        if not _aware_timestamp(item.get("observedAt")):
+        if not _aware_timestamp(item.get("observedAt"), now=now):
             missing.append("observedAt")
         if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
             missing.append("revision")
@@ -113,8 +117,8 @@ def assess_external_gates(document: Mapping[str, object], *, evidence_root: Path
     return tuple(results)
 
 
-def external_gate_report(document: Mapping[str, object], *, evidence_root: Path | None = None) -> dict[str, object]:
-    results = assess_external_gates(document, evidence_root=evidence_root)
+def external_gate_report(document: Mapping[str, object], *, evidence_root: Path | None = None, now: datetime | None = None) -> dict[str, object]:
+    results = assess_external_gates(document, evidence_root=evidence_root, now=now)
     source_gates = document.get("gates")
     return {
         "schema": "pramana.external_gate_report.v2",
