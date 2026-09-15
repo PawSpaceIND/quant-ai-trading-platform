@@ -400,7 +400,12 @@ class AutonomousTradingDaemon:
                 traces = self.scheduler.pipeline.runtime.xai_logger.traces()
                 if traces:
                     agent_ids = tuple(row["agent_id"] for row in traces[-1].input_matrix)
-                    self.scheduler.pipeline.runtime.attribution.record(agent_ids, realized_delta)
+                    # Intra-session scoring only. At the next boot the journal replaces
+                    # this with the more accurate version: the agents that argued for the
+                    # entry, in the regime that entry was made in.
+                    self.scheduler.pipeline.runtime.attribution.record(
+                        agent_ids, realized_delta, getattr(traces[-1], "regime", None)
+                    )
             for item in self._briefs_to_dispatch(briefs):
                 self.notifications.dispatch_brief(
                     item,

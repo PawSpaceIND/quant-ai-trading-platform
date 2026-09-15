@@ -23,6 +23,14 @@ from quant_ai.risk.warden import RiskWarden, WardenDecision
 LOGGER = logging.getLogger(__name__)
 
 
+def _regime_of(context: EvidenceContext | None) -> str | None:
+    """The regime label the supplied evidence carried, when it carried one."""
+    if context is None:
+        return None
+    label = dict(context.regime).get("label")
+    return label if isinstance(label, str) and label else None
+
+
 @dataclass(frozen=True)
 class SwarmExecutionResult:
     proposal: TradeProposal
@@ -111,7 +119,7 @@ class SwarmPaperTradingService:
         tenant_id: str = "default",
         evidence_context: EvidenceContext | None = None,
     ) -> SwarmExecutionResult:
-        weighted = self.attribution.weight_evidence(evidence)
+        weighted = self.attribution.weight_evidence(evidence, _regime_of(evidence_context))
         if preflight_veto_reason is not None:
             proposal = self.cio.propose(
                 request, weighted, quantity=quantity, reference_price=reference_price,
