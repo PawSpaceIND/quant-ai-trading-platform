@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from quant_ai.agents.contracts import (
+    DEFAULT_MAX_TIMEFRAME_BARS,
     MAX_EVIDENCE_BARS,
     MAX_EVIDENCE_HEADLINES,
     MAX_HEADLINE_CHARS,
+    MAX_TIMEFRAME_BARS,
     AgentEvidence,
     EvidenceBar,
     EvidenceContext,
@@ -39,13 +42,36 @@ from quant_ai.intelligence.providers import (
     NewsSentimentProvider,
     NewsSignal,
 )
-from quant_ai.intelligence.regime import MarketRegimeDetector, RegimeAssessment
+from quant_ai.intelligence.regime import (
+    MarketRegimeDetector,
+    RegimeAssessment,
+    RegimeSummary,
+    classify,
+    primary_regime,
+)
 from quant_ai.marketdata.feed import MarketDataFeed
 from quant_ai.marketdata.models import Candle
 from quant_ai.marketdata.ticker_stream import LiveTick
+from quant_ai.marketdata.timeframes import DailyHistoryProvider, aggregate, venue_for
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.portfolio.sizing import PositionSizer
+
+LOGGER = logging.getLogger("quant_ai.pipeline")
+
+# Higher-timeframe context. The 15-minute bars come from a wider 1-minute window than the
+# 60-minute one the specialists, the analytics and the plan score, so adding them moves no
+# sizing input; 30 hours reaches the previous session on a weekday for both venues, and the
+# live tick feed answers it from the bars it already holds in memory.
+INTRADAY_TIMEFRAME = "15m"
+INTRADAY_TIMEFRAME_MINUTES = 15
+DAILY_TIMEFRAME = "1d"
+INTRADAY_HISTORY_WINDOW = timedelta(hours=30)
+# A provider or feed fault must never break the cadence: context is evidence, not a gate.
+_CONTEXT_FAILURES = (
+    TimeoutError, OSError, RuntimeError, ValueError, TypeError, LookupError, AttributeError,
+    ArithmeticError,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +92,65 @@ class MarketAnalysisResult:
     execution: SwarmExecutionResult
     regime: RegimeAssessment
     analytics: PerformanceMetrics
+    # The deterministic regime label the decision was made in; see ``MarketContext``.
+    regime_summary: RegimeSummary | None = None
+
+
+@dataclass(frozen=True)
+class MarketContext:
+    """Closed higher-timeframe bars and regime summaries for one cadence tick.
+
+    ``primary`` is the daily summary when the history provider returned enough closed
+    sessions, else the 15-minute summary, else ``insufficient_history``; both summaries
+    stay available as evidence.
+    """
+
+    intraday_bars: tuple[Candle, ...]
+    daily_bars: tuple[Candle, ...]
+    intraday: RegimeSummary
+    daily: RegimeSummary
+    primary: RegimeSummary
+
+    def metrics(self) -> dict[str, Decimal | str]:
+        """The regime facts the deterministic specialists receive with the other metrics."""
+        return {
+            "regime_label": self.primary.label,
+            "regime_trend_strength": self.primary.trend_strength,
+            "regime_volatility_ratio": self.primary.volatility_ratio,
+        }
+
+    def regime_evidence(self) -> tuple[tuple[str, Decimal | str], ...]:
+        """``label`` and ``timeframe`` first (the provenance reads them), then the metrics."""
+        pairs: list[tuple[str, Decimal | str]] = [
+            ("label", self.primary.label),
+            ("timeframe", self.primary.timeframe),
+            *self.primary.as_evidence(),
+        ]
+        for summary in (self.daily, self.intraday):
+            pairs.append((f"{summary.timeframe}_label", summary.label))
+            pairs.append((f"{summary.timeframe}_bars", Decimal(summary.bars_used)))
+        return tuple(pairs)
+
+    def timeframe_evidence(self) -> tuple[tuple[str, tuple[EvidenceBar, ...]], ...]:
+        """The newest closed bars per timeframe, bounded by the contract, oldest first."""
+        series = ((INTRADAY_TIMEFRAME, self.intraday_bars), (DAILY_TIMEFRAME, self.daily_bars))
+        return tuple(
+            (
+                name,
+                tuple(
+                    _evidence_bar(candle)
+                    for candle in bars[-MAX_TIMEFRAME_BARS.get(name, DEFAULT_MAX_TIMEFRAME_BARS):]
+                ),
+            )
+            for name, bars in series
+        )
+
+
+def _evidence_bar(candle: Candle) -> EvidenceBar:
+    return EvidenceBar(
+        candle.timestamp.isoformat(),
+        candle.open, candle.high, candle.low, candle.close, candle.volume,
+    )
 
 
 class SwarmMarketAnalysisPipeline:
@@ -82,10 +167,18 @@ class SwarmMarketAnalysisPipeline:
         tick_reader: CadenceMarketReader | None = None,
         sizer: PositionSizer | None = None,
         news_window: timedelta = timedelta(hours=6),
+        history: DailyHistoryProvider | None = None,
+        intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
     ) -> None:
         if news_window <= timedelta(0):
             raise ValueError("news_window must be positive")
+        if intraday_window <= timedelta(0):
+            raise ValueError("intraday_window must be positive")
         self.news_window = news_window
+        # Read-only closed daily bars for regime context. None means no daily context and
+        # no I/O; the regime then comes from the 15-minute bars, or abstains.
+        self.history = history
+        self.intraday_window = intraday_window
         self.market_feed = market_feed
         self.news = news
         self.fundamentals = fundamentals
@@ -203,13 +296,15 @@ class SwarmMarketAnalysisPipeline:
             curve.append(curve[-1] * (Decimal(1) + item))
         analytics = summarize_performance(returns, tuple(curve), returns)
         technical = self._technical_metrics(closes)
+        market = self._market_context(instrument, candles, now)
         equity_news = self._recent_sentiment(news, now)
         geopolitical_sentiment = self._recent_sentiment(geopolitical, now)
         macro_metrics = self._macro_metrics(macro)
 
-        common = dict(fundamentals.metrics)
+        common: dict[str, Decimal | str] = dict(fundamentals.metrics)
         common.update(technical)
         common.update(macro_metrics)
+        common.update(market.metrics())
         common["equity_news_sentiment"] = equity_news
         common["news_sentiment"] = geopolitical_sentiment
         common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
@@ -247,6 +342,9 @@ class SwarmMarketAnalysisPipeline:
         )
         effective_quantity = self._apply_conflict(requested_quantity, conflict)
         stop, take_profit = self._protective_levels(effective_plan, reference_price)
+        # The deterministic path builds no prompt, but the proof still records which
+        # regime the decision was made in.
+        evidence_context = EvidenceContext(regime=market.regime_evidence())
         execution = self.runtime.execute(
             root_request,
             evidence,
@@ -259,6 +357,7 @@ class SwarmMarketAnalysisPipeline:
             country=country,
             country_exposure=country_exposure,
             tenant_id=tenant_id,
+            evidence_context=evidence_context,
         )
         return MarketAnalysisResult(
             evidence,
@@ -269,6 +368,7 @@ class SwarmMarketAnalysisPipeline:
             execution,
             regime,
             analytics,
+            market.primary,
         )
 
     async def run_async(
@@ -324,9 +424,11 @@ class SwarmMarketAnalysisPipeline:
             curve.append(curve[-1] * (Decimal(1) + item))
         analytics = summarize_performance(returns, tuple(curve), returns)
         technical = self._technical_metrics(closes)
-        common = dict(fundamentals.metrics)
+        market = self._market_context(instrument, candles, now)
+        common: dict[str, Decimal | str] = dict(fundamentals.metrics)
         common.update(technical)
         common.update(self._macro_metrics(macro))
+        common.update(market.metrics())
         common["equity_news_sentiment"] = self._recent_sentiment(news, now)
         geo_sentiment = self._recent_sentiment(geopolitical, now)
         common["news_sentiment"] = geo_sentiment
@@ -375,7 +477,8 @@ class SwarmMarketAnalysisPipeline:
         # The same evidence the specialists scored, summarized and bounded, so the LLM
         # consensus can reason about it instead of only re-weighting five numbers.
         evidence_context = self._evidence_context(
-            candles, technical, news + geopolitical, macro, fundamentals, states
+            candles, technical, news + geopolitical, macro, fundamentals, states,
+            timeframes=market.timeframe_evidence(), regime=market.regime_evidence(),
         )
         execution = await self.runtime.execute_async(
             root_request,
@@ -402,7 +505,59 @@ class SwarmMarketAnalysisPipeline:
             execution,
             regime,
             analytics,
+            market.primary,
         )
+
+    def _market_context(
+        self, instrument: Instrument, candles: tuple[Candle, ...], now: datetime
+    ) -> MarketContext:
+        """Closed 15-minute and daily bars with their regime summaries; never raises."""
+        history = self._intraday_history(instrument, candles, now)
+        intraday_bars = aggregate(
+            history, INTRADAY_TIMEFRAME_MINUTES, venue=venue_for(instrument.market), now=now
+        )
+        daily_bars = self._daily_history(instrument, now)
+        intraday = classify(intraday_bars, timeframe=INTRADAY_TIMEFRAME)
+        daily = classify(daily_bars, timeframe=DAILY_TIMEFRAME)
+        return MarketContext(
+            intraday_bars, daily_bars, intraday, daily, primary_regime(daily, intraday)
+        )
+
+    def _intraday_history(
+        self, instrument: Instrument, candles: tuple[Candle, ...], now: datetime
+    ) -> tuple[Candle, ...]:
+        """The wider 1-minute window behind the 15-minute bars.
+
+        The 60-minute fetch that feeds the specialists, the analytics and the plan is left
+        untouched, so no sizing input moves. A feed that cannot serve the wider window
+        leaves the 60-minute candles as the only intraday context.
+        """
+        if self.intraday_window <= timedelta(minutes=60):
+            return candles
+        try:
+            wider = self.market_feed.fetch_ohlcv(
+                instrument, now - self.intraday_window, now, "1m"
+            )
+        except _CONTEXT_FAILURES as exc:
+            LOGGER.warning(
+                "intraday history unavailable: symbol=%s reason=%s",
+                instrument.symbol, f"{type(exc).__name__}: {exc}",
+            )
+            return candles
+        return wider or candles
+
+    def _daily_history(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
+        """Closed daily bars from the history provider; a failing provider abstains."""
+        if self.history is None:
+            return ()
+        try:
+            return self.history.fetch(instrument, now)
+        except _CONTEXT_FAILURES as exc:
+            LOGGER.warning(
+                "daily history unavailable: symbol=%s reason=%s",
+                instrument.symbol, f"{type(exc).__name__}: {exc}",
+            )
+            return ()
 
     def _market_tick_status(
         self, symbol: str, now: datetime
@@ -440,19 +595,16 @@ class SwarmMarketAnalysisPipeline:
         *,
         max_bars: int = MAX_EVIDENCE_BARS,
         max_headlines: int = MAX_EVIDENCE_HEADLINES,
+        timeframes: tuple[tuple[str, tuple[EvidenceBar, ...]], ...] = (),
+        regime: tuple[tuple[str, Decimal | str], ...] = (),
     ) -> EvidenceContext:
         """Pre-render the newest bars and headlines plus the metric maps for the prompt.
 
         Headline text is third-party data: it is collapsed to one line and cut to
         ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize.
+        ``timeframes`` and ``regime`` arrive already bounded from ``MarketContext``.
         """
-        bars = tuple(
-            EvidenceBar(
-                candle.timestamp.isoformat(),
-                candle.open, candle.high, candle.low, candle.close, candle.volume,
-            )
-            for candle in candles[-max_bars:]
-        )
+        bars = tuple(_evidence_bar(candle) for candle in candles[-max_bars:])
         newest = sorted(headlines, key=lambda item: item.published_at)[-max_headlines:]
         rendered_headlines = tuple(
             EvidenceHeadline(
@@ -484,6 +636,8 @@ class SwarmMarketAnalysisPipeline:
                 ("macro", freshness(states.macro)),
                 ("fundamentals", freshness(states.fundamentals)),
             ),
+            timeframes=timeframes,
+            regime=regime,
         )
 
     @staticmethod

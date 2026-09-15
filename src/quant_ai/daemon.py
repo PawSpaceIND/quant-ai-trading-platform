@@ -59,6 +59,7 @@ from quant_ai.marketdata.ticker_stream import (
     ZerodhaKiteTicker,
     _contract_symbol,
 )
+from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.warden import RiskWarden
@@ -306,6 +307,7 @@ def build_ghost_runner(
     directives: FounderDirectives | None = None,
     pilot_mode: bool = False,
     decision_quality_report: str | Path | None = None,
+    history_provider: DailyHistoryProvider | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -332,6 +334,7 @@ def build_ghost_runner(
         macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
         tick_reader=CadenceMarketReader(buffer),
+        history=history_provider,
     )
     scheduler = AutonomousCadenceScheduler(
         pipeline,
@@ -507,6 +510,18 @@ def _env_intelligence_providers() -> tuple[
     )
 
 
+def _env_daily_history_provider() -> DailyHistoryProvider | None:
+    """Closed daily bars for regime context; ``none`` leaves the regime to intraday bars."""
+    source = os.getenv("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower()
+    if source in {"", "yahoo"}:
+        # Own client so a Yahoo rate-limit opens this circuit only. Construction performs
+        # no I/O; the first cadence tick fetches, at most once per instrument per UTC day.
+        return DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
+    if source == "none":
+        return None
+    raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
+
+
 def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     payload = _env_json("PRAMANA_HOLIDAYS_JSON", {})
     return holidays_from_json(payload, default_holidays())
@@ -548,6 +563,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,
+        history_provider=_env_daily_history_provider(),
         holidays=_env_holidays(),
         notifications=_env_notifications(),
         halt_file=paths.halt_file(),
