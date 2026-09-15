@@ -9,9 +9,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from quant_ai.agents.atlas import AtlasInvestmentAgent
-from quant_ai.agents.swarm import AtlasCIOAgent, TradeProposal
-from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.agents.swarm import TradeProposal
+from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.metrics import (
     MINIMUM_RATIO_OBSERVATIONS,
     MINIMUM_SIGNIFICANCE_OBSERVATIONS,
@@ -38,6 +37,7 @@ from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.execution.session import intraday_periods_per_year
 from quant_ai.governance.directives import FounderDirectives
+from quant_ai.governance.event_calendar import event_calendar_from_env
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
@@ -48,9 +48,6 @@ from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
 from quant_ai.operations.evidence_log import append_record
 from quant_ai.operations.zerodha_login import run_login
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
-from quant_ai.risk.book_history import sector_map_from_env
-from quant_ai.risk.policy import BookRiskFirewall
-from quant_ai.risk.warden import RiskWarden
 from quant_ai.validation.trial_register import record_trials, register_summary
 
 
@@ -62,19 +59,10 @@ def build_runtime() -> AutonomousTradingDaemon:
     broker = PaperBrokerService(str(database), starting_capital=directives.starting_capital)
     feed = UsaSandboxMarketDataFeed()
     xai_dir = str(paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR"))
-    runtime = SwarmPaperTradingService(
-        cio=AtlasCIOAgent(AtlasInvestmentAgent(founder_instructions=directives.instructions)),
-        warden=RiskWarden(
-            blocked_asset_classes=directives.blocked_asset_classes(),
-            # Sandbox runtime: no return history source, so only the operator's
-            # group limit arms here. Correlation/expected-shortfall stay unarmed.
-            book_risk=BookRiskFirewall(
-                sector_map=directives.sector_map or sector_map_from_env()
-            ),
-        ),
-        broker=broker,
-        xai_logger=XAITraceLogger(xai_dir),
-        max_open_positions=directives.max_open_positions,
+    # Sandbox runtime: no return history source, so only the operator's group limit
+    # arms here. Correlation/expected-shortfall stay unarmed.
+    runtime = build_traded_runtime(
+        broker=broker, directives=directives, xai_logger=XAITraceLogger(xai_dir)
     )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
@@ -278,6 +266,10 @@ def _backtest(args: argparse.Namespace) -> None:
         country="India" if market == Market.INDIA else "USA",
         tenant_id=tenant,
         xai_logger=XAITraceLogger(proof_dir),
+        # The founder's own scope and blackout calendar, so the backtested engine is the
+        # deployed engine rather than a more permissive relative of it.
+        directives=FounderDirectives.from_env() or FounderDirectives(),
+        event_calendar=event_calendar_from_env(),
     ).run(dataset)
     trials = register_summary(register)
     tearsheet_json = build_tearsheet(

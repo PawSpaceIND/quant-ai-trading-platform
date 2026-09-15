@@ -140,6 +140,10 @@ The priority is a complete and measurable path from valid data to an auditable d
 
 Historical replay now supports complete lower-timeframe OHLC windows, chronological stop/target triggers, conservative ambiguous-bar resolution, worse-price stop gaps and explicit execution assumptions in the tearsheet. [Implementation and limits](INTRABAR_REPLAY.md). This is a partial advance on the documented TradingView Bar Magnifier comparison; realistic partial fills, queue/latency behavior and real-data qualification remain unclosed. The separate deterministic SMA experiment is unchanged.
 
+## Implementation delta — backtest configuration fidelity
+
+The historical replay previously built its runtime from permissive defaults while the ghost daemon passed the founder's position cap, blocked asset classes, book risk firewall and instructions, so every tearsheet described a looser engine than the one that runs. Both paths now assemble through one builder, a test fails when the two configurations diverge, and each result names the decision-maker that produced it together with the differences a replay cannot reproduce. [Contract and limits](BACKTEST_FIDELITY.md). This does not establish out-of-sample AI performance: the replayed decision-maker is the deterministic stand-in, and QuantConnect-style live/backtest reconciliation remains open.
+
 ## Implementation delta — portfolio what-if and concentration
 
 The workspace now provides distinct shocks by holding, per-holding scenario P&L and aggregate equity impact, cash-inclusive exposure weights, largest-position concentration, effective holding count, and recorded-stop downside diagnostics. The scenario passes its actual per-holding settings into the Atlas prompt. Missing stops, breached thresholds and stale marks are visible. These cash-equity/ETF diagnostics partially advance the IBKR/Bloomberg what-if and portfolio-risk comparison. They are not correlation diversification, factor/sector risk, Greeks, broker-native protection or Bloomberg-style attribution. Those requirements remain open.
