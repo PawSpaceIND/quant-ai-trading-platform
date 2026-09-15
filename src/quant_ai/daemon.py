@@ -21,6 +21,8 @@ from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
+from quant_ai.execution.friction import BrokerageSchedule, MarketFrictionModel
+from quant_ai.execution.live_friction import LiveFrictionContextProvider
 from quant_ai.execution.notifications import (
     ConsoleNotificationAdapter,
     TelegramNotificationAdapter,
@@ -321,7 +323,13 @@ def build_ghost_runner(
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
     directives = directives or FounderDirectives()
-    broker = PaperBrokerService(database, starting_capital=directives.starting_capital)
+    broker = PaperBrokerService(
+        database,
+        starting_capital=directives.starting_capital,
+        # Broker charges are part of the cost of a fill, and the environment may override
+        # the published schedule for the account actually being shadowed.
+        friction_model=MarketFrictionModel(brokerage_schedule=BrokerageSchedule.from_env()),
+    )
     buffer = TickBuffer()
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
@@ -364,6 +372,14 @@ def build_ghost_runner(
     plan = CapitalGoalEngine().recommend(directives.capital_plan_request())
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    # Price live fills from the market that was actually observed: ATR and volume from the
+    # closed tick bars, the half spread from the tick's own bid/ask. The clock is read
+    # through the buffer because the daemon rebinds it below.
+    broker.set_friction_context_provider(
+        LiveFrictionContextProvider(
+            feed, buffer, instruments, clock=lambda: buffer.clock()
+        )
+    )
     if pilot_mode:
         broker.configure_pilot(instruments, tenant_id)
     mapped = set(zerodha_symbol_by_token.values())

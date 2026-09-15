@@ -119,9 +119,11 @@ def test_actual_harness_and_telemetry_reconcile_known_sizes_fees_and_divergence(
         assert [f["quantity"] for f in fills] == ([8, 8] if mode == "paper" else [10, 10])
         cash = Decimal(100000)
         for f in fills:
-            cash += (1 if f["side"] == "SELL" else -1) * f["quantity"] * Decimal(
-                f["price"]
-            ) - Decimal(f["cashFees"])
+            # Fees and notional are applied as two cash movements, exactly as a ledger
+            # applies them: one Decimal expression would re-associate the sum and round
+            # the last place of a 28-digit total differently from the book it audits.
+            cash -= Decimal(f["cashFees"])
+            cash += (1 if f["side"] == "SELL" else -1) * f["quantity"] * Decimal(f["price"])
         values[mode] = cash
         assert Decimal(report["curve"][-1][mode]["equity"]) == cash
     assert (
