@@ -7,9 +7,11 @@ which no single component owns.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from quant_ai.agents.atlas import EVIDENCE_BLOCK_END, EVIDENCE_BLOCK_START, LESSONS_HEADING
 from quant_ai.agents.contracts import MAX_LESSON_CHARS, MAX_LESSONS, EvidenceContext
@@ -143,3 +145,56 @@ def test_the_journal_records_the_regime_vocabulary_the_proof_uses(tmp_path):
     traces = daemon.scheduler.pipeline.runtime.xai_logger.traces()
     proof_labels = {trace.regime for trace in traces if getattr(trace, "regime", None)}
     assert recorded <= proof_labels
+
+
+def test_the_report_publishes_the_ai_budget_headroom(tmp_path, monkeypatch):
+    """An exhausted budget stops the AI deciding; the page must be able to say so."""
+
+    from test_pilot_closure import publish_tick, runner_for
+
+    from quant_ai.llm.budget import SqliteAIBudget
+
+    runner = runner_for(tmp_path)
+    daemon = runner.daemon
+    daemon.clock = lambda: NOW
+    publish_tick(runner, "100", NOW)
+
+    # No budget configured: the section is absent rather than invented.
+    assert daemon._ai_budget_status() is None
+
+    budget = SqliteAIBudget(tmp_path / "ai-budget.sqlite", daily_call_limit=2, daily_token_limit=100)
+    daemon.scheduler.pipeline.runtime.cio.atlas.llm_client = SimpleNamespace(budget=budget)
+
+    status = daemon._ai_budget_status()
+    assert status is not None
+    assert status["daily_call_limit"] == 2
+    assert status["exhausted"] is False
+
+    budget.reserve("consensus")
+    budget.reserve("consensus")
+    assert daemon._ai_budget_status()["exhausted"] is True
+
+    report_path = tmp_path / "decision-quality.json"
+    daemon.decision_quality_report_path = report_path
+    daemon._write_decision_quality(NOW)
+    published = json.loads(report_path.read_text(encoding="utf-8"))
+    assert published["ai_budget"]["exhausted"] is True
+    budget.close()
+
+
+def test_a_broken_budget_reader_costs_no_tick(tmp_path):
+    from test_pilot_closure import publish_tick, runner_for
+
+    runner = runner_for(tmp_path)
+    daemon = runner.daemon
+    daemon.clock = lambda: NOW
+    publish_tick(runner, "100", NOW)
+
+    class Exploding:
+        @property
+        def budget(self):
+            raise RuntimeError("budget store unreadable")
+
+    daemon.scheduler.pipeline.runtime.cio.atlas.llm_client = Exploding()
+
+    assert daemon._ai_budget_status() is None

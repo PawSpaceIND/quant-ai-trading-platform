@@ -71,7 +71,33 @@ def collect():
             "riskHistory": risk_history_input(rows, now, calendar=calendar),
             "commodity": "MCX enabled; contract feed not configured" if "MCX" in profile.get("exchanges", []) else "MCX access not reported by this account",
             "note": "Last available quotes; poll time is not trade time. Gold/silver ETFs follow NSE hours.",
-            "providers": {"Claude": "Availability is checked per copilot request", "Technical": "Real daily candle history", "News": "Economic Times RSS; rule-based sentiment" if news else "RSS unavailable; no fabricated opinions", "Macro": "Unavailable; FRED not configured", "Fundamentals": "Unavailable; licensed source needed", "US equities": "No IBKR connection"}}
+            "providers": provider_status(bool(news))}
+
+
+def provider_status(news_available):
+    """What the engine is actually configured to use, read from the environment.
+
+    These strings were hardcoded and went stale the moment a provider was added: the page
+    claimed fundamentals were unavailable while the engine was scoring real ratios. They
+    report configuration, not health; freshness belongs to the heartbeat and the proofs.
+    """
+    fundamentals = os.environ.get("PRAMANA_FUNDAMENTALS_PROVIDER", "yahoo").strip().lower() or "yahoo"
+    history = os.environ.get("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower() or "yahoo"
+    ibkr = os.environ.get("PRAMANA_IBKR_ENABLED", "false").strip().lower() in {"true", "1", "yes", "on"}
+    return {
+        "Claude": "Availability is checked per copilot request",
+        "Technical": "Real daily candle history",
+        "News": "Economic Times RSS; rule-based sentiment" if news_available
+                else "RSS unavailable; no fabricated opinions",
+        "Macro": "FRED configured (FRED_API_KEY present)" if os.environ.get("FRED_API_KEY", "").strip()
+                 else "Unavailable; FRED_API_KEY not configured",
+        "Fundamentals": "Yahoo quoteSummary; agents abstain unless all four ratios return"
+                        if fundamentals == "yahoo"
+                        else f"Disabled (PRAMANA_FUNDAMENTALS_PROVIDER={fundamentals}); valuation agents abstain",
+        "Regime history": "Yahoo daily bars" if history == "yahoo"
+                          else f"Disabled (PRAMANA_DAILY_HISTORY_PROVIDER={history}); intraday-only regime",
+        "US equities": "IBKR enabled" if ibkr else "No IBKR connection",
+    }
 
 
 if __name__ == "__main__":

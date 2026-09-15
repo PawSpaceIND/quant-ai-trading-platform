@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { CalibrationBin, DecisionQualityReport, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
 import { count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent } from "@/lib/decision-quality-model";
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; verdict: Verdict | null };
@@ -45,6 +45,7 @@ export function DecisionQuality() {
     </section>}
     {report && verdict && <>
       <VerdictBanner verdict={verdict} />
+      {report.ai_budget && <AiBudgetNotice budget={report.ai_budget} />}
       <div className="quality-meta">
         <span>Report generated {when(report.generated_at)}</span>
         <span>Window {day(report.window.since)} → {day(report.window.until)} · {count(report.window.sessions)} sessions</span>
@@ -90,6 +91,21 @@ export function DecisionQuality() {
       {report.limitations.length ? <ul className="quality-limitations">{report.limitations.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="muted">The report declares no limitations. Treat that as a gap in the report, not as proof of completeness.</p>}
     </section>}
   </>;
+}
+
+function AiBudgetNotice({ budget }: { budget: AiBudget }) {
+  // An exhausted budget is the difference between "the engine saw nothing worth trading"
+  // and "the engine stopped asking". Say which, on the page, before a founder reads a
+  // quiet day as a verdict on the strategy.
+  const tone = budget.exhausted ? "warning" : "muted";
+  return <div className={`banner quality-budget ${tone}`} role="status">
+    <strong>{budget.exhausted ? "AI budget exhausted today" : "AI budget"}</strong>
+    <p>
+      {budget.exhausted
+        ? `The daily consensus cap was reached on ${budget.day}, so consensus degrades to NEUTRAL and every tick ends in PRESERVE_CAPITAL until 00:00 UTC. Decisions after that point are not evidence about the strategy.`
+        : `${count(budget.calls)} of ${count(budget.daily_call_limit)} consensus calls and ${count(budget.tokens)} of ${count(budget.daily_token_limit)} tokens used on ${budget.day}.`}
+    </p>
+  </div>;
 }
 
 function VerdictBanner({ verdict }: { verdict: Verdict }) {

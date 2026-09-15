@@ -228,3 +228,39 @@ test("the API route returns report, post-mortems and verdict with no-store", asy
   assert.equal(empty.verdict, null);
   assert.equal(empty.postMortems.length, 2);
 });
+
+test("an absent or malformed ai_budget never blanks the report", () => {
+  const withoutBudget = fixture();
+  delete withoutBudget.ai_budget;
+  assert.equal(parseDecisionQuality(JSON.stringify(withoutBudget))?.ai_budget, null);
+
+  for (const broken of [null, "exhausted", 42, {}, { day: "2026-09-15" }, { ...budgetBlock(), calls: "12" }]) {
+    const report = fixture();
+    report.ai_budget = broken;
+    const parsed = parseDecisionQuality(JSON.stringify(report));
+    assert.ok(parsed, "a malformed budget must not reject the whole report");
+    assert.equal(parsed.ai_budget, null);
+  }
+});
+
+test("a well-formed ai_budget is parsed, including the exhausted flag", () => {
+  const report = fixture();
+  report.ai_budget = budgetBlock();
+  const parsed = parseDecisionQuality(JSON.stringify(report));
+  assert.ok(parsed?.ai_budget);
+  assert.equal(parsed.ai_budget.calls, 12);
+  assert.equal(parsed.ai_budget.daily_call_limit, 500);
+  assert.equal(parsed.ai_budget.exhausted, false);
+
+  report.ai_budget = { ...budgetBlock(), calls: 500, remaining_calls: 0, exhausted: true };
+  const spent = parseDecisionQuality(JSON.stringify(report));
+  assert.equal(spent?.ai_budget?.exhausted, true);
+});
+
+function budgetBlock() {
+  return {
+    day: "2026-09-15", scope: "consensus", calls: 12, tokens: 48000,
+    daily_call_limit: 500, daily_token_limit: 2000000,
+    remaining_calls: 488, remaining_tokens: 1952000, exhausted: false,
+  };
+}
