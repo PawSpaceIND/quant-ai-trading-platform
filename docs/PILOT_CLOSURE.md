@@ -38,11 +38,13 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P30 | Recorded paper versus retained historical replay | Unique run/source/configuration retention, explicit time grid, independently checked accounting, fill/curve differences, private UI/export/Atlas and recovery | Engineering verified on synthetic evidence; production/image evidence tracked per revision; same-strategy/OOS and real-source qualification remain open |
 | X01 | Real-feed session observation | Founder/provider feed during an open session; source freshness and sample coverage | External evidence needed |
 | X02 | Sustained operational burn-in | Successful token renewal, independent alert and recovery/restore drill in target deployment | External evidence needed |
-| X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed |
+| X03 | Strategy effectiveness | Holdout and forward-paper evidence; current 100 trades / 30 days minimum is not proof alone | External evidence needed; `pramana.ai_holdout.v1` now provides fail-closed AI holdout evidence plumbing |
 
 Completion is reported separately for engineering and external evidence. Unknown or absent evidence is never green. Real-money execution, broader assets/currencies, and a public multi-tenant product are separate releases.
 
 Detailed results and limitations: [verification record](PILOT_VERIFICATION.md). Deployment and research commands: [private pilot runbook](PRIVATE_PILOT_RUNBOOK.md).
+
+The AI-specific holdout evaluator is documented in [AI holdout evidence](AI_HOLDOUT.md). It validates frozen decision/provenance inputs and after-cost arithmetic, but it cannot establish forward performance or independent calibration without real reviewed evidence.
 
 ## Wider capability closure remains in scope
 
