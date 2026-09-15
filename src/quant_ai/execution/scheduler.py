@@ -25,6 +25,9 @@ class AutonomousCadenceScheduler:
         self.calendar = calendar or MarketCalendar()
         self.cadence = cadence
         self.last_run_at: datetime | None = None
+        # The full pipeline result behind the most recent brief (None off-hours), so the
+        # daemon can journal the decision without widening the brief contract.
+        self.last_result: MarketAnalysisResult | None = None
 
     def is_due(self, now: datetime) -> bool:
         return self.last_run_at is None or now - self.last_run_at >= self.cadence
@@ -43,6 +46,7 @@ class AutonomousCadenceScheduler:
     ) -> FounderExecutionBrief:
         state = self.calendar.state(instrument.market, now)
         self.last_run_at = now
+        self.last_result = None
         if state != MarketState.REGULAR_HOURS:
             return self._off_hours_brief(instrument, now, state)
         result = self.pipeline.run(
@@ -55,6 +59,7 @@ class AutonomousCadenceScheduler:
             tenant_id=tenant_id,
             country_exposure=country_exposure,
         )
+        self.last_result = result
         return self._market_brief(instrument, now, state, result)
 
     async def run_tick_async(
@@ -71,12 +76,14 @@ class AutonomousCadenceScheduler:
     ) -> FounderExecutionBrief:
         state = self.calendar.state(instrument.market, now)
         self.last_run_at = now
+        self.last_result = None
         if state != MarketState.REGULAR_HOURS:
             return self._off_hours_brief(instrument, now, state)
         result = await self.pipeline.run_async(
             instrument, now, plan, portfolio, quantity=quantity, country=country,
             tenant_id=tenant_id, country_exposure=country_exposure,
         )
+        self.last_result = result
         return self._market_brief(instrument, now, state, result)
 
     def _off_hours_brief(
@@ -140,7 +147,7 @@ class AutonomousCadenceScheduler:
             result.execution.risk_decision.reason,
             orders,
             provider_status,
-            result.regime.regime.value,
+            _regime_line(result),
             "PASS" if stress.passed else "STRESS_VETO",
             result.analytics.sharpe,
             result.analytics.sortino,
@@ -149,3 +156,21 @@ class AutonomousCadenceScheduler:
                 f"risk={result.execution.risk_decision.approved}:{result.execution.risk_decision.reason}",
             ),
         )
+
+
+def _regime_line(result: MarketAnalysisResult) -> str:
+    """Both regime readings for the operator digest, each named.
+
+    ``result.regime`` is the exposure-scaling detector; ``regime_summary`` is the
+    multi-timeframe label the decision was made under, which is what the journal, the
+    dashboard breakdown and the proof all record. Showing one without saying which it is
+    made the three surfaces look like they disagreed, so the digest names both.
+    """
+    sizing = result.regime.regime.value
+    summary = getattr(result, "regime_summary", None)
+    label = getattr(summary, "label", None)
+    if not label or label == sizing:
+        return sizing
+    timeframe = getattr(summary, "timeframe", None)
+    suffix = f"@{timeframe}" if timeframe else ""
+    return f"{label}{suffix} (exposure:{sizing})"

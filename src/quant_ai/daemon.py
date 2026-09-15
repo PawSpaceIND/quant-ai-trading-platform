@@ -15,6 +15,7 @@ from typing import Any
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
@@ -59,6 +60,7 @@ from quant_ai.marketdata.ticker_stream import (
     ZerodhaKiteTicker,
     _contract_symbol,
 )
+from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.warden import RiskWarden
@@ -305,6 +307,9 @@ def build_ghost_runner(
     halt_file: str | Path | None = None,
     directives: FounderDirectives | None = None,
     pilot_mode: bool = False,
+    decision_quality_report: str | Path | None = None,
+    history_provider: DailyHistoryProvider | None = None,
+    post_mortem_directory: str | Path | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -331,6 +336,8 @@ def build_ghost_runner(
         macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
         tick_reader=CadenceMarketReader(buffer),
+        history=history_provider,
+        lessons_provider=_lessons_provider(database, post_mortem_directory),
     )
     scheduler = AutonomousCadenceScheduler(
         pipeline,
@@ -364,6 +371,7 @@ def build_ghost_runner(
         halt_file=halt_file,
         instruments=instruments,
     )
+    daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
     feed.clock = lambda: daemon.clock()
     if pilot_mode:
@@ -395,6 +403,15 @@ def build_ghost_runner(
 def _assert_ghost_mode() -> None:
     if os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "true":
         raise RuntimeError("ghost daemon refuses to start when TRADING_LIVE_MONEY_ACTIVE=true")
+
+
+def _decision_quality_path(database: str | Path, configured: str | Path | None) -> Path | None:
+    """Report file next to the ledger unless configured; none for an in-memory ledger."""
+    if configured is not None:
+        return Path(configured)
+    if str(database) == ":memory:":
+        return None
+    return Path(database).parent / paths.DEFAULT_DECISION_QUALITY_NAME
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -496,6 +513,36 @@ def _env_intelligence_providers() -> tuple[
     )
 
 
+def _lessons_provider(
+    database: str | Path, directory: str | Path | None
+) -> Callable[[], tuple[str, ...]] | None:
+    """Read operator-approved post-mortem lessons for the consensus evidence block.
+
+    Only post-mortems an operator explicitly approved are read, and only the newest few.
+    The engine never writes its own lessons back into its own prompt: a session review has
+    to pass through a human before it can influence another decision. The lessons still
+    reach the model as data inside the untrusted-evidence block, never as instructions.
+    """
+    resolved = Path(directory) if directory is not None else Path(database).parent / "post-mortems"
+
+    def read() -> tuple[str, ...]:
+        return approved_lessons(resolved, datetime.now(timezone.utc))
+
+    return read
+
+
+def _env_daily_history_provider() -> DailyHistoryProvider | None:
+    """Closed daily bars for regime context; ``none`` leaves the regime to intraday bars."""
+    source = os.getenv("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower()
+    if source in {"", "yahoo"}:
+        # Own client so a Yahoo rate-limit opens this circuit only. Construction performs
+        # no I/O; the first cadence tick fetches, at most once per instrument per UTC day.
+        return DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
+    if source == "none":
+        return None
+    raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
+
+
 def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     payload = _env_json("PRAMANA_HOLIDAYS_JSON", {})
     return holidays_from_json(payload, default_holidays())
@@ -537,6 +584,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,
+        history_provider=_env_daily_history_provider(),
         holidays=_env_holidays(),
         notifications=_env_notifications(),
         halt_file=paths.halt_file(),
@@ -550,6 +598,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         ib_port=int(os.getenv("PRAMANA_IB_PORT", "7497")),
         ib_client_id=int(os.getenv("PRAMANA_IB_CLIENT_ID", "17")),
         database=str(paths.ledger_path("PRAMANA_PAPER_DB")),
+        decision_quality_report=paths.decision_quality_report("PRAMANA_PAPER_DB"),
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),

@@ -26,6 +26,7 @@ import {BrokerObservation} from "./broker-observation";
 import {RunComparison} from "./run-comparison";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
+import {DecisionQuality} from "./decision-quality";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -34,6 +35,7 @@ const sections = [
   { id: "portfolio", name: "Portfolio", icon: "▥" },
   { id: "risk", name: "Risk lab", icon: "◇" },
   { id: "research", name: "Research", icon: "◴" },
+  { id: "quality", name: "Decision quality", icon: "◔" },
   { id: "activity", name: "Activity", icon: "≡" },
 ];
 const money = (v: number | undefined) =>
@@ -324,9 +326,11 @@ export function PilotWorkspace() {
                       ? "Explore hypothetical shocks before making a decision."
                       : view === "research"
                         ? "Measure what works. Keep unverified claims out of your launch."
-                        : view === "activity"
-                          ? "Trace paper fills back to the decisions and controls behind them."
-                          : "Position-level valuations with visible sources and freshness."}
+                        : view === "quality"
+                          ? "Judge the paper AI by calibration and outcomes, not by eye."
+                          : view === "activity"
+                            ? "Trace paper fills back to the decisions and controls behind them."
+                            : "Position-level valuations with visible sources and freshness."}
               </p>
             </div>
             <div className="connection">
@@ -623,6 +627,7 @@ export function PilotWorkspace() {
                     <ProviderPanel data={data} />
                   </>
                 )}
+                {view === "quality" && <DecisionQuality />}
                 {view === "activity" && (
                   <>
                     {!hosted && <ExternalAccountPanel state={data.externalAccount} onAsk={ask} />}

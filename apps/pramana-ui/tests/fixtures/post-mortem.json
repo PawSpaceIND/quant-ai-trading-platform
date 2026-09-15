@@ -1,0 +1,25 @@
+{
+  "schema": "pramana.post_mortem.v1",
+  "tenant_id": "ghost",
+  "session_date": "2026-09-12",
+  "generated_at": "2026-09-12T10:35:00Z",
+  "status": "approved",
+  "approved_at": "2026-09-12T16:02:00Z",
+  "summary": {
+    "decisions": 6,
+    "filled": 3,
+    "net_pnl": -142.5,
+    "regime": "RANGE_BOUND",
+    "reviewed": true,
+    "notes": null,
+    "nested": {"ignored": "objects are not scalar summary entries"}
+  },
+  "lessons": [
+    "Two of three fills were exited by session close rather than a stop or target; the holding-time assumption is too long for a range-bound morning.",
+    "Quote-staleness rejections clustered between 09:15 and 09:30 IST."
+  ],
+  "evidence": {
+    "decision_ids": ["d-0101", "d-0102", "d-0103", "d-0104", "d-0105", "d-0106"],
+    "order_ids": ["o-0090", "o-0091", "o-0092"]
+  }
+}

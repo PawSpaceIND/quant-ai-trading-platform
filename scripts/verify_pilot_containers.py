@@ -91,6 +91,9 @@ def main():
         assert services["pramana-ghost"]["environment"]["PRAMANA_AI_BUDGET_DB"] == "/data/ai-budget.sqlite"
         assert services["pramana-ghost"]["environment"]["PRAMANA_FUNDAMENTALS_PROVIDER"] == "yahoo"
         assert services["dashboard"]["environment"]["PRAMANA_CHAT_DAILY_LIMIT"] == "200"
+        for service in ("pramana-ghost", "dashboard"):
+            assert services[service]["environment"]["PRAMANA_DECISION_QUALITY_REPORT"] == "/data/decision-quality.json"
+            assert services[service]["environment"]["PRAMANA_POST_MORTEM_DIR"] == "/data/post-mortems"
         assert services["pramana-ghost"]["healthcheck"]["test"][3] == "health"
         for key, value in {**research_paths, **attribution_config}.items():
             assert services["dashboard"]["environment"][key] == value

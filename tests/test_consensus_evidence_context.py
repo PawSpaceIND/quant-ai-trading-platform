@@ -87,6 +87,12 @@ def _context(bars: int = 3, headlines: int = 2, **overrides) -> EvidenceContext:
     return EvidenceContext(**fields)
 
 
+# The higher-timeframe and regime sections are opt-in here so the size-bound tests below
+# keep measuring exactly the evidence they are about.
+TIMEFRAMES = (("15m", (_bar(0), _bar(15))), ("1d", (_bar(30),)))
+REGIME = (("label", "trending_up"), ("timeframe", "1d"), ("trend_strength", Decimal("0.4200")))
+
+
 def _block(prompt: str) -> str:
     start = prompt.index(EVIDENCE_BLOCK_START)
     end = prompt.index(EVIDENCE_BLOCK_END)
@@ -97,12 +103,19 @@ def _block(prompt: str) -> str:
 # ---------------------------------------------------------------- rendering
 
 def test_prompt_contains_each_section_when_provided() -> None:
-    prompt = _atlas_prompt("AAPL", _evidence(), None, "keep it small", context=_context())
+    context = _context(timeframes=TIMEFRAMES, regime=REGIME)
+    prompt = _atlas_prompt("AAPL", _evidence(), None, "keep it small", context=context)
     block = _block(prompt)
     assert prompt.count(EVIDENCE_BLOCK_START) == prompt.count(EVIDENCE_BLOCK_END) == 1
     assert "recent_bars=3 closed bars, oldest first" in block
     assert block.count("\nbar=") == 3
     assert f"bar={NOW.isoformat()};open=100;high=101;low=99;close=100.5;volume=1000" in block
+    assert "timeframes=15m,1d closed bars, oldest first, stamped at bar close" in block
+    assert "timeframe=15m;bars=2" in block and "timeframe=1d;bars=1" in block
+    assert (f"tf_bar=15m;timestamp={NOW.isoformat()};open=100;high=101;low=99;"
+            "close=100.5;volume=1000") in block
+    assert block.count("\ntf_bar=") == 3
+    assert "regime=label=trending_up;timeframe=1d;trend_strength=0.4200" in block
     assert "technical=momentum=0.002;rsi=55;sma_spread=0.001" in block
     assert "headlines=2, oldest first" in block
     assert ("headline=subject=AAPL;sentiment=0.3;published_at=" + NOW.isoformat()

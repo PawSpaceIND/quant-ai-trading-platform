@@ -18,6 +18,7 @@ from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.ledger_integrity import PaperLedgerDataError
 from quant_ai.execution.notifications import TradingNotificationDispatcher
 from quant_ai.execution.portfolio import PortfolioTracker
+from quant_ai.execution.protection_state import positive_level
 from quant_ai.execution.protective_exits import (
     ProtectiveExit,
     ProtectiveExitEngine,
@@ -91,6 +92,10 @@ class AutonomousTradingDaemon:
         self.protection_coverage = None
         self.trade_evidence = None
         self.strategy_manifest = None
+        # Decision-quality layer: the journal lives in the ledger; the report is a file the
+        # factory points at (None keeps the report unwritten). Neither may break a tick.
+        self.decision_quality_report_path: Path | None = None
+        self.decision_outcomes: dict[str, int] | None = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -383,8 +388,10 @@ class AutonomousTradingDaemon:
                         country_exposure=exposure,
                     )
                 briefs.append(brief)
+                self._journal_decision(instrument, timestamp, llm_available=use_llm)
             if self.telemetry is not None:
                 self._reconcile_pilot()
+            self._resolve_decision_outcomes(timestamp)
             self.briefs = tuple(briefs)
             brief = self._primary_brief(briefs)
             metrics = self.tracker.metrics(timestamp)
@@ -416,9 +423,72 @@ class AutonomousTradingDaemon:
                     "drawdown": str(metrics.drawdown_fraction),
                 },
             )
+            self._write_decision_quality(timestamp)
             return brief
         finally:
             self._in_flight = False
+
+    # ------------------------------------------------------------ decision quality
+    # Every hook below swallows its own failure: the journal, the resolver and the report
+    # are evidence about the cadence, never a reason for the cadence to fail.
+
+    def _journal_decision(self, instrument: Instrument, timestamp: datetime, *, llm_available: bool) -> None:
+        """Journal the swarm decision the scheduler just produced for ``instrument``."""
+        try:
+            result = getattr(self.scheduler, "last_result", None)
+            execution = getattr(result, "execution", None)
+            if execution is None or execution.proposal.symbol != instrument.symbol:
+                return  # off-hours sweep, or no swarm decision for this instrument
+            from quant_ai.analytics.decision_journal import record_decision
+
+            # Two regime vocabularies exist. ``result.regime`` is the sizing detector that
+            # scales gross exposure; the journal instead records the multi-timeframe label
+            # the decision was actually made under, which is the one the supplied evidence
+            # carried and the one the proof stores, so a by-regime breakdown and the proof
+            # a founder opens from it always say the same word. ``record_decision`` reads it
+            # from the trace, falling back to the proposal provenance.
+            record_decision(
+                self.tracker.broker, execution, tenant_id=self.tenant_id,
+                now=timestamp, llm_available=llm_available,
+            )
+        except Exception:  # evidence capture must never break the cadence
+            self._logger.exception("decision_journal_write_failed symbol=%s", instrument.symbol)
+
+    def _resolve_decision_outcomes(self, timestamp: datetime) -> None:
+        """Mark forward returns and closed-trade outcomes for earlier journal rows."""
+        try:
+            from quant_ai.analytics.outcome_resolver import resolve_outcomes
+
+            self.decision_outcomes = resolve_outcomes(
+                self.tracker.broker, tenant_id=self.tenant_id, now=timestamp,
+                mark_for=self._decision_mark, calendar=self.scheduler.calendar,
+                market=self.instrument.market, trade_evidence=self.trade_evidence,
+            )
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("decision_outcome_resolution_failed")
+
+    def _write_decision_quality(self, timestamp: datetime) -> None:
+        """Rewrite the decision-quality report file, when the factory configured one."""
+        if self.decision_quality_report_path is None:
+            return
+        try:
+            from quant_ai.analytics.decision_quality import build_report, write_report
+
+            report = build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            write_report(self.decision_quality_report_path, report)
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("decision_quality_report_failed")
+
+    def _decision_mark(self, symbol: str) -> Decimal | None:
+        """Current mark for a journaled symbol from the shared feed; None when unknown."""
+        instrument = next((item for item in self.instruments if item.symbol == symbol), None)
+        if instrument is None:
+            return None
+        try:
+            return positive_level(self.tracker.market_feed.latest_tick(instrument).last_price)
+        except (ValueError, RuntimeError, TimeoutError, ConnectionError, OSError,
+                DecimalException, AttributeError, TypeError):
+            return None
 
     async def run(self) -> None:
         self.install_signal_handlers()
