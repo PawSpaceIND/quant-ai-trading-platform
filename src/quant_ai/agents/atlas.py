@@ -10,6 +10,7 @@ from quant_ai.agents.contracts import (
     AtlasDecision,
     EvidenceBar,
     EvidenceContext,
+    EvidenceHeadline,
     Stance,
 )
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
@@ -355,12 +356,7 @@ def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = 
             + (f", {omitted.headlines} older headlines omitted for prompt size"
                if omitted.headlines else "")
         )
-        lines.extend(
-            f"headline=subject={item.subject};sentiment={item.sentiment};"
-            f"scorer={item.scorer};published_at={item.published_at};provider={item.provider};"
-            f"rationale={item.rationale};text={item.headline}"
-            for item in context.headlines
-        )
+        lines.extend(_headline_line(item) for item in context.headlines)
     elif omitted.headlines:
         lines.append(f"headlines=all {omitted.headlines} headlines omitted for prompt size")
     else:
@@ -430,6 +426,22 @@ def _metric_line(
     return f"{name}={rendered}"
 
 
+def _headline_line(item: EvidenceHeadline) -> str:
+    """One headline as evidence, saying how it was attached to the subject.
+
+    ``matched_alias`` is rendered only when an operator's alias - not the headline text -
+    is what tied this story to the instrument, so an install with no aliases configured
+    produces exactly the line it produced before. The alias comes from a validated
+    character set that excludes ``;`` and ``=``, so it cannot forge a field of its own.
+    """
+    alias = f"matched_alias={item.matched_alias};" if item.matched_alias else ""
+    return (
+        f"headline=subject={item.subject};sentiment={item.sentiment};"
+        f"scorer={item.scorer};published_at={item.published_at};provider={item.provider};"
+        f"{alias}rationale={item.rationale};text={item.headline}"
+    )
+
+
 def _headline_provenance(context: EvidenceContext | None) -> dict:
     """Which scorer produced each headline number, and why, on the proof itself.
 
@@ -437,20 +449,22 @@ def _headline_provenance(context: EvidenceContext | None) -> dict:
     the prompt, but a founder reading a decision should not have to re-derive a hash to
     learn whether a sentiment number came from a model that can read negation or from the
     word counter. The rendered headlines are already bounded, so this stays small.
+
+    A headline an operator's alias attached to this instrument also carries that alias, so
+    an asserted entity link is never read as an observed one.
     """
     headlines = context.headlines if context is not None else ()
     counts: dict[str, int] = {}
+    rendered = []
     for item in headlines:
         counts[item.scorer] = counts.get(item.scorer, 0) + 1
-    return {
-        "headline_scorers": counts,
-        "headlines": [
-            {"provider": item.provider, "published_at": item.published_at,
-             "subject": item.subject, "sentiment": str(item.sentiment),
-             "scorer": item.scorer, "rationale": item.rationale, "headline": item.headline}
-            for item in headlines
-        ],
-    }
+        row = {"provider": item.provider, "published_at": item.published_at,
+               "subject": item.subject, "sentiment": str(item.sentiment),
+               "scorer": item.scorer, "rationale": item.rationale, "headline": item.headline}
+        if item.matched_alias:
+            row["matched_alias"] = item.matched_alias
+        rendered.append(row)
+    return {"headline_scorers": counts, "headlines": rendered}
 
 
 def _market_rationale(tick: LiveTick | None) -> tuple[str, ...]:
