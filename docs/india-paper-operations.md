@@ -20,6 +20,17 @@ INFY, RELIANCE and TCS with 100,000 INR simulated starting capital.
 - Market closure permits monitoring/off-hours briefs, not paper order generation.
 - MCX is not enabled in the verified account. Metal shares and gold/silver ETFs
   obey NSE sessions. No commodity-futures or US broker integration is enabled.
+- The dashboard now declares the wider India research universe: NSE cash and
+  index/ETF observations, MCX metals and energy, CDS currency derivatives, NSE
+  derivatives and NCDEX agriculture. The latter groups are shown as planned
+  until an exact broker contract is supplied.
+- To add a read-only extra quote, set
+  `PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON` to a JSON list containing the exact
+  exchange symbol plus `contract` and `expiry` for MCX/CDS/NCDEX instruments.
+  The collector rejects generic `GOLD` or `CRUDEOIL` labels, and these rows do
+  not widen the pilot order gate. Contract expiry, lot size, tick size, product,
+  session and broker entitlement must be reviewed before any paper execution
+  change is considered.
 - The Mac must remain awake and connected. This is a foreground/background local
   deployment, not a reboot-managed server installation.
 - Kite access tokens are invalidated daily at about 06:00 IST and require renewed

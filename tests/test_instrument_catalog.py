@@ -10,3 +10,7 @@ def test_catalog_spans_multiple_asset_classes() -> None:
     assert AssetClass.METAL in asset_classes
     assert AssetClass.FX in asset_classes
     assert AssetClass.CRYPTO in asset_classes
+    by_symbol = {item.symbol: item for item in catalog}
+    for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "USDINR", "EURINR", "GBPINR", "JPYINR"):
+        assert by_symbol[symbol].tradable is False
+        assert by_symbol[symbol].metadata["requires_contract"] == "true"

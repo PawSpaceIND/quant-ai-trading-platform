@@ -127,6 +127,7 @@ services:
       ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
       ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
+      PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON: ${PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON:-}
       # The monitor writes the provider tiles the dashboard shows, so it needs the same
       # provider configuration as the engine or the page reports a different build.
       FRED_API_KEY: ${FRED_API_KEY:-}

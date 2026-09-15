@@ -1,6 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { homedir } from "node:os";
+import { indiaCoverage, type IndiaCoverage } from "./india-universe";
+export type MarketInstrument = {
+  symbol?: string;
+  market: string;
+  assetClass: string;
+  currency: string;
+  exchange: string;
+  providerInstrumentId?: string;
+  contract?: string;
+  expiry?: string;
+  lotSize?: number;
+  tickSize?: number;
+};
 export type MarketRow = {
   symbol: string;
   available: boolean;
@@ -10,6 +23,7 @@ export type MarketRow = {
   lastTrade?: string;
   exchangeTimestamp?: string;
   history?: { date: string; close: number }[];
+  instrument?: MarketInstrument;
 };
 export type MarketSnapshot = {
   riskHistory?: unknown;
@@ -23,6 +37,7 @@ export type MarketSnapshot = {
   news?: { headline: string; publishedAt: string; source: string }[];
   collectorStale?: boolean;
   runtime?: Record<string, unknown>;
+  coverage?: IndiaCoverage;
 };
 export async function readMarket(): Promise<MarketSnapshot> {
   try {
@@ -47,23 +62,46 @@ export async function readMarket(): Promise<MarketSnapshot> {
           (!r.available || (Number.isFinite(r.price) && r.price! > 0)),
       )
       .slice(0, 500)
-      .map((r: MarketRow) => ({
-        ...r,
-        lastTrade:
-          r.lastTrade && !r.lastTrade.startsWith("1970")
-            ? r.lastTrade
-            : undefined,
-        exchangeTimestamp:
-          r.exchangeTimestamp && !r.exchangeTimestamp.startsWith("1970")
-            ? r.exchangeTimestamp
-            : undefined,
-        history: (r.history || [])
-          .filter((x) => Number.isFinite(x.close) && x.close > 0)
-          .slice(-1000),
-      }));
+      .map((r: MarketRow) => {
+        const item = r.instrument;
+        const instrument = item && typeof item === "object"
+          && typeof item.market === "string" && item.market.length <= 40
+          && typeof item.assetClass === "string" && item.assetClass.length <= 40
+          && typeof item.currency === "string" && item.currency.length <= 10
+          && typeof item.exchange === "string" && item.exchange.length <= 20
+          ? {
+              symbol: typeof item.symbol === "string" ? item.symbol : undefined,
+              market: item.market,
+              assetClass: item.assetClass,
+              currency: item.currency,
+              exchange: item.exchange,
+              providerInstrumentId: typeof item.providerInstrumentId === "string" ? item.providerInstrumentId : undefined,
+              contract: typeof item.contract === "string" ? item.contract : undefined,
+              expiry: typeof item.expiry === "string" ? item.expiry : undefined,
+              lotSize: typeof item.lotSize === "number" && Number.isFinite(item.lotSize) ? item.lotSize : undefined,
+              tickSize: typeof item.tickSize === "number" && Number.isFinite(item.tickSize) ? item.tickSize : undefined,
+            }
+          : undefined;
+        return {
+          ...r,
+          instrument,
+          lastTrade:
+            r.lastTrade && !r.lastTrade.startsWith("1970")
+              ? r.lastTrade
+              : undefined,
+          exchangeTimestamp:
+            r.exchangeTimestamp && !r.exchangeTimestamp.startsWith("1970")
+              ? r.exchangeTimestamp
+              : undefined,
+          history: (r.history || [])
+            .filter((x) => Number.isFinite(x.close) && x.close > 0)
+            .slice(-1000),
+        };
+      });
     return {
       ...raw,
       rows,
+      coverage: indiaCoverage(rows),
       collectorStale:
         !Number.isFinite(timestamp) || age > 120000 || age < -5000,
     };
@@ -72,6 +110,7 @@ export async function readMarket(): Promise<MarketSnapshot> {
       status: "unavailable",
       rows: [],
       collectorStale: true,
+      coverage: indiaCoverage([]),
       note: "No readable market snapshot. Start the market collector.",
     };
   }

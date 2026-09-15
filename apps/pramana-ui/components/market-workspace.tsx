@@ -158,7 +158,7 @@ export function MarketWorkspace({
                         onClick={() => setSelected(row.symbol)}
                       >
                         {row.symbol}
-                        <small>NSE · INR</small>
+                        <small>{row.instrument?.exchange || "Venue unknown"} · {row.instrument?.currency || "Currency unknown"} · {row.instrument?.assetClass || "Asset unknown"}{row.instrument?.contract ? ` · ${row.instrument.contract}${row.instrument.expiry ? ` · ${row.instrument.expiry}` : ""}` : ""}</small>
                       </button>
                     </td>
                     <td className="numeric mono">
@@ -231,7 +231,7 @@ export function MarketWorkspace({
               </button>
             </div>
             <div className="detail-price">
-              {number(detail.price)} <small>INR</small>
+              {number(detail.price)} <small>{detail.instrument?.currency || "quote units"}</small>
             </div>
             <p className="muted">
               Historical daily closes · last available prices
@@ -317,6 +317,10 @@ export function MarketWorkspace({
                     "Not supplied"}
                 </dd>
               </div>
+              {detail.instrument?.contract && <div>
+                <dt>Contract</dt>
+                <dd>{detail.instrument.contract}{detail.instrument.expiry ? ` · expiry ${detail.instrument.expiry}` : ""}{detail.instrument.lotSize ? ` · lot ${detail.instrument.lotSize}` : ""}{detail.instrument.tickSize ? ` · tick ${detail.instrument.tickSize}` : ""}</dd>
+              </div>}
               <div>
                 <dt>Collector retrieved</dt>
                 <dd>
@@ -333,6 +337,33 @@ export function MarketWorkspace({
           </div>
         )}
       </div>
+      {data.coverage?.groups?.length ? (
+        <div className="market-coverage callout">
+          <div className="section-row">
+            <div>
+              <span className="eyebrow">INDIA COVERAGE</span>
+              <h3>{data.coverage.scope}</h3>
+            </div>
+            <span className="pill neutral">Paper only</span>
+          </div>
+          <div className="coverage-grid">
+            {data.coverage.groups.map((group) => (
+              <article key={group.id} className="coverage-card">
+                <div className="coverage-card-title">
+                  <strong>{group.label}</strong>
+                  <span className={`pill ${group.status === "observed" ? "green" : "amber"}`}>
+                    {group.status === "observed" ? "Observed" : group.mode === "requires_contract" ? "Contract needed" : "Planned"}
+                  </span>
+                </div>
+                <small>{group.exchange} · {group.currency} · {group.assetClasses.join(" / ")}</small>
+                <p className="coverage-examples">{group.examples.join(" · ")}</p>
+                <p className="footnote">{group.detail}</p>
+              </article>
+            ))}
+          </div>
+          <p className="footnote">{data.coverage.disclaimer}</p>
+        </div>
+      ) : null}
       <p className="panel-footnote">
         {data.source || "Market provider"} ·{" "}
         {data.note || "Collector freshness does not establish quote freshness."}
