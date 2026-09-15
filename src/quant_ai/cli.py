@@ -186,6 +186,7 @@ def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
     statutory_codes = {"STT", "EXCHANGE", "SEBI", "GST", "STAMP", "SEC", "FINRA_TAF"}
     statutory = sum((amount for code, amount in totals.items() if code in statutory_codes), Decimal(0))
     print(f"brokerage={totals.get('BROKERAGE', Decimal(0))}")
+    print(f"depository={totals.get('DP', Decimal(0))}")
     print(f"statutory_fees={statutory}")
     print(f"slippage={totals.get('SLIPPAGE', Decimal(0))}")
     print(f"spread={totals.get('SPREAD', Decimal(0))}")

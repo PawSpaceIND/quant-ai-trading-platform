@@ -9,7 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from quant_ai.domain.models import AssetClass, Instrument, Market, OrderIntent, Side
-from quant_ai.execution.friction import FeeSchedule, MarketFrictionModel
+from quant_ai.execution.friction import (
+    BrokerageSchedule,
+    FeeSchedule,
+    FrictionContext,
+    MarketFrictionModel,
+)
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.reconciliation import reconcile_paper
@@ -20,8 +25,12 @@ BASE = datetime(2000, 1, 1, 4, 1, tzinfo=timezone.utc)
 
 
 def account(directory: Path, now=BASE, *, execution_times=None):
+    # A synthetic cost world for accounting arithmetic: one synthetic exchange rate, a 1%
+    # spread, 10bps slippage and no broker charges. Real brokerage is modelled and proved
+    # in the friction tests; this fixture checks ledger and telemetry arithmetic.
     model = MarketFrictionModel(
         fee_schedule=replace(FeeSchedule.zero(), name="synthetic_fee", india_exchange_rate=Decimal(".001")),
+        brokerage_schedule=BrokerageSchedule.zero(),
         gamma=Decimal(0), spread_atr_multiplier=Decimal(1), max_half_spread_fraction=Decimal(".01"),
         max_slippage_fraction=Decimal(0), fixed_slippage_bps=Decimal(10),
     )
@@ -32,7 +41,12 @@ def account(directory: Path, now=BASE, *, execution_times=None):
               ("TCS", Side.SELL, 3, "130"), ("INFY", Side.BUY, 2, "50"),
               ("INFY", Side.SELL, 2, "45"), ("NIFTY", Side.BUY, 1, "80")]
     for i, (symbol, side, quantity, price) in enumerate(trades):
-        broker.set_friction_context(None, execution_time=execution_times[i] if execution_times else now - timedelta(seconds=20-i))
+        # An explicit context, so the synthetic 1% spread comes from this fixture rather
+        # than from whatever the broker assumes when no market was observed.
+        broker.set_friction_context(
+            FrictionContext(Decimal(price) * Decimal(".01"), Decimal(1000000)),
+            execution_time=execution_times[i] if execution_times else now - timedelta(seconds=20-i),
+        )
         with patch("quant_ai.execution.paper_ledger.uuid4", return_value=SimpleNamespace(hex=f"{i:016x}")):
             intent = OrderIntent(symbol, Market.INDIA, side, quantity, Decimal(price), "SYNTHETIC", AssetClass.ETF if symbol == "NIFTY" else AssetClass.EQUITY)
             (broker.buy if side == Side.BUY else broker.sell)(intent)
