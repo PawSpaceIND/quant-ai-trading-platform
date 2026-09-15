@@ -30,6 +30,7 @@ from quant_ai.agents.swarm import (
 from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradingService
 from quant_ai.analytics.metrics import PerformanceMetrics, summarize_performance
 from quant_ai.domain.models import Instrument, PortfolioSnapshot, Side
+from quant_ai.execution.session import intraday_periods_per_year
 from quant_ai.intelligence.freshness import (
     DataCategory,
     FreshnessResult,
@@ -80,6 +81,13 @@ _CONTEXT_FAILURES = (
     TimeoutError, OSError, RuntimeError, ValueError, TypeError, LookupError, AttributeError,
     ArithmeticError,
 )
+# The analytics block scores one-minute instrument returns, so it must annualise with the
+# number of one-minute bars in a trading year at that venue - not with trading days.
+ONE_MINUTE = timedelta(minutes=1)
+
+
+def _one_minute_periods(instrument: Instrument) -> int:
+    return intraday_periods_per_year(instrument.market, ONE_MINUTE)
 
 
 @dataclass(frozen=True)
@@ -311,7 +319,9 @@ class SwarmMarketAnalysisPipeline:
         curve = [Decimal(100)]
         for item in returns:
             curve.append(curve[-1] * (Decimal(1) + item))
-        analytics = summarize_performance(returns, tuple(curve), returns)
+        analytics = summarize_performance(
+            returns, tuple(curve), returns, periods=_one_minute_periods(instrument)
+        )
         technical = self._technical_metrics(closes)
         market = self._market_context(instrument, candles, now)
         equity_news = self._recent_sentiment(news, now)
@@ -446,7 +456,9 @@ class SwarmMarketAnalysisPipeline:
         curve = [Decimal(100)]
         for item in returns:
             curve.append(curve[-1] * (Decimal(1) + item))
-        analytics = summarize_performance(returns, tuple(curve), returns)
+        analytics = summarize_performance(
+            returns, tuple(curve), returns, periods=_one_minute_periods(instrument)
+        )
         technical = self._technical_metrics(closes)
         market = self._market_context(instrument, candles, now)
         common: dict[str, Decimal | str] = dict(fundamentals.metrics)

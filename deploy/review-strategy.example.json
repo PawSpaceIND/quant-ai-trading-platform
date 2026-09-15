@@ -21,5 +21,17 @@
   "holdout_evidence_sha256": "",
   "forward_paper_evidence_sha256": "",
   "execution_stress_evidence_sha256": "",
-  "calibration_evidence_sha256": ""
+  "calibration_evidence_sha256": "",
+  "ledger_evidence_sha256": "",
+  "trial_register_sha256": "",
+  "evidence_files": {
+    "strategy_config_sha256": ["runtime-strategy-manifest.json"],
+    "strategy_evidence_sha256": ["strategy-episodes.json"],
+    "holdout_evidence_sha256": ["holdout-report.json"],
+    "forward_paper_evidence_sha256": ["forward-paper-report.json"],
+    "execution_stress_evidence_sha256": ["execution-stress-report.json"],
+    "calibration_evidence_sha256": ["calibration-report.json"],
+    "ledger_evidence_sha256": ["paper-ledger.sqlite"],
+    "trial_register_sha256": ["trial-register.json"]
+  }
 }

@@ -27,6 +27,8 @@ TENANT_ENV = "PRAMANA_TENANT_ID"
 HALT_FILE_ENV = "PRAMANA_HALT_FILE"
 DECISION_QUALITY_ENV = "PRAMANA_DECISION_QUALITY_REPORT"
 POST_MORTEM_DIR_ENV = "PRAMANA_POST_MORTEM_DIR"
+HALT_OVERRIDE_LOG_ENV = "PRAMANA_HALT_OVERRIDE_LOG"
+TRIAL_REGISTER_ENV = "PRAMANA_TRIAL_REGISTER"
 ALERT_LOG_ENV = "PRAMANA_ALERT_LOG"
 
 DEFAULT_LEDGER_NAME = "pramana_ledger.sqlite"
@@ -35,6 +37,8 @@ DEFAULT_TENANT_ID = "default"
 DEFAULT_HALT_FILE_NAME = "PRAMANA_HALT"
 DEFAULT_DECISION_QUALITY_NAME = "decision-quality.json"
 DEFAULT_POST_MORTEM_DIRECTORY_NAME = "post-mortems"
+DEFAULT_HALT_OVERRIDE_LOG_NAME = "halt-overrides.jsonl"
+DEFAULT_TRIAL_REGISTER_NAME = "trial-register.jsonl"
 DEFAULT_ALERT_LOG_NAME = "alerts.jsonl"
 
 _ROOT_MARKERS = ("pyproject.toml", ".git")
@@ -96,6 +100,22 @@ def decision_quality_report(*legacy_env: str) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return ledger_path(*legacy_env).parent / DEFAULT_DECISION_QUALITY_NAME
+
+
+def halt_override_log(*legacy_env: str) -> Path:
+    """Hash-chained record of every operator override that cleared a durable fault halt."""
+    configured = _from_env(HALT_OVERRIDE_LOG_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_HALT_OVERRIDE_LOG_NAME
+
+
+def trial_register(*legacy_env: str) -> Path:
+    """Hash-chained register of research trials; next to the ledger by default."""
+    configured = _from_env(TRIAL_REGISTER_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_TRIAL_REGISTER_NAME
 
 
 def post_mortem_directory(*legacy_env: str) -> Path:

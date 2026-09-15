@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -11,7 +12,12 @@ from pathlib import Path
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent, TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
-from quant_ai.analytics.metrics import summarize_performance
+from quant_ai.analytics.metrics import (
+    MINIMUM_RATIO_OBSERVATIONS,
+    MINIMUM_SIGNIFICANCE_OBSERVATIONS,
+    mean_return_significance,
+    summarize_performance,
+)
 from quant_ai.backtesting.replay import (
     HistoricalReplayDataset,
     HistoricalReplayHarness,
@@ -21,7 +27,7 @@ from quant_ai.backtesting.tearsheet import build_tearsheet
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode, Side
 from quant_ai.execution.audit import XAITraceLogger
-from quant_ai.execution.daemon import AutonomousTradingDaemon
+from quant_ai.execution.daemon import OPERATOR_HALT_PREFIX, AutonomousTradingDaemon
 from quant_ai.execution.notifications import (
     ConsoleNotificationAdapter,
     TradingNotificationDispatcher,
@@ -30,6 +36,7 @@ from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
+from quant_ai.execution.session import intraday_periods_per_year
 from quant_ai.governance.directives import FounderDirectives
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.sandbox import (
@@ -38,9 +45,11 @@ from quant_ai.intelligence.sandbox import (
     SandboxNewsSentimentProvider,
 )
 from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
+from quant_ai.operations.evidence_log import append_record
 from quant_ai.operations.zerodha_login import run_login
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.risk.warden import RiskWarden
+from quant_ai.validation.trial_register import record_trials, register_summary
 
 
 def build_runtime() -> AutonomousTradingDaemon:
@@ -98,6 +107,13 @@ def _portfolio(daemon: AutonomousTradingDaemon) -> None:
     print(f"drawdown={metrics.drawdown_fraction}")
 
 
+def _ratio_line(value: Decimal | None) -> str:
+    """Print an annualised ratio, or say plainly that the sample cannot support one."""
+    if value is None:
+        return f"unavailable:fewer_than_{MINIMUM_RATIO_OBSERVATIONS}_observations"
+    return str(value)
+
+
 def _analytics(daemon: AutonomousTradingDaemon) -> None:
     now = datetime.now(timezone.utc)
     candles = daemon.scheduler.pipeline.market_feed.fetch_ohlcv(
@@ -112,9 +128,22 @@ def _analytics(daemon: AutonomousTradingDaemon) -> None:
     curve = [Decimal(100)]
     for item in returns:
         curve.append(curve[-1] * (Decimal(1) + item))
-    metrics = summarize_performance(returns, tuple(curve), returns, returns)
-    print(f"sharpe={metrics.sharpe}")
-    print(f"sortino={metrics.sortino}")
+    periods = intraday_periods_per_year(daemon.instrument.market, timedelta(minutes=1))
+    metrics = summarize_performance(returns, tuple(curve), returns, returns, periods=periods)
+    # A one-minute series annualised with trading days overstates the ratio by the square
+    # root of the bars in a session, so the interval is named alongside every ratio and a
+    # sample too short to support one prints no number at all.
+    print(f"annualisation_periods_per_year={metrics.periods_per_year}")
+    print(f"return_observations={metrics.observations}")
+    print(f"sharpe={_ratio_line(metrics.sharpe)}")
+    print(f"sortino={_ratio_line(metrics.sortino)}")
+    significance = mean_return_significance(returns)
+    if significance is None:
+        print(f"mean_return_t_statistic=unavailable:fewer_than_{MINIMUM_SIGNIFICANCE_OBSERVATIONS}_observations")
+    else:
+        print(f"mean_return_t_statistic={significance.t_statistic}")
+        print(f"mean_return_observations={significance.observations}")
+        print("mean_return_multiple_testing_correction=none")
     print(f"max_drawdown={metrics.max_drawdown}")
     print(f"win_loss_ratio={metrics.win_loss_ratio}")
     print(f"var_95={metrics.var_95}")
@@ -194,6 +223,30 @@ def _backtest(args: argparse.Namespace) -> None:
         tuple(w for w in dataset.intrabar_windows
               if w.parent_timestamp in {b.timestamp for b in bars[1:]}),
     )
+    # Every replay is a look at the data, so the look is recorded before it happens: a
+    # sweep of windows cannot be reported as one lucky backtest when the register already
+    # counts the runs. The tearsheet then carries the running total.
+    register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    record_trials(
+        register,
+        study=f"replay:{instrument.symbol}:{instrument.market.value}",
+        candidate_trials=1,
+        configuration={
+            "bars": len(bars),
+            "start": bars[0].timestamp.isoformat(),
+            "end": bars[-1].timestamp.isoformat(),
+            "requested_start": args.start,
+            "requested_end": args.end,
+            "market": args.market,
+        },
+        data_sha256=hashlib.sha256(
+            "|".join(
+                f"{bar.timestamp.isoformat()}:{bar.open}:{bar.high}:"
+                f"{bar.low}:{bar.close}:{bar.volume}"
+                for bar in bars
+            ).encode()
+        ).hexdigest(),
+    )
     database = os.environ.get("QUANT_AI_BACKTEST_DB", "").strip() or ":memory:"
     if database == "shared":
         database = str(paths.ledger_path())
@@ -217,10 +270,68 @@ def _backtest(args: argparse.Namespace) -> None:
         tenant_id=tenant,
         xai_logger=XAITraceLogger(proof_dir),
     ).run(dataset)
-    tearsheet_json = build_tearsheet(result, broker, tenant_id=tenant).to_json()
+    trials = register_summary(register)
+    tearsheet_json = build_tearsheet(
+        result, broker, tenant_id=tenant, trial_register=trials
+    ).to_json()
     (proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
     print(tearsheet_json)
     broker.flush()
+
+
+def _resume(*, clear_fault_halt: bool, operator: str | None) -> int:
+    """Release an operator halt. A fault halt needs an explicit, named override.
+
+    ``resume`` removes the halt marker file and clears a persisted halt only when that
+    halt came from the marker file. A halt latched by the engine itself - a drawdown
+    breach, a failed ledger reconciliation, a failed protective exit, a latched cadence
+    fault - is a finding, not a pause, and stays until an operator overrides it by name.
+    Every override is printed and appended to a hash-chained override log.
+    """
+    target = paths.halt_file()
+    if target.exists():
+        target.unlink()
+        print(f"halt released: {target}")
+    else:
+        print(f"no halt file present: {target}")
+    ledger = paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    if not ledger.exists():
+        return 0
+    tenant = paths.tenant_id("QUANT_AI_TENANT_ID", default="ghost")
+    risk_state = SQLiteRiskStateStore(ledger)
+    try:
+        engaged, reason = risk_state.kill_switch_state(tenant)
+        if not engaged:
+            print(f"no persisted halt present: tenant={tenant}")
+            return 0
+        detail = reason or "unrecorded reason"
+        if detail.startswith(OPERATOR_HALT_PREFIX):
+            risk_state.set_kill_switch(tenant, False, None)
+            print(f"persisted operator halt released: tenant={tenant} reason={detail}")
+            return 0
+        if not clear_fault_halt:
+            print(f"refusing to clear fault halt: tenant={tenant} reason={detail}")
+            print(
+                "This halt was latched by the engine, not by an operator pause. Fix the "
+                "cause, then rerun with --clear-fault-halt to override it on the record."
+            )
+            return 2
+        record = append_record(
+            paths.halt_override_log("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB"),
+            "fault_halt_override",
+            {
+                "tenant_id": tenant,
+                "halt_reason": detail,
+                "operator": (operator or "").strip() or "unnamed operator",
+                "ledger": str(ledger),
+            },
+        )
+        risk_state.set_kill_switch(tenant, False, None)
+        print(f"fault halt cleared by operator override: tenant={tenant} reason={detail}")
+        print(f"override recorded: sequence={record['sequence']} sha256={record['sha256']}")
+        return 0
+    finally:
+        risk_state.close()
 
 
 def _journal_broker() -> tuple[PaperBrokerService, str]:
@@ -298,6 +409,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--market", choices=("india", "us"), default="us")
     parser.add_argument("--reason", default="operator halt")
     parser.add_argument(
+        "--clear-fault-halt",
+        action="store_true",
+        help=(
+            "resume: also clear a persisted halt the engine latched itself (drawdown, "
+            "reconciliation, protective-exit or cadence fault). Prints what it clears and "
+            "appends the override to the hash-chained override log."
+        ),
+    )
+    parser.add_argument(
+        "--operator", help="resume: name recorded against a --clear-fault-halt override"
+    )
+    parser.add_argument(
         "--request-token",
         help="zerodha-login: Kite request_token or the full redirect URL; prompted if omitted",
     )
@@ -318,20 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"halt engaged: {target}")
         return 0
     if args.command == "resume":
-        target = paths.halt_file()
-        if target.exists():
-            target.unlink()
-            print(f"halt released: {target}")
-        else:
-            print(f"no halt file present: {target}")
-        ledger = paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
-        if ledger.exists():
-            tenant = paths.tenant_id("QUANT_AI_TENANT_ID", default="ghost")
-            risk_state = SQLiteRiskStateStore(ledger)
-            risk_state.set_kill_switch(tenant, False, None)
-            risk_state.close()
-            print(f"persisted halt released: tenant={tenant}")
-        return 0
+        return _resume(clear_fault_halt=args.clear_fault_halt, operator=args.operator)
     if args.command == "zerodha-login":
         # Daily Kite token renewal for the paper pilot; never prints or stores secrets.
         return run_login(args.request_token)

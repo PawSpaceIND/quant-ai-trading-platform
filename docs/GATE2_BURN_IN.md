@@ -98,9 +98,26 @@ pramana resume                           # released on the next tick
 tail -f pramana-ghost.log                # JSON lines: ticks, exits, faults, proofs
 ```
 
-A halt freezes new risk only: protective exits keep running. A halt latched by
-repeated cadence failures (`cadence_halted` in the log) is not released by `resume`;
-fix the cause and restart the daemon.
+A halt freezes new risk only: protective exits keep running.
+
+`resume` releases operator halts and nothing else. It removes the halt marker file and
+clears the persisted halt only when that halt came from the marker file. A halt the
+engine latched itself - `portfolio_drawdown_limit`, `portfolio_daily_loss_limit`,
+`paper_ledger_reconciliation_failed`, `paper_position_protection_incomplete`,
+`protective_exit_failed`, `runtime_strategy_changed_or_unavailable`, a latched cadence
+fault - is a finding, not a pause. `resume` prints the reason and exits 2 without
+touching it.
+
+Fix the cause first. If an operator then has to override the halt deliberately:
+
+```bash
+pramana resume --clear-fault-halt --operator "NAME"
+```
+
+It prints exactly what it is clearing and appends the override to a hash-chained record
+next to the ledger (`halt-overrides.jsonl`, or `PRAMANA_HALT_OVERRIDE_LOG`). The record
+carries the halt reason, the tenant and the operator name, and each line pins the digest
+of the line before it, so an override cannot be removed from the file unnoticed.
 
 Holidays: NYSE 2026 closures are built in. For NSE only civil-calendar closures are
 built in; load the lunar-calendar dates from the exchange circular:

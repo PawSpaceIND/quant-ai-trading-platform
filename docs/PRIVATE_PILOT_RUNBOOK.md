@@ -65,6 +65,14 @@ Set `PRAMANA_RESEARCH_REPORT` to a reviewed report path to expose it in the dash
 
 The `deploy/review-*.example.json` templates deliberately start incomplete. An operator must fill them from retained evidence, reference the evidence bundle, and identify the exact deployed git revision. Strategy review requires AI-specific holdout, forward-paper, execution-stress, costs, trial accounting and calibration review, with a SHA-256 digest for each evidence artifact, plus the existing minimum trade/history/expectancy/drawdown/profit-factor/regime policy. The deterministic baseline report cannot satisfy this schema. The numeric minimums are filters, not a profit guarantee or a substitute for expert review.
 
+Every claim in a strategy artifact that a machine can check is now checked by the machine, and the boolean review flags stay what they always were: a person attesting that they looked.
+
+* `evidence_files` maps each pinned digest to the retained files behind it, as paths relative to the review document. The gate recomputes every digest with `quant_ai.operations.pilot_gate.evidence_bundle_digest` - the same hasher the external-gate preflight uses - and refuses when the recomputed digest does not match. A digest over files that are not there is refused, not accepted. The file names in `deploy/review-strategy.example.json` are placeholders: replace each with the name the retained file actually has next to the review document.
+* `ledger_evidence_sha256` pins exactly one file: a retained copy of the paper ledger. `trial_register_sha256` pins exactly one file: the hash-chained trial register. Both are hashed like any other evidence, and both are then opened and read.
+* `sample_trades`, `expectancy`, `max_drawdown`, `profit_factor`, `profitable_regimes` and `paper_days` are recomputed from that ledger: the decision journal supplies the trade statistics, the profitable regimes and the session count, and the recorded daily equity marks supply the drawdown. The promotion policy is evaluated on the recomputed figures. The typed figures are still required and still validated, and the review is refused when they disagree with the ledger.
+* A figure that cannot be recomputed refuses the review. No closed trades, no losing trade to divide by, fewer than two daily equity marks, an empty or broken trial register: each is a refusal, never a fall back to the typed number.
+* The signed payload carries a `derived` block with the recomputed figures and the registered candidate-trial count, so a signature covers what the ledger recorded rather than what the reviewer typed. The trial count is reported without a multiple-testing correction; read it as the number of looks the reported statistics have to answer for.
+
 After the checks have actually been performed, an authorized reviewer can record an attestation:
 
 ```sh
