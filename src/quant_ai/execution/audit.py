@@ -33,6 +33,10 @@ class XAITrace:
     # symbol guesswork.
     order_id: str | None = None
     provenance: dict | None = None
+    # The deterministic market regime the decision was made in (``trending_up``,
+    # ``ranging``, ``insufficient_history``, ...), lifted from the proposal provenance so
+    # decision quality can be broken down by regime without parsing the provenance.
+    regime: str | None = None
 
 
 class XAITraceLogger:
@@ -107,8 +111,14 @@ class XAITraceLogger:
             },
             fill.order_id if fill is not None else None,
             proposal.provenance,
+            self._regime(proposal.provenance),
         )
         return trace
+
+    @staticmethod
+    def _regime(provenance: dict | None) -> str | None:
+        label = provenance.get("regime") if isinstance(provenance, dict) else None
+        return label if isinstance(label, str) else None
 
     def record(self, trace: XAITrace) -> None:
         """Publish the in-memory/file projection of a prepared trace."""
@@ -148,6 +158,7 @@ class XAITraceLogger:
             f"- Stress: {trace.stress_verdict['passed']} ({trace.stress_verdict['worst_scenario']})",
             f"- Risk: {trace.risk_verdict['approved']} ({trace.risk_verdict['reason']})",
             f"- Order: {trace.order_id or 'none (not filled)'}",
+            f"- Regime: {trace.regime or 'unrecorded'}",
             "",
             "## Specialist evidence",
         ]

@@ -81,11 +81,13 @@ class SwarmPaperTradingService:
         country: str,
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
+        evidence_context: EvidenceContext | None = None,
     ) -> SwarmExecutionResult:
         weighted = self.attribution.weight_evidence(evidence)
         proposal = self.cio.propose(
             request, weighted, quantity=quantity, reference_price=reference_price,
             stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+            evidence_context=evidence_context,
         )
         return self._execute_proposal(
             request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
@@ -114,6 +116,7 @@ class SwarmPaperTradingService:
             proposal = self.cio.propose(
                 request, weighted, quantity=quantity, reference_price=reference_price,
                 stop_price=stop_price, take_profit_price=take_profit_price, country=country,
+                evidence_context=evidence_context,
             )
             stress = self.stress_agent.evaluate(proposal, portfolio)
             risk = self.warden.reject(preflight_veto_reason, proposal, tenant_id)

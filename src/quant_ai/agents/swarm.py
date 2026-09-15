@@ -17,7 +17,9 @@ class AgentAnalysisRequest:
     market: Market
     asset_class: AssetClass
     observed_at: datetime
-    metrics: dict[str, Decimal]
+    # Numeric inputs plus the deterministic ``regime_label`` string; every agent reads the
+    # keys it needs with a typed default and never iterates the whole map.
+    metrics: dict[str, Decimal | str]
     source_freshness_seconds: int = 0
 
 
@@ -225,8 +227,11 @@ class AtlasCIOAgent:
         stop_price: Decimal | None,
         take_profit_price: Decimal | None,
         country: str,
+        evidence_context: EvidenceContext | None = None,
     ) -> TradeProposal:
-        decision = self.atlas.decide(request.subject, evidence, request.observed_at)
+        decision = self.atlas.decide(
+            request.subject, evidence, request.observed_at, evidence_context=evidence_context
+        )
         return self._proposal_from_decision(
             request, decision, quantity=quantity, reference_price=reference_price,
             stop_price=stop_price, take_profit_price=take_profit_price, country=country,
