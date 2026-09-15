@@ -145,7 +145,9 @@ The workspace refreshes every five seconds, but polling does not revive old evid
 Record those external gates in a reviewed JSON document and run the fail-closed preflight before acceptance:
 
 ```sh
-python scripts/pilot_ops.py pilot-check --evidence /data/reviews/external-gates.json
+python scripts/pilot_ops.py pilot-check --evidence /data/reviews/external-gates.json --destination /data/reviews/external-gates-report.json
 ```
 
 The command requires X01/X02/X03 evidence, a target host, exact release revision, reviewer, timezone-aware observation time, non-empty evidence attachments and a 64-character SHA-256 digest binding each gate's reviewed evidence. It reports `liveExecutionEnabled: false` and exits non-zero for any missing or invalid item. This records acceptance evidence; it does not enable live orders.
+
+The optional destination writes the evaluated report with mode 0600 and refuses to replace any existing path. An incomplete report is also saved for inspection and still exits 2. Create the parent directory first and choose a new filename for each evaluation. Run inside the deployment's shared `/data` volume, then set `PRAMANA_EXTERNAL_GATE_REPORT=/data/reviews/external-gates-report.json` for the dashboard and recreate that service. A host-only path is not automatically mounted by Compose. Keep the input review document separate from this generated report. Digests identify reviewer-supplied evidence; this preflight does not open attachments or independently authenticate their contents.

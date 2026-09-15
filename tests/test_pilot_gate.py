@@ -1,4 +1,8 @@
+import json
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from quant_ai.operations.pilot_gate import (
     EXTERNAL_GATES,
@@ -52,3 +56,23 @@ def test_missing_or_invalid_external_document_never_claims_readiness():
     report = external_gate_report({"revision": "", "targetHost": "", "gates": {}})
     assert report["ready"] is False
     assert all(not item["passed"] for item in report["gates"])
+
+
+def test_cli_publishes_private_report_without_overwriting_review(tmp_path):
+    source = tmp_path / "review.json"
+    source.write_text(json.dumps(evidence()))
+    destination = tmp_path / "report.json"
+    command = [sys.executable, str(Path(__file__).resolve().parents[1] / "scripts/pilot_ops.py"),
+               "pilot-check", "--evidence", str(source), "--destination", str(destination)]
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(destination.read_text()) == json.loads(result.stdout)
+    assert destination.stat().st_mode & 0o777 == 0o600
+    original = destination.read_bytes()
+    assert subprocess.run(command, check=False, capture_output=True).returncode != 0
+    assert destination.read_bytes() == original
+    source.write_text(json.dumps({"gates": {}}))
+    command[-1] = str(tmp_path / "pending.json")
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert json.loads(Path(command[-1]).read_text())["ready"] is False

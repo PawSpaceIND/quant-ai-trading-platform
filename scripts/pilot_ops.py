@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -51,6 +52,12 @@ if __name__ == "__main__":
         from quant_ai.operations.pilot_gate import external_gate_report
         evidence = json.loads(args.evidence.read_text())
         result = external_gate_report(evidence)
+        if args.destination:
+            # Create privately from the first byte; never replace reviewed evidence.
+            fd = os.open(args.destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as output:
+                json.dump(result, output, indent=2)
+                output.write("\n")
         print(json.dumps(result, indent=2))
         raise SystemExit(0 if result["ready"] else 2)
     if not args.database:
