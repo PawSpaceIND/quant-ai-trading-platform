@@ -96,3 +96,47 @@ jobs:
           name: pilot-container-verification
           path: /tmp/pilot-container-verification.json
           if-no-files-found: warn
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      # gitleaks-action v2 requires a (free) license key for organization-owned repositories.
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks scans the pushed/PR commit range, not only the checkout
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev,pilot]'
+      - run: pip install pip-audit
+      # pip-audit fails on a fresh resolve of '.[dev,pilot]' as of 2026-09-15:
+      #   autobahn 19.11.2   PYSEC-2020-25    fix 20.12.3  (kiteconnect 5.2.2 pins autobahn[twisted]==19.11.2)
+      #   setuptools 79.0.1  PYSEC-2026-3447  fix 83.0.0   (environment package, not a project dependency)
+      # Non-blocking until those two are decided; remove continue-on-error once the audit is clean.
+      - name: Python dependency audit (pip-audit)
+        run: pip-audit
+        continue-on-error: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/pramana-ui/package-lock.json
+      - name: UI dependency audit (npm audit)
+        working-directory: apps/pramana-ui
+        run: |
+          npm ci
+          npm audit --audit-level=high
+      - name: Secret scan (gitleaks)
+        if: env.GITLEAKS_LICENSE != ''
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Secret scan skipped
+        if: env.GITLEAKS_LICENSE == ''
+        run: echo "::warning::GITLEAKS_LICENSE secret is not set; gitleaks secret scan skipped (organization repos need the free key from gitleaks.io)"
