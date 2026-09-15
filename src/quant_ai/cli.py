@@ -25,6 +25,7 @@ from quant_ai.backtesting.baselines import (
 from quant_ai.backtesting.replay import (
     HistoricalReplayDataset,
     HistoricalReplayHarness,
+    dataset_instrument,
     load_replay_dataset,
 )
 from quant_ai.backtesting.tearsheet import build_tearsheet
@@ -237,13 +238,58 @@ def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
         print(f"{code.lower()}={totals[code]}")
 
 
-def _replay_instrument(market: str | None) -> Instrument:
-    resolved = Market.INDIA if (market or "us") == "india" else Market.USA
+def _replay_instrument(market: str | None, data: str | None = None) -> Instrument:
+    """What a replay or baseline run is scoring, taken from the dataset wherever it says.
+
+    ``--market`` used to decide this alone, and it resolved an absent flag to the US: an
+    NSE series scored without the flag was priced against the US fee schedule and
+    annualised against the US session length, and every line of the output - the table, the
+    trial-register study, the proof - named AAPL. Nothing said so. Worse, the flag only
+    ever chose between two hardcoded instruments, so a run over ``INFY.json`` was recorded
+    as RELIANCE even when the flag was right.
+
+    A dataset written by ``scripts/fetch_historical_bars.py`` states its own symbol, market,
+    asset class, exchange and currency, and that statement wins. When the dataset declares
+    nothing - a hand-written fixture, a CSV - the flag is used, and is now required rather
+    than defaulted, because guessing a market silently is the failure above. When both
+    exist and disagree, neither is trusted: an operator who has mixed up two files needs to
+    be told, not to be handed one of the two answers.
+    """
+    declared = _declared_instrument(data)
+    if declared is not None:
+        if market is not None and _requested_market(market) != declared.market:
+            raise SystemExit(
+                f"--market {market} contradicts {data}, which declares "
+                f"{declared.symbol} on {declared.market.value}"
+            )
+        return declared
+    if market is None:
+        raise SystemExit(
+            f"--market is required: {data or 'this dataset'} does not declare the "
+            "instrument it holds, and a market cannot be guessed - it selects the "
+            "statutory fee schedule and the session length ratios are annualised against"
+        )
+    resolved = _requested_market(market)
     return (
         Instrument("RELIANCE", resolved, AssetClass.EQUITY, "INR", "NSE")
         if resolved == Market.INDIA
         else Instrument("AAPL", resolved, AssetClass.EQUITY, "USD", "NASDAQ")
     )
+
+
+def _requested_market(market: str) -> Market:
+    return Market.INDIA if market == "india" else Market.USA
+
+
+def _declared_instrument(data: str | None) -> Instrument | None:
+    """The dataset's own instrument, with a malformed declaration reported as an operator
+    error rather than a traceback."""
+    if not data:
+        return None
+    try:
+        return dataset_instrument(data)
+    except (OSError, ValueError, TypeError) as error:
+        raise SystemExit(f"{data}: cannot read the declared instrument ({error})") from error
 
 
 def _windowed_bars(dataset: HistoricalReplayDataset, args: argparse.Namespace, command: str):
@@ -269,7 +315,7 @@ def _baselines(args: argparse.Namespace) -> None:
     """
     if not args.data:
         raise SystemExit("baselines requires --data")
-    instrument = _replay_instrument(args.market)
+    instrument = _replay_instrument(args.market, args.data)
     bars = _windowed_bars(load_replay_dataset(args.data, instrument), args, "baselines")
     strategies = default_baselines()
     register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
@@ -317,7 +363,7 @@ def _bar_digest(bars) -> str:
 def _backtest(args: argparse.Namespace) -> None:
     if not args.data:
         raise SystemExit("backtest requires --data")
-    instrument = _replay_instrument(args.market)
+    instrument = _replay_instrument(args.market, args.data)
     market = instrument.market
     dataset = load_replay_dataset(args.data, instrument)
     bars = _windowed_bars(dataset, args, "backtest")
