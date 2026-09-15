@@ -120,6 +120,9 @@ assert.equal(workspace.companyEvents.status, "available");
 assert.equal(workspace.companyEvents.events[0].title, "Infosys Limited");
 assert.equal(workspace.companyEvents.events[0].mapping.symbol, "NSE:INFY");
 assert.equal(workspace.companyEvents.events[0].captureKind, "imported");
+assert.equal(workspace.researchDashboard.status, "published");
+assert.equal(workspace.researchDashboard.snapshot.paperOnly, true);
+assert.deepEqual(workspace.researchDashboard.snapshot.modules.map(module => module.id), ["comparison", "simulation", "companyEvents"]);
 }
 for (const [route, matches] of [
   ["/api/research/comparison", r => r.experiment === "deployment-fixture" && r.tenant_id === workspace.tenantId],

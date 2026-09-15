@@ -17,6 +17,7 @@ import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
 import {BenchmarkAttributionPanel} from "./benchmark-attribution";
 import { ResearchComparison } from "./research-comparison";
+import { ResearchLabPanel } from "./research-lab-panel";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
@@ -503,6 +504,7 @@ export function PilotWorkspace() {
                     <ResearchPanel data={data} />
                     <BenchmarkAttributionPanel state={data.benchmarkAttribution} onAsk={ask} />
                     <ResearchComparison state={data.researchLab} onAsk={ask} />
+                    <ResearchLabPanel snapshot={data.researchDashboard?.snapshot} now={data.generatedAt} />
                     <ResearchPortfolio state={data.researchPortfolio} onAsk={ask} />
                     {!hosted && <RunComparison key={data.runComparison?.sha256} state={data.runComparison} onAsk={(prompt,sha)=>ask(prompt,undefined,undefined,sha)} />}
                     <TradeEvidencePanel data={data} onAsk={ask} />

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_ai.research.company_events import CompanyEvents
+from quant_ai.research.dashboard_export import snapshot, write_snapshot
 from quant_ai.research.lab import ResearchLab
 from quant_ai.research.portfolio_sim import PortfolioJournal
 from quant_ai.research.portfolio_workspace import publish as publish_portfolio
@@ -56,6 +57,11 @@ def build(directory: Path, tenant: str):
     comparison, portfolio = directory / "comparison-001.json", directory / "portfolio-001.json"
     publish_comparison(directory / "research.sqlite", "deployment-fixture", tenant, comparison)
     publish_portfolio(directory / "portfolio.sqlite", "Synthetic deployment replay", tenant, portfolio)
+    write_snapshot(directory / "dashboard-snapshot.json", snapshot({
+        "comparison": {"database": str(directory / "research.sqlite"), "experiment": "deployment-fixture"},
+        "simulation": {"database": str(directory / "portfolio.sqlite")},
+        "companyEvents": {"database": str(directory / "events.sqlite")},
+    }, now=datetime(2026, 1, 1, 4, 0, 20, tzinfo=timezone.utc)))
     receipt = {"tenant":tenant, "source":"synthetic", "networkRequests":0,
                "comparisonSha256":hashlib.sha256(comparison.read_bytes()).hexdigest(),
                "portfolioSha256":hashlib.sha256(portfolio.read_bytes()).hexdigest()}

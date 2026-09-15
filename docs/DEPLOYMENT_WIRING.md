@@ -7,6 +7,7 @@ Compose now passes the private research and company-event settings to the dashbo
 | Variable | Consumer | Compose value / example |
 |---|---|---|
 | `PRAMANA_RESEARCH_LAB_REPORT` | Candidate comparison and export | `/data/research/comparison-001.json` |
+| `PRAMANA_RESEARCH_DASHBOARD_SNAPSHOT` | Sanitized comparison/simulation/company-event panel | `/data/research/dashboard-snapshot.json` |
 | `PRAMANA_PORTFOLIO_RESEARCH_REPORT` | Continuous replay, contribution and export | `/data/research/portfolio-001.json` |
 | `PRAMANA_COMPANY_EVENTS_DB` | Company announcements, mapping and export | `/data/research/events.sqlite` |
 | `PRAMANA_RESEARCH_REPORT` | Earlier deterministic research report | Defaults to `/data/research-report.json`; override now honored |

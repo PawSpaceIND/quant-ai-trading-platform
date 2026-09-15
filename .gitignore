@@ -30,5 +30,6 @@ pramana-proofs/
 deploy/cloudflare/.wrangler/
 
 apps/pramana-ui/node_modules
+apps/pramana-ui/test-results/
 
 .wrangler/

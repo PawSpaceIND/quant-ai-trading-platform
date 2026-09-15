@@ -226,7 +226,10 @@ def test_real_factory_governed_entry_and_protective_exit_share_exact_manifest(
     r = runner_for(tmp_path)
     d = r.daemon
     b = d.tracker.broker
-    now = datetime(2026, 9, 15, 6, tzinfo=timezone.utc)
+    # The factory records the boot manifest with its runtime clock. Keep the
+    # synthetic fills on that same clock so attribution does not depend on the
+    # wall-clock time at which the test happens to run.
+    now = datetime.now(timezone.utc)
     d.clock = lambda: now
     b._execution_time = now
     publish_tick(r, "100", now)

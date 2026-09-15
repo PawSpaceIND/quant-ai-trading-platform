@@ -74,6 +74,15 @@ No scheduler has been installed by this branch.
 This handoff does not bypass #50's deployment or readiness gates. Availability of research
 records is not a successful strategy review and never grants trading permission.
 
+## Current main integration status
+
+The private workspace now loads `PRAMANA_RESEARCH_DASHBOARD_SNAPSHOT` from a fixed
+server-side path, caps it at 512 KB, validates the `ResearchSnapshot` schema and returns
+an explicit unavailable/invalid state on failure. The authenticated Research screen
+mounts `ResearchLabPanel`; the deployment fixture generates the sanitized snapshot and
+the authenticated container smoke contract checks all three module IDs. The hosted
+Cloudflare viewer remains intentionally unable to receive private research evidence.
+
 ## Verification commands
 
 ~~~sh
@@ -101,5 +110,5 @@ node node_modules/typescript/bin/tsc --noEmit
 - Temporary merge with PR #50 at 206aa0e837ada9c5ae6ec2679f7203125aeae55c was
   conflict-free. All 480 combined Python tests pass, as do rendering and TypeScript checks.
 - The temporary merge was aborted and removed. PR #50 and running services were untouched.
-- The panel is not mounted or deployed yet. Authenticated route/hosted browser acceptance
-  belongs to the PR #50 owner after the documented integration.
+- Target-host deployment and hosted browser acceptance remain with the PR #50 owner;
+  local authenticated workspace wiring and browser/API smoke are now covered on main.

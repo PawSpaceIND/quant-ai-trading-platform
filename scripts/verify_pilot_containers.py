@@ -69,6 +69,7 @@ def main():
                               "PRAMANA_BENCHMARK_ATTRIBUTION_PORTFOLIO":"example-portfolio"}
         research_paths = {"PRAMANA_RESEARCH_LAB_REPORT":"/data/research/comparison-001.json",
                           "PRAMANA_PORTFOLIO_RESEARCH_REPORT":"/data/research/portfolio-001.json",
+                          "PRAMANA_RESEARCH_DASHBOARD_SNAPSHOT":"/data/research/dashboard-snapshot.json",
                           "PRAMANA_COMPANY_EVENTS_DB":"/data/research/events.sqlite"}
         safe_environment = {key:value for key, value in os.environ.items()
                             if not key.startswith(("PRAMANA_", "ANTHROPIC_", "ZERODHA_", "FRED_", "TRADING_"))}

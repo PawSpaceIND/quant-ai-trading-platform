@@ -3,6 +3,7 @@ import type {BenchmarkAttributionState} from "./benchmark-attribution";
 import type {CompanyEventsState} from "./company-events";
 import type { ResearchReport } from "./research";
 import type { ResearchLabState } from "./research-lab";
+import type { ResearchDashboardState } from "./research-dashboard";
 import type { PortfolioResearchState } from "./research-portfolio";
 import type { PaperContributionState } from "./paper-contribution";
 import type {HistoricalRiskState} from "./historical-risk";
@@ -75,6 +76,7 @@ export type Workspace = {
   paperContribution?: PaperContributionState;
   benchmarkAttribution?: BenchmarkAttributionState;
   researchLab?: ResearchLabState;
+  researchDashboard?: ResearchDashboardState;
   researchPortfolio?: PortfolioResearchState;
   companyEvents?: CompanyEventsState;
   strategyObservation?: {days:number;daily:{date:string;minutes:number}[];source:string};
