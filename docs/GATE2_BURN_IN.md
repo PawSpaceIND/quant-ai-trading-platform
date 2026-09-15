@@ -23,7 +23,10 @@ governance faithfully; it does **not** test the intelligence layer's judgement.
 ## Prerequisites
 
 - Python ≥ 3.9 (CI runs 3.12), Node ≥ 22 for the dashboard (`node:sqlite`).
-- Zerodha Kite credentials and the instrument tokens you are licensed to consume.
+- Zerodha Kite credentials (`api_key` and `api_secret` in `~/.config/pramana/zerodha.json`,
+  mode 0600) and the instrument tokens you are licensed to consume. Kite issues one
+  access token per interactive login and invalidates it every day at about 06:00 IST;
+  `pramana zerodha-login` performs that login and records when the token was issued.
   Kite carries NSE/BSE equities and indices, NFO, MCX metals and commodities, and
   CDS currency pairs; the daemon subscribes to whatever tokens you list.
 - US instruments need IB Gateway/TWS reachable and `PRAMANA_IBKR_ENABLED=true`.
@@ -53,12 +56,28 @@ does, never widen a firewall limit.
 
 ## Launch
 
+Every trading day, after 06:00 IST and before the 09:15 IST open, renew the Kite token
+first. Yesterday's token is invalid after the cutoff, and an invalid token does not
+error: the stream goes quiet and stops are not enforced for the gap.
+
+```bash
+pramana zerodha-login          # prints the login URL; paste the redirect URL back
+```
+
+The command exchanges the request token for an access token, checks that `kite.profile()`
+reports the same `user_id` as the new session, writes `~/.config/pramana/zerodha-session.json`
+(mode 0600, with `issued_at`) and prints the next expected expiry. It never prints the
+token or the secret. `scripts/india_paper_runtime.py` reads that file directly and refuses
+to start once the token is past the cutoff. The generic daemon below reads
+`ZERODHA_ACCESS_TOKEN` from the shell, so export it from the session file after `.env`.
+
 The daemon does not read `.env` by itself; export it into the shell.
 
 ```bash
 # terminal 1 — ghost daemon (live ticks → paper ledger)
 cd /path/to/quant-ai-trading-platform && source .venv/bin/activate
 set -a; source .env; set +a
+export ZERODHA_ACCESS_TOKEN="$(python -c 'import json, pathlib; print(json.load((pathlib.Path.home() / ".config/pramana/zerodha-session.json").open())["access_token"])')"
 export TRADING_LIVE_MONEY_ACTIVE=false PRAMANA_TENANT_ID=ghost PRAMANA_GHOST_LOG="$PWD/pramana-ghost.log"
 python -m quant_ai.daemon
 
