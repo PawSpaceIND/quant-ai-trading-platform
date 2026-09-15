@@ -32,7 +32,13 @@ from quant_ai.domain.models import Market
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.execution.session import regular_session_length
 from quant_ai.governance.derived_evidence import derive_strategy_evidence
-from quant_ai.governance.pilot_review import review, sign_review
+from quant_ai.governance.pilot_review import (
+    HUMAN_REVIEW_FLAGS,
+    PINNED_DIGESTS,
+    SINGLE_FILE_DIGESTS,
+    review,
+    sign_review,
+)
 from quant_ai.operations.evidence_log import append_record, read_records, verify_chain
 from quant_ai.operations.pilot_gate import evidence_bundle_digest
 from quant_ai.validation.trial_register import record_trials, register_summary
@@ -597,3 +603,24 @@ def test_the_research_experiment_registers_its_candidate_trials(tmp_path, monkey
 
     assert len(read_records(register)) == 2
     assert verify_chain(read_records(register))
+
+
+def test_the_shipped_review_template_names_every_field_the_gate_demands():
+    """An operator fills in the example; the example must not omit a required field.
+
+    The gate refuses a review that leaves out a pinned digest or the listing of files
+    behind it. A template missing those keys sends the operator to a refusal they cannot
+    diagnose from the document in front of them, so the template is checked here rather
+    than discovered during a promotion review.
+    """
+    template = json.loads(
+        (Path(__file__).resolve().parents[1] / "deploy/review-strategy.example.json").read_text()
+    )
+    for name in PINNED_DIGESTS:
+        assert name in template, f"template omits the pinned digest {name}"
+        assert template["evidence_files"].get(name), f"template omits the files behind {name}"
+    for name in SINGLE_FILE_DIGESTS:
+        assert len(template["evidence_files"][name]) == 1, f"{name} pins exactly one file"
+    assert set(template["evidence_files"]) == set(PINNED_DIGESTS)
+    for flag in HUMAN_REVIEW_FLAGS:
+        assert template[flag] is False, "a template must not pre-tick a human review flag"
