@@ -32,7 +32,9 @@ The diversification ratio divides the weighted sum of standalone daily volatilit
 
 Historical scenario P&L is the sum of current instrument values multiplied by each historical daily return. The 95% VaR loss is the nearest-rank 95th percentile of signed losses (`−P&L`). Expected shortfall integrates the worst 5% of the empirical loss distribution, including fractional weight on its boundary observation. Negative loss values are retained: they mean gains in that historical sample. The worst observed scenario is not a maximum possible loss.
 
-No historical strategy holdings are reconstructed. The model fixes today's portfolio, does not compound or rebalance it, and excludes executions, costs, liquidity, intraday paths, protective orders, external flows, FX, leverage and derivatives. It does not feed order sizing, entry controls or promotion gates. Existing portfolio freshness gates continue independently.
+No historical strategy holdings are reconstructed. The model fixes today's portfolio, does not compound or rebalance it, and excludes executions, costs, liquidity, intraday paths, protective orders, external flows, FX, leverage and derivatives. This browser module does not feed order sizing, entry controls or promotion gates. Existing portfolio freshness gates continue independently.
+
+The engine carries its own `Decimal` port of this convention in `quant_ai.risk.portfolio_risk`, reading closed daily bars rather than the collector's snapshot. That port *does* gate entries, through the warden's correlation, group and expected-shortfall limits. The calculation convention above is the shared reference for both; a divergence between them is a defect. See [cross-position risk controls](PORTFOLIO_RISK_CONTROLS.md).
 
 ## Dashboard, export and AI
 

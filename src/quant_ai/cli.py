@@ -48,6 +48,8 @@ from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
 from quant_ai.operations.evidence_log import append_record
 from quant_ai.operations.zerodha_login import run_login
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
+from quant_ai.risk.book_history import sector_map_from_env
+from quant_ai.risk.policy import BookRiskFirewall
 from quant_ai.risk.warden import RiskWarden
 from quant_ai.validation.trial_register import record_trials, register_summary
 
@@ -62,7 +64,14 @@ def build_runtime() -> AutonomousTradingDaemon:
     xai_dir = str(paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR"))
     runtime = SwarmPaperTradingService(
         cio=AtlasCIOAgent(AtlasInvestmentAgent(founder_instructions=directives.instructions)),
-        warden=RiskWarden(blocked_asset_classes=directives.blocked_asset_classes()),
+        warden=RiskWarden(
+            blocked_asset_classes=directives.blocked_asset_classes(),
+            # Sandbox runtime: no return history source, so only the operator's
+            # group limit arms here. Correlation/expected-shortfall stay unarmed.
+            book_risk=BookRiskFirewall(
+                sector_map=directives.sector_map or sector_map_from_env()
+            ),
+        ),
         broker=broker,
         xai_logger=XAITraceLogger(xai_dir),
         max_open_positions=directives.max_open_positions,
