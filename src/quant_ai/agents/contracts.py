@@ -89,3 +89,66 @@ class AtlasDecision:
             return value
 
         return json.dumps(normalize(asdict(self)), sort_keys=True, separators=(",", ":"))
+
+
+# Bounds on the evidence handed to the consensus prompt. They keep every prompt a
+# similar size and make prompt-injection surface (third-party headline text)
+# small and easy to audit.
+MAX_EVIDENCE_BARS = 20
+MAX_EVIDENCE_HEADLINES = 8
+MAX_HEADLINE_CHARS = 160
+
+
+@dataclass(frozen=True)
+class EvidenceBar:
+    """One closed OHLCV bar, already rendered: ISO-8601 timestamp and Decimals."""
+
+    timestamp: str
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+
+
+@dataclass(frozen=True)
+class EvidenceHeadline:
+    """One third-party headline. The text is untrusted data, never an instruction."""
+
+    subject: str
+    headline: str
+    sentiment: Decimal
+    published_at: str
+    provider: str
+
+    def __post_init__(self) -> None:
+        if len(self.headline) > MAX_HEADLINE_CHARS:
+            raise ValueError(f"headline must be at most {MAX_HEADLINE_CHARS} characters")
+        if any(char in self.headline for char in "\r\n"):
+            raise ValueError("headline must be a single line")
+
+
+@dataclass(frozen=True)
+class EvidenceContext:
+    """Bounded, pre-rendered market evidence for the LLM trading consensus.
+
+    Every field is already a string or Decimal so the prompt renderer only joins
+    text and never computes. Metric maps are ordered ``(name, value)`` pairs;
+    ``freshness`` pairs a data category with its rendered state. ``None``
+    observation times and empty tuples render as ``unavailable``.
+    """
+
+    bars: tuple[EvidenceBar, ...] = ()
+    technical: tuple[tuple[str, Decimal], ...] = ()
+    headlines: tuple[EvidenceHeadline, ...] = ()
+    macro: tuple[tuple[str, Decimal], ...] = ()
+    macro_observed_at: str | None = None
+    fundamentals: tuple[tuple[str, Decimal], ...] = ()
+    fundamentals_observed_at: str | None = None
+    freshness: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.bars) > MAX_EVIDENCE_BARS:
+            raise ValueError(f"evidence context holds at most {MAX_EVIDENCE_BARS} bars")
+        if len(self.headlines) > MAX_EVIDENCE_HEADLINES:
+            raise ValueError(f"evidence context holds at most {MAX_EVIDENCE_HEADLINES} headlines")

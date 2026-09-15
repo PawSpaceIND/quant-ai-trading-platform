@@ -4,7 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from quant_ai.agents.contracts import AgentEvidence, Stance
+from quant_ai.agents.contracts import (
+    MAX_EVIDENCE_BARS,
+    MAX_EVIDENCE_HEADLINES,
+    MAX_HEADLINE_CHARS,
+    AgentEvidence,
+    EvidenceBar,
+    EvidenceContext,
+    EvidenceHeadline,
+    Stance,
+)
 from quant_ai.agents.swarm import (
     AgentAnalysisRequest,
     CommodityYieldAgent,
@@ -24,6 +33,7 @@ from quant_ai.intelligence.freshness import (
 )
 from quant_ai.intelligence.providers import (
     FundamentalDataProvider,
+    FundamentalSnapshot,
     MacroIndicatorProvider,
     MacroSnapshot,
     NewsSentimentProvider,
@@ -31,6 +41,7 @@ from quant_ai.intelligence.providers import (
 )
 from quant_ai.intelligence.regime import MarketRegimeDetector, RegimeAssessment
 from quant_ai.marketdata.feed import MarketDataFeed
+from quant_ai.marketdata.models import Candle
 from quant_ai.marketdata.ticker_stream import LiveTick
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalPlan
@@ -361,6 +372,11 @@ class SwarmMarketAnalysisPipeline:
         )
         effective_quantity = self._apply_conflict(requested_quantity, conflict)
         stop, take_profit = self._protective_levels(effective_plan, reference_price)
+        # The same evidence the specialists scored, summarized and bounded, so the LLM
+        # consensus can reason about it instead of only re-weighting five numbers.
+        evidence_context = self._evidence_context(
+            candles, technical, news + geopolitical, macro, fundamentals, states
+        )
         execution = await self.runtime.execute_async(
             root_request,
             evidence,
@@ -375,6 +391,7 @@ class SwarmMarketAnalysisPipeline:
             preflight_veto_reason=market_data_veto,
             country_exposure=country_exposure,
             tenant_id=tenant_id,
+            evidence_context=evidence_context,
         )
         return MarketAnalysisResult(
             evidence,
@@ -411,6 +428,63 @@ class SwarmMarketAnalysisPipeline:
                 states.fundamentals.confidence_multiplier,
             )
         return states.price.confidence_multiplier
+
+    @staticmethod
+    def _evidence_context(
+        candles: tuple[Candle, ...],
+        technical: dict[str, Decimal],
+        headlines: tuple[NewsSignal, ...],
+        macro: MacroSnapshot,
+        fundamentals: FundamentalSnapshot,
+        states: PipelineFreshness,
+        *,
+        max_bars: int = MAX_EVIDENCE_BARS,
+        max_headlines: int = MAX_EVIDENCE_HEADLINES,
+    ) -> EvidenceContext:
+        """Pre-render the newest bars and headlines plus the metric maps for the prompt.
+
+        Headline text is third-party data: it is collapsed to one line and cut to
+        ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize.
+        """
+        bars = tuple(
+            EvidenceBar(
+                candle.timestamp.isoformat(),
+                candle.open, candle.high, candle.low, candle.close, candle.volume,
+            )
+            for candle in candles[-max_bars:]
+        )
+        newest = sorted(headlines, key=lambda item: item.published_at)[-max_headlines:]
+        rendered_headlines = tuple(
+            EvidenceHeadline(
+                item.subject,
+                " ".join(item.headline.split())[:MAX_HEADLINE_CHARS],
+                item.sentiment,
+                item.published_at.isoformat(),
+                item.source,
+            )
+            for item in newest
+        )
+
+        def freshness(result: FreshnessResult) -> str:
+            if result.age_seconds is None:
+                return result.state.value
+            return f"{result.state.value}(age_seconds={result.age_seconds})"
+
+        return EvidenceContext(
+            bars,
+            tuple(sorted(technical.items())),
+            rendered_headlines,
+            tuple(sorted(macro.indicators.items())),
+            macro.observed_at.isoformat() if macro.indicators else None,
+            tuple(sorted(fundamentals.metrics.items())),
+            fundamentals.observed_at.isoformat() if fundamentals.metrics else None,
+            (
+                ("price", freshness(states.price)),
+                ("news", freshness(states.news)),
+                ("macro", freshness(states.macro)),
+                ("fundamentals", freshness(states.fundamentals)),
+            ),
+        )
 
     @staticmethod
     def _mean(values: tuple[Decimal, ...]) -> Decimal:

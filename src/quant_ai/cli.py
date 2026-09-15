@@ -37,6 +37,7 @@ from quant_ai.intelligence.sandbox import (
     SandboxNewsSentimentProvider,
 )
 from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
+from quant_ai.operations.zerodha_login import run_login
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.risk.warden import RiskWarden
 
@@ -226,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "friction-audit", "halt", "resume",
+            "backtest", "friction-audit", "halt", "resume", "zerodha-login",
         ),
     )
     parser.add_argument("--data")
@@ -234,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end")
     parser.add_argument("--market", choices=("india", "us"), default="us")
     parser.add_argument("--reason", default="operator halt")
+    parser.add_argument(
+        "--request-token",
+        help="zerodha-login: Kite request_token or the full redirect URL; prompted if omitted",
+    )
     args = parser.parse_args(argv)
     if args.command == "halt":
         target = paths.halt_file()
@@ -256,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
             risk_state.close()
             print(f"persisted halt released: tenant={tenant}")
         return 0
+    if args.command == "zerodha-login":
+        # Daily Kite token renewal for the paper pilot; never prints or stores secrets.
+        return run_login(args.request_token)
     if args.command == "backtest":
         _backtest(args)
         return 0

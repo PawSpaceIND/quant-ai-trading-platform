@@ -13,7 +13,7 @@ controls that exist today.
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` (keyword sentiment) | Real if set, else sandbox constants |
 | Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY) | `FRED_API_KEY` | Real if set, else sandbox constants |
-| Fundamentals (P/E, margin, FCF) | none | **Sandbox** — valuation agents abstain on unknown symbols |
+| Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
 | Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
@@ -23,7 +23,10 @@ governance faithfully; it does **not** test the intelligence layer's judgement.
 ## Prerequisites
 
 - Python ≥ 3.9 (CI runs 3.12), Node ≥ 22 for the dashboard (`node:sqlite`).
-- Zerodha Kite credentials and the instrument tokens you are licensed to consume.
+- Zerodha Kite credentials (`api_key` and `api_secret` in `~/.config/pramana/zerodha.json`,
+  mode 0600) and the instrument tokens you are licensed to consume. Kite issues one
+  access token per interactive login and invalidates it every day at about 06:00 IST;
+  `pramana zerodha-login` performs that login and records when the token was issued.
   Kite carries NSE/BSE equities and indices, NFO, MCX metals and commodities, and
   CDS currency pairs; the daemon subscribes to whatever tokens you list.
 - US instruments need IB Gateway/TWS reachable and `PRAMANA_IBKR_ENABLED=true`.
@@ -53,12 +56,28 @@ does, never widen a firewall limit.
 
 ## Launch
 
+Every trading day, after 06:00 IST and before the 09:15 IST open, renew the Kite token
+first. Yesterday's token is invalid after the cutoff, and an invalid token does not
+error: the stream goes quiet and stops are not enforced for the gap.
+
+```bash
+pramana zerodha-login          # prints the login URL; paste the redirect URL back
+```
+
+The command exchanges the request token for an access token, checks that `kite.profile()`
+reports the same `user_id` as the new session, writes `~/.config/pramana/zerodha-session.json`
+(mode 0600, with `issued_at`) and prints the next expected expiry. It never prints the
+token or the secret. `scripts/india_paper_runtime.py` reads that file directly and refuses
+to start once the token is past the cutoff. The generic daemon below reads
+`ZERODHA_ACCESS_TOKEN` from the shell, so export it from the session file after `.env`.
+
 The daemon does not read `.env` by itself; export it into the shell.
 
 ```bash
 # terminal 1 — ghost daemon (live ticks → paper ledger)
 cd /path/to/quant-ai-trading-platform && source .venv/bin/activate
 set -a; source .env; set +a
+export ZERODHA_ACCESS_TOKEN="$(python -c 'import json, pathlib; print(json.load((pathlib.Path.home() / ".config/pramana/zerodha-session.json").open())["access_token"])')"
 export TRADING_LIVE_MONEY_ACTIVE=false PRAMANA_TENANT_ID=ghost PRAMANA_GHOST_LOG="$PWD/pramana-ghost.log"
 python -m quant_ai.daemon
 
@@ -89,6 +108,18 @@ built in; load the lunar-calendar dates from the exchange circular:
 ```bash
 export PRAMANA_HOLIDAYS_JSON='{"INDIA": ["2026-03-26", "2026-03-31", "2026-11-09"]}'
 ```
+
+AI spend: Anthropic calls are capped per UTC day on both paths. The daemon admits at
+most `PRAMANA_AI_DAILY_CALL_LIMIT` (500) consensus calls and
+`PRAMANA_AI_DAILY_TOKEN_LIMIT` (2,000,000) tokens, counted in `ai-budget.sqlite` next
+to the ledger (`PRAMANA_AI_BUDGET_DB`). Once either is reached the consensus degrades
+to NEUTRAL and the tick ends in PRESERVE_CAPITAL; the proof shows
+`Consensus Skipped: AI budget exhausted` with inference status `budget_exhausted`, and
+the log carries one `anthropic_consensus_budget_exhausted` warning per day. A budget
+file the daemon cannot read refuses the call the same way. The dashboard admits
+`PRAMANA_CHAT_DAILY_LIMIT` (200) Atlas chat calls per day and answers 429 afterwards,
+with a `copilot.budget_exhausted` audit row; `GET /api/copilot` reports
+`dailyRemaining`. Counters reset at 00:00 UTC; a value of 0 or less disables that cap.
 
 ## What to watch (first 24–48h of session hours)
 
@@ -121,8 +152,13 @@ positions and cooldowns must survive; no duplicate fill on the next tick.
 
 ## Known limits of this build
 
-- Fundamentals are sandbox constants; valuation agents abstain on symbols the sandbox
-  does not know. A licensed fundamentals provider is a founder decision.
+- Fundamentals come from Yahoo Finance's public `quoteSummary` endpoint (crumb-and-cookie
+  session, no API key, no data licence). The provider returns all four ratios or nothing:
+  valuation agents abstain when Yahoo omits a field (trailing P/E is absent for loss-making
+  companies), when the endpoint changes shape or rate-limits, or when the symbol is outside
+  the watchlist/target. Snapshots are cached six hours per symbol, so a new filing reaches
+  the engine up to six hours late. A licensed fundamentals provider remains a founder
+  decision.
 - RSS sentiment is keyword-based. It is real data, not a strong signal.
 - Exposure is keyed by symbol; the directives reject duplicate symbols across markets
   for that reason.
