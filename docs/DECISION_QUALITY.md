@@ -45,6 +45,26 @@ report carries `insufficient_sample: true` until at least 20 directional decisio
 have a resolved 60-minute outcome; before that the dashboard says so and no number
 should be read as edge.
 
+### Significance
+
+A hit rate above one half and a positive expectancy describe a sample. The
+`significance` block asks the first question that should be asked of them: how far
+is each mean from zero in units of its own standard error.
+
+| Field | Meaning |
+|---|---|
+| `forward_return_60m.t_statistic` | One-sample t-statistic of the mean 60-minute forward return against zero |
+| `trade_net_pnl.t_statistic` | The same for the mean realised net P&L per closed trade |
+| `observations` | The number of observations behind each statistic |
+| `minimum_observations` | Below this count no t-statistic is reported at all; the field is null |
+| `multiple_testing_correction` | `none` |
+
+Read the correction field literally. Nothing here accounts for how many candidate
+strategies, windows or parameter settings were tried before this one was reported;
+the trial register beside the ledger is what records that count. Decisions inside a
+session are also serially correlated, which inflates a t-statistic further. A large
+t-statistic on a swept strategy is not evidence of an edge.
+
 ## Session post-mortems
 
 `pramana post-mortem [--date YYYY-MM-DD]` writes a deterministic session review to

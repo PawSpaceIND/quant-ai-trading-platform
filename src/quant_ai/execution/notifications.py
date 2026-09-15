@@ -84,6 +84,11 @@ class TelegramNotificationAdapter:
             close()
 
 
+def _ratio(value: Decimal | None) -> str:
+    """An annualised ratio, or a plain statement that the sample could not support one."""
+    return "unavailable (too few observations)" if value is None else str(value)
+
+
 def format_founder_execution_brief(
     brief: FounderExecutionBrief,
     *,
@@ -103,7 +108,10 @@ def format_founder_execution_brief(
             f"Swarm: {consensus}",
             f"Risk: {brief.risk_decision}",
             f"Regime: {brief.market_regime} | Stress: {brief.stress_verdict}",
-            f"Market-return Sharpe: {brief.sharpe_ratio} | Sortino: {brief.sortino_ratio} (not strategy performance)",
+            (
+                f"Market-return Sharpe: {_ratio(brief.sharpe_ratio)} | "
+                f"Sortino: {_ratio(brief.sortino_ratio)} (not strategy performance)"
+            ),
             f"XAI: {'; '.join(brief.xai_rationales) or 'none'}",
             f"Trades: {trades}",
             f"Equity: {total_equity} | Realized P&L: {realized_pnl}",

@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from random import Random
 
+from quant_ai.config import paths
+from quant_ai.validation.trial_register import record_trials, register_summary
 from quant_ai.validation.walk_forward import walk_forward_splits
 
 
@@ -100,7 +102,7 @@ def evaluate(prices: list[float], *, train: int = 60, test: int = 20,
             "path_stress": block_paths(held_out), "promotion_approved": False,
             "limitations": ["Cost estimate is a configurable all-in turnover assumption, not a broker fill model.",
                             "Input must be licensed, point-in-time and corporate-action-consistent.",
-                            "Trying another configuration reuses the holdout; register every experiment and reserve new unseen data.",
+                            "Trying another configuration reuses the holdout; every run is appended to the trial register and no reported statistic here is corrected for that multiplicity.",
                             "This baseline does not validate AI decisions, intrabar fills or future profits."]}
 
 
@@ -113,20 +115,45 @@ def load_prices(source: Path) -> list[float]:
     return [float(row["close"]) for row in rows]
 
 
+STUDY = "long_cash_sma_baseline"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--cost-bps", type=float, default=10)
+    parser.add_argument(
+        "--trial-register",
+        type=Path,
+        help="append-only trial register (default: beside the paper ledger)",
+    )
     args = parser.parse_args()
     report = evaluate(load_prices(args.data), cost_bps=args.cost_bps)
     report["data_sha256"] = hashlib.sha256(args.data.read_bytes()).hexdigest()
     report["code_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    # Register the run before the report is written. Re-running this study over another
+    # window therefore leaves a trace, and the report carries the cumulative count of
+    # candidates evaluated so far - the number every reported statistic has to answer for.
+    register = args.trial_register or paths.trial_register()
+    record_trials(
+        register,
+        study=STUDY,
+        candidate_trials=int(report["candidate_trials"]),
+        configuration=report["configuration"],
+        data_sha256=report["data_sha256"],
+    )
+    report["trial_register"] = register_summary(register, study=STUDY)
     report["report_sha256"] = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x") as file:
         json.dump(report, file, indent=2)
-    print(json.dumps({"report": str(args.output), "promotion_approved": False}))
+    print(json.dumps({
+        "report": str(args.output),
+        "promotion_approved": False,
+        "trial_register": str(register),
+        "cumulative_candidate_trials": report["trial_register"]["candidate_trials"],
+    }))
 
 
 if __name__ == "__main__":

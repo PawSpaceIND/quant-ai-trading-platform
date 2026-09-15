@@ -59,8 +59,12 @@ def plan():
 
 def test_performance_metrics_and_var_are_mathematically_bounded() -> None:
     returns = (Decimal("0.01"), Decimal("-0.02"), Decimal("0.03"), Decimal("-0.01"))
-    assert sharpe_ratio(returns) != 0
-    assert sortino_ratio(returns) != 0
+    # Four observations cannot support an annualised ratio, so none is reported.
+    assert sharpe_ratio(returns) is None
+    assert sortino_ratio(returns) is None
+    long_enough = returns * 10
+    assert sharpe_ratio(long_enough) is not None
+    assert sortino_ratio(long_enough) is not None
     assert maximum_drawdown((Decimal(100), Decimal(110), Decimal(99), Decimal(120))) == Decimal("0.1")
     assert win_loss_ratio((Decimal(1), Decimal(2), Decimal(-1), Decimal(-3))) == Decimal(1)
     assert historical_var(returns, Decimal("0.95")) == Decimal("0.02")
