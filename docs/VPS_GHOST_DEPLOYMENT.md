@@ -91,6 +91,36 @@ docker compose -f deploy/docker-compose.yml ps
 docker compose -f deploy/docker-compose.yml logs --tail=100 pramana-ghost
 ```
 
+## 7. Update a running deployment
+
+Merging to `main` does not deploy anything. CI builds and tests the images; the host
+only changes when you pull and rebuild there. Run this on the Docker host, from the
+repository checkout, after the `main` CI run for the merge is green:
+
+```bash
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+git rev-parse HEAD                                   # record the deployed revision
+docker compose -f deploy/docker-compose.yml --env-file .env config --quiet
+docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs --tail=100 pramana-ghost
+```
+
+With the Cloudflare overlay (`docs/CLOUDFLARE_PRIVATE_PILOT.md`) pass both files to every
+`docker compose` command above, for example
+`-f deploy/docker-compose.yml -f deploy/docker-compose.cloudflare.yml`. `up -d --build`
+recreates only the services whose image or configuration changed; the `pramana-data`
+volume, and with it the ledger, proofs, AI budget counters and the halt marker, is kept.
+Update outside NSE and US session hours when you can: the daemon restarts in seconds,
+but an open paper position is unprotected for the length of the restart.
+
+Confirm the dashboard reports the new revision (`PRAMANA_RELEASE_REVISION`, when set)
+and that the first cadence tick after the restart writes a proof. New optional settings
+land in `.env.example` with each release; copy the ones you want into `.env` before
+`up -d --build`, otherwise the Compose defaults apply.
+
 ## IBKR opt-in
 
 IBKR is disabled by default. Enable it only when an IB Gateway/TWS endpoint is intentionally running
