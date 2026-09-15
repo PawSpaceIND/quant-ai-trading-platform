@@ -74,6 +74,12 @@ test("private market watchlist persists and hands a selected instrument to Atlas
  await expect(page.getByRole("button",{name:"Remove NSE:INFY"})).toBeVisible();
  await page.getByRole("button",{name:"Ask Atlas ↗"}).click();
  await expect(page.locator(".copilot-dock textarea")).toHaveValue(/NSE:INFY/);
+ const marketFits=await page.locator(".market-panel").evaluate(panel=>{
+   const detail=panel.querySelector(".instrument-detail");
+   return !!detail && detail.getBoundingClientRect().right<=panel.getBoundingClientRect().right+1
+     && panel.scrollWidth<=panel.clientWidth+1;
+ });
+ expect(marketFits).toBe(true);
  await page.screenshot({path:"test-results/market-watch-atlas.png",fullPage:true});
  expect(errors).toEqual([]);
 });
