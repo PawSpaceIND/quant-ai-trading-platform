@@ -25,11 +25,15 @@ LEDGER_ENV = "PRAMANA_LEDGER_PATH"
 PROOF_ENV = "PRAMANA_PROOF_DIR"
 TENANT_ENV = "PRAMANA_TENANT_ID"
 HALT_FILE_ENV = "PRAMANA_HALT_FILE"
+DECISION_QUALITY_ENV = "PRAMANA_DECISION_QUALITY_REPORT"
+POST_MORTEM_DIR_ENV = "PRAMANA_POST_MORTEM_DIR"
 
 DEFAULT_LEDGER_NAME = "pramana_ledger.sqlite"
 DEFAULT_PROOF_DIRECTORY_NAME = "pramana-proofs"
 DEFAULT_TENANT_ID = "default"
 DEFAULT_HALT_FILE_NAME = "PRAMANA_HALT"
+DEFAULT_DECISION_QUALITY_NAME = "decision-quality.json"
+DEFAULT_POST_MORTEM_DIRECTORY_NAME = "post-mortems"
 
 _ROOT_MARKERS = ("pyproject.toml", ".git")
 
@@ -82,3 +86,19 @@ def halt_file() -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return ledger_path().parent / DEFAULT_HALT_FILE_NAME
+
+
+def decision_quality_report(*legacy_env: str) -> Path:
+    """Decision-quality report the daemon rewrites every cadence; next to the ledger by default."""
+    configured = _from_env(DECISION_QUALITY_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_DECISION_QUALITY_NAME
+
+
+def post_mortem_directory(*legacy_env: str) -> Path:
+    """Directory of per-session post-mortem files; ``post-mortems`` next to the ledger by default."""
+    configured = _from_env(POST_MORTEM_DIR_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_POST_MORTEM_DIRECTORY_NAME

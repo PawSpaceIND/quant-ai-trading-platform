@@ -305,6 +305,7 @@ def build_ghost_runner(
     halt_file: str | Path | None = None,
     directives: FounderDirectives | None = None,
     pilot_mode: bool = False,
+    decision_quality_report: str | Path | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -364,6 +365,7 @@ def build_ghost_runner(
         halt_file=halt_file,
         instruments=instruments,
     )
+    daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
     feed.clock = lambda: daemon.clock()
     if pilot_mode:
@@ -395,6 +397,15 @@ def build_ghost_runner(
 def _assert_ghost_mode() -> None:
     if os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "true":
         raise RuntimeError("ghost daemon refuses to start when TRADING_LIVE_MONEY_ACTIVE=true")
+
+
+def _decision_quality_path(database: str | Path, configured: str | Path | None) -> Path | None:
+    """Report file next to the ledger unless configured; none for an in-memory ledger."""
+    if configured is not None:
+        return Path(configured)
+    if str(database) == ":memory:":
+        return None
+    return Path(database).parent / paths.DEFAULT_DECISION_QUALITY_NAME
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -550,6 +561,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         ib_port=int(os.getenv("PRAMANA_IB_PORT", "7497")),
         ib_client_id=int(os.getenv("PRAMANA_IB_CLIENT_ID", "17")),
         database=str(paths.ledger_path("PRAMANA_PAPER_DB")),
+        decision_quality_report=paths.decision_quality_report("PRAMANA_PAPER_DB"),
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),
