@@ -136,6 +136,14 @@ def starter_catalog() -> tuple[Instrument, ...]:
             {"requires_contract": "true"},
         ),
         Instrument(
+            "MSEI-EQUITY", Market.INDIA, AssetClass.EQUITY, "INR", "MSEI", False,
+            {"research_only": "true"},
+        ),
+        Instrument(
+            "MSEI-DERIVATIVE", Market.INDIA, AssetClass.FUTURE, "INR", "MSEI", False,
+            {"requires_contract": "true"},
+        ),
+        Instrument(
             "GIFT-NIFTY", Market.INDIA, AssetClass.FUTURE, "USD", "IFSC", False,
             {"requires_contract": "true"},
         ),
