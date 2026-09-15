@@ -62,6 +62,7 @@ from quant_ai.marketdata.ticker_stream import (
     _contract_symbol,
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
+from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.warden import RiskWarden
@@ -258,14 +259,19 @@ class DaemonRunner:
     async def _capture_xai_proofs(self, generated_at: datetime) -> None:
         logger = self.daemon.scheduler.pipeline.runtime.xai_logger
         traces = logger.traces()
-        for trace in traces[self._proof_count :]:
+        # Count against every trace ever recorded, not the retained window: the logger
+        # keeps only the newest traces in memory, so an index into the window would
+        # silently stop advancing once the cap is reached. Clamping to the window means
+        # a session long enough to overflow it writes the proofs it still holds.
+        unwritten = min(max(logger.recorded_count - self._proof_count, 0), len(traces))
+        for trace in traces[len(traces) - unwritten :]:
             payload = {
                 "event": "xai_proof",
                 "generated_at": generated_at.isoformat(),
                 "proof": json.loads(logger.to_json(trace)),
             }
             await asyncio.to_thread(self._append_json_line, payload)
-        self._proof_count = len(traces)
+        self._proof_count = logger.recorded_count
 
     async def _write_event(self, event: str, **fields: str) -> None:
         payload = {"event": event, "generated_at": _as_utc(self.clock()).isoformat(), **fields}
@@ -558,14 +564,23 @@ def _env_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     return holidays_from_json(payload, default_holidays())
 
 
-def _env_notifications() -> TradingNotificationDispatcher | None:
+def _env_notifications() -> TradingNotificationDispatcher:
+    """Always durable, with Telegram as an addition rather than a precondition.
+
+    Console output dies with the container that `up -d --build` replaces, so the
+    JSON-lines log on the shared volume is wired in unconditionally and needs no
+    credentials. Telegram is added only when both settings are present; without them
+    the operator loses push delivery, never the record.
+    """
+    sinks: list[TradingNotificationSink] = [
+        ConsoleNotificationAdapter(),
+        JsonlFileSink(paths.alert_log("PRAMANA_PAPER_DB")),
+    ]
     token = os.getenv("PRAMANA_TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("PRAMANA_TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        return None
-    return TradingNotificationDispatcher(
-        (ConsoleNotificationAdapter(), TelegramNotificationAdapter(token, chat_id))
-    )
+    if token and chat_id:
+        sinks.append(TelegramNotificationAdapter(token, chat_id))
+    return TradingNotificationDispatcher(tuple(sinks))
 
 
 def build_ghost_runner_from_env() -> DaemonRunner:

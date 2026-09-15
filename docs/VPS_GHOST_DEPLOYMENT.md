@@ -82,7 +82,8 @@ a Warden veto and no paper fill. Anthropic timeout/overload must skip consensus 
 
 ## 6. Persistence and restart proof
 
-The SQLite paper ledger, XAI proofs, and daemon log live in the `pramana-data` Docker volume.
+The SQLite paper ledger, XAI proofs, alert log (`alerts.jsonl`), scheduled backups
+(`backups/`) and daemon log live in the `pramana-data` Docker volume.
 Verify restart behavior once before unattended operation:
 
 ```bash
@@ -120,6 +121,98 @@ Confirm the dashboard reports the new revision (`PRAMANA_RELEASE_REVISION`, when
 and that the first cadence tick after the restart writes a proof. New optional settings
 land in `.env.example` with each release; copy the ones you want into `.env` before
 `up -d --build`, otherwise the Compose defaults apply.
+
+## Durable alerts
+
+Every dispatched alert - kill switch engaged, stop-loss failed to liquidate, cadence
+halted, drawdown breached, and the cadence briefs - is appended as one JSON line to
+`/data/alerts.jsonl` in the shared volume (`PRAMANA_ALERT_LOG`). This needs no
+credentials and is always on. The container's stderr is not a record: `up -d --build`
+replaces the container and takes its logs with it, while the volume survives.
+
+```bash
+docker compose -f deploy/docker-compose.yml exec pramana-ghost \
+  tail -n 50 /data/alerts.jsonl
+docker compose -f deploy/docker-compose.yml exec pramana-ghost \
+  sh -c "grep KILL_SWITCH_ENGAGED /data/alerts.jsonl | tail -n 5"
+```
+
+The file is created mode 0600, append-only, and contains no credentials. A write
+failure is logged and swallowed - an alert sink must never break the cadence tick that
+is reporting the problem, so check that the file is growing rather than assuming it.
+
+Push delivery is optional and additive: set `PRAMANA_TELEGRAM_BOT_TOKEN` and
+`PRAMANA_TELEGRAM_CHAT_ID` in `.env` (Compose passes both through, empty by default)
+and recreate the engine. Without them you lose the push, never the record. Neither the
+file nor this repository replaces the independent host monitor required by
+`docs/PRIVATE_PILOT_RUNBOOK.md`: an alert written by a stopped engine is never sent.
+
+## Scheduled backups
+
+The `backup` service runs on the engine image and invokes the existing
+`scripts/pilot_ops.py backup` once every `PRAMANA_BACKUP_INTERVAL_SECONDS` (default
+86400, daily), keeping the newest `PRAMANA_BACKUP_KEEP` copies (default 14) in
+`/data/backups`. Each copy is taken with SQLite's online backup API through a
+read-only connection - designed to run against a live WAL database - then
+integrity-checked and recorded in a `.manifest.json` with its sha256. The engine is
+never paused, locked or restarted for a backup.
+
+```bash
+docker compose -f deploy/docker-compose.yml logs --tail=20 backup
+docker compose -f deploy/docker-compose.yml exec backup ls -l /data/backups
+# Take one now, outside the schedule (for example before an upgrade):
+docker compose -f deploy/docker-compose.yml exec backup \
+  python /app/scripts/scheduled_backup.py --database /data/pramana.db \
+  --directory /data/backups --keep 14 --once
+# Non-destructive restore drill against a copy; it never touches the live ledger:
+docker compose -f deploy/docker-compose.yml exec backup \
+  python /app/scripts/pilot_ops.py restore-drill \
+  --database /data/backups/<copy>.db --destination /data/drills/<copy>-drill.db
+```
+
+On the systemd install (`deploy/pramana-ghost.service`) there is no Compose service;
+run the same script with `--once` from a systemd timer or cron instead.
+
+### An on-instance backup is not a backup
+
+A copy in `/data/backups` sits on the same volume, the same disk and the same instance
+as the ledger it protects. It survives a bad upgrade or a corrupted write. It does not
+survive the instance being deleted, the disk failing, the account being lost or the
+host being compromised. Copy it off the host, on a schedule you actually keep:
+
+```bash
+# On the Docker host: lift the backups out of the volume onto the host filesystem.
+docker compose -f deploy/docker-compose.yml cp backup:/data/backups ./pramana-backups
+
+# From your workstation (pull, never push): copy them off the instance.
+rsync -az --chmod=D700,F600 \
+  operator@<vps-host>:~/quant-ai-trading-platform/pramana-backups/ \
+  ~/pramana-offsite/$(date -u +%Y-%m-%d)/
+
+# Then verify what landed, against the sha256 each manifest recorded at copy time.
+cd ~/pramana-offsite/$(date -u +%Y-%m-%d)
+for copy in pramana-*.db; do
+  printf '%s  %s\n' "$(python3 -c "import json;print(json.load(open('$copy.manifest.json'))['sha256'])")" "$copy"
+done | sha256sum -c -
+```
+
+Back up the XAI proof directory (`/data/xai`), `/data/alerts.jsonl` and the console
+database alongside the ledger; `docs/PRIVATE_PILOT_RUNBOOK.md` covers restoring the
+whole bundle on a separate deployment, which is the only thing that proves a backup.
+Private file permissions are not encryption: store the off-host copy encrypted.
+
+## Resource limits and log rotation
+
+Every Compose service declares a memory cap (`mem_limit`: 1g engine, 512m dashboard,
+256m collector and backup) sized for a small 2 GB instance, matching the systemd
+unit's `MemoryMax`. Caps are not reservations. Every service also caps its container
+logs at 10 MB x 5 files, so a chatty week cannot fill the disk and stop the engine.
+Confirm both in the rendered configuration before starting:
+
+```bash
+docker compose -f deploy/docker-compose.yml --env-file .env config | grep -A3 -E "mem_limit|logging"
+docker compose -f deploy/docker-compose.yml ps           # after an OOM kill a service shows Exited (137)
+```
 
 ## IBKR opt-in
 
