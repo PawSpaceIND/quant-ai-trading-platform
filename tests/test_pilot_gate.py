@@ -18,6 +18,7 @@ def evidence(status="passed"):
                 "reviewer": "founder-reviewer",
                 "observedAt": now,
                 "evidence": [f"evidence/{gate.gate_id}.json"],
+                "evidenceSha256": "b" * 64,
                 **{item: True for item in gate.required_evidence},
             }
             for gate in EXTERNAL_GATES
@@ -36,6 +37,10 @@ def test_external_gates_require_every_attached_reviewed_evidence_item():
     missing = evidence()
     del missing["gates"]["X01"]["coverage"]
     assert not assess_external_gates(missing)[0].passed
+
+    bad_digest = evidence()
+    bad_digest["gates"]["X01"]["evidenceSha256"] = "unbound"
+    assert not assess_external_gates(bad_digest)[0].passed
 
 
 def test_missing_or_invalid_external_document_never_claims_readiness():

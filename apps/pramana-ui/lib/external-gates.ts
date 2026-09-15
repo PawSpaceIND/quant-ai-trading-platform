@@ -20,8 +20,8 @@ export function externalGateChecks(): ExternalGateCheck[] {
     const expectedRevision = process.env.PRAMANA_RELEASE_REVISION?.trim();
     const reportReady = report.schema === "pramana.external_gate_report.v1" && report.ready === true && report.liveExecutionEnabled === false && revision.length >= 40 && (!expectedRevision || expectedRevision === revision);
     return expected.map(([id, title]) => {
-      const item = gates.find((candidate) => candidate && typeof candidate === "object" && (candidate as {id?: unknown}).id === id) as {passed?: unknown; detail?: unknown} | undefined;
-      const pass = reportReady && item?.passed === true;
+      const item = gates.find((candidate) => candidate && typeof candidate === "object" && (candidate as {id?: unknown}).id === id) as {passed?: unknown; detail?: unknown; evidenceSha256?: unknown} | undefined;
+      const pass = reportReady && item?.passed === true && typeof item.evidenceSha256 === "string" && /^[0-9a-f]{64}$/i.test(item.evidenceSha256);
       return {id, title, pass, detail: pass ? "Reviewed external evidence passed." : typeof item?.detail === "string" ? item.detail : "External evidence is missing or does not match this release."};
     });
   } catch {

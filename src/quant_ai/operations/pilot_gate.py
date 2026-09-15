@@ -1,6 +1,7 @@
 """Fail-closed external evidence gate for paper-pilot acceptance."""
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -64,6 +65,9 @@ def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, .
         attachments = item.get("evidence")
         if not isinstance(attachments, list) or not attachments or not all(isinstance(path, str) and path for path in attachments):
             missing.append("evidence_attachments")
+        digest = item.get("evidenceSha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            missing.append("evidenceSha256")
         if not isinstance(item.get("reviewer"), str) or not item["reviewer"].strip():
             missing.append("reviewer")
         if not _aware_timestamp(item.get("observedAt")):

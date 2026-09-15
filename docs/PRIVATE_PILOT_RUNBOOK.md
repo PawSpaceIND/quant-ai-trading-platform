@@ -148,4 +148,4 @@ Record those external gates in a reviewed JSON document and run the fail-closed 
 python scripts/pilot_ops.py pilot-check --evidence /data/reviews/external-gates.json
 ```
 
-The command requires X01/X02/X03 evidence, a target host, exact release revision, reviewer, timezone-aware observation time and non-empty evidence attachments. It reports `liveExecutionEnabled: false` and exits non-zero for any missing or invalid item. This records acceptance evidence; it does not enable live orders.
+The command requires X01/X02/X03 evidence, a target host, exact release revision, reviewer, timezone-aware observation time, non-empty evidence attachments and a 64-character SHA-256 digest binding each gate's reviewed evidence. It reports `liveExecutionEnabled: false` and exits non-zero for any missing or invalid item. This records acceptance evidence; it does not enable live orders.
