@@ -1,0 +1,76 @@
+{
+  "schema": "pramana.decision_quality.v1",
+  "tenant_id": "ghost",
+  "generated_at": "2026-09-14T10:15:00Z",
+  "window": {"since": "2026-08-31T03:45:00Z", "until": "2026-09-14T10:00:00Z", "sessions": 10},
+  "minimum_sample": 20,
+  "insufficient_sample": false,
+  "counts": {"decisions": 61, "filled": 28, "rejected": 21, "abstained": 12, "resolved_60m": 34, "closed_trades": 24},
+  "rejections": [
+    {"reason": "risk_budget_exhausted", "count": 11},
+    {"reason": "stale_quote", "count": 6},
+    {"reason": "halted", "count": 4}
+  ],
+  "directional": {"horizon_minutes": 60, "evaluated": 34, "hit_rate": 0.5588, "mean_forward_return": 0.0012},
+  "trades": {
+    "closed": 24,
+    "win_rate": 0.5417,
+    "expectancy": 42.5,
+    "profit_factor": 1.38,
+    "average_win": 310.4,
+    "average_loss": -274.9,
+    "average_holding_minutes": 87.5,
+    "net_pnl": 1020.0,
+    "gross_pnl": 1188.6,
+    "fees": 168.6,
+    "exits": [
+      {"trigger": "take_profit", "count": 9},
+      {"trigger": "stop_loss", "count": 8},
+      {"trigger": "session_close", "count": 7}
+    ]
+  },
+  "calibration": {
+    "brier_score": 0.221,
+    "bins": [
+      {"lower": 0.0, "upper": 0.1, "decisions": 0, "hit_rate": null, "mean_confidence": null},
+      {"lower": 0.1, "upper": 0.2, "decisions": 0, "hit_rate": null, "mean_confidence": null},
+      {"lower": 0.2, "upper": 0.3, "decisions": 1, "hit_rate": 0.0, "mean_confidence": 0.28},
+      {"lower": 0.3, "upper": 0.4, "decisions": 2, "hit_rate": 0.5, "mean_confidence": 0.36},
+      {"lower": 0.4, "upper": 0.5, "decisions": 4, "hit_rate": 0.5, "mean_confidence": 0.46},
+      {"lower": 0.5, "upper": 0.6, "decisions": 9, "hit_rate": 0.5556, "mean_confidence": 0.55},
+      {"lower": 0.6, "upper": 0.7, "decisions": 10, "hit_rate": 0.6, "mean_confidence": 0.65},
+      {"lower": 0.7, "upper": 0.8, "decisions": 6, "hit_rate": 0.6667, "mean_confidence": 0.74},
+      {"lower": 0.8, "upper": 0.9, "decisions": 2, "hit_rate": 0.5, "mean_confidence": 0.83},
+      {"lower": 0.9, "upper": 1.0, "decisions": 0, "hit_rate": null, "mean_confidence": null}
+    ]
+  },
+  "by_regime": [
+    {"regime": "TRENDING_UP", "decisions": 24, "filled": 14, "hit_rate": 0.6, "net_pnl": 1310.2},
+    {"regime": "RANGE_BOUND", "decisions": 27, "filled": 10, "hit_rate": 0.5, "net_pnl": -412.7},
+    {"regime": "VOLATILE", "decisions": 10, "filled": 4, "hit_rate": null, "net_pnl": 122.5}
+  ],
+  "by_hour_ist": [
+    {"hour": 11, "decisions": 12, "hit_rate": 0.5, "net_pnl": 96.0},
+    {"hour": 9, "decisions": 21, "hit_rate": 0.5714, "net_pnl": 612.4},
+    {"hour": 10, "decisions": 18, "hit_rate": 0.5833, "net_pnl": 311.6},
+    {"hour": 14, "decisions": 10, "hit_rate": null, "net_pnl": 0.0}
+  ],
+  "by_agent": [
+    {"agent_id": "momentum", "evaluated": 34, "directional_accuracy": 0.5882},
+    {"agent_id": "mean_reversion", "evaluated": 34, "directional_accuracy": 0.4706},
+    {"agent_id": "news_sentiment", "evaluated": 12, "directional_accuracy": null}
+  ],
+  "by_mode": [
+    {"mode": "deterministic", "decisions": 40},
+    {"mode": "llm", "decisions": 21}
+  ],
+  "recent": [
+    {"decision_id": "d-0212", "decided_at": "2026-09-12T04:05:00Z", "symbol": "TCS", "stance": "BUY", "confidence": 0.61, "regime": "RANGE_BOUND", "mode": "deterministic", "governance": "rejected", "reason": "risk_budget_exhausted", "order_id": null, "forward_return_60m": -0.0021, "net_pnl": null, "exit_trigger": null},
+    {"decision_id": "d-0219", "decided_at": "2026-09-14T04:32:00Z", "symbol": "INFY", "stance": "BUY", "confidence": 0.72, "regime": "TRENDING_UP", "mode": "llm", "governance": "filled", "reason": null, "order_id": "o-0114", "forward_return_60m": 0.0041, "net_pnl": 286.4, "exit_trigger": "take_profit"},
+    {"decision_id": "d-0216", "decided_at": "2026-09-13T05:10:00Z", "symbol": "HDFCBANK", "stance": "NEUTRAL", "confidence": 0.44, "regime": null, "mode": null, "governance": "abstained", "reason": "confidence_below_floor", "order_id": null, "forward_return_60m": null, "net_pnl": null, "exit_trigger": null}
+  ],
+  "limitations": [
+    "Paper fills only; live slippage, partial fills and broker rejections are not modelled.",
+    "Ten sessions is a short window; hit-rate confidence intervals are wide and regime coverage is uneven."
+  ]
+}

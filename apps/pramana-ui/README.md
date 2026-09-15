@@ -9,6 +9,8 @@ The server reads only:
 - `PRAMANA_LEDGER_PATH` (default `../../pramana_ledger.sqlite`)
 - `PRAMANA_PROOF_DIR` (default `../../pramana-proofs`)
 - `PRAMANA_TENANT_ID` (default `default`)
+- `PRAMANA_DECISION_QUALITY_REPORT` (default `decision-quality.json` beside the ledger)
+- `PRAMANA_POST_MORTEM_DIR` (default `post-mortems/` beside the ledger; read-only, approval stays on the host CLI)
 
 SQLite is opened with `readonly: true`, `fileMustExist: true`, and `PRAGMA query_only=ON`.
 No API route mutates the ledger, proof files, risk parameters, or orders.
