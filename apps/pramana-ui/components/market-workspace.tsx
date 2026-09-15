@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import type { MarketInstrument, MarketSnapshot } from "@/lib/market";
+import { InstrumentUniversePanel } from "./instrument-universe";
 const number = (v: number | undefined) =>
   v === undefined
     ? "—"
@@ -372,6 +373,7 @@ export function MarketWorkspace({
           </div>
         )}
       </div>
+      <InstrumentUniversePanel universe={data.instrumentUniverse} />
       {data.coverage?.groups?.length ? (
         <div className="market-coverage callout">
           <div className="section-row">

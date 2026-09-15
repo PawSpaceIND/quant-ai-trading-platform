@@ -9,6 +9,7 @@ export type MarketInstrument = {
   currency: string;
   exchange: string;
   providerInstrumentId?: string;
+  providerExchangeToken?: string;
   contract?: string;
   expiry?: string;
   underlying?: string;
@@ -19,6 +20,28 @@ export type MarketInstrument = {
   lotSize?: number;
   tickSize?: number;
 };
+export type UniverseInstrument = MarketInstrument & {instrumentType?: string; shortability?: string};
+export type InstrumentUniverse = {
+  schema: string;
+  status: string;
+  source?: string;
+  fetchedAt?: string;
+  cacheAgeSeconds?: number;
+  total: number;
+  byExchange: Record<string, number>;
+  bySegment: Record<string, number>;
+  byAssetClass: Record<string, number>;
+  byInstrumentType: Record<string, number>;
+  expiringContracts: number;
+  optionContracts: number;
+  futureContracts: number;
+  derivativeContracts: number;
+  shortSide?: string;
+  entitlement?: string;
+  sample?: UniverseInstrument[];
+  recordsPath?: string;
+};
+
 export type MarketRow = {
   symbol: string;
   available: boolean;
@@ -43,7 +66,17 @@ export type MarketSnapshot = {
   collectorStale?: boolean;
   runtime?: Record<string, unknown>;
   coverage?: IndiaCoverage;
+  instrumentUniverse?: InstrumentUniverse;
 };
+const cleanCount = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+const cleanCounts = (value: unknown): Record<string, number> => {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key, item]) => key.length <= 80 && Number.isSafeInteger(item) && (item as number) >= 0)
+    .slice(0, 100)
+    .map(([key, item]) => [key, item as number]));
+};
+
 export async function readMarket(): Promise<MarketSnapshot> {
   try {
     const file =
@@ -81,6 +114,7 @@ export async function readMarket(): Promise<MarketSnapshot> {
               currency: item.currency,
               exchange: item.exchange,
               providerInstrumentId: typeof item.providerInstrumentId === "string" ? item.providerInstrumentId : undefined,
+              providerExchangeToken: typeof item.providerExchangeToken === "string" ? item.providerExchangeToken : undefined,
               contract: typeof item.contract === "string" ? item.contract : undefined,
               expiry: typeof item.expiry === "string" ? item.expiry : undefined,
               underlying: typeof item.underlying === "string" ? item.underlying : undefined,
@@ -108,9 +142,38 @@ export async function readMarket(): Promise<MarketSnapshot> {
             .slice(-1000),
         };
       });
+    const rawUniverse = raw.instrumentUniverse;
+    const instrumentUniverse: InstrumentUniverse | undefined = rawUniverse && typeof rawUniverse === "object"
+      && typeof rawUniverse.status === "string" && Number.isSafeInteger(rawUniverse.total)
+      ? {
+          schema: typeof rawUniverse.schema === "string" ? rawUniverse.schema : "pramana.instrument_universe.v1",
+          status: rawUniverse.status,
+          source: typeof rawUniverse.source === "string" ? rawUniverse.source : undefined,
+          fetchedAt: typeof rawUniverse.fetchedAt === "string" ? rawUniverse.fetchedAt : undefined,
+          cacheAgeSeconds: typeof rawUniverse.cacheAgeSeconds === "number" && Number.isFinite(rawUniverse.cacheAgeSeconds) ? rawUniverse.cacheAgeSeconds : undefined,
+          total: rawUniverse.total,
+          byExchange: cleanCounts(rawUniverse.byExchange),
+          bySegment: cleanCounts(rawUniverse.bySegment),
+          byAssetClass: cleanCounts(rawUniverse.byAssetClass),
+          byInstrumentType: cleanCounts(rawUniverse.byInstrumentType),
+          expiringContracts: cleanCount(rawUniverse.expiringContracts),
+          optionContracts: cleanCount(rawUniverse.optionContracts),
+          futureContracts: cleanCount(rawUniverse.futureContracts),
+          derivativeContracts: cleanCount(rawUniverse.derivativeContracts),
+          shortSide: typeof rawUniverse.shortSide === "string" ? rawUniverse.shortSide : undefined,
+          entitlement: typeof rawUniverse.entitlement === "string" ? rawUniverse.entitlement : undefined,
+          recordsPath: typeof rawUniverse.recordsPath === "string" ? rawUniverse.recordsPath : undefined,
+          sample: Array.isArray(rawUniverse.sample) ? rawUniverse.sample.slice(0,100).filter((item: unknown): item is UniverseInstrument => {
+            if (!item || typeof item !== "object") return false;
+            const value = item as Record<string, unknown>;
+            return typeof value.exchange === "string" && typeof value.symbol === "string" && typeof value.assetClass === "string";
+          }) : [],
+        }
+      : undefined;
     return {
       ...raw,
       rows,
+      instrumentUniverse,
       coverage: indiaCoverage(rows),
       collectorStale:
         !Number.isFinite(timestamp) || age > 120000 || age < -5000,

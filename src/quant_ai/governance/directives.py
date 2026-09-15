@@ -93,7 +93,8 @@ class FounderDirectives:
                     f"{instrument.symbol}: asset class {instrument.asset_class.value} is not allowed"
                 )
             if instrument.symbol in seen:
-                # Exposure and tick buffers are keyed by symbol; one symbol, one instrument.
+                # Tick buffers, exposure and stop controls are keyed by symbol.
+                # Keeping one symbol per pilot watchlist avoids cross-venue collisions.
                 raise ValueError(f"{instrument.symbol}: duplicate watchlist symbol")
             seen.add(instrument.symbol)
 

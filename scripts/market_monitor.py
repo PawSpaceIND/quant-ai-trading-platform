@@ -12,6 +12,7 @@ from kiteconnect import KiteConnect
 from quant_ai.domain.models import Market
 from quant_ai.execution.session import MarketCalendar, default_holidays, holidays_from_json
 from quant_ai.marketdata.risk_history import risk_history_input
+from quant_ai.marketdata.instrument_master import instrument_universe
 
 CONFIG = Path.home() / ".config/pramana"
 TARGET = Path(os.environ.get("PRAMANA_MARKET_SNAPSHOT", str(CONFIG / "market-monitor.json")))
@@ -181,6 +182,10 @@ def collect():
                      "exchangeTimestamp": str(quote.get("timestamp") or ""),
                      "lastTrade": str(quote.get("last_trade_time") or ""),
                      "history": history[token][1], "instrument": base_instrument})
+    # Keep quote polling bounded, but retain the complete exact broker universe
+    # separately from the watchlist. This is refreshed/cached at most daily and
+    # never widens the paper or live execution gate.
+    universe = instrument_universe(kite, now, TARGET.parent)
     news = []
     try:
         adapter = RssNewsSentimentAdapter(ResilientHttpClient(UrllibTransport()), ("https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",))
@@ -192,6 +197,7 @@ def collect():
     return {"news": news, "runtime": runtime, "status": "ok", "fetchedAt": now.isoformat(), "source": "Zerodha REST quotes",
             "session": calendar.state(Market.INDIA, now).value,
             "exchanges": profile.get("exchanges", []), "rows": rows,
+            "instrumentUniverse": universe,
             "riskHistory": risk_history_input(rows, now, calendar=calendar),
             "commodity": "MCX observations configured from exact contracts" if extras else ("MCX enabled; contract feed not configured" if "MCX" in profile.get("exchanges", []) else "MCX access not reported by this account"),
             "note": "Last available quotes; poll time is not trade time. Gold/silver ETFs follow NSE hours. Extra MCX/CDS rows are read-only until separately qualified.",
