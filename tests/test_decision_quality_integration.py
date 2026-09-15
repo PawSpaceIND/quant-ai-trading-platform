@@ -8,10 +8,11 @@ which no single component owns.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from quant_ai.agents.atlas import EVIDENCE_BLOCK_END, EVIDENCE_BLOCK_START, LESSONS_HEADING
-from quant_ai.agents.contracts import MAX_LESSON_CHARS, MAX_LESSONS
+from quant_ai.agents.contracts import MAX_LESSON_CHARS, MAX_LESSONS, EvidenceContext
 from quant_ai.analytics.post_mortem import approve_post_mortem, approved_lessons, write_post_mortem
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 
@@ -71,9 +72,21 @@ def test_lesson_text_is_bounded_and_single_line_before_it_reaches_the_prompt(tmp
     assert all("\n" not in item and "\r" not in item for item in lessons)
 
 
-def test_lessons_render_inside_the_untrusted_evidence_block():
-    from tests.helpers_prompt import prompt_with_lessons
+def prompt_with_lessons(lessons: tuple[str, ...]) -> str:
+    """A consensus prompt carrying the supplied lessons and nothing else optional."""
+    from quant_ai.agents.atlas import _atlas_prompt
+    from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
 
+    evidence = (
+        AgentEvidence(
+            "technical", AgentDomain.TECHNICAL, "INFY", Stance.BUY, Decimal("0.6"),
+            Decimal("0.01"), Decimal("0.005"), ("momentum",), NOW, 30,
+        ),
+    )
+    return _atlas_prompt("INFY", evidence, None, context=EvidenceContext(lessons=lessons))
+
+
+def test_lessons_render_inside_the_untrusted_evidence_block():
     prompt = prompt_with_lessons(("abstain in the first ten minutes",))
     start, end = prompt.index(EVIDENCE_BLOCK_START), prompt.index(EVIDENCE_BLOCK_END)
     block = prompt[start:end]
