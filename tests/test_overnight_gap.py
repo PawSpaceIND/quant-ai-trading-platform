@@ -392,6 +392,29 @@ def test_the_operators_declaration_closes_the_loop_and_says_so() -> None:
     assert gap_alerts(dispatcher)[-1].metadata["resolved"] == "True"
 
 
+def test_an_open_step_can_be_read_off_a_page_and_not_only_off_an_alert() -> None:
+    """The alert reaches whoever was watching a dispatcher. The page is for everyone else.
+
+    Same facts, same exactness: marks stay text, and the deadline is the one
+    ``halt_reason`` will actually act on rather than a second opinion about it.
+    """
+    monitor, _ = monitor_for()
+    assert monitor.unresolved_state() == ()
+    monitor.observe("INFY", Market.INDIA, Decimal(100), AFTERNOON)
+    monitor.observe("INFY", Market.INDIA, Decimal(70), NEXT_MORNING)
+    (row,) = monitor.unresolved_state()
+    assert row["symbol"] == "INFY"
+    assert row["verdict"] == GapVerdict.UNDETERMINED.value
+    assert row["previousMark"] == "100" and row["currentMark"] == "70"
+    assert row["firstSeenAt"] == NEXT_MORNING.isoformat()
+    halts_at = NEXT_MORNING + regular_session_length(GlobalVenue.INDIA)
+    assert row["haltsAt"] == halts_at.isoformat()
+    assert monitor.halt_reason(halts_at) == "overnight_gap_unresolved:INFY"
+    # An operator's declaration removes it from the page as well as from the halt clock.
+    monitor.forget(())
+    assert monitor.unresolved_state() == ()
+
+
 def test_an_unresolved_step_halts_after_one_full_session_and_not_before() -> None:
     monitor, _ = monitor_for()
     monitor.observe("INFY", Market.INDIA, Decimal(100), AFTERNOON)

@@ -9,6 +9,7 @@ import type { PaperContributionState } from "./paper-contribution";
 import type {HistoricalRiskState} from "./historical-risk";
 import type { MarketSnapshot } from "./market";
 import type { Runtime } from "./pilot";
+export type {GateRefusalState, Refusal, RefusalReason} from "./gate-refusals";
 export type Holding = {
   symbol: string;
   market: string;
@@ -67,6 +68,7 @@ export type Intelligence = {
   };
 };
 export type Workspace = {
+  gateRefusals?: import("./gate-refusals").GateRefusalState;
   runComparison?: import("./run-comparison-model").RunComparisonState;
   externalAccount?: ExternalAccountState;
   brokerObservation?: import("./broker-observation").BrokerObservationState;

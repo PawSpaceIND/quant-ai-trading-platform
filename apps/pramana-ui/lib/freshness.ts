@@ -70,11 +70,11 @@ export function ageWorkspace(snapshot:Workspace,now=Date.now()):Workspace {
   const engine=runtime.status==="running"&&runtime.mode==="paper";
   const currentBook=responseCurrent&&portfolio.markMode==="engine_live"&&portfolio.status==="ok";
   const feed=tradingFeedCheck(runtime,now);
-  const engineChecks=new Set(["engine","entry_controls","strategy_manifest","strategy_evidence","reconciliation","protection_coverage","evidence"]);
+  const engineChecks=new Set(["engine","entry_controls","strategy_manifest","strategy_evidence","reconciliation","protection_coverage","protection_sweep","evidence"]);
   const manifest=runtime.strategyManifest,manifestAge=sourceAge(manifest?.checkedAt,now);
   const manifestCurrent=engine&&within(manifestAge,10,5)&&typeof manifest?.sourceCheckAgeSeconds==="number"&&Number.isFinite(manifest.sourceCheckAgeSeconds)&&manifest.sourceCheckAgeSeconds>=0&&manifest.sourceCheckAgeSeconds+Math.max(manifestAge??Infinity,0)<=65;
   const checks=snapshot.checks.map(c=>{
-    const allowed=responseCurrent&&(c.id==="ticks"?feed.pass:c.id==="quotes"?!market.collectorStale:c.id==="marks"?currentBook:["strategy_manifest","strategy_evidence","evidence"].includes(c.id)?manifestCurrent:c.id==="reconciliation"?engine&&within(sourceAge(runtime.reconciliation?.checkedAt,now),120,5):c.id==="protection_coverage"?engine&&currentBook&&within(sourceAge(runtime.protectionCoverage?.checkedAt,now),10,5):engineChecks.has(c.id)?engine:true);
+    const allowed=responseCurrent&&(c.id==="ticks"?feed.pass:c.id==="quotes"?!market.collectorStale:c.id==="marks"?currentBook:["strategy_manifest","strategy_evidence","evidence"].includes(c.id)?manifestCurrent:c.id==="reconciliation"?engine&&within(sourceAge(runtime.reconciliation?.checkedAt,now),120,5):c.id==="protection_coverage"?engine&&currentBook&&within(sourceAge(runtime.protectionCoverage?.checkedAt,now),10,5):c.id==="protection_sweep"?engine&&within(sourceAge(runtime.protectionSweep?.checkedAt,now),10,5):engineChecks.has(c.id)?engine:true);
     return {...c,pass:c.pass===true&&allowed,detail:!responseCurrent?"Workspace evidence expired. Refresh is required to verify this check.":c.id==="ticks"?feed.detail:c.id==="marks"?portfolio.markDisclaimer:!allowed&&engineChecks.has(c.id)?"Engine or source evidence is no longer current. Refresh is required to verify this check.":c.detail};
   });
   const contribution=snapshot.paperContribution;

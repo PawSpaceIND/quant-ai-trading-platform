@@ -19,6 +19,8 @@ import {historicalRisk} from "@/lib/historical-risk";
 import { latestSwarmIntelligence } from "@/lib/proofs";
 import { readRuntime, performance } from "@/lib/pilot";
 import {protectionCoverageCheck} from "@/lib/protection-coverage";
+import {protectionSweepCheck} from "@/lib/protection-sweep";
+import {readGateRefusals} from "@/lib/gate-refusals";
 import { consoleDb } from "@/lib/console-db";
 import { ledgerPath, tenantId } from "@/lib/db";
 import { externalGateChecks } from "@/lib/external-gates";
@@ -84,6 +86,9 @@ export async function GET() {
           : "No paper account reconciliation recorded. External broker reconciliation is separate.",
       },
       protectionCoverageCheck(runtime, portfolio, tenantId),
+      // Enforcement sits next to storage on purpose: a stop that exists and a stop the
+      // engine can act on are two claims, and only the second keeps a position covered.
+      protectionSweepCheck(runtime, tenantId),
       {
         id: "engine",
         title: "Protection heartbeat",
@@ -158,6 +163,8 @@ export async function GET() {
         performance: perf,
         strategyObservation,
         intelligence: latestSwarmIntelligence(),
+        // Read from the decision journal the engine already writes; no new store.
+        gateRefusals: readGateRefusals(),
         checks,
         audit,
         tenantId,

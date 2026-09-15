@@ -122,6 +122,16 @@ class ProtectiveExitEngine:
         # suppress an exit the stored levels call for. See ``_rebased``.
         self.gap_monitor = gap_monitor
 
+    @property
+    def last_sweep_at(self) -> datetime | None:
+        """When the most recent sweep ran, or None before the first ``evaluate``.
+
+        ``unprotected`` and ``rebased`` are empty both before the first sweep and after a
+        clean one, so anything reporting them to an operator needs this to tell "nothing
+        found" apart from "not looked yet". The two must never read the same.
+        """
+        return self._sweep_at
+
     def evaluate(self, now: datetime | None = None) -> tuple[ProtectiveExit, ...]:
         """Check every open position and liquidate the ones whose thresholds are breached.
 

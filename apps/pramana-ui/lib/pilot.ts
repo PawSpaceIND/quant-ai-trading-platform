@@ -47,7 +47,39 @@ export type StrategyEpisodeEvidence = {
   summary: {completedTrades: number; openEpisodes: number; netPnl: string; expectancy: string | null;
     profitFactor: string | null; profitFactorState: string; winRate: string | null; closedCashFees: string};
 };
+/**
+ * One sweep of the protective-exit engine, symbol by symbol. `protectionCoverage` says a
+ * stop is stored; this says whether the engine could act on it. `sweptAt` is nullable on
+ * purpose: empty lists mean "swept and clean" only when a sweep actually happened.
+ */
+export type ProtectionSweep = {
+  schema: string; tenantId: string; checkedAt: string; sweptAt: string | null;
+  unprotected: Array<{symbol: string; unpricedSince: string | null}>;
+  rebased: string[];
+  haltAfterSeconds: number | null;
+  gapMonitor: {armed: boolean; unresolved: Array<{
+    symbol: string; verdict: string; venue: string; previousMark: string; currentMark: string;
+    stepFraction: string; nearestAction: string; firstSeenAt: string; lastAlertAt: string;
+    haltsAt: string | null;
+  }>};
+};
+/**
+ * One opt-in entry control. `armed` is the field that matters: every gate here is silent
+ * when it is off and silent when it is on and content, and those are not the same fact.
+ * `records` counts what the operator supplied, so armed-with-an-empty-file reads as its
+ * own third state.
+ */
+export type RiskGate = {
+  id: string; setting: string; armed: boolean;
+  records?: number | null; groups?: number | null; limit?: number | null;
+  observed?: number | null; observedUnavailable?: string | null;
+  closingWindowSeconds?: number | null;
+  blackouts?: Array<{category: string; symbol: string | null}>;
+};
+export type RiskGates = {schema: string; tenantId: string; checkedAt: string; gates: RiskGate[]};
 export type Runtime = {
+  protectionSweep?: ProtectionSweep | null;
+  riskGates?: RiskGates | null;
   marketDataIntegrity?: {schema: string; accepted: number; rejected: Record<string, number>;
     lastRejection: {reason: string; symbol: string; observedAt: string | null; receivedAt: string} | null; scope: string};
   valuation?: {status: string; reason?: string; checkedAt: string; ledgerId: number};

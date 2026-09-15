@@ -27,6 +27,8 @@ import {RunComparison} from "./run-comparison";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
 import {DecisionQuality} from "./decision-quality";
+import {GateRefusals, ProtectiveState} from "./protective-state";
+import {protectionAlert} from "@/lib/protection-sweep";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -207,6 +209,10 @@ export function PilotWorkspace() {
   }, [halt, controlBusy]);
   const title = sections.find((s) => s.id === view)?.name || "Overview";
   const p = data?.portfolio;
+  // Recomputed on the same clock the rest of the workspace ages against, so a sweep that
+  // has fallen out of its ten-second window reads as unverified here too rather than
+  // keeping a stale all-clear on screen.
+  const protection = useMemo(() => data ? protectionAlert(data.runtime, data.tenantId, clock) : null, [data, clock]);
   return (
     <div className="app-shell">
       <aside className="sidebar" inert={halt}>
@@ -375,6 +381,11 @@ export function PilotWorkspace() {
               {hosted ? "Current engine state is not verified by this snapshot." : "Protective exits remain enabled. Resume requires operator review through the CLI."}
             </div>
           )}
+          {protection?.severity === "exposed" && (
+            <div className="banner warning protection-banner" role="alert">
+              <strong>{protection.headline}.</strong> {protection.detail}
+            </div>
+          )}
           {loading && !data ? (
             <div className="loading-state" role="status">
               <span className="atlas-orb">✳</span>Loading your workspace…
@@ -466,6 +477,8 @@ export function PilotWorkspace() {
                 )}
                 {view === "overview" && (
                   <>
+                    {protection && <ProtectiveState runtime={data.runtime} tenant={data.tenantId} alert={protection} />}
+                    <GateRefusals state={data.gateRefusals} />
                     <MarketWorkspace
                       readOnly={hosted}
                       compact
