@@ -156,6 +156,7 @@ test("market coverage separates observed NSE rows from unbound Indian contracts"
   assert.equal(result.coverage?.groups.find((g) => g.id === "nse-cash")?.status, "observed");
   assert.equal(result.coverage?.groups.find((g) => g.id === "mcx-metals")?.status, "planned");
   assert.match(result.coverage?.disclaimer || "", /exact broker contract/);
+  assert.match(result.coverage?.aiContext || "", /does not modify model weights/);
 });
 
 test("interrupted copilot requests become visible errors after restart", async () => {
