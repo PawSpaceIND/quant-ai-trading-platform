@@ -352,7 +352,14 @@ def build_ghost_runner(
     # Built here rather than beside the scheduler because the overnight limits are the
     # same calendar read from the entry side: what the warden must know about the close is
     # exactly what the scheduler knows about the session, and two calendars could disagree.
-    calendar = MarketCalendar(holidays=holidays if holidays is not None else default_holidays())
+    # The watchlist is where the operator already named each instrument's venue, so it is
+    # also the only place the calendar can learn that GOLD is an MCX contract and keeps
+    # MCX hours. Without this every India instrument is judged by the NSE cash session and
+    # the engine is blind to the eight hours a metal trades after the equity market shuts.
+    calendar = MarketCalendar(
+        holidays=holidays if holidays is not None else default_holidays(),
+        exchanges={item.symbol.upper(): item.exchange.upper() for item in instruments},
+    )
     # The historical replay assembles its runtime through this same builder, so a
     # backtest cannot quietly run a looser configuration than the one that trades.
     runtime = build_traded_runtime(

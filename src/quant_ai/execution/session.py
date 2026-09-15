@@ -30,6 +30,22 @@ class SessionDefinition:
     regular_open: time
     regular_close: time
     post_close: time
+    # MCX runs an evening session that tracks COMEX, so its close moves with *US*
+    # daylight saving: 23:55 IST while New York is on DST, 23:30 IST otherwise. Both
+    # variants are stated outright rather than derived by adding 25 minutes to a base,
+    # because that arithmetic silently crosses midnight and every time comparison in
+    # ``state`` below assumes a session that begins and ends on the same local day.
+    us_dst_regular_close: time | None = None
+    us_dst_post_close: time | None = None
+
+    def closes_on(self, day: date) -> tuple[time, time]:
+        """The ``(regular_close, post_close)`` in force on ``day``."""
+        if self.us_dst_regular_close is None:
+            return self.regular_close, self.post_close
+        noon = datetime.combine(day, time(12), tzinfo=ZoneInfo("America/New_York"))
+        if not noon.dst():
+            return self.regular_close, self.post_close
+        return self.us_dst_regular_close, self.us_dst_post_close or self.us_dst_regular_close
 
 
 SESSIONS = {
@@ -49,6 +65,50 @@ SESSIONS = {
         "Europe/Berlin", time(8), time(9), time(17, 30), time(18, 30)
     ),
 }
+
+
+# India trades one country across several exchanges that do not keep the same hours, so a
+# single "INDIA" session is wrong for everything but NSE/BSE cash. An MCX metal is live for
+# eight hours after the equity market shuts; treating it as closed is not a conservative
+# error, it is eight hours of an open position that nothing is deciding about.
+#
+# Hours below are the regular continuous sessions as published by each exchange. Half-days,
+# Muhurat sessions and commodity-specific agri timings are not encoded: an operator who
+# needs one supplies it, rather than the platform guessing.
+INDIA_EXCHANGE_SESSIONS: dict[str, SessionDefinition] = {
+    # Cash equity and equity derivatives.
+    "NSE": SessionDefinition("Asia/Kolkata", time(9), time(9, 15), time(15, 30), time(16)),
+    "BSE": SessionDefinition("Asia/Kolkata", time(9), time(9, 15), time(15, 30), time(16)),
+    "NFO": SessionDefinition("Asia/Kolkata", time(9), time(9, 15), time(15, 30), time(16)),
+    "BFO": SessionDefinition("Asia/Kolkata", time(9), time(9, 15), time(15, 30), time(16)),
+    # Currency derivatives close at 17:00 IST.
+    "CDS": SessionDefinition("Asia/Kolkata", time(9), time(9), time(17), time(17, 30)),
+    "BCD": SessionDefinition("Asia/Kolkata", time(9), time(9), time(17), time(17, 30)),
+    # Non-agri commodities run 09:00 through the evening session. There is no post-market
+    # window, so ``post_close`` equals the close and the state goes straight to CLOSED.
+    "MCX": SessionDefinition(
+        "Asia/Kolkata", time(8, 45), time(9), time(23, 30), time(23, 30),
+        us_dst_regular_close=time(23, 55), us_dst_post_close=time(23, 55),
+    ),
+    # Agri commodities close in the evening rather than at night.
+    "NCDEX": SessionDefinition("Asia/Kolkata", time(9), time(9), time(17), time(17, 30)),
+}
+
+
+def session_for(
+    market: Market | GlobalVenue, exchange: str | None = None
+) -> SessionDefinition:
+    """The session governing ``market``, narrowed by ``exchange`` where one is known.
+
+    An unrecognised exchange falls back to the venue session rather than raising: a new
+    or mis-spelled code must not take the engine down, and the venue session is the
+    conservative answer (it is the shortest of the Indian ones).
+    """
+    code = (exchange or "").strip().upper()
+    venue = venue_of(market)
+    if venue == GlobalVenue.INDIA and code in INDIA_EXCHANGE_SESSIONS:
+        return INDIA_EXCHANGE_SESSIONS[code]
+    return SESSIONS[venue]
 
 
 # NYSE full-day closures for 2026, derived from the exchange's published rules
@@ -86,15 +146,25 @@ def venue_of(market: Market | GlobalVenue) -> GlobalVenue:
     raise ValueError("GLOBAL market requires an explicit GlobalVenue")
 
 
-def regular_session_length(market: Market | GlobalVenue) -> timedelta:
-    """Length of one regular trading session, used to annualise intraday statistics."""
-    session = SESSIONS[venue_of(market)]
+def regular_session_length(
+    market: Market | GlobalVenue, exchange: str | None = None
+) -> timedelta:
+    """Length of one regular trading session, used to annualise intraday statistics.
+
+    The MCX variant is measured against its standard-time close. The DST close is 25
+    minutes later, which moves an annualised ratio by under 1.5% - far less than the
+    sampling error on any window short enough to care - and pinning one length keeps a
+    ratio comparable with the same ratio computed in a different month.
+    """
+    session = session_for(market, exchange)
     opened = datetime.combine(date(2000, 1, 1), session.regular_open)
     closed = datetime.combine(date(2000, 1, 1), session.regular_close)
     return closed - opened
 
 
-def intraday_periods_per_year(market: Market | GlobalVenue, interval: timedelta) -> int:
+def intraday_periods_per_year(
+    market: Market | GlobalVenue, interval: timedelta, exchange: str | None = None
+) -> int:
     """Sampling intervals in a trading year for an intraday series on ``market``.
 
     Zero when the market has no session definition to annualise against, which makes
@@ -103,7 +173,7 @@ def intraday_periods_per_year(market: Market | GlobalVenue, interval: timedelta)
     from quant_ai.analytics.metrics import annualisation_periods
 
     try:
-        return annualisation_periods(interval, regular_session_length(market))
+        return annualisation_periods(interval, regular_session_length(market, exchange))
     except (KeyError, ValueError):
         return 0
 
@@ -120,47 +190,104 @@ def default_special_sessions() -> dict[Market | GlobalVenue, frozenset[date]]:
 
 def holidays_from_json(
     payload: dict[str, list[str]],
-    base: dict[Market | GlobalVenue, frozenset[date]] | None = None,
-) -> dict[Market | GlobalVenue, frozenset[date]]:
-    """Merge ``{"INDIA": ["2026-11-09", ...], "USA": [...]}`` over ``base``."""
+    base: dict[Market | GlobalVenue | str, frozenset[date]] | None = None,
+) -> dict[Market | GlobalVenue | str, frozenset[date]]:
+    """Merge ``{"INDIA": [...], "MCX": [...]}`` over ``base``.
+
+    Keys are venues or India exchange codes. An exchange key replaces the venue list for
+    that exchange alone, which is how an operator states the days MCX keeps and NSE does
+    not without editing the national calendar every other venue reads.
+    """
     if not isinstance(payload, dict):
         raise TypeError("Holiday overrides must be a venue-to-date-list object")
-    merged: dict[Market | GlobalVenue, frozenset[date]] = dict(base or {})
+    merged: dict[Market | GlobalVenue | str, frozenset[date]] = dict(base or {})
     for key, values in payload.items():
         if not isinstance(key, str) or not isinstance(values, list) or any(not isinstance(item, str) for item in values):
             raise TypeError("Holiday overrides require string venues and lists of ISO date strings")
-        venue = GlobalVenue(key.strip().upper())
+        name = key.strip().upper()
+        target: GlobalVenue | str = name if name in INDIA_EXCHANGE_SESSIONS else GlobalVenue(name)
         parsed = frozenset(date.fromisoformat(item) for item in values)
-        merged[venue] = merged.get(venue, frozenset()) | parsed
+        merged[target] = merged.get(target, frozenset()) | parsed
     return merged
 
 
 @dataclass(frozen=True)
 class MarketCalendar:
-    holidays: dict[Market | GlobalVenue, frozenset[date]] = field(default_factory=dict)
-    special_sessions: dict[Market | GlobalVenue, frozenset[date]] = field(default_factory=default_special_sessions)
+    """Session state per venue, narrowed to the exchange an instrument actually trades on.
 
-    def state(self, market: Market | GlobalVenue, timestamp: datetime) -> MarketState:
+    ``exchanges`` maps symbol to exchange code, so a caller holding only an order - which
+    carries no exchange - still resolves the right session. The daemon builds it from the
+    founder watchlist, which is where the operator already stated the venue of every
+    instrument. A symbol absent from the map falls back to the venue session, so an
+    unmapped instrument is judged by the shortest Indian session rather than the longest.
+    """
+
+    holidays: dict[Market | GlobalVenue | str, frozenset[date]] = field(default_factory=dict)
+    special_sessions: dict[Market | GlobalVenue | str, frozenset[date]] = field(default_factory=default_special_sessions)
+    exchanges: dict[str, str] = field(default_factory=dict)
+
+    def state(
+        self,
+        market: Market | GlobalVenue,
+        timestamp: datetime,
+        *,
+        exchange: str | None = None,
+        symbol: str | None = None,
+    ) -> MarketState:
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
             raise ValueError("timestamp must be timezone-aware")
         venue = self._venue(market)
-        session = SESSIONS[venue]
+        code = self.exchange_for(exchange=exchange, symbol=symbol)
+        session = session_for(market, code)
         local = timestamp.astimezone(ZoneInfo(session.timezone))
-        holidays = self.holidays.get(market, self.holidays.get(venue, frozenset()))
-        special = self.special_sessions.get(market, self.special_sessions.get(venue, frozenset()))
+        holidays = self._dates(self.holidays, market, venue, code)
+        special = self._dates(self.special_sessions, market, venue, code)
         if (local.weekday() >= 5 and local.date() not in special) or local.date() in holidays:
             return MarketState.CLOSED
         local_time = local.time().replace(tzinfo=None)
+        regular_close, post_close = session.closes_on(local.date())
         if session.pre_open <= local_time < session.regular_open:
             return MarketState.PRE_MARKET
-        if session.regular_open <= local_time < session.regular_close:
+        if session.regular_open <= local_time < regular_close:
             return MarketState.REGULAR_HOURS
-        if session.regular_close <= local_time < session.post_close:
+        if regular_close <= local_time < post_close:
             return MarketState.POST_MARKET
         return MarketState.CLOSED
 
+    def exchange_for(self, *, exchange: str | None = None, symbol: str | None = None) -> str:
+        """The exchange code to judge by: the explicit one, else the symbol's mapping."""
+        if exchange:
+            return exchange.strip().upper()
+        return self.exchanges.get((symbol or "").strip().upper(), "")
+
+    def session(
+        self, market: Market | GlobalVenue, *, exchange: str | None = None, symbol: str | None = None
+    ) -> SessionDefinition:
+        """The session this calendar would judge such an instrument by."""
+        return session_for(market, self.exchange_for(exchange=exchange, symbol=symbol))
+
     def global_states(self, timestamp: datetime) -> dict[GlobalVenue, MarketState]:
         return {venue: self.state(venue, timestamp) for venue in GlobalVenue}
+
+    @staticmethod
+    def _dates(
+        source: dict[Market | GlobalVenue | str, frozenset[date]],
+        market: Market | GlobalVenue,
+        venue: GlobalVenue,
+        code: str,
+    ) -> frozenset[date]:
+        """Exchange override first, then the market, then the venue.
+
+        An exchange with no entry of its own inherits the venue list rather than trading
+        through a national holiday. MCX keeps its own calendar and is open on a handful of
+        days NSE is not; inheriting costs those sessions, while the opposite mistake would
+        have the engine deciding into a closed book. An operator who needs the difference
+        supplies an ``MCX`` key - see :func:`holidays_from_json`.
+        """
+        for key in (code, market, venue):
+            if key and key in source:
+                return source[key]
+        return frozenset()
 
     @staticmethod
     def _venue(market: Market | GlobalVenue) -> GlobalVenue:

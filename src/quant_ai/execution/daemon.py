@@ -173,7 +173,9 @@ class AutonomousTradingDaemon:
             if blackout is not None:
                 return blackout
         instrument = next((i for i in self.instruments if i.symbol == proposal.symbol), None)
-        if instrument is None or self.scheduler.calendar.state(instrument.market, now) != MarketState.REGULAR_HOURS:
+        if instrument is None or self.scheduler.calendar.state(
+            instrument.market, now, exchange=instrument.exchange
+        ) != MarketState.REGULAR_HOURS:
             return "pilot_session_or_scope_blocked"
         if not self.telemetry.fresh(instrument, now)[0]:
             return "pilot_stale_entry_price"
@@ -660,6 +662,15 @@ class AutonomousTradingDaemon:
             market.value: self.scheduler.calendar.state(market, timestamp).value
             for market in (Market.INDIA, Market.USA)
         }
+        # The venue rows above are NSE/NYSE hours. A watchlist instrument on MCX is live
+        # for eight hours after INDIA reads CLOSED, so each exchange in the book gets its
+        # own row and the heartbeat stops implying one session per country.
+        sessions.update({
+            f"{item.market.value}:{item.exchange}": self.scheduler.calendar.state(
+                item.market, timestamp, exchange=item.exchange
+            ).value
+            for item in self.instruments
+        })
         return DaemonHeartbeat(
             timestamp,
             max(0.0, monotonic() - self._started_monotonic),
