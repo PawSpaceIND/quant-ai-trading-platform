@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -221,6 +222,65 @@ def _backtest(args: argparse.Namespace) -> None:
     broker.flush()
 
 
+def _journal_broker() -> tuple[PaperBrokerService, str]:
+    """Open the shared ledger for the journal commands without assembling a runtime."""
+    ledger = paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    if not ledger.exists():
+        raise SystemExit(f"no paper ledger at {ledger}")
+    return PaperBrokerService(str(ledger)), paths.tenant_id("QUANT_AI_TENANT_ID", default="ghost")
+
+
+def _decision_quality(args: argparse.Namespace) -> int:
+    from quant_ai.analytics.decision_quality import build_report
+
+    broker, tenant = _journal_broker()
+    try:
+        report = build_report(
+            broker, tenant_id=tenant, now=datetime.now(timezone.utc), since_days=args.since
+        )
+    finally:
+        broker.close()
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0
+
+
+def _post_mortem(args: argparse.Namespace) -> int:
+    from quant_ai.analytics.post_mortem import (
+        PostMortemApprovedError,
+        approve_post_mortem,
+        build_post_mortem,
+        write_post_mortem,
+    )
+
+    directory = paths.post_mortem_directory("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    now = datetime.now(timezone.utc)
+    if args.approve:
+        try:
+            report = approve_post_mortem(directory, args.approve, now)
+        except (FileNotFoundError, ValueError) as error:
+            raise SystemExit(str(error)) from error
+        print(json.dumps({
+            "session_date": report["session_date"], "status": report["status"],
+            "approved_at": report["approved_at"], "lessons": len(report.get("lessons", [])),
+            "path": str(directory / f"{report['session_date']}.json"),
+        }))
+        return 0
+    broker, tenant = _journal_broker()
+    try:
+        session = date.fromisoformat(args.date) if args.date else None
+        report = build_post_mortem(broker, tenant_id=tenant, now=now, session_date=session)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    finally:
+        broker.close()
+    try:
+        write_post_mortem(directory, report)
+    except PostMortemApprovedError as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pramana")
     parser.add_argument(
@@ -228,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
             "backtest", "friction-audit", "halt", "resume", "zerodha-login",
+            "decision-quality", "post-mortem",
         ),
     )
     parser.add_argument("--data")
@@ -239,7 +300,16 @@ def main(argv: list[str] | None = None) -> int:
         "--request-token",
         help="zerodha-login: Kite request_token or the full redirect URL; prompted if omitted",
     )
+    parser.add_argument("--since", type=int, default=30, help="decision-quality: window in days")
+    parser.add_argument("--date", help="post-mortem: IST session date YYYY-MM-DD (default: latest)")
+    parser.add_argument(
+        "--approve", metavar="YYYY-MM-DD", help="post-mortem: approve the written file for this session"
+    )
     args = parser.parse_args(argv)
+    if args.command == "decision-quality":
+        return _decision_quality(args)
+    if args.command == "post-mortem":
+        return _post_mortem(args)
     if args.command == "halt":
         target = paths.halt_file()
         target.parent.mkdir(parents=True, exist_ok=True)
