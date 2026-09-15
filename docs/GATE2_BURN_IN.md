@@ -228,7 +228,12 @@ next tick's mark (expect slippage past the threshold on a fast move). Look for
 `protective_exit` events and a SELL row with EXACT PROOF. A run of
 `protective_exit_mark_skipped` warnings during session hours means the tick feed is
 silent and **stops are not being enforced for the gap** — treat it as a feed outage
-(Zerodha access tokens expire daily).
+(Zerodha access tokens expire daily). After
+`PRAMANA_UNPROTECTED_HALT_SECONDS` (120 by default) of an open position staying
+unpriceable, the engine latches `protection_unreachable:<symbol>` and stops adding risk.
+It does not liquidate: selling on a feed it cannot price is the fabricated-mark
+behaviour the exit engine exists to refuse. Fix the feed, confirm ticks are arriving,
+then `pramana resume`.
 
 **Halts** — after a breach, BUYs show `max_drawdown_reached` /
 `daily_loss_limit_reached`; SELLs show `approved_risk_reducing`. The drawdown tile

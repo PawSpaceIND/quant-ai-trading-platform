@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -93,6 +94,13 @@ class AutonomousTradingDaemon:
         self._in_flight = False
         self._logger = logging.getLogger("quant_ai.daemon")
         self.telemetry = None
+        # A protected position that cannot be priced is unprotected in fact. Hold the halt
+        # for a short grace period so a single dropped tick does not stop the day, but never
+        # longer than the market can move against an unenforced stop.
+        self.unprotected_halt_seconds = float(
+            os.getenv("PRAMANA_UNPROTECTED_HALT_SECONDS", "120") or 120
+        )
+        self._unprotected_since: dict[str, datetime] = {}
         self.reconciliation = None
         self.protection_coverage = None
         self.trade_evidence = None
@@ -184,6 +192,7 @@ class AutonomousTradingDaemon:
                 raise
             if any(not exit.filled for exit in self.protective_exits):
                 self.engage_kill_switch("protective_exit_failed")
+            self._check_protection_reachable(timestamp)
             if self.telemetry is not None:
                 if any(exit.filled for exit in self.protective_exits):
                     self._reconcile_pilot()
@@ -284,6 +293,31 @@ class AutonomousTradingDaemon:
             tenant_id=self.tenant_id,
             metadata={"detail": detail, "consecutive": str(consecutive)},
         )
+
+    def _check_protection_reachable(self, now: datetime) -> None:
+        """Halt when an open position has been unpriceable for too long.
+
+        Skipping an unknown mark keeps a single sweep safe, but a stop that cannot be
+        evaluated is not enforced. Without this, a dead websocket leaves every position
+        naked while the cadence still completes and the container still reports healthy,
+        so nothing tells the operator the book lost its protection.
+
+        The halt blocks new risk rather than liquidating: exiting on a feed we cannot
+        price is exactly the fabricated-mark behaviour the exit engine refuses to do.
+        Recovery is deliberately an operator decision, because an automatic resume would
+        re-arm trading on a feed nobody has confirmed is healthy.
+        """
+        unprotected = set(getattr(self.exit_engine, "unprotected", ()))
+        for symbol in list(self._unprotected_since):
+            if symbol not in unprotected:
+                del self._unprotected_since[symbol]
+        if not unprotected:
+            return
+        for symbol in unprotected:
+            first_seen = self._unprotected_since.setdefault(symbol, now)
+            if (now - first_seen).total_seconds() >= self.unprotected_halt_seconds:
+                self.engage_kill_switch(f"protection_unreachable:{symbol}")
+                return
 
     def sweep_protective_exits(
         self, now: datetime | None = None

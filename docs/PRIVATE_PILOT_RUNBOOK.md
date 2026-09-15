@@ -17,7 +17,7 @@ Review [deployment feature wiring](DEPLOYMENT_WIRING.md) for the private researc
 4. Confirm the signed login session, current protection heartbeat, currency scope, tick coverage, and matching ledger/valuation version. Test during an exchange session. A green HTTP response or running container alone is insufficient.
 5. Configure an **independent host/container monitor** to alert the operator when the engine health check fails or market observations become stale. An alert emitted by the stopped engine itself is not independent monitoring. Record an actual received alert during a failure drill. No external notification is sent by setup commands in this repository.
 
-The existing optional Telegram adapter remains supported through local environment settings. To use it in Compose, explicitly add `PRAMANA_TELEGRAM_BOT_TOKEN` and `PRAMANA_TELEGRAM_CHAT_ID` through the host secret mechanism after approving the destination. Do not place credentials into source or screenshots.
+Every dispatched alert is appended as one JSON line to `/data/alerts.jsonl` in the shared volume, with no credentials required, so an alert survives the container that `up -d --build` replaces. This is a record, not monitoring: a stopped engine writes nothing, which is why the independent monitor above is still required. The optional Telegram adapter adds push delivery on top; Compose now passes `PRAMANA_TELEGRAM_BOT_TOKEN` and `PRAMANA_TELEGRAM_CHAT_ID` through, so set them in `.env` (mode 0600) after approving the destination. Do not place credentials into source or screenshots.
 
 ## Halt and restart
 
@@ -37,7 +37,7 @@ python /app/scripts/pilot_ops.py backup --database /data/pilot-console.sqlite --
 python /app/scripts/pilot_ops.py restore-drill --database /data/backups/ledger-YYYYMMDD.sqlite --destination /data/drills/ledger-YYYYMMDD.sqlite
 ```
 
-Use unique paths; commands refuse overwrite. SQLite's backup API captures a consistent database including WAL changes. The drill validates the recorded SHA-256 and database integrity and writes a separate database. It does not replace the active ledger. Back up the XAI proof directory and acceptance artifacts alongside the databases, store an encrypted copy outside the host, and test restoration of the **whole bundle** on a separate deployment. Halting and stopping writers makes the ledger/proof/console bundle easier to reconcile. Record counts, latest order IDs, settings, halt state, recovery duration and the restored dashboard checks. An individual SQLite integrity check is only part of recovery acceptance.
+The `backup` Compose service already runs the first of these daily into `/data/backups`, keeping the newest `PRAMANA_BACKUP_KEEP` copies; run these by hand for the console database, for an extra copy before an upgrade, or for the drill. Use unique paths; commands refuse overwrite. SQLite's backup API captures a consistent database including WAL changes. The drill validates the recorded SHA-256 and database integrity and writes a separate database. It does not replace the active ledger. Back up the XAI proof directory and acceptance artifacts alongside the databases, store an encrypted copy outside the host, and test restoration of the **whole bundle** on a separate deployment. Halting and stopping writers makes the ledger/proof/console bundle easier to reconcile. Record counts, latest order IDs, settings, halt state, recovery duration and the restored dashboard checks. An individual SQLite integrity check is only part of recovery acceptance.
 
 ## Rollback
 
