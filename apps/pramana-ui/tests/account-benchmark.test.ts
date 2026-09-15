@@ -149,6 +149,10 @@ test("workspace, private selected export and saved Atlas context share identical
   const response=await request("?benchmark=NIFTY+BANK&lookback=20");assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"no-store");assert.match(response.headers.get("content-disposition")!,/attachment/);
   const exported=await response.json();assert.equal(exported.comparison.benchmark,"NIFTY BANK");assert.equal(exported.comparison.intervals,20);
   const {GET:workspace}=await import("../app/api/workspace/route");const w=await(await workspace()).json();assert.equal(w.benchmarkPerformance.report.sourceSha256,exported.report.sourceSha256);
+  delete process.env.PRAMANA_PORTFOLIO_RISK_METADATA;
+  delete process.env.PRAMANA_PORTFOLIO_RISK_METADATA_FILE;
+  const {GET:attribution}=await import("../app/api/portfolio/attribution/route");
+  const attributionResponse=await attribution();assert.equal(attributionResponse.status,422);assert.equal(attributionResponse.headers.get("cache-control"),"no-store");assert.equal(attributionResponse.headers.get("content-disposition"),null);
   const {generateAnswer,conversations}=await import("../lib/copilot");delete process.env.ANTHROPIC_API_KEY;
   const answer=await generateAnswer("Explain NIFTY BANK over 20 sessions",undefined,"account-benchmark-fixture");assert.equal(answer.status,"error");
   const context=JSON.parse(conversations(answer.id)[0].context!);const saved=context.benchmarkPerformance;
