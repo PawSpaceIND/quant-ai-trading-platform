@@ -103,6 +103,11 @@ class XAITraceLogger:
                 "worst_scenario": stress.worst_scenario,
                 "projected_loss": str(stress.projected_loss),
                 "loss_fraction_of_equity": str(stress.loss_fraction_of_equity),
+                # The book figures the veto now turns on, alongside the
+                # single-trade ones the proof has always carried.
+                "book_worst_scenario": stress.book_worst_scenario,
+                "book_loss": str(stress.book_loss),
+                "book_loss_fraction_of_equity": str(stress.book_loss_fraction_of_equity),
                 "flags": ",".join(stress.flags),
             },
             {
