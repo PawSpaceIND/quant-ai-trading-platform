@@ -33,6 +33,7 @@ def test_external_gates_require_every_attached_reviewed_evidence_item():
     assert report["revision"] == "a" * 40
     assert report["targetHost"] == "pilot-host"
     assert all(item["passed"] for item in report["gates"])
+    assert all(item["evidenceSha256"] == "b" * 64 for item in report["gates"])
 
     missing = evidence()
     del missing["gates"]["X01"]["coverage"]
@@ -41,6 +42,10 @@ def test_external_gates_require_every_attached_reviewed_evidence_item():
     bad_digest = evidence()
     bad_digest["gates"]["X01"]["evidenceSha256"] = "unbound"
     assert not assess_external_gates(bad_digest)[0].passed
+
+    bad_revision = evidence()
+    bad_revision["revision"] = "not-a-sha"
+    assert not all(item.passed for item in assess_external_gates(bad_revision))
 
 
 def test_missing_or_invalid_external_document_never_claims_readiness():

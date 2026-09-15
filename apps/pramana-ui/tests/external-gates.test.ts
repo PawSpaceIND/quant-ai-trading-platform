@@ -21,6 +21,8 @@ test("external gate UI accepts only a release-matched reviewed report",()=>{
   assert(externalGateChecks().every((gate)=>gate.pass));
   fs.writeFileSync(file,JSON.stringify({schema:"pramana.external_gate_report.v1",ready:true,liveExecutionEnabled:false,revision:"b".repeat(40),gates:[]}));
   assert(externalGateChecks().every((gate)=>!gate.pass));
+  fs.writeFileSync(file,JSON.stringify({schema:"pramana.external_gate_report.v1",ready:true,liveExecutionEnabled:false,revision:"a".repeat(41),targetHost:"host",gates:[]}));
+  assert(externalGateChecks().every((gate)=>!gate.pass));
   delete process.env.PRAMANA_EXTERNAL_GATE_REPORT;
   delete process.env.PRAMANA_RELEASE_REVISION;
 });

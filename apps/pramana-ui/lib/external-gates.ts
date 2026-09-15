@@ -18,7 +18,7 @@ export function externalGateChecks(): ExternalGateCheck[] {
     const gates = Array.isArray(report.gates) ? report.gates : [];
     const revision = typeof report.revision === "string" ? report.revision : "";
     const expectedRevision = process.env.PRAMANA_RELEASE_REVISION?.trim();
-    const reportReady = report.schema === "pramana.external_gate_report.v1" && report.ready === true && report.liveExecutionEnabled === false && revision.length >= 40 && (!expectedRevision || expectedRevision === revision);
+    const reportReady = report.schema === "pramana.external_gate_report.v1" && report.ready === true && report.liveExecutionEnabled === false && /^[0-9a-f]{40}$/i.test(revision) && typeof report.targetHost === "string" && report.targetHost.trim().length > 0 && (!expectedRevision || expectedRevision === revision);
     return expected.map(([id, title]) => {
       const item = gates.find((candidate) => candidate && typeof candidate === "object" && (candidate as {id?: unknown}).id === id) as {passed?: unknown; detail?: unknown; evidenceSha256?: unknown} | undefined;
       const pass = reportReady && item?.passed === true && typeof item.evidenceSha256 === "string" && /^[0-9a-f]{64}$/i.test(item.evidenceSha256);

@@ -72,7 +72,7 @@ def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, .
             missing.append("reviewer")
         if not _aware_timestamp(item.get("observedAt")):
             missing.append("observedAt")
-        if not isinstance(revision, str) or not revision.strip():
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
             missing.append("revision")
         if not isinstance(host, str) or not host.strip():
             missing.append("targetHost")
@@ -83,6 +83,7 @@ def assess_external_gates(document: Mapping[str, object]) -> tuple[GateResult, .
 
 def external_gate_report(document: Mapping[str, object]) -> dict[str, object]:
     results = assess_external_gates(document)
+    source_gates = document.get("gates")
     return {
         "schema": "pramana.external_gate_report.v1",
         "ready": bool(results) and all(result.passed for result in results),
@@ -90,7 +91,10 @@ def external_gate_report(document: Mapping[str, object]) -> dict[str, object]:
         "revision": document.get("revision"),
         "targetHost": document.get("targetHost"),
         "gates": [
-            {"id": result.gate.gate_id, "title": result.gate.title, "passed": result.passed, "detail": result.detail}
+            {"id": result.gate.gate_id, "title": result.gate.title, "passed": result.passed, "detail": result.detail,
+             "evidenceSha256": (source_gates.get(result.gate.gate_id, {}).get("evidenceSha256")
+                                 if isinstance(source_gates, Mapping) and isinstance(source_gates.get(result.gate.gate_id), Mapping)
+                                 else None)}
             for result in results
         ],
     }
