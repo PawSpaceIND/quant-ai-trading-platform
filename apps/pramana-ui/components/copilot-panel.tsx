@@ -23,6 +23,9 @@ export function CopilotPanel({
   const [active, setActive] = useState<Conversation | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The daily chat cap is enforced server-side and answered with 429. Showing the
+  // remaining allowance means running out is expected rather than a mystery failure.
+  const [allowance, setAllowance] = useState<{ remaining: number; limit: number } | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/api/copilot", { signal: AbortSignal.timeout(12000) })
@@ -31,7 +34,14 @@ export function CopilotPanel({
         return r.json();
       })
       .then((d) => {
-        if (alive) setHistory(d.conversations);
+        if (!alive) return;
+        setHistory(d.conversations);
+        const remaining = d.dailyRemaining, limit = d.dailyLimit;
+        setAllowance(
+          typeof remaining === "number" && typeof limit === "number" && limit > 0
+            ? { remaining: Math.max(0, remaining), limit }
+            : null,
+        );
       })
       .catch((e) => {
         if (alive) setError(e.message);
@@ -177,6 +187,13 @@ export function CopilotPanel({
       {error && (
         <p className="error" role="alert">
           {error}
+        </p>
+      )}
+      {allowance && (
+        <p className={allowance.remaining > 0 ? "muted chat-allowance" : "error chat-allowance"} role="status">
+          {allowance.remaining > 0
+            ? `${allowance.remaining} of ${allowance.limit} Atlas questions left today.`
+            : `Daily limit of ${allowance.limit} Atlas questions reached; it resets at 00:00 UTC.`}
         </p>
       )}
       <form onSubmit={send} className="chat-form">

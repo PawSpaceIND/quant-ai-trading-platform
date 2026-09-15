@@ -475,9 +475,31 @@ class AutonomousTradingDaemon:
             from quant_ai.analytics.decision_quality import build_report, write_report
 
             report = build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            budget = self._ai_budget_status()
+            if budget is not None:
+                report["ai_budget"] = budget
             write_report(self.decision_quality_report_path, report)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_quality_report_failed")
+
+    def _ai_budget_status(self) -> dict | None:
+        """Today's consensus spend headroom, or None when no budget is configured.
+
+        An exhausted budget degrades every consensus to NEUTRAL, so the cadence keeps
+        running while the decisions stop being AI-informed. Without this on the page a
+        founder sees a quiet engine and no reason for it.
+        """
+        try:
+            client = self.scheduler.pipeline.runtime.cio.atlas.llm_client
+            budget = getattr(client, "budget", None)
+            if budget is None:
+                return None
+            from quant_ai.llm.anthropic_client import BUDGET_SCOPE
+
+            return budget.status(BUDGET_SCOPE)
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("ai_budget_status_failed")
+            return None
 
     def _decision_mark(self, symbol: str) -> Decimal | None:
         """Current mark for a journaled symbol from the shared feed; None when unknown."""

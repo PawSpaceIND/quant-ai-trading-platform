@@ -69,6 +69,24 @@ specialists receive the regime metrics and the consensus prompt receives the
 15-minute and daily bars alongside the 1-minute bars. Sizing and risk gates are
 unchanged; regime is evidence and provenance in this release.
 
+## What the page shows, and what it means when it is quiet
+
+The **Decision quality** section carries the verdict banner, the headline numbers, the
+calibration strip, the breakdowns and the post-mortems. Two notices sit above them
+because a quiet engine has more than one cause:
+
+- **Insufficient sample.** Fewer than 20 directional decisions have a resolved
+  60-minute outcome. The numbers are shown but must not be read as edge.
+- **AI budget.** Today's consensus calls and tokens against their caps. When the cap is
+  reached, consensus degrades to NEUTRAL and every tick ends in PRESERVE_CAPITAL, so the
+  absence of trades after that point says nothing about the strategy. The Atlas chat
+  panel shows its own remaining daily allowance for the same reason.
+
+The **Markets** provider tiles report what the engine is configured to use, read from
+the environment rather than hardcoded, so the page and the running build cannot drift
+apart. They describe configuration, not health: freshness lives in the heartbeat and in
+each proof.
+
 ## Gate 2 pass criteria
 
 Hold the paper pilot to all of the following over at least 20 sessions before any

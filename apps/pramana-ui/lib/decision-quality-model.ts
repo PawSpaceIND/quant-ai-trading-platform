@@ -48,6 +48,14 @@ export type DecisionQualityReport = {
   by_mode: ModeRow[];
   recent: RecentDecision[];
   limitations: string[];
+  /** Today's consensus spend headroom. Absent when the engine runs without a budget. */
+  ai_budget: AiBudget | null;
+};
+
+export type AiBudget = {
+  day: string; scope: string; calls: number; tokens: number;
+  daily_call_limit: number; daily_token_limit: number;
+  remaining_calls: number; remaining_tokens: number; exhausted: boolean;
 };
 
 export type PostMortemStatus = "pending" | "approved";
@@ -158,6 +166,24 @@ const optText = (v: unknown, max = 200): string | null => v === null ? null : te
 const stamp = (v: unknown): string => { const s = text(v, 80); return Number.isFinite(Date.parse(s)) ? s : fail(); };
 const governance = (v: unknown): Governance => v === "filled" || v === "rejected" || v === "abstained" ? v : fail();
 
+function optAiBudget(value: unknown): AiBudget | null {
+  // Absent on an engine without a budget, and older engines never wrote it at all, so a
+  // missing or malformed block yields null instead of failing the whole report.
+  if (value === null || value === undefined) return null;
+  try {
+    const d = record(value);
+    return {
+      day: text(d.day, 20), scope: text(d.scope, 40),
+      calls: num(d.calls), tokens: num(d.tokens),
+      daily_call_limit: num(d.daily_call_limit), daily_token_limit: num(d.daily_token_limit),
+      remaining_calls: num(d.remaining_calls), remaining_tokens: num(d.remaining_tokens),
+      exhausted: bool(d.exhausted),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeReport(value: unknown): DecisionQualityReport {
   const r = record(value);
   if (r.schema !== DECISION_QUALITY_SCHEMA) fail();
@@ -217,6 +243,7 @@ function normalizeReport(value: unknown): DecisionQualityReport {
     by_mode: list(r.by_mode, 50).map((item) => { const d = record(item); return { mode: text(d.mode, 80), decisions: num(d.decisions) }; }),
     recent,
     limitations: list(r.limitations, 50).map((item) => text(item, 500)),
+    ai_budget: optAiBudget(r.ai_budget),
   };
 }
 
