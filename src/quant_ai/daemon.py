@@ -15,6 +15,7 @@ from typing import Any
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.execution.audit import PRAMANA_PROOF_DIRECTORY, XAITraceLogger
@@ -308,6 +309,7 @@ def build_ghost_runner(
     pilot_mode: bool = False,
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
+    post_mortem_directory: str | Path | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -335,6 +337,7 @@ def build_ghost_runner(
         runtime=runtime,
         tick_reader=CadenceMarketReader(buffer),
         history=history_provider,
+        lessons_provider=_lessons_provider(database, post_mortem_directory),
     )
     scheduler = AutonomousCadenceScheduler(
         pipeline,
@@ -508,6 +511,24 @@ def _env_intelligence_providers() -> tuple[
         FailoverFundamentalProvider(registry),
         FailoverMacroProvider(registry),
     )
+
+
+def _lessons_provider(
+    database: str | Path, directory: str | Path | None
+) -> Callable[[], tuple[str, ...]] | None:
+    """Read operator-approved post-mortem lessons for the consensus evidence block.
+
+    Only post-mortems an operator explicitly approved are read, and only the newest few.
+    The engine never writes its own lessons back into its own prompt: a session review has
+    to pass through a human before it can influence another decision. The lessons still
+    reach the model as data inside the untrusted-evidence block, never as instructions.
+    """
+    resolved = Path(directory) if directory is not None else Path(database).parent / "post-mortems"
+
+    def read() -> tuple[str, ...]:
+        return approved_lessons(resolved, datetime.now(timezone.utc))
+
+    return read
 
 
 def _env_daily_history_provider() -> DailyHistoryProvider | None:

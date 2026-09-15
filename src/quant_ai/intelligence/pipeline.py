@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -10,6 +11,8 @@ from quant_ai.agents.contracts import (
     MAX_EVIDENCE_BARS,
     MAX_EVIDENCE_HEADLINES,
     MAX_HEADLINE_CHARS,
+    MAX_LESSON_CHARS,
+    MAX_LESSONS,
     MAX_TIMEFRAME_BARS,
     AgentEvidence,
     EvidenceBar,
@@ -168,6 +171,7 @@ class SwarmMarketAnalysisPipeline:
         sizer: PositionSizer | None = None,
         news_window: timedelta = timedelta(hours=6),
         history: DailyHistoryProvider | None = None,
+        lessons_provider: Callable[[], Sequence[str]] | None = None,
         intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
     ) -> None:
         if news_window <= timedelta(0):
@@ -178,6 +182,10 @@ class SwarmMarketAnalysisPipeline:
         # Read-only closed daily bars for regime context. None means no daily context and
         # no I/O; the regime then comes from the 15-minute bars, or abstains.
         self.history = history
+        # Operator-approved post-mortem lessons. They are prior-session notes a human
+        # signed off, never model self-talk, and they reach the prompt inside the block
+        # that is labelled as data rather than instructions.
+        self.lessons_provider = lessons_provider
         self.intraday_window = intraday_window
         self.market_feed = market_feed
         self.news = news
@@ -479,6 +487,7 @@ class SwarmMarketAnalysisPipeline:
         evidence_context = self._evidence_context(
             candles, technical, news + geopolitical, macro, fundamentals, states,
             timeframes=market.timeframe_evidence(), regime=market.regime_evidence(),
+            lessons=self._approved_lessons(),
         )
         execution = await self.runtime.execute_async(
             root_request,
@@ -584,6 +593,31 @@ class SwarmMarketAnalysisPipeline:
             )
         return states.price.confidence_multiplier
 
+    def _approved_lessons(self) -> tuple[str, ...]:
+        """Bounded operator-approved lessons, or nothing.
+
+        The provider reads files a human approved, but a file is still untrusted input and
+        a missing or malformed store is not a reason to lose a tick: any failure yields no
+        lessons and one warning. ``EvidenceContext`` enforces the count and length bounds,
+        so a provider that returns more than ``MAX_LESSONS`` is trimmed here rather than
+        raising inside the evidence constructor.
+        """
+        if self.lessons_provider is None:
+            return ()
+        try:
+            supplied = tuple(self.lessons_provider())
+        except Exception:  # evidence is optional, the cadence is not
+            LOGGER.warning("approved_lessons_unavailable", exc_info=True)
+            return ()
+        lessons: list[str] = []
+        for item in supplied[:MAX_LESSONS]:
+            if not isinstance(item, str):
+                continue
+            text = " ".join(item.split())[:MAX_LESSON_CHARS].strip()
+            if text:
+                lessons.append(text)
+        return tuple(lessons)
+
     @staticmethod
     def _evidence_context(
         candles: tuple[Candle, ...],
@@ -597,6 +631,7 @@ class SwarmMarketAnalysisPipeline:
         max_headlines: int = MAX_EVIDENCE_HEADLINES,
         timeframes: tuple[tuple[str, tuple[EvidenceBar, ...]], ...] = (),
         regime: tuple[tuple[str, Decimal | str], ...] = (),
+        lessons: tuple[str, ...] = (),
     ) -> EvidenceContext:
         """Pre-render the newest bars and headlines plus the metric maps for the prompt.
 
@@ -638,6 +673,7 @@ class SwarmMarketAnalysisPipeline:
             ),
             timeframes=timeframes,
             regime=regime,
+            lessons=lessons,
         )
 
     @staticmethod

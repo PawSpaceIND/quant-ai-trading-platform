@@ -147,7 +147,7 @@ class AutonomousCadenceScheduler:
             result.execution.risk_decision.reason,
             orders,
             provider_status,
-            result.regime.regime.value,
+            _regime_line(result),
             "PASS" if stress.passed else "STRESS_VETO",
             result.analytics.sharpe,
             result.analytics.sortino,
@@ -156,3 +156,21 @@ class AutonomousCadenceScheduler:
                 f"risk={result.execution.risk_decision.approved}:{result.execution.risk_decision.reason}",
             ),
         )
+
+
+def _regime_line(result: MarketAnalysisResult) -> str:
+    """Both regime readings for the operator digest, each named.
+
+    ``result.regime`` is the exposure-scaling detector; ``regime_summary`` is the
+    multi-timeframe label the decision was made under, which is what the journal, the
+    dashboard breakdown and the proof all record. Showing one without saying which it is
+    made the three surfaces look like they disagreed, so the digest names both.
+    """
+    sizing = result.regime.regime.value
+    summary = getattr(result, "regime_summary", None)
+    label = getattr(summary, "label", None)
+    if not label or label == sizing:
+        return sizing
+    timeframe = getattr(summary, "timeframe", None)
+    suffix = f"@{timeframe}" if timeframe else ""
+    return f"{label}{suffix} (exposure:{sizing})"

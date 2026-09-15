@@ -441,9 +441,14 @@ class AutonomousTradingDaemon:
                 return  # off-hours sweep, or no swarm decision for this instrument
             from quant_ai.analytics.decision_journal import record_decision
 
-            regime = getattr(getattr(result, "regime", None), "regime", None)
+            # Two regime vocabularies exist. ``result.regime`` is the sizing detector that
+            # scales gross exposure; the journal instead records the multi-timeframe label
+            # the decision was actually made under, which is the one the supplied evidence
+            # carried and the one the proof stores, so a by-regime breakdown and the proof
+            # a founder opens from it always say the same word. ``record_decision`` reads it
+            # from the trace, falling back to the proposal provenance.
             record_decision(
-                self.tracker.broker, execution, tenant_id=self.tenant_id, regime=regime,
+                self.tracker.broker, execution, tenant_id=self.tenant_id,
                 now=timestamp, llm_available=llm_available,
             )
         except Exception:  # evidence capture must never break the cadence
