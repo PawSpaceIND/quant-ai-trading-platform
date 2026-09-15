@@ -103,7 +103,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      # gitleaks-action v2 requires a (free) license key for organization-owned repositories.
+      # gitleaks-action requires a (free) license key for organization-owned repositories.
       GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
           npm audit --audit-level=high
       - name: Secret scan (gitleaks)
         if: env.GITLEAKS_LICENSE != ''
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e  # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Secret scan skipped
