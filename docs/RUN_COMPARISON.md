@@ -31,7 +31,7 @@ Whole-window returns use each run's own first requested observation. They and ag
 
 Fills are grouped by minute, instrument and side. Quantity, weighted average price, recorded cash fees and differences are inspectable. Chart markers sit on the equity curve in the fill's minute, not an execution-price axis; up to 200 markers with available equity are shown. Every selected fill remains in the export. Grouping is not one-to-one order matching or a causal attribution model. Spread/slippage already enter execution prices and are not deducted again as cash fees.
 
-Source inventory and recorded components are compared when a paper strategy manifest is available. Even identical inventories/components do not prove provider equivalence, scheduler/clock parity, identical AI responses, point-in-time availability or untouched holdout status. `strategyEquivalence` remains `unverified` and `automaticPromotion` remains false.
+The retained replay run records the runtime configuration it ran under and the decision-maker that produced it; a replay curve comes from the deterministic consensus, a paper curve from the live decision-maker, so the two are not the same agent. [What a replay tests and what it cannot](BACKTEST_FIDELITY.md). Source inventory and recorded components are compared when a paper strategy manifest is available. Even identical inventories/components do not prove provider equivalence, scheduler/clock parity, identical AI responses, point-in-time availability or untouched holdout status. `strategyEquivalence` remains `unverified` and `automaticPromotion` remains false.
 
 ## Private UI, AI and recovery
 

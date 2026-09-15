@@ -28,6 +28,10 @@ Timestamps are interval **closes**, not opens. Convert vendor timestamps explici
 - Targets are market-style triggers, not guaranteed limit fills. Protective exits remain paper-only, persist in the ledger, carry a cooldown, and are linked to explicit events in the JSON tearsheet. They are not full AI XAI proofs.
 - Tearsheets expose `protection_model` and `intrabar_exits`, including order ID, reference price, interval bounds, gap and ambiguity flags. Interior events use interval-end bookkeeping; that is not a measured tick execution time.
 
+## Which engine the replay runs
+
+Every number here is produced by the deterministic Atlas consensus under the founder's own directives, not by the LLM decision-maker that normally trades. Tearsheets carry `decision_maker`, `decision_maker_note` and `traded_configuration_differences` so a reader can see which agent drew the curve and what the replay could not reproduce. [Contract and the reasons for each difference](BACKTEST_FIDELITY.md).
+
 ## Limits and remaining qualification
 
 This improves one execution-model gap against the TradingView Bar Magnifier reference; it does not establish full product parity. Queue position, partial fills, exchange limits, latency paths, tick ordering, short positions and broker-native order lifecycles are not simulated here. Liquidity friction uses preceding parent bars, not a measured execution-time order book. Child volumes are not used to assert market-depth capacity.

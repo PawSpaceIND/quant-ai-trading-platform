@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quant_ai.agents.traded_runtime import DECISION_MAKER_NOTES, runtime_configuration
 from quant_ai.governance.runtime_manifest import describe, digest, encoded, stable
 
 
@@ -71,6 +72,14 @@ class ReplayRunEvidence:
                 "country": harness.country,
                 "components": components,
                 "newsWindowSeconds": pipeline.news_window.total_seconds(),
+                # Which agent drew this curve, and what the curve therefore is and is not
+                # evidence of. A reader who skips the code still cannot miss it.
+                "decisionMaker": harness.decision_maker,
+                "decisionMakerNote": DECISION_MAKER_NOTES[harness.decision_maker],
+                "tradedRuntime": runtime_configuration(pipeline.runtime),
+                "tradedConfigurationDifferences": [
+                    dict(item) for item in harness.traded_configuration_differences
+                ],
             },
             "configurationIssues": issues,
             "protectionModel": "lower_timeframe_ohlc_stop_first"

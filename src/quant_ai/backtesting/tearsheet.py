@@ -4,13 +4,17 @@ import json
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 
+from quant_ai.agents.traded_runtime import DECISION_MAKER_NOTES, DETERMINISTIC_CONSENSUS
 from quant_ai.analytics.metrics import (
     MINIMUM_SIGNIFICANCE_OBSERVATIONS,
     alpha_beta,
     maximum_drawdown,
     mean_return_significance,
 )
-from quant_ai.backtesting.replay import HistoricalReplayResult
+from quant_ai.backtesting.replay import (
+    TRADED_CONFIGURATION_DIFFERENCES,
+    HistoricalReplayResult,
+)
 from quant_ai.execution.paper_ledger import PaperBrokerService
 
 
@@ -43,6 +47,12 @@ class TearSheet:
         "registered candidate-trial count, and note that per-bar returns are serially "
         "correlated."
     )
+    # Which agent produced this curve, and what the curve therefore is and is not evidence
+    # of. A sheet read without these cannot tell the traded decision-maker from its
+    # rule-based stand-in, and would be read as the first when it is the second.
+    decision_maker: str = DETERMINISTIC_CONSENSUS
+    decision_maker_note: str = DECISION_MAKER_NOTES[DETERMINISTIC_CONSENSUS]
+    traded_configuration_differences: tuple[dict, ...] = TRADED_CONFIGURATION_DIFFERENCES
 
     def to_json(self) -> str:
         return json.dumps(
@@ -92,6 +102,8 @@ def build_tearsheet(
         MINIMUM_SIGNIFICANCE_OBSERVATIONS,
         None if trial_register is None else int(trial_register.get("candidate_trials", 0)),
         None if trial_register is None else int(trial_register.get("runs", 0)),
+        decision_maker=result.decision_maker,
+        decision_maker_note=DECISION_MAKER_NOTES[result.decision_maker],
     )
 
 

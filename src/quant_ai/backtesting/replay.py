@@ -7,7 +7,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from quant_ai.agents.swarm import TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+from quant_ai.agents.traded_runtime import (
+    DETERMINISTIC_CONSENSUS,
+    LLM_CONSENSUS,
+    build_traded_runtime,
+)
 from quant_ai.backtesting.intrabar import IntrabarWindow, first_breach
 from quant_ai.domain.models import Instrument, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.execution.audit import XAITraceLogger
@@ -15,11 +21,66 @@ from quant_ai.execution.friction import FrictionContext
 from quant_ai.execution.live_friction import friction_context_from_bars
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.portfolio import PortfolioTracker
+from quant_ai.governance.directives import FounderDirectives
+from quant_ai.governance.event_calendar import EventCalendar
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.providers import FundamentalSnapshot, MacroSnapshot, NewsSignal
 from quant_ai.marketdata.feed import MarketDataFeed, MarketTick
 from quant_ai.marketdata.models import Candle
 from quant_ai.planning.capital import CapitalPlan
+
+# What the replay cannot reproduce from the configuration that trades, and why. Each entry
+# is recorded in the run evidence and held by ``tests/test_backtest_fidelity.py``, so a
+# difference may exist only for as long as it is written down here.
+TRADED_CONFIGURATION_DIFFERENCES = (
+    {
+        "knob": "decisionMaker",
+        "traded": LLM_CONSENSUS,
+        "replayed": DETERMINISTIC_CONSENSUS,
+        "reason": (
+            "Replaying a model over a past window is not a clean backtest: its training "
+            "data may already contain the outcome, and no look-ahead assertion here can "
+            "detect that. The replay runs the rule-based consensus instead and labels the "
+            "curve as a stand-in rather than as the AI."
+        ),
+    },
+    {
+        "knob": "attribution",
+        "traded": "restored_from_decision_journal",
+        "replayed": "cold",
+        "reason": (
+            "Journal rows carry the realised P&L of trades that closed after the replay "
+            "window, and the journal cannot be bounded to outcomes known at a point in "
+            "time, so restoring specialist weights would feed the window its own future. "
+            "Every specialist starts unscored at weight 1.0."
+        ),
+    },
+    {
+        "knob": "pilotRuntimeHooks",
+        "traded": "snapshot_provider,pre_submit_check,strategy_manifest_provider",
+        "replayed": "event_blackout_pre_submit_only",
+        "reason": (
+            "The pilot hooks read live state - a reconciled ledger, tick freshness, an "
+            "open session, a bound strategy manifest, a mark that has not drifted during "
+            "analysis - that a historical bar cannot supply. Only the scheduled-event "
+            "blackout is answerable from a timestamp, and the replay enforces it whenever "
+            "the operator supplies a calendar."
+        ),
+    },
+    {
+        "knob": "sessionHalt",
+        "traded": "latched_kill_switch_on_drawdown_or_daily_loss",
+        "replayed": "per_order_risk_firewall_only",
+        "reason": (
+            "The pilot's protection tick latches a durable halt when the book breaches the "
+            "drawdown or daily-loss limit, and that halt outlives the breach. The replay "
+            "has no protection tick: the same limits are still enforced order by order by "
+            "the risk firewall, but a replayed run resumes trading once equity recovers "
+            "where the live engine would have stayed halted. A replay can therefore trade "
+            "more than the live engine would have, never less."
+        ),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +116,7 @@ class HistoricalReplayResult:
     intrabar_exits: tuple[dict, ...] = ()
     protection_model: str = "not_simulated"
     replay_run_id: str | None = None
+    decision_maker: str = DETERMINISTIC_CONSENSUS
 
 
 class HistoricalMarketDataFeed(MarketDataFeed):
@@ -136,7 +198,14 @@ class HistoricalFundamentalProvider:
 
 
 class HistoricalReplayHarness:
-    """Point-in-time replay with next-bar execution for close-derived decisions."""
+    """Point-in-time replay with next-bar execution for close-derived decisions.
+
+    The runtime comes from :func:`build_traded_runtime`, the same builder the ghost
+    daemon uses, so the configuration under test is the configuration that trades:
+    the founder's position cap, blocked asset classes and book firewall apply here
+    exactly as they do live. What the replay still cannot reproduce is enumerated in
+    ``TRADED_CONFIGURATION_DIFFERENCES`` and recorded on every run.
+    """
 
     def __init__(
         self,
@@ -147,13 +216,51 @@ class HistoricalReplayHarness:
         country: str = "USA",
         tenant_id: str = "backtest",
         xai_logger: XAITraceLogger | None = None,
+        directives: FounderDirectives | None = None,
+        book_risk_history=None,
+        event_calendar: EventCalendar | None = None,
+        decision_maker: str = DETERMINISTIC_CONSENSUS,
     ) -> None:
+        if decision_maker != DETERMINISTIC_CONSENSUS:
+            # Refusing is the honest answer, not a missing feature: a curve drawn by a
+            # model that may have read the window's outcome during training cannot be
+            # distinguished from skill by anything in this repository.
+            raise ValueError(
+                f"replay_decision_maker_unsupported:{decision_maker}; "
+                f"only {DETERMINISTIC_CONSENSUS} can be replayed without unverifiable "
+                "look-ahead"
+            )
         self.broker = broker
         self.plan = plan
         self.quantity = quantity
         self.country = country
         self.tenant_id = tenant_id
         self.xai_logger = xai_logger
+        # The traded configuration, not a permissive stand-in: absent directives are the
+        # founder defaults the daemon boots with, never "no limits".
+        self.directives = directives or FounderDirectives()
+        self.book_risk_history = book_risk_history
+        self.event_calendar = event_calendar
+        self.decision_maker = decision_maker
+        self.traded_configuration_differences = TRADED_CONFIGURATION_DIFFERENCES
+        self._decision_time: datetime | None = None
+
+    def build_runtime(self) -> SwarmPaperTradingService:
+        """The runtime this harness replays with, assembled exactly as the daemon's is.
+
+        Exposed so a test can compare the two configurations without running either; the
+        run evidence records the result of this same call under ``tradedRuntime``.
+        """
+        runtime = build_traded_runtime(
+            broker=self.broker,
+            directives=self.directives,
+            xai_logger=self.xai_logger,
+            book_risk_history=self.book_risk_history,
+            # No attribution restore here; see TRADED_CONFIGURATION_DIFFERENCES.
+        )
+        if self.event_calendar is not None:
+            runtime.pre_submit_check = self._blackout_veto
+        return runtime
 
     def run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
         self._validate(dataset)
@@ -173,7 +280,7 @@ class HistoricalReplayHarness:
         windows = {w.parent_timestamp: w for w in dataset.intrabar_windows}
         exits: list[dict] = []
         feed = HistoricalMarketDataFeed(dataset.bars)
-        runtime = SwarmPaperTradingService(broker=self.broker, xai_logger=self.xai_logger)
+        runtime = self.build_runtime()
         pipeline = SwarmMarketAnalysisPipeline(
             feed,
             HistoricalNewsProvider(dataset.news),
@@ -201,6 +308,7 @@ class HistoricalReplayHarness:
             decision_bar = dataset.bars[index - 1]
             execution_bar = dataset.bars[index]
             feed.set_time(decision_bar.timestamp)
+            self._decision_time = decision_bar.timestamp
             visible = feed.visible()
             context = self._friction_context(visible)
             self.broker.set_friction_context(
@@ -254,7 +362,18 @@ class HistoricalReplayHarness:
             tracker.get_snapshot(dataset.bars[-1].timestamp),
             tuple(exits),
             "lower_timeframe_ohlc_stop_first" if windows else "not_simulated",
+            decision_maker=self.decision_maker,
         )
+
+    def _blackout_veto(self, proposal: TradeProposal) -> str | None:
+        """The one pilot pre-submit gate a historical bar can answer.
+
+        Entries only, exactly as the live path treats it: a scheduled event suppresses a
+        new position and never blocks an exit out of one.
+        """
+        if proposal.side == Side.SELL or self._decision_time is None:
+            return None
+        return self.event_calendar.blackout_reason(proposal.symbol, self._decision_time)
 
     def _protect(
         self,

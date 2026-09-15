@@ -12,10 +12,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
-from quant_ai.agents.atlas import AtlasInvestmentAgent
-from quant_ai.agents.swarm import AtlasCIOAgent
-from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
-from quant_ai.analytics.attribution import restore_from_journal
+from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
@@ -72,9 +69,7 @@ from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
-from quant_ai.risk.book_history import DailyCloseHistory, sector_map_from_env
-from quant_ai.risk.policy import BookRiskFirewall
-from quant_ai.risk.warden import RiskWarden
+from quant_ai.risk.book_history import DailyCloseHistory
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
@@ -344,9 +339,6 @@ def build_ghost_runner(
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
     feed = LiveTickMarketDataFeed(buffer)
-    cio = AtlasCIOAgent(
-        AtlasInvestmentAgent(llm_client=llm_client, founder_instructions=directives.instructions)
-    )
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
     # Cross-position controls. The group limit arms from the operator's mapping alone;
@@ -356,28 +348,19 @@ def build_ghost_runner(
     book_history = (
         DailyCloseHistory(book_risk_history, instruments) if book_risk_history is not None else None
     )
-    book_risk = BookRiskFirewall(
-        history_provider=book_history,
-        sector_map=directives.sector_map or sector_map_from_env(),
-    )
-    runtime = SwarmPaperTradingService(
-        cio=cio,
-        warden=RiskWarden(
-            blocked_asset_classes=directives.blocked_asset_classes(), book_risk=book_risk
-        ),
+    # The historical replay assembles its runtime through this same builder, so a
+    # backtest cannot quietly run a looser configuration than the one that trades.
+    runtime = build_traded_runtime(
         broker=broker,
+        directives=directives,
+        llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
-        max_open_positions=directives.max_open_positions,
+        book_risk_history=book_history,
+        # What the specialists earned in past sessions, recovered from the journal. The
+        # daily token restart would otherwise reset every score each morning, so the
+        # engine could never learn anything that outlived one session.
+        attribution_journal_tenant=tenant_id,
     )
-    # What the specialists earned in past sessions, recovered from the journal. The daily
-    # token restart would otherwise reset every score each morning, so the engine could
-    # never learn anything that outlived one session.
-    try:
-        restore_from_journal(runtime.attribution, broker, tenant_id=tenant_id)
-    except Exception:  # a cold start beats a daemon that will not boot
-        logging.getLogger("quant_ai.ghost_runner").exception(
-            "attribution_restore_failed tenant=%s", tenant_id
-        )
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
         news_provider or SandboxNewsSentimentProvider(),
