@@ -10,8 +10,13 @@ from quant_ai.marketdata.models import Candle
 
 
 def yahoo_symbol(symbol: str, market: Market) -> str:
-    """Yahoo ticker for a canonical symbol: NSE listings carry the ``.NS`` suffix."""
-    if market == Market.INDIA and not symbol.endswith(".NS"):
+    """Yahoo ticker for a canonical symbol: NSE listings carry the ``.NS`` suffix.
+
+    Yahoo's index tickers are already fully qualified and are never exchange-suffixed:
+    NIFTY 50 is ``^NSEI``, and ``^NSEI.NS`` is not a symbol Yahoo knows. A leading caret
+    marks that namespace, so it is passed through untouched.
+    """
+    if market == Market.INDIA and not symbol.endswith(".NS") and not symbol.startswith("^"):
         return f"{symbol}.NS"
     return symbol
 
