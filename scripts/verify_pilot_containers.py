@@ -110,7 +110,9 @@ def main():
         assert tunnel["read_only"] is True and "ALL" in tunnel["cap_drop"]
         assert tunnel["command"] == ["tunnel", "--no-autoupdate", "run", "--token-file",
                                       "/run/secrets/cloudflare_tunnel_token"]
-        assert tunnel["secrets"] == [{"source": "cloudflare_tunnel_token", "target": "cloudflare_tunnel_token"}]
+        assert len(tunnel["secrets"]) == 1
+        assert tunnel["secrets"][0]["source"] == "cloudflare_tunnel_token"
+        assert tunnel["secrets"][0]["target"] == "cloudflare_tunnel_token"
         assert tunnel_config["secrets"]["cloudflare_tunnel_token"]["file"] == str(token_file)
         for service_name, service in services.items():
             assert tunnel_config["services"][service_name] == service

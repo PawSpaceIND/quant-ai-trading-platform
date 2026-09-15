@@ -8,7 +8,9 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     depends_on: [dashboard]
-    secrets: [cloudflare_tunnel_token]
+    secrets:
+      - source: cloudflare_tunnel_token
+        target: cloudflare_tunnel_token
 secrets:
   cloudflare_tunnel_token:
     file: ${PRAMANA_TUNNEL_TOKEN_FILE:?required absolute path to private tunnel token file}
