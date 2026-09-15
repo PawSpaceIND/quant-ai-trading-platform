@@ -83,6 +83,8 @@ def external_gate_report(document: Mapping[str, object]) -> dict[str, object]:
         "schema": "pramana.external_gate_report.v1",
         "ready": bool(results) and all(result.passed for result in results),
         "liveExecutionEnabled": False,
+        "revision": document.get("revision"),
+        "targetHost": document.get("targetHost"),
         "gates": [
             {"id": result.gate.gate_id, "title": result.gate.title, "passed": result.passed, "detail": result.detail}
             for result in results

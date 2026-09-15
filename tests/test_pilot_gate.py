@@ -29,6 +29,8 @@ def test_external_gates_require_every_attached_reviewed_evidence_item():
     report = external_gate_report(evidence())
     assert report["ready"] is True
     assert report["liveExecutionEnabled"] is False
+    assert report["revision"] == "a" * 40
+    assert report["targetHost"] == "pilot-host"
     assert all(item["passed"] for item in report["gates"])
 
     missing = evidence()

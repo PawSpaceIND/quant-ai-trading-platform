@@ -18,6 +18,7 @@ import { readRuntime, performance } from "@/lib/pilot";
 import {protectionCoverageCheck} from "@/lib/protection-coverage";
 import { consoleDb } from "@/lib/console-db";
 import { ledgerPath, tenantId } from "@/lib/db";
+import { externalGateChecks } from "@/lib/external-gates";
 export const dynamic = "force-dynamic";
 export async function GET() {
   try {
@@ -124,6 +125,12 @@ export async function GET() {
         pass: recoveryReview.pass,
         detail: recoveryReview.detail,
       },
+      ...externalGateChecks().map((gate) => ({
+        id: gate.id.toLowerCase(),
+        title: gate.title,
+        pass: gate.pass,
+        detail: gate.detail,
+      })),
     ];
     return NextResponse.json(
       {
