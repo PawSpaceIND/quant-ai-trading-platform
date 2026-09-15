@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -54,6 +55,62 @@ def test_india_current_2026_contract_note_math_and_legacy_profile() -> None:
     legacy = MarketFrictionModel(fee_schedule=FeeSchedule.legacy_prompt_rates())
     legacy_buy = legacy.evaluate(_order(Market.INDIA, Side.BUY), _zero_context())
     assert legacy_buy.statutory_fees == Decimal("35.46226000")
+
+
+def test_a_one_way_cost_is_the_sum_of_its_parts_and_a_sizeless_order_is_refused() -> None:
+    """What the deleted flat-bps ``CostModel`` asserted, against the model that charges.
+
+    That test read ``CostModel(1, 2, 1).one_way_cost(10000) == 4``: three constants added
+    and divided by 10000. The constants are gone and the arithmetic with them. The property
+    underneath them is not, and it is checked here from the opposite direction: the price
+    displacement and the charge lines are derived independently of ``total_friction`` and
+    have to reconstruct it exactly. A component charged into the execution price and then
+    left out of the total - or counted into it twice - fails here, which is the failure the
+    old one-line sum was standing in for.
+
+    The deleted model also refused a nonsensical notional, and no test ever asked it to.
+    The statutory model's equivalent guard is exercised here so it does not become dead
+    code in its turn: an order with no size is refused rather than priced at zero.
+    """
+    model = MarketFrictionModel(
+        fee_schedule=FeeSchedule.current_2026(),
+        gamma=Decimal(0),
+        fixed_slippage_bps=Decimal(5),
+    )
+    # An observed quote and a flat impact keep the two drags exact, so the reconstruction
+    # below tests the model's bookkeeping rather than Decimal's rounding context.
+    context = FrictionContext(
+        Decimal(2), Decimal(1000000), Decimal(1), True, Decimal("0.001")
+    )
+    quantity = 100
+
+    buy = model.evaluate(_order(Market.INDIA, Side.BUY, quantity), context)
+    charged = sum((item.amount for item in buy.charges), Decimal(0))
+    displacement = (buy.execution_price - buy.reference_price) * Decimal(quantity)
+    assert displacement > 0
+    assert buy.spread_drag + buy.slippage_drag == displacement
+    assert buy.cash_charges == charged == buy.statutory_fees
+    assert buy.total_friction == displacement + charged
+    assert {item.code for item in buy.charges} == {
+        "BROKERAGE", "STT", "EXCHANGE", "SEBI", "GST", "STAMP"
+    }
+    assert all(item.amount > 0 for item in buy.charges)
+    # No single line is the whole cost. A total read back off the one component a broken
+    # model still added would satisfy the equality above and fail this.
+    assert all(item.amount < buy.total_friction for item in buy.charges)
+
+    # A sell displaces the price the other way and the same two drags still account for it.
+    sell = model.evaluate(_order(Market.INDIA, Side.SELL, quantity), context)
+    sell_displacement = (sell.reference_price - sell.execution_price) * Decimal(quantity)
+    assert sell_displacement > 0
+    assert sell.spread_drag + sell.slippage_drag == sell_displacement
+    assert sell.total_friction == sell_displacement + sell.cash_charges
+
+    sizeless = replace(_order(Market.INDIA, Side.BUY), quantity=0)
+    priceless = replace(_order(Market.INDIA, Side.BUY), reference_price=Decimal(0))
+    for broken in (sizeless, priceless):
+        with pytest.raises(ValueError, match="positive quantity and reference_price"):
+            model.evaluate(broken, context)
 
 
 def test_us_fees_sell_only_and_current_rates() -> None:
