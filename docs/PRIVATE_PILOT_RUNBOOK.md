@@ -63,7 +63,7 @@ Set `PRAMANA_RESEARCH_REPORT` to a reviewed report path to expose it in the dash
 
 ## Recording external acceptance
 
-The `deploy/review-*.example.json` templates deliberately start incomplete. An operator must fill them from retained evidence, reference the evidence bundle, and identify the exact deployed git revision. Strategy review requires AI-specific holdout, costs, trial accounting and calibration review, plus the existing minimum trade/history/expectancy/drawdown/profit-factor/regime policy. The deterministic baseline report cannot satisfy this schema. The numeric minimums are filters, not a profit guarantee or a substitute for expert review.
+The `deploy/review-*.example.json` templates deliberately start incomplete. An operator must fill them from retained evidence, reference the evidence bundle, and identify the exact deployed git revision. Strategy review requires AI-specific holdout, forward-paper, execution-stress, costs, trial accounting and calibration review, with a SHA-256 digest for each evidence artifact, plus the existing minimum trade/history/expectancy/drawdown/profit-factor/regime policy. The deterministic baseline report cannot satisfy this schema. The numeric minimums are filters, not a profit guarantee or a substitute for expert review.
 
 After the checks have actually been performed, an authorized reviewer can record an attestation:
 

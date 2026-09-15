@@ -8,6 +8,8 @@
   "costs_reviewed": false,
   "trial_register_reviewed": false,
   "ai_calibration_reviewed": false,
+  "forward_paper_reviewed": false,
+  "execution_stress_reviewed": false,
   "sample_trades": 0,
   "expectancy": "0",
   "max_drawdown": "0",
@@ -15,5 +17,9 @@
   "profitable_regimes": 0,
   "paper_days": 0,
   "strategy_config_sha256": "",
-  "strategy_evidence_sha256": ""
+  "strategy_evidence_sha256": "",
+  "holdout_evidence_sha256": "",
+  "forward_paper_evidence_sha256": "",
+  "execution_stress_evidence_sha256": "",
+  "calibration_evidence_sha256": ""
 }

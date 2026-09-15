@@ -88,6 +88,13 @@ export function reviewedGate(gate: "strategy" | "recovery", runtime?: Runtime): 
     )
       throw new Error();
     if (gate === "strategy") {
+      const artifact = r.artifact as Record<string, unknown> | undefined;
+      const requiredReviews = ["holdout_reviewed", "costs_reviewed", "trial_register_reviewed", "ai_calibration_reviewed", "forward_paper_reviewed", "execution_stress_reviewed"];
+      const requiredEvidence = ["holdout_evidence_sha256", "forward_paper_evidence_sha256", "execution_stress_evidence_sha256", "calibration_evidence_sha256"];
+      if (!artifact || requiredReviews.some((key) => artifact[key] !== true)
+          || requiredEvidence.some((key) => typeof artifact[key] !== "string" || !/^[0-9a-f]{64}$/.test(artifact[key] as string))) {
+        return {pass:false,detail:"Strategy review is incomplete; trade evidence and SHA-bound holdout, forward-paper, execution-stress and calibration evidence are required."};
+      }
       const running = runtime ?? readRuntime();
       const active = verifiedRuntimeManifest(running);
       if (!active.pass || active.sha256 !== r.artifact?.strategy_config_sha256) {

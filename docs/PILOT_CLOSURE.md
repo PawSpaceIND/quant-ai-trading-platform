@@ -16,7 +16,7 @@ Target: 100% verified readiness for a private, paper-only, single-currency NSE c
 | P08 | Interactive market watch | Search, sort, selection, saved watchlist, detail chart, timestamps | Browser verified |
 | P09 | Grounded AI copilot | Persisted conversations, provider errors, source context, no execution tools | Verified including one real Claude request |
 | P10 | Risk/scenario and execution views | Portfolio scenarios, holdings, fill/proof linkage, costs, exports | Verified basic pilot views; broader risk parity open |
-| P11 | Evidence and promotion workflow | Reproducible evaluation, protected external gates, no manufactured readiness | Framework verified: causal baseline, hashes and release-bound review; AI evidence pending |
+| P11 | Evidence and promotion workflow | Reproducible evaluation, protected external gates, no manufactured readiness | Framework verified: causal baseline, release-bound review and SHA-bound holdout/forward/stress/calibration evidence; real AI evidence pending |
 | P12 | End-to-end and responsive verification | Meaningful regression suite + browser flow on populated fixtures | Local UI/build verified; target-host E2E pending |
 | P13 | Runtime strategy/review binding | Effective configuration and source fingerprints; fresh registry evidence, drift halt and canonical fill linkage | Engineering verified for built-in pilot; target-host review pending |
 | P14 | Strategy-specific evidence coverage | Exact episode proof/configuration linkage, unresolved-loss coverage, qualified days and review metric/hash parity | Engineering verified; real strategy validation pending |

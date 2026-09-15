@@ -20,8 +20,11 @@ def review(artifact: dict, gate: str, *, tenant: str, revision: str) -> None:
     if gate == "strategy":
         if artifact.get("schema") != "pramana.strategy.review.v1" or not artifact.get("strategy_id"):
             raise ValueError("AI strategy-specific reviewed evidence required; a baseline is not sufficient")
-        if not all(artifact.get(k) is True for k in ("holdout_reviewed", "costs_reviewed", "trial_register_reviewed", "ai_calibration_reviewed")):
+        if not all(artifact.get(k) is True for k in ("holdout_reviewed", "costs_reviewed", "trial_register_reviewed", "ai_calibration_reviewed", "forward_paper_reviewed", "execution_stress_reviewed")):
             raise ValueError("Strategy review is incomplete")
+        for evidence_name in ("holdout_evidence_sha256", "forward_paper_evidence_sha256", "execution_stress_evidence_sha256", "calibration_evidence_sha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(artifact.get(evidence_name, ""))):
+                raise ValueError(f"Pin the reviewed {evidence_name.removesuffix('_evidence_sha256').replace('_', ' ')} evidence digest")
         if not re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("strategy_config_sha256", ""))):
             raise ValueError("Pin the reviewed strategy configuration and model/prompt versions")
         if not re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("strategy_evidence_sha256", ""))):

@@ -41,7 +41,7 @@ function fresh():Runtime {
     strategyEvidence:{schema:"pramana.strategy_episode_evidence.v1",status:"ok",strategySha256:sha,sourceSha256:"f".repeat(64),evidenceSha256:evidenceHash,generatedAt:new Date().toISOString(),coverageStartedAt:"2000-01-01T00:00:00Z",ledgerId:200,unresolvedEpisodes:0,foreignOpenEpisodes:0,unlinkedAccountCompletedTrades:0,incompatibleSessionDates:[],summary:{completedTrades:100,openEpisodes:0,netPnl:"100",expectancy:"1",profitFactor:"1.5",profitFactorState:"defined",winRate:".6",closedCashFees:"10"}}};
 }
 function sign(overrides:Record<string,unknown>={}) {
-  const artifact={strategy_config_sha256:sha,strategy_evidence_sha256:evidenceHash,sample_trades:100,expectancy:"1",profit_factor:"1.5",paper_days:30,...overrides};
+  const artifact={strategy_config_sha256:sha,strategy_evidence_sha256:evidenceHash,holdout_evidence_sha256:"1".repeat(64),forward_paper_evidence_sha256:"2".repeat(64),execution_stress_evidence_sha256:"3".repeat(64),calibration_evidence_sha256:"4".repeat(64),holdout_reviewed:true,costs_reviewed:true,trial_register_reviewed:true,ai_calibration_reviewed:true,forward_paper_reviewed:true,execution_stress_reviewed:true,sample_trades:100,expectancy:"1",profit_factor:"1.5",paper_days:30,...overrides};
   const body=JSON.stringify({schema:"pramana.pilot.acceptance.v1",scope:"private-paper-pilot",gate:"strategy",tenant_id:"default",release_revision:"a".repeat(40),reviewer:"Synthetic QA",reviewed_at:new Date().toISOString(),expires_at:new Date(Date.now()+86400000).toISOString(),artifact});
   fs.writeFileSync(path.join(dir,"strategy.json"),JSON.stringify({payload:body,signature:createHmac("sha256",process.env.PRAMANA_REVIEW_SECRET!).update(body).digest("hex")}));
 }
