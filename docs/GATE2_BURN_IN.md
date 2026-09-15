@@ -90,6 +90,18 @@ built in; load the lunar-calendar dates from the exchange circular:
 export PRAMANA_HOLIDAYS_JSON='{"INDIA": ["2026-03-26", "2026-03-31", "2026-11-09"]}'
 ```
 
+AI spend: Anthropic calls are capped per UTC day on both paths. The daemon admits at
+most `PRAMANA_AI_DAILY_CALL_LIMIT` (500) consensus calls and
+`PRAMANA_AI_DAILY_TOKEN_LIMIT` (2,000,000) tokens, counted in `ai-budget.sqlite` next
+to the ledger (`PRAMANA_AI_BUDGET_DB`). Once either is reached the consensus degrades
+to NEUTRAL and the tick ends in PRESERVE_CAPITAL; the proof shows
+`Consensus Skipped: AI budget exhausted` with inference status `budget_exhausted`, and
+the log carries one `anthropic_consensus_budget_exhausted` warning per day. A budget
+file the daemon cannot read refuses the call the same way. The dashboard admits
+`PRAMANA_CHAT_DAILY_LIMIT` (200) Atlas chat calls per day and answers 429 afterwards,
+with a `copilot.budget_exhausted` audit row; `GET /api/copilot` reports
+`dailyRemaining`. Counters reset at 00:00 UTC; a value of 0 or less disables that cap.
+
 ## What to watch (first 24–48h of session hours)
 
 **Data path** — a proof every 10 minutes in `pramana-proofs/`; `price=FRESH` in the
