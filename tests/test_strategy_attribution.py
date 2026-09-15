@@ -2,11 +2,13 @@ import json
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal as D
+from zoneinfo import ZoneInfo
 
 import pytest
 from test_trade_evidence import account, fill
 
 from quant_ai.domain.models import Market, OrderIntent, Side
+from quant_ai.execution.session import MarketState
 from quant_ai.governance.runtime_manifest import digest, encoded, stable
 from quant_ai.validation.strategy_attribution import select_strategy_evidence
 from quant_ai.validation.trade_evidence import build_trade_evidence
@@ -226,10 +228,17 @@ def test_real_factory_governed_entry_and_protective_exit_share_exact_manifest(
     r = runner_for(tmp_path)
     d = r.daemon
     b = d.tracker.broker
-    # The factory records the boot manifest with its runtime clock. Keep the
-    # synthetic fills on that same clock so attribution does not depend on the
-    # wall-clock time at which the test happens to run.
-    now = datetime.now(timezone.utc)
+    # The factory records the boot manifest at its runtime clock and attribution
+    # refuses a fill recorded before its manifest, while the pilot pre-submit gate
+    # consults the NSE calendar at the daemon clock. Advance to the first NSE
+    # regular-hours instant after boot so both hold whenever this test runs.
+    boot = datetime.now(timezone.utc)
+    now = boot.astimezone(ZoneInfo("Asia/Kolkata")).replace(
+        hour=11, minute=30, second=0, microsecond=0
+    )
+    while now <= boot or d.scheduler.calendar.state(Market.INDIA, now) != MarketState.REGULAR_HOURS:
+        now += timedelta(days=1)
+    now = now.astimezone(timezone.utc)
     d.clock = lambda: now
     b._execution_time = now
     publish_tick(r, "100", now)

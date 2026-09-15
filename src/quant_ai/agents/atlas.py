@@ -153,8 +153,14 @@ class AtlasInvestmentAgent:
         if not isinstance(inference, dict):
             inference = {"status": "unverified", "provider": "unverified",
                          "requested_model": getattr(self.llm_client, "model", None), "resolved_model": None}
-        mode = ("llm" if inference.get("status") == "completed" else
-                "llm_unavailable" if inference.get("status") == "unavailable" else "unverified_inference")
+        status = inference.get("status")
+        mode = ("llm" if status == "completed" else
+                "llm_unavailable" if status == "unavailable" else
+                # A spent daily budget is a deliberate, operator-configured refusal, not an
+                # unverified inference: give it its own mode so proofs and dashboards can
+                # tell "no budget left" apart from "provider down" and "schema rejected".
+                "llm_budget_exhausted" if status == "budget_exhausted" else
+                "unverified_inference")
         action = signal.stance
         if signal.expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
