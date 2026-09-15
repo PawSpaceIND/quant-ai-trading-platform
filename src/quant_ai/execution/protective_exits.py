@@ -52,6 +52,11 @@ class ProtectiveExit:
         return (self.mark_price - self.average_price) * self.quantity
 
 
+# Returned by ``_breach`` when a protected position has no usable mark. Distinct from
+# ``None`` ("priced, no breach") so a feed outage cannot be mistaken for a quiet market.
+MARK_UNAVAILABLE = object()
+
+
 class ProtectiveExitEngine:
     """Active stop-loss / take-profit monitor.
 
@@ -60,6 +65,9 @@ class ProtectiveExitEngine:
     the full position the moment a stored threshold is breached. It is deliberately independent
     of the swarm — no agent vote, no LLM call and no consensus can suppress an exit.
     """
+
+    #: Symbols the most recent sweep could not price. Empty before the first evaluate().
+    unprotected: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -83,20 +91,32 @@ class ProtectiveExitEngine:
         self.re_entry_cooldown = re_entry_cooldown
 
     def evaluate(self, now: datetime | None = None) -> tuple[ProtectiveExit, ...]:
-        """Check every open position and liquidate the ones whose thresholds are breached."""
+        """Check every open position and liquidate the ones whose thresholds are breached.
+
+        Positions the engine could not price are recorded in ``unprotected``. Skipping an
+        unknown mark is the safe choice for *this* sweep, but a position whose stop cannot
+        be evaluated is unprotected in fact, and silence about that is how a feed outage
+        turns a stop-protected book into a naked one. The caller decides how long to
+        tolerate it.
+        """
         observed_at = now or datetime.now(timezone.utc)
         exits: list[ProtectiveExit] = []
+        unprotected: list[str] = []
         for position in self.broker.get_protection_positions(self.tenant_id):
             decision = self._breach(position)
+            if decision is MARK_UNAVAILABLE:
+                unprotected.append(position.symbol)
+                continue
             if decision is None:
                 continue
             trigger, threshold, mark = decision
             exits.append(self._liquidate(position, trigger, threshold, mark, observed_at))
+        self.unprotected = tuple(unprotected)
         return tuple(exits)
 
     def _breach(
         self, position: BrokerPosition
-    ) -> tuple[ExitTrigger, Decimal, Decimal] | None:
+    ) -> tuple[ExitTrigger, Decimal, Decimal] | None | object:
         if position.quantity <= 0:
             return None
         stop, target = positive_level(position.stop_price), positive_level(position.take_profit_price)
@@ -104,7 +124,7 @@ class ProtectiveExitEngine:
             return None
         mark = self._mark(position)
         if mark is None:
-            return None
+            return MARK_UNAVAILABLE
         # Long-only ledger: a stop sits below entry and a target above it. The stop is
         # evaluated first so a bar that spans both thresholds resolves conservatively.
         if stop is not None and mark <= stop:
