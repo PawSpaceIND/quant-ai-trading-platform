@@ -16,6 +16,10 @@ from quant_ai.execution.paper_ledger import (
     PaperBrokerService,
 )
 from quant_ai.execution.protection_state import positive_level
+from quant_ai.marketdata.corporate_calendar import (
+    DEFAULT_DISCONTINUITY_FRACTION,
+    price_discontinuity,
+)
 from quant_ai.notifications.trading import (
     TradingAlertCode,
     TradingNotificationDispatcher,
@@ -56,6 +60,10 @@ class ProtectiveExit:
 # ``None`` ("priced, no breach") so a feed outage cannot be mistaken for a quiet market.
 MARK_UNAVAILABLE = object()
 
+# Returned when the quote was re-based by a corporate action: the stored stop and cost
+# basis refer to a different unit, so the comparison is meaningless, not breached.
+PRICE_REBASED = object()
+
 
 class ProtectiveExitEngine:
     """Active stop-loss / take-profit monitor.
@@ -69,6 +77,14 @@ class ProtectiveExitEngine:
     #: Symbols the most recent sweep could not price. Empty before the first evaluate().
     unprotected: tuple[str, ...] = ()
 
+    #: Symbols whose quote was re-based by a corporate action during the most recent sweep.
+    rebased: tuple[str, ...] = ()
+
+    #: Declared ex-dates. None means undeclared actions are caught by the step guard alone.
+    corporate_calendar: object | None = None
+    discontinuity_fraction: Decimal = DEFAULT_DISCONTINUITY_FRACTION
+
+
     def __init__(
         self,
         broker: PaperBrokerService,
@@ -78,6 +94,8 @@ class ProtectiveExitEngine:
         dispatcher: TradingNotificationDispatcher | None = None,
         strategy_id: str = "protective-exit",
         re_entry_cooldown: timedelta = timedelta(minutes=30),
+        corporate_calendar: object | None = None,
+        discontinuity_fraction: Decimal = DEFAULT_DISCONTINUITY_FRACTION,
     ) -> None:
         self.broker = broker
         self.mark_resolver = mark_resolver
@@ -89,6 +107,13 @@ class ProtectiveExitEngine:
         # sustained decline turns one contained loss into a repeated one. Set to timedelta(0)
         # to disable.
         self.re_entry_cooldown = re_entry_cooldown
+        # A corporate action re-bases the quote without changing what the position is worth,
+        # so the stored stop and cost basis stop being comparable for that session. Declared
+        # ex-dates say so; the step guard catches the ones nobody declared.
+        self.corporate_calendar = corporate_calendar
+        self.discontinuity_fraction = discontinuity_fraction
+        self._last_mark: dict[str, Decimal] = {}
+        self._sweep_at: datetime | None = None
 
     def evaluate(self, now: datetime | None = None) -> tuple[ProtectiveExit, ...]:
         """Check every open position and liquidate the ones whose thresholds are breached.
@@ -100,18 +125,24 @@ class ProtectiveExitEngine:
         tolerate it.
         """
         observed_at = now or datetime.now(timezone.utc)
+        self._sweep_at = observed_at
         exits: list[ProtectiveExit] = []
         unprotected: list[str] = []
+        rebased: list[str] = []
         for position in self.broker.get_protection_positions(self.tenant_id):
             decision = self._breach(position)
             if decision is MARK_UNAVAILABLE:
                 unprotected.append(position.symbol)
+                continue
+            if decision is PRICE_REBASED:
+                rebased.append(position.symbol)
                 continue
             if decision is None:
                 continue
             trigger, threshold, mark = decision
             exits.append(self._liquidate(position, trigger, threshold, mark, observed_at))
         self.unprotected = tuple(unprotected)
+        self.rebased = tuple(rebased)
         return tuple(exits)
 
     def _breach(
@@ -125,6 +156,8 @@ class ProtectiveExitEngine:
         mark = self._mark(position)
         if mark is None:
             return MARK_UNAVAILABLE
+        if self._rebased(position, mark):
+            return PRICE_REBASED
         # Long-only ledger: a stop sits below entry and a target above it. The stop is
         # evaluated first so a bar that spans both thresholds resolves conservatively.
         if stop is not None and mark <= stop:
@@ -132,6 +165,36 @@ class ProtectiveExitEngine:
         if target is not None and mark >= target:
             return ExitTrigger.TAKE_PROFIT, target, mark
         return None
+
+    def _rebased(self, position: BrokerPosition, mark: Decimal) -> bool:
+        """True when this quote cannot be compared with the stored stop and cost basis.
+
+        A declared ex-date says so outright. Failing that, a step larger than the exchange
+        band means the quote was re-based by an action nobody recorded. Either way the
+        stored levels refer to a different unit, and acting on the comparison would book a
+        loss the market never caused.
+        """
+        symbol = position.symbol
+        previous = self._last_mark.get(symbol)
+        self._last_mark[symbol] = mark
+        if self.corporate_calendar is not None:
+            try:
+                declared = self.corporate_calendar.action_on(symbol, self._sweep_at)
+            except (ValueError, AttributeError):
+                declared = None
+            if declared:
+                LOGGER.warning(
+                    "protective_exit_suspended symbol=%s reason=declared_corporate_action:%s",
+                    symbol, declared,
+                )
+                return True
+        if price_discontinuity(previous, mark, fraction=self.discontinuity_fraction):
+            LOGGER.warning(
+                "protective_exit_suspended symbol=%s reason=price_rebased previous=%s current=%s",
+                symbol, previous, mark,
+            )
+            return True
+        return False
 
     def _mark(self, position: BrokerPosition) -> Decimal | None:
         try:

@@ -28,6 +28,7 @@ from quant_ai.execution.protective_exits import (
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
 from quant_ai.execution.session import MarketState
 from quant_ai.governance.directives import country_for
+from quant_ai.marketdata.corporate_calendar import CorporateActionCalendar
 from quant_ai.notifications.trading import TradingAlertCode
 from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
@@ -223,6 +224,9 @@ class AutonomousTradingDaemon:
             ),
             tenant_id=self.tenant_id,
             dispatcher=self.notifications,
+            corporate_calendar=CorporateActionCalendar.from_file(
+                os.getenv("PRAMANA_CORPORATE_ACTIONS") or None
+            ),
         )
 
     @property

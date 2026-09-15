@@ -177,6 +177,22 @@ this pilot must satisfy before a live adapter is worth discussing. Until at leas
 directional decisions have a resolved 60-minute outcome, the report says
 `insufficient_sample` and none of its numbers should be read as edge.
 
+## Corporate actions
+
+A split, bonus or large special dividend cuts the quoted price without changing what the
+position is worth, so for one session the stored stop and cost basis are not comparable
+with the quote. The engine refuses to act on that comparison rather than booking a loss
+the market never caused: the affected symbol reports `protective_exit_suspended` and its
+stop is not evaluated until the quote and the basis agree again.
+
+Two layers. `PRAMANA_CORPORATE_ACTIONS` holds ex-dates you declare. Independently, any
+single step larger than the exchange band (20% by default) is treated as a re-based quote,
+which catches the actions nobody declared. A limit-hit move inside the band is still a
+real move and is still stopped.
+
+The engine does not adjust the position: quantity and average price are not rewritten.
+After an action, reconcile the affected position manually before resuming it.
+
 ## Known limits of this build
 
 - Fundamentals come from Yahoo Finance's public `quoteSummary` endpoint (crumb-and-cookie
