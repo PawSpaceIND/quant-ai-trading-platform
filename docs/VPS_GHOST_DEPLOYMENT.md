@@ -92,11 +92,46 @@ docker compose -f deploy/docker-compose.yml ps
 docker compose -f deploy/docker-compose.yml logs --tail=100 pramana-ghost
 ```
 
+`restart: unless-stopped` only reacts to a process exiting, so the `STATUS` column of
+`docker compose ps` also carries a health verdict for the three services that can wedge
+while still running. The engine answers `pilot_ops health`; the dashboard has to return a
+real 200 from the port it publishes; the collector's snapshot file has to have been
+rewritten in the last 15 minutes, which is loose enough for the first cycle of the day
+(instrument-master download and parse) and far tighter than one session. The exact
+thresholds and why they are what they are sit next to each `healthcheck:` in
+`deploy/docker-compose.yml`.
+
+`backup` deliberately has no healthcheck: it is a once-a-day loop, so any bound over its
+artifact would report `healthy` for a day after it stopped working. Check backup coverage
+from the directory and its manifests instead:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec backup \
+  sh -c "ls -l /data/backups | tail -n 5"
+```
+
+Docker does not restart a container for being unhealthy; the verdict is a signal for you
+and for `scripts/deploy_pilot_host.sh`, which fails a deploy that leaves one unhealthy.
+
 ## 7. Update a running deployment
 
 Merging to `main` does not deploy anything. CI builds and tests the images; the host
-only changes when you pull and rebuild there. Run this on the Docker host, from the
-repository checkout, after the `main` CI run for the merge is green:
+only changes when you pull and rebuild there. After the `main` CI run for the merge is
+green, run this on the Docker host from the repository root:
+
+```bash
+./scripts/deploy_pilot_host.sh            # add --force to deploy inside NSE hours
+```
+
+It does the sequence below and refuses the ways it can go wrong: a dirty checkout (the
+stamped revision would describe an image nobody can rebuild), a deploy during NSE regular
+hours (see the warning further down - it asks the calendar in
+`src/quant_ai/execution/session.py`, so weekends and exchange holidays are allowed), and a
+container that is not running, is unhealthy, or restarts again during the settle window
+after the build. It stamps `PRAMANA_RELEASE_REVISION` in `.env` from the new HEAD and
+prints the revision it deployed. Nothing it runs prints a value out of `.env`.
+
+The same steps by hand, if you need to take them one at a time:
 
 ```bash
 git fetch origin
@@ -114,8 +149,12 @@ With the Cloudflare overlay (`docs/CLOUDFLARE_PRIVATE_PILOT.md`) pass both files
 `-f deploy/docker-compose.yml -f deploy/docker-compose.cloudflare.yml`. `up -d --build`
 recreates only the services whose image or configuration changed; the `pramana-data`
 volume, and with it the ledger, proofs, AI budget counters and the halt marker, is kept.
-Update outside NSE and US session hours when you can: the daemon restarts in seconds,
-but an open paper position is unprotected for the length of the restart.
+Update outside NSE and US session hours. The daemon restarts in seconds, but the
+market-data candle aggregator it carries is in memory only: a rebuild during a session
+throws away every intraday candle built since the open, and the technical agent has no
+decision basis until roughly 50 minutes of ticks have rebuilt them - while the paper book
+stays open. `scripts/deploy_pilot_host.sh` refuses to run inside NSE regular hours unless
+you pass `--force`.
 
 Confirm the dashboard reports the new revision (`PRAMANA_RELEASE_REVISION`, when set)
 and that the first cadence tick after the restart writes a proof. New optional settings
