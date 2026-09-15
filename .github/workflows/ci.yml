@@ -36,6 +36,30 @@ jobs:
       - run: npm test
 
 
+  browser-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/pramana-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/pramana-ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attribution-browser-verification
+          path: apps/pramana-ui/test-results
+          if-no-files-found: warn
+
   cloud-web:
     runs-on: ubuntu-latest
     steps:
