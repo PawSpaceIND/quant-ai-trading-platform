@@ -143,13 +143,19 @@ class DurableOms:
                     at TEXT NOT NULL,
                     broker_order_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS oms_replacements(
+                    original_client_order_id TEXT PRIMARY KEY,
+                    replacement_client_order_id TEXT NOT NULL UNIQUE,
+                    reason TEXT NOT NULL,
+                    at TEXT NOT NULL
+                );
             """)
             row = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
             if row is None:
                 self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
             elif row[0] != SCHEMA_VERSION:
                 raise ValueError("oms_schema_version_mismatch")
-            for table in ("oms_events", "oms_fills"):
+            for table in ("oms_events", "oms_fills", "oms_replacements"):
                 for verb in ("UPDATE", "DELETE"):
                     name = f"{table}_{verb.lower()}_blocked"
                     self.db.execute(
@@ -288,6 +294,133 @@ class DurableOms:
         if not reason.strip():
             raise ValueError("order_cancel_reason_required")
         return self.transition(client_order_id, OrderState.CANCELLED, reason=reason, now=now)
+
+    def replace_cancelled(
+        self,
+        original_client_order_id: str,
+        replacement: OrderIntent,
+        *,
+        decision_id: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        """Create one conservative replacement after cancellation is confirmed.
+
+        Replacement never mutates the old order and never races an unconfirmed cancel. The
+        replacement may change price/protective levels and may reduce size, but it cannot
+        increase the original order's still-unfilled quantity or change economic identity.
+        """
+        self._validate_id(original_client_order_id, "client_order_id")
+        if not reason.strip():
+            raise ValueError("replacement_reason_required")
+        if (
+            type(replacement.quantity) is not int
+            or replacement.quantity <= 0
+            or replacement.reference_price <= 0
+        ):
+            raise ValueError("oms_invalid_order_geometry")
+        if not decision_id.strip():
+            raise ValueError("decision_id_required")
+        at = now or datetime.now(timezone.utc)
+        stamp = _instant(at, "replacement_at")
+        replacement_id = self.client_order_id(replacement, decision_id)
+        with self.db:
+            existing_link = self.db.execute(
+                "SELECT * FROM oms_replacements WHERE original_client_order_id=?",
+                (original_client_order_id,),
+            ).fetchone()
+            if existing_link is not None:
+                if (
+                    existing_link["replacement_client_order_id"] != replacement_id
+                    or existing_link["reason"] != reason.strip()
+                ):
+                    raise ValueError("replacement_lineage_payload_mismatch")
+                current = self.db.execute(
+                    "SELECT * FROM oms_orders WHERE client_order_id=?", (replacement_id,)
+                ).fetchone()
+                if current is None:
+                    raise ValueError("replacement_lineage_missing_order")
+                decoded = self._decode(current)
+                self._assert_same_intent(decoded, replacement)
+                return decoded
+
+            original_row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?",
+                (original_client_order_id,),
+            ).fetchone()
+            if original_row is None:
+                raise KeyError(original_client_order_id)
+            original = self._decode(original_row)
+            if original.state is not OrderState.CANCELLED:
+                raise ValueError("replacement_requires_confirmed_cancel")
+            if original.pending_quantity <= 0:
+                raise ValueError("cancelled_order_has_no_replaceable_quantity")
+            if (
+                original.tenant_id != replacement.tenant_id
+                or original.strategy_id != replacement.strategy_id
+                or original.symbol != replacement.symbol
+                or original.market != replacement.market.value
+                or original.asset_class != replacement.asset_class.value
+                or original.side != replacement.side.value
+            ):
+                raise ValueError("replacement_economic_identity_changed")
+            if replacement.quantity > original.pending_quantity:
+                raise ValueError("replacement_exceeds_cancelled_remainder")
+            collision = self.db.execute(
+                "SELECT 1 FROM oms_orders WHERE client_order_id=?", (replacement_id,)
+            ).fetchone()
+            if collision is not None:
+                raise ValueError("replacement_order_preexists_without_lineage")
+            self.db.execute(
+                "INSERT INTO oms_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    replacement_id, replacement.tenant_id, replacement.strategy_id,
+                    OrderState.CREATED.value, replacement.symbol, replacement.market.value,
+                    replacement.asset_class.value, replacement.side.value, replacement.quantity,
+                    str(replacement.reference_price), 0, None, None, stamp, stamp, 0,
+                ),
+            )
+            self._append_event_locked(replacement_id, "CREATED", at, {
+                "decisionId": decision_id,
+                "replacesClientOrderId": original_client_order_id,
+                "order": {
+                    "tenantId": replacement.tenant_id,
+                    "strategyId": replacement.strategy_id,
+                    "market": replacement.market.value,
+                    "assetClass": replacement.asset_class.value,
+                    "symbol": replacement.symbol,
+                    "side": replacement.side.value,
+                    "quantity": replacement.quantity,
+                    "referencePrice": str(replacement.reference_price),
+                },
+            })
+            self.db.execute(
+                "INSERT INTO oms_replacements VALUES(?,?,?,?)",
+                (original_client_order_id, replacement_id, reason.strip(), stamp),
+            )
+            self._append_event_locked(original_client_order_id, "REPLACED_BY", at, {
+                "replacementClientOrderId": replacement_id,
+                "reason": reason.strip(),
+            })
+        return self.get(replacement_id)
+
+    def replacement_for(self, original_client_order_id: str) -> str | None:
+        self._validate_id(original_client_order_id, "client_order_id")
+        row = self.db.execute(
+            "SELECT replacement_client_order_id FROM oms_replacements "
+            "WHERE original_client_order_id=?",
+            (original_client_order_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def replacement_parent(self, replacement_client_order_id: str) -> str | None:
+        self._validate_id(replacement_client_order_id, "client_order_id")
+        row = self.db.execute(
+            "SELECT original_client_order_id FROM oms_replacements "
+            "WHERE replacement_client_order_id=?",
+            (replacement_client_order_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
 
     def fill(
         self,
