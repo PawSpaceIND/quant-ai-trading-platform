@@ -8,6 +8,7 @@ class OrderState(str, Enum):
     CREATED = "CREATED"
     RISK_APPROVED = "RISK_APPROVED"
     SUBMITTED = "SUBMITTED"
+    SUBMISSION_UNCERTAIN = "SUBMISSION_UNCERTAIN"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCELLED = "CANCELLED"
@@ -16,8 +17,9 @@ class OrderState(str, Enum):
 
 _ALLOWED = {
     OrderState.CREATED: {OrderState.RISK_APPROVED, OrderState.REJECTED, OrderState.CANCELLED},
-    OrderState.RISK_APPROVED: {OrderState.SUBMITTED, OrderState.REJECTED, OrderState.CANCELLED},
-    OrderState.SUBMITTED: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.REJECTED, OrderState.CANCELLED},
+    OrderState.RISK_APPROVED: {OrderState.SUBMITTED, OrderState.SUBMISSION_UNCERTAIN, OrderState.REJECTED, OrderState.CANCELLED},
+    OrderState.SUBMITTED: {OrderState.SUBMISSION_UNCERTAIN, OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.REJECTED, OrderState.CANCELLED},
+    OrderState.SUBMISSION_UNCERTAIN: {OrderState.SUBMITTED, OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.REJECTED, OrderState.CANCELLED},
     OrderState.PARTIALLY_FILLED: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED},
     OrderState.FILLED: set(),
     OrderState.CANCELLED: set(),
