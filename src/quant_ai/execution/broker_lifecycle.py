@@ -11,12 +11,13 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from quant_ai.execution.broker_journal import validate_capture
-from quant_ai.execution.broker_observation import inspect_capture
-from quant_ai.orders.oms import DurableOms, OmsOrder
+from quant_ai.execution.broker_observation import IST, inspect_capture
+from quant_ai.execution.external_account_snapshot import SCOPE as ACCOUNT_SCOPE
+from quant_ai.orders.oms import TERMINAL, DurableOms, OmsOrder
 from quant_ai.orders.state import OrderState
 
 
@@ -56,10 +57,21 @@ def _trade_instant(trade: Mapping[str, object]) -> datetime:
 
 def _compatible(current: OmsOrder, broker_order: Mapping[str, object]) -> bool:
     return (
-        current.symbol == broker_order.get("symbol")
+        current.market == "INDIA"
+        and current.asset_class in {"EQUITY", "ETF"}
+        and broker_order.get("exchange") in {"NSE", "BSE"}
+        and current.symbol == broker_order.get("symbol")
         and current.side == broker_order.get("side")
         and current.requested_quantity == broker_order.get("quantity")
     )
+
+
+def _evidence_binding(capture, broker_order):
+    return {
+        "broker": "zerodha-kite", "account_ref": capture["accountRef"],
+        "broker_order_id": broker_order["orderId"], "instrument_id": broker_order["instrumentId"],
+        "exchange": broker_order["exchange"], "product": broker_order["product"],
+    }
 
 
 def _fill_id(trade: Mapping[str, object]) -> str:
@@ -68,8 +80,24 @@ def _fill_id(trade: Mapping[str, object]) -> str:
     return f"KITE:{exchange}:{trade_id}"
 
 
+def _capture_age_issue(capture, now, max_age_seconds):
+    if type(max_age_seconds) is not int or max_age_seconds <= 0:
+        raise ValueError("capture_max_age_must_be_positive_integer")
+    moment = now or datetime.now(timezone.utc)
+    finished = _capture_instant(capture)
+    if moment.utcoffset() is None or finished.utcoffset() is None:
+        return "capture_clock_must_be_timezone_aware"
+    age = (moment - finished).total_seconds()
+    return "capture_from_future" if age < 0 else "capture_stale" if age > max_age_seconds else None
+
+
 class OmsBrokerLifecycleReconciler:
-    """Advance OMS state only from stable, account-bound broker evidence."""
+    """Advance OMS state only from fresh, stable, account-bound broker evidence."""
+
+    def __init__(self, *, max_capture_age_seconds: int = 300) -> None:
+        if type(max_capture_age_seconds) is not int or max_capture_age_seconds <= 0:
+            raise ValueError("capture_max_age_must_be_positive_integer")
+        self.max_capture_age_seconds = max_capture_age_seconds
 
     def reconcile(
         self,
@@ -79,33 +107,65 @@ class OmsBrokerLifecycleReconciler:
         tenant_id: str,
         account_ref: str,
         bindings: Mapping[str, str] | None = None,
+        now: datetime | None = None,
     ) -> BrokerLifecycleReport:
         evidence = validate_capture(capture, tenant_id, account_ref)
+        age_issue = _capture_age_issue(evidence, now, self.max_capture_age_seconds)
+        if age_issue:
+            return BrokerLifecycleReport("unavailable", evidence["sha256"], (), (),
+                                         (BrokerLifecycleIssue(age_issue),))
         inspection = inspect_capture(evidence)
         if inspection["status"] not in {"consistent", "empty"}:
             return BrokerLifecycleReport(
                 "unavailable", evidence["sha256"], (), (),
                 (BrokerLifecycleIssue("broker_capture_not_consistent"),),
             )
+        # Nested OMS methods use savepoints, not independently committing connection
+        # contexts. A failure on the last fill rolls back the entire observation.
+        with oms.transaction():
+            return self._reconcile_locked(oms, evidence, tenant_id, bindings)
+
+    def _reconcile_locked(self, oms, evidence, tenant_id, bindings):
         supplied = dict(bindings or {})
-        candidates = {row.client_order_id: row for row in oms.open_orders(tenant_id)}
+        observed_ids = {row["orderId"] for row in evidence["orders"]}
+        capture_day = _capture_instant(evidence).astimezone(IST).date()
+        candidates = {
+            row.client_order_id: row for row in oms.all_orders(tenant_id)
+            if row.state not in TERMINAL or row.broker_order_id in observed_ids
+            or row.broker_order_id is not None and row.created_at.astimezone(IST).date() == capture_day
+        }
+        binding_issues = []
         for client_id in supplied:
             try:
                 candidate = oms.get(client_id)
-            except KeyError:
+            except (KeyError, ValueError):
+                binding_issues.append(BrokerLifecycleIssue("explicit_binding_order_unavailable"))
                 continue
             if candidate.tenant_id == tenant_id:
                 candidates[client_id] = candidate
+            else:
+                binding_issues.append(BrokerLifecycleIssue("explicit_binding_order_unavailable"))
         broker_orders = {str(row["orderId"]): row for row in evidence["orders"]}
         trades_by_order: dict[str, list[dict]] = {}
         for trade in evidence["trades"]:
             trades_by_order.setdefault(str(trade["orderId"]), []).append(trade)
-        issues: list[BrokerLifecycleIssue] = []
+        issues: list[BrokerLifecycleIssue] = binding_issues
         unresolved: list[BrokerLifecycleIssue] = []
         resolved: list[str] = []
         work: list[tuple[OmsOrder, str, dict, tuple[dict, ...]]] = []
+        claimed_broker_ids: dict[str, str] = {}
         for client_id, current in sorted(candidates.items()):
+            try:
+                oms.verify(client_id)
+            except (KeyError, TypeError, ValueError) as error:
+                issues.append(BrokerLifecycleIssue(f"oms_integrity_invalid:{error}", client_id))
+                continue
             bound = current.broker_order_id or supplied.get(client_id)
+            if bound is not None:
+                if bound in claimed_broker_ids:
+                    issues.append(BrokerLifecycleIssue("broker_order_multiple_local_claims", client_id, bound))
+                    continue
+                claimed_broker_ids[bound] = client_id
             if current.broker_order_id and supplied.get(client_id) not in {None, current.broker_order_id}:
                 issues.append(
                     BrokerLifecycleIssue(
@@ -133,6 +193,11 @@ class OmsBrokerLifecycleReconciler:
                     BrokerLifecycleIssue("broker_order_seen_before_risk_approval", client_id, bound)
                 )
                 continue
+            expected_binding = _evidence_binding(evidence, broker_order)
+            existing_binding = oms.broker_evidence_binding(client_id)
+            if existing_binding is not None and existing_binding != expected_binding:
+                issues.append(BrokerLifecycleIssue("broker_account_or_contract_binding_changed", client_id, bound))
+                continue
             linked = tuple(
                 sorted(
                     trades_by_order.get(bound, []),
@@ -148,6 +213,31 @@ class OmsBrokerLifecycleReconciler:
                 )
                 continue
             known_fill_ids = set(oms.fill_ids(client_id))
+            broker_by_fill = {_fill_id(trade): trade for trade in linked}
+            changed_known_fill = False
+            for recorded in oms.db.execute(
+                "SELECT * FROM oms_fills WHERE client_order_id=?", (client_id,)
+            ).fetchall():
+                observed = broker_by_fill.get(recorded["fill_id"])
+                if recorded["fill_id"].startswith("KITE:") and observed is None:
+                    changed_known_fill = True
+                if observed is not None and (
+                    recorded["quantity"] != observed["quantity"]
+                    or _decimal(recorded["price"], "recorded_price") != _decimal(observed["price"], "observed_price")
+                    or recorded["broker_order_id"] not in {None, bound}
+                ):
+                    changed_known_fill = True
+            if changed_known_fill:
+                issues.append(BrokerLifecycleIssue("broker_fill_payload_mismatch", client_id, bound))
+                continue
+            if current.filled_quantity == broker_filled and broker_filled:
+                broker_average = sum(
+                    (_decimal(trade["price"], "observed_price") * trade["quantity"] for trade in linked),
+                    Decimal(0),
+                ) / broker_filled
+                if current.average_fill_price != broker_average:
+                    issues.append(BrokerLifecycleIssue("broker_fill_price_mismatch", client_id, bound))
+                    continue
             unseen = tuple(trade for trade in linked if _fill_id(trade) not in known_fill_ids)
             fill_delta = broker_filled - current.filled_quantity
             if fill_delta == 0:
@@ -183,6 +273,8 @@ class OmsBrokerLifecycleReconciler:
 
         for current, broker_id, broker_order, linked in work:
             client_id = current.client_order_id
+            oms.bind_broker_evidence(client_id, _evidence_binding(evidence, broker_order),
+                                     now=_capture_instant(evidence))
             state = current.state
             if state in {OrderState.RISK_APPROVED, OrderState.SUBMISSION_UNCERTAIN}:
                 current = oms.submitted(
@@ -226,10 +318,8 @@ class OmsBrokerLifecycleReconciler:
                     now=_capture_instant(evidence),
                 )
             elif status == "COMPLETE" and current.state is not OrderState.FILLED:
-                return BrokerLifecycleReport(
-                    "discrepancy", evidence["sha256"], tuple(resolved), tuple(unresolved),
-                    (BrokerLifecycleIssue("broker_complete_oms_not_filled", client_id, broker_id),),
-                )
+                raise ValueError("broker_complete_oms_not_filled")
+            oms.verify(client_id)
             resolved.append(client_id)
 
         return BrokerLifecycleReport(
@@ -293,11 +383,28 @@ def _external_snapshot_digest(snapshot: Mapping[str, object]) -> str:
 def reconcile_external_account(
     snapshot: dict,
     expected: ExpectedBrokerAccount,
+    *,
+    now: datetime | None = None,
+    max_capture_age_seconds: int = 300,
 ) -> BrokerAccountReconciliation:
+    sha = str(snapshot.get("sha256", "")) if isinstance(snapshot, dict) else ""
+    try:
+        result = _reconcile_external_account(snapshot, expected)
+        if result.status != "unavailable":
+            age_issue = _capture_age_issue(snapshot, now, max_capture_age_seconds)
+            if age_issue:
+                return BrokerAccountReconciliation("unavailable", sha, (age_issue,))
+        return result
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return BrokerAccountReconciliation("unavailable", sha, ("snapshot_shape_or_amount_invalid",))
+
+
+def _reconcile_external_account(snapshot, expected):
     sha = str(snapshot.get("sha256", ""))
     if sha != _external_snapshot_digest(snapshot):
         return BrokerAccountReconciliation("unavailable", sha, ("snapshot_hash_mismatch",))
     required = {
+        "scope": ACCOUNT_SCOPE,
         "schema": "pramana.external_account_snapshot.v1",
         "broker": "zerodha-kite",
         "tenantId": expected.tenant_id,
@@ -308,6 +415,12 @@ def reconcile_external_account(
             return BrokerAccountReconciliation(
                 "unavailable", sha, (f"snapshot_{key}_mismatch",)
             )
+    started = datetime.fromisoformat(snapshot["startedAt"])
+    finished = datetime.fromisoformat(snapshot["finishedAt"])
+    if (started.utcoffset() is None or finished.utcoffset() is None
+            or not 0 <= (finished - started).total_seconds() <= 30
+            or started.astimezone(IST).date() != finished.astimezone(IST).date()):
+        return BrokerAccountReconciliation("unavailable", sha, ("snapshot_capture_interval_invalid",))
     if snapshot.get("status") != "consistent":
         return BrokerAccountReconciliation("unavailable", sha, ("snapshot_not_consistent",))
     if (
@@ -322,6 +435,9 @@ def reconcile_external_account(
     positions = snapshot.get("positions")
     if not isinstance(funds, dict) or not isinstance(positions, list):
         return BrokerAccountReconciliation("unavailable", sha, ("snapshot_shape_invalid",))
+    if (funds.get("currency") != "INR" or funds.get("segment") != "equity"
+            or funds.get("broker") != "zerodha-kite"):
+        return BrokerAccountReconciliation("unavailable", sha, ("snapshot_funds_semantics_mismatch",))
     issues: list[str] = []
     if _decimal(funds.get("cash_balance"), "external_cash_balance") != expected.cash_balance:
         issues.append("cash_balance_mismatch")

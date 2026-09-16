@@ -94,7 +94,7 @@ def test_explicit_binding_resolves_uncertain_split_fill_and_is_idempotent(tmp_pa
         report = OmsBrokerLifecycleReconciler().reconcile(
             oms, capture, tenant_id="tenant", account_ref=capture["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert report.status == "matched"
         filled = oms.get(row.client_order_id)
         assert filled.state is OrderState.FILLED
@@ -104,7 +104,7 @@ def test_explicit_binding_resolves_uncertain_split_fill_and_is_idempotent(tmp_pa
         again = OmsBrokerLifecycleReconciler().reconcile(
             oms, capture, tenant_id="tenant", account_ref=capture["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert again.status == "matched"
         assert oms.verify(row.client_order_id)["verified"] is True
 
@@ -120,7 +120,7 @@ def test_partial_open_then_complete_capture_advances_without_duplicate_fill(tmp_
         first = OmsBrokerLifecycleReconciler().reconcile(
             oms, open_capture, tenant_id="tenant", account_ref=open_capture["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert first.status == "matched"
         partial = oms.get(row.client_order_id)
         assert partial.state is OrderState.PARTIALLY_FILLED
@@ -128,7 +128,7 @@ def test_partial_open_then_complete_capture_advances_without_duplicate_fill(tmp_
         second = OmsBrokerLifecycleReconciler().reconcile(
             oms, complete_capture, tenant_id="tenant",
             account_ref=complete_capture["accountRef"],
-        )
+        now=NOW)
         assert second.status == "matched"
         assert oms.get(row.client_order_id).state is OrderState.FILLED
         assert oms.get(row.client_order_id).filled_quantity == 3
@@ -146,7 +146,7 @@ def test_cancelled_partial_and_rejected_orders_reconcile_terminal_state(tmp_path
             oms, cancelled_capture, tenant_id="tenant",
             account_ref=cancelled_capture["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert report.status == "matched"
         current = oms.get(row.client_order_id)
         assert current.state is OrderState.CANCELLED and current.filled_quantity == 1
@@ -162,7 +162,7 @@ def test_cancelled_partial_and_rejected_orders_reconcile_terminal_state(tmp_path
             oms, rejected_capture, tenant_id="tenant",
             account_ref=rejected_capture["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert report.status == "matched"
         assert oms.get(row.client_order_id).state is OrderState.REJECTED
 
@@ -173,7 +173,7 @@ def test_uncertain_order_without_binding_is_never_guessed_from_economics(tmp_pat
         row = uncertain_order(oms)
         report = OmsBrokerLifecycleReconciler().reconcile(
             oms, capture, tenant_id="tenant", account_ref=capture["accountRef"]
-        )
+        , now=NOW)
         assert report.status == "partial"
         assert report.unresolved[0].code == "broker_order_binding_required"
         assert oms.get(row.client_order_id).state is OrderState.SUBMISSION_UNCERTAIN
@@ -190,7 +190,7 @@ def test_identity_mismatch_or_changing_capture_never_mutates_oms(tmp_path):
         report = OmsBrokerLifecycleReconciler().reconcile(
             oms, wrong, tenant_id="tenant", account_ref=wrong["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert report.status == "discrepancy"
         assert report.issues[0].code == "broker_order_identity_mismatch"
         assert oms.get(row.client_order_id).state is OrderState.SUBMISSION_UNCERTAIN
@@ -206,7 +206,7 @@ def test_identity_mismatch_or_changing_capture_never_mutates_oms(tmp_path):
         report = OmsBrokerLifecycleReconciler().reconcile(
             oms, changing, tenant_id="tenant", account_ref=changing["accountRef"],
             bindings={row.client_order_id: "order-1"},
-        )
+        now=NOW)
         assert report.status == "unavailable"
         assert oms.get(row.client_order_id).state is OrderState.SUBMISSION_UNCERTAIN
 
@@ -246,7 +246,7 @@ def expected_account(snapshot, *, cash="1000", available="800", quantity="2"):
 
 def test_external_cash_and_position_reconciliation_matches_exact_expected_book():
     snapshot = account_snapshot()
-    report = reconcile_external_account(snapshot, expected_account(snapshot))
+    report = reconcile_external_account(snapshot, expected_account(snapshot), now=NOW)
     assert report.status == "matched"
     assert report.issues == ()
     assert report.snapshot_sha256 == snapshot["sha256"]
@@ -256,7 +256,7 @@ def test_external_account_discrepancies_are_explicit_and_never_repaired():
     snapshot = account_snapshot()
     report = reconcile_external_account(
         snapshot, expected_account(snapshot, cash="999", available="799", quantity="3")
-    )
+    , now=NOW)
     assert report.status == "discrepancy"
     assert set(report.issues) == {
         "cash_balance_mismatch", "available_balance_mismatch",
@@ -272,7 +272,7 @@ def test_external_snapshot_tamper_or_unstable_state_is_unavailable():
     tampered["funds"]["cash_balance"] = "999"
     assert reconcile_external_account(
         tampered, expected_account(snapshot)
-    ).status == "unavailable"
+    , now=NOW).status == "unavailable"
 
     unstable = deepcopy(snapshot)
     unstable["status"] = "changing"
@@ -285,7 +285,7 @@ def test_external_snapshot_tamper_or_unstable_state_is_unavailable():
     ).encode()).hexdigest()
     assert reconcile_external_account(
         unstable, expected_account(snapshot)
-    ).issues == ("snapshot_not_consistent",)
+    , now=NOW).issues == ("snapshot_not_consistent",)
 
 
 def test_existing_nonbroker_fill_is_not_double_counted_and_ambiguous_delta_refuses(tmp_path):
@@ -304,13 +304,13 @@ def test_existing_nonbroker_fill_is_not_double_counted_and_ambiguous_delta_refus
         )
         same_total = OmsBrokerLifecycleReconciler().reconcile(
             oms, open_capture, tenant_id="tenant", account_ref=open_capture["accountRef"]
-        )
+        , now=NOW)
         assert same_total.status == "matched"
         assert oms.get(row.client_order_id).filled_quantity == 1
         ambiguous = OmsBrokerLifecycleReconciler().reconcile(
             oms, complete_capture, tenant_id="tenant",
             account_ref=complete_capture["accountRef"],
-        )
+        now=NOW)
         assert ambiguous.status == "discrepancy"
         assert ambiguous.issues[0].code == "broker_fill_lineage_ambiguous"
         assert oms.get(row.client_order_id).filled_quantity == 1
