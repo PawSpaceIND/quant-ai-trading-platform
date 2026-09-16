@@ -8,6 +8,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.agents.traded_runtime import build_traded_runtime
@@ -22,7 +23,13 @@ from quant_ai.backtesting.baselines import (
     default_baselines,
     format_comparison,
 )
+from quant_ai.backtesting.contest import (
+    NOT_THE_AI,
+    contest,
+    format_contest,
+)
 from quant_ai.backtesting.replay import (
+    TRADED_CONFIGURATION_DIFFERENCES,
     HistoricalReplayDataset,
     HistoricalReplayHarness,
     dataset_instrument,
@@ -360,13 +367,21 @@ def _bar_digest(bars) -> str:
     ).hexdigest()
 
 
-def _backtest(args: argparse.Namespace) -> None:
+def _replayed(args: argparse.Namespace, command: str):
+    """Run the replay exactly as ``backtest`` does, and hand back everything it produced.
+
+    Shared rather than copied: ``contest`` puts this curve beside the deterministic floors
+    and claims the two faced the same engine. A second wiring of the harness would let the
+    two commands drift - a different capital plan, different directives, a different
+    database - and the sheet would keep printing, comparing two things that were never the
+    same. One builder is the only way that claim stays true.
+    """
     if not args.data:
-        raise SystemExit("backtest requires --data")
+        raise SystemExit(f"{command} requires --data")
     instrument = _replay_instrument(args.market, args.data)
     market = instrument.market
     dataset = load_replay_dataset(args.data, instrument)
-    bars = _windowed_bars(dataset, args, "backtest")
+    bars = _windowed_bars(dataset, args, command)
     end_time = bars[-1].timestamp
     dataset = HistoricalReplayDataset(
         bars,
@@ -383,6 +398,9 @@ def _backtest(args: argparse.Namespace) -> None:
     register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
     record_trials(
         register,
+        # Deliberately not keyed on the command: `contest` is another look at the same
+        # data through the same engine, so it counts against the same study. Splitting
+        # them would reset a total whose only job is to make a sweep of windows visible.
         study=f"replay:{instrument.symbol}:{instrument.market.value}",
         candidate_trials=1,
         configuration={
@@ -422,13 +440,58 @@ def _backtest(args: argparse.Namespace) -> None:
         directives=FounderDirectives.from_env() or FounderDirectives(),
         event_calendar=event_calendar_from_env(),
     ).run(dataset)
-    trials = register_summary(register)
+    return SimpleNamespace(
+        instrument=instrument, bars=bars, result=result, broker=broker,
+        tenant=tenant, proof_dir=proof_dir, register=register,
+    )
+
+
+def _backtest(args: argparse.Namespace) -> None:
+    run = _replayed(args, "backtest")
+    trials = register_summary(run.register)
     tearsheet_json = build_tearsheet(
-        result, broker, tenant_id=tenant, trial_register=trials
+        run.result, run.broker, tenant_id=run.tenant, trial_register=trials
     ).to_json()
-    (proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
+    (run.proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
     print(tearsheet_json)
-    broker.flush()
+    run.broker.flush()
+
+
+def _contest(args: argparse.Namespace) -> None:
+    """Score the replayed rule engine against the floors it has to beat, on one sheet.
+
+    The floors answer "what would owning it, or one dumb rule, have done". This answers
+    "did our own deterministic engine do better" - the question that has to come out right
+    before the AI's version of it is worth asking, and which no command answered before.
+    """
+    run = _replayed(args, "contest")
+    rows = contest(
+        run.bars,
+        instrument=run.instrument,
+        replay_result=run.result,
+        broker=run.broker,
+        tenant_id=run.tenant,
+    )
+    print(format_contest(rows))
+    payload = {
+        "schema": "pramana.contest.v1",
+        "instrument": {
+            "symbol": run.instrument.symbol,
+            "market": run.instrument.market.value,
+        },
+        "bars": len(run.bars),
+        "start": run.bars[0].timestamp.isoformat(),
+        "end": run.bars[-1].timestamp.isoformat(),
+        "dataSha256": _bar_digest(run.bars),
+        "noneOfTheseIsTheTradedAi": NOT_THE_AI,
+        "tradedConfigurationDifferences": list(TRADED_CONFIGURATION_DIFFERENCES),
+        "registeredTrials": register_summary(run.register),
+        "entrants": [row.to_dict() for row in rows],
+    }
+    document = json.dumps(payload, sort_keys=True, allow_nan=False)
+    (run.proof_dir / "latest-contest.json").write_text(document)
+    print(document)
+    run.broker.flush()
 
 
 def _resume(*, clear_fault_halt: bool, operator: str | None) -> int:
@@ -551,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "baselines", "friction-audit", "halt", "resume",
+            "backtest", "baselines", "contest", "friction-audit", "halt", "resume",
             "zerodha-login", "decision-quality", "post-mortem",
         ),
     )
@@ -602,13 +665,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         _backtest(args)
         return 0
+    if args.command == "contest":
+        _contest(args)
+        return 0
     if args.command == "baselines":
         _baselines(args)
         return 0
     if args.market is not None:
         raise SystemExit(
             f"--market does not apply to {args.command}: this runtime is a US sandbox. "
-            "Only backtest and baselines read --market; the pilot watchlist is set by "
+            "Only backtest, baselines and contest read --market; the pilot watchlist is set by "
             "founder directives."
         )
     daemon = build_runtime()
