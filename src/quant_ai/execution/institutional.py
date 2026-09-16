@@ -29,7 +29,7 @@ from quant_ai.execution.planner import (
     VolumeBucket,
 )
 from quant_ai.execution.program import ExecutionProgram, ExecutionProgramJournal
-from quant_ai.orders.intent import canonical_order_intent
+from quant_ai.orders.intent import bound_identity, canonical_order_intent
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -297,6 +297,7 @@ class InstitutionalPaperCoordinator:
             raise ValueError("execution_program_runtime_context_unavailable_after_restart")
         executed: list[int] = []
         program = self.programs.get(program_id)
+        self._assert_runtime_intent(program, request, parent)
         for slice_ in self.programs.due(program_id, now):
             current_snapshot = self.snapshot_provider()
             child = replace(parent, quantity=slice_.quantity)
@@ -382,6 +383,8 @@ class InstitutionalPaperCoordinator:
                 "event_type": "swarm_fill",
                 "institutional_program": program_id,
                 "institutional_slice": slice_.sequence,
+                "order_intent_sha256": hashlib.sha256(canonical_order_intent(child).encode()).hexdigest(),
+                "instrument_identity": bound_identity(child),
             }
             try:
                 fill = self.broker.submit_with_evidence(
@@ -457,11 +460,19 @@ class InstitutionalPaperCoordinator:
         self._requests[program_id] = request
         self._orders[program_id] = parent_order
 
+    @staticmethod
+    def _assert_runtime_intent(program, request, parent) -> None:
+        if (program.parent_order_payload is None
+                or canonical_order_intent(parent) != program.parent_order_payload
+                or request_fingerprint(request) != program.runtime_context_sha256):
+            raise ValueError("execution_program_runtime_context_mismatch")
+
     def reconcile_accounting(self, program_id: str) -> InstitutionalExecutionResult:
         request = self._requests.get(program_id)
         parent = self._orders.get(program_id)
         if request is None or parent is None:
             raise ValueError("execution_program_runtime_context_unavailable_after_restart")
+        self._assert_runtime_intent(self.programs.get(program_id), request, parent)
         finalized: list[int] = []
         for slice_ in self.programs.unaccounted(program_id):
             if slice_.broker_order_id is None or slice_.client_order_id is None:
@@ -476,6 +487,23 @@ class InstitutionalPaperCoordinator:
             if ledger is None:
                 raise ValueError("unaccounted_slice_broker_fill_missing")
             child = replace(parent, quantity=slice_.quantity)
+            if (ledger.symbol, ledger.market, ledger.asset_class, ledger.side, ledger.quantity) != (
+                child.symbol, child.market, child.asset_class, child.side, child.quantity
+            ):
+                raise ValueError("accounting_recovery_fill_intent_mismatch")
+            if ledger.instrument_identity != bound_identity(child):
+                raise ValueError("accounting_recovery_contract_identity_mismatch")
+            expected_client = self.oms.client_order_id(
+                child, f"{request.proposal.decision_id}:slice:{slice_.sequence}"
+            )
+            self.oms.verify(slice_.client_order_id)
+            oms_order = self.oms.get(slice_.client_order_id)
+            if (slice_.client_order_id != expected_client
+                    or self.oms.intent_snapshot(slice_.client_order_id) != canonical_order_intent(child)
+                    or oms_order.broker_order_id != ledger.order_id
+                    or oms_order.filled_quantity != ledger.quantity
+                    or oms_order.average_fill_price != ledger.fill_price):
+                raise ValueError("accounting_recovery_oms_fill_mismatch")
             before = None
             if child.side is Side.SELL:
                 if slice_.pre_fill_average_price is None:

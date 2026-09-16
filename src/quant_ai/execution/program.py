@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Self
 
 from quant_ai.execution.planner import ExecutionPlan
+from quant_ai.orders.intent import order_from_snapshot
 
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,180}")
 
@@ -117,6 +118,13 @@ class ExecutionProgramJournal:
                    SELECT RAISE(ABORT,'Execution program history is retained'); END"""
             )
 
+            self.db.execute(
+                """CREATE TRIGGER IF NOT EXISTS execution_program_approved_identity_immutable
+                BEFORE UPDATE OF program_id,tenant_id,decision_id,symbol,plan_sha256,
+                runtime_context_sha256,parent_quantity,created_at,parent_order_payload ON execution_programs
+                BEGIN SELECT RAISE(ABORT,'Approved execution identity is immutable'); END"""
+            )
+
     def __enter__(self) -> Self:
         return self
 
@@ -167,6 +175,10 @@ class ExecutionProgramJournal:
             or any(ch not in "0123456789abcdef" for ch in runtime_context_sha256)
         ):
             raise ValueError("execution_program_runtime_context_digest_invalid")
+        if parent_order_payload is not None:
+            parent = order_from_snapshot(parent_order_payload)
+            if (parent.tenant_id, parent.symbol, parent.quantity) != (tenant_id, symbol, plan.parent_quantity):
+                raise ValueError("execution_program_parent_identity_mismatch")
         plan.assert_conservative()
         payload = self._plan_payload(plan)
         digest = hashlib.sha256(

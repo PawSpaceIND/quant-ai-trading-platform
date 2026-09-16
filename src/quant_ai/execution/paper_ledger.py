@@ -33,6 +33,7 @@ from quant_ai.instruments.contract import assert_contract_tradable, assert_order
 from quant_ai.instruments.identity import (
     canonical_instrument_identity,
     instrument_from_identity,
+    stored_identity,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class PaperLedgerEntry:
     take_profit_price: Decimal | None = None
     margin_change: Decimal | None = None
     margin_provenance: str | None = None
+    instrument_identity: str | None = None
 
 
 class PaperBrokerService(BrokerAdapter):
@@ -976,7 +978,7 @@ class PaperBrokerService(BrokerAdapter):
             rows = self._connection.execute(
                 """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity,
                 fill_price, notional, status, created_at, stop_price, take_profit_price,
-                margin_change, margin_provenance
+                margin_change, margin_provenance, instrument_identity
                 FROM paper_ledger WHERE tenant_id = ? ORDER BY id""",
                 (tenant_id,),
             ).fetchall()
@@ -997,6 +999,7 @@ class PaperBrokerService(BrokerAdapter):
                 _optional_decimal(row["take_profit_price"]),
                 _optional_decimal(row["margin_change"]),
                 row["margin_provenance"],
+                stored_identity(row),
             )
             for row in rows
         )

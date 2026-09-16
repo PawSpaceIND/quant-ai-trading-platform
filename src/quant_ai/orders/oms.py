@@ -27,7 +27,7 @@ from quant_ai.orders.execution_identity import (
     execution_identity,
     external_fill_id,
 )
-from quant_ai.orders.intent import bound_identity
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
@@ -257,6 +257,7 @@ class DurableOms:
             )
             self._append_event_locked(client_id, "CREATED", at, {
                 "decisionId": decision_id,
+                "approvedIntent": canonical_order_intent(order),
                 "order": {
                     "tenantId": order.tenant_id, "strategyId": order.strategy_id,
                     "market": order.market.value, "assetClass": order.asset_class.value,
@@ -267,8 +268,7 @@ class DurableOms:
             })
         return self.get(client_id)
 
-    @staticmethod
-    def _assert_same_intent(current: OmsOrder, order: OrderIntent) -> None:
+    def _assert_same_intent(self, current: OmsOrder, order: OrderIntent) -> None:
         if (
             current.tenant_id != order.tenant_id
             or current.strategy_id != order.strategy_id
@@ -281,6 +281,25 @@ class DurableOms:
             or current.instrument_identity != bound_identity(order)
         ):
             raise ValueError("client_order_id_intent_mismatch")
+        original = self.intent_snapshot(current.client_order_id)
+        if original is not None and original != canonical_order_intent(order):
+            raise ValueError("client_order_id_intent_mismatch")
+
+    def intent_snapshot(self, client_order_id: str) -> str | None:
+        """Return the verified full snapshot, or unknown for a legacy creation event."""
+        with self.transaction():
+            self._verify_locked(client_order_id)
+            row = self.db.execute(
+                "SELECT payload FROM oms_events WHERE client_order_id=? AND sequence=1",
+                (client_order_id,),
+            ).fetchone()
+            return json.loads(row[0]).get("approvedIntent")
+
+    def get_intent(self, client_order_id: str) -> OrderIntent:
+        raw = self.intent_snapshot(client_order_id)
+        if raw is None:
+            raise ValueError("oms_legacy_full_intent_unavailable")
+        return order_from_snapshot(raw)
 
     def transition(
         self,
@@ -506,6 +525,7 @@ class DurableOms:
             self._append_event_locked(replacement_id, "CREATED", at, {
                 "decisionId": decision_id,
                 "replacesClientOrderId": original_client_order_id,
+                "approvedIntent": canonical_order_intent(replacement),
                 "order": {
                     "tenantId": replacement.tenant_id,
                     "strategyId": replacement.strategy_id,
@@ -757,6 +777,12 @@ class DurableOms:
                     identity["instrumentIdentity"] = current.instrument_identity
                 if expected != 1 or payload.get("order") != identity:
                     raise ValueError("oms_identity_projection_mismatch")
+                if "approvedIntent" in payload:
+                    complete = json.loads(canonical_order_intent(order_from_snapshot(payload["approvedIntent"])))
+                    if any(complete.get(key) != value for key, value in identity.items()):
+                        raise ValueError("oms_full_intent_projection_mismatch")
+                    if complete["instrumentIdentity"] != current.instrument_identity:
+                        raise ValueError("oms_full_intent_contract_mismatch")
                 if datetime.fromisoformat(row["at"]) != current.created_at:
                     raise ValueError("oms_created_at_projection_mismatch")
             elif kind == "FILL":

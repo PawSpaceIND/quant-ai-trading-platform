@@ -278,13 +278,17 @@ def test_oms_contract_projection_tamper_is_detected(tmp_path):
             oms.verify(row.client_order_id)
 
 
-def test_legacy_program_without_parent_snapshot_cannot_rebind_by_symbol(tmp_path):
+def test_legacy_program_without_parent_snapshot_cannot_rebind_by_symbol(tmp_path, monkeypatch):
     h = Harness(tmp_path)
     try:
         request = make_request(h.broker)
+        create = h.programs.create
+        def legacy_create(**kwargs):
+            # Model an older writer at INSERT time. New approved snapshots are immutable.
+            kwargs["parent_order_payload"] = None
+            return create(**kwargs)
+        monkeypatch.setattr(h.programs, "create", legacy_create)
         prepared = h.coordinator.prepare(request)
-        with h.programs.db:
-            h.programs.db.execute("UPDATE execution_programs SET parent_order_payload=NULL")
         with pytest.raises(ValueError, match="execution_program_runtime_context_mismatch"):
             h.coordinator.bind_runtime_context(prepared.program.program_id, request=request,
                                                parent_order=prepared.approved_order)
