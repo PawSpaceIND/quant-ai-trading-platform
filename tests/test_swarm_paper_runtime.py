@@ -12,6 +12,7 @@ from quant_ai.agents.swarm import (
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.domain.models import AssetClass, Market, PortfolioSnapshot, RiskMode
 from quant_ai.execution.paper_ledger import PaperBrokerService
+from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 
 
@@ -119,3 +120,30 @@ def test_unsized_buy_is_refused_before_it_reaches_the_broker(tmp_path) -> None:
     assert result.fill is None
     assert result.risk_decision.reason in {"position_sizer_no_capacity", "invalid_trade_proposal"}
     assert broker.ledger_entries("zero") == ()
+
+
+def test_sanctioned_swarm_path_can_be_reconstructed_from_durable_oms(tmp_path) -> None:
+    from quant_ai.orders.oms import DurableOms
+
+    now = datetime.now(timezone.utc)
+    broker = PaperBrokerService(
+        tmp_path / "oms-paper.db", starting_capital=Decimal(100000), slippage_bps=Decimal(0)
+    )
+    flat = PortfolioSnapshot(
+        Decimal(100000), Decimal(0), Decimal(0), peak_equity=Decimal(100000)
+    )
+    with DurableOms(tmp_path / "oms.sqlite") as oms:
+        service = SwarmPaperTradingService(broker=broker, oms=oms)
+        result = _execute(service, Stance.STRONG_BUY, flat, 10, now, tenant="oms")
+        assert result.fill is not None
+        assert result.risk_decision.order is not None
+        client_id = oms.client_order_id(
+            result.risk_decision.order, result.proposal.decision_id
+        )
+        order_row = oms.get(client_id)
+        assert order_row.state is OrderState.FILLED
+        assert order_row.broker_order_id == result.fill.order_id
+        assert order_row.filled_quantity == result.fill.filled_quantity
+        verification = oms.verify(client_id)
+        assert verification["verified"] is True
+        assert verification["pendingQuantity"] == 0

@@ -71,6 +71,7 @@ GOVERNED_ATTRIBUTES = frozenset(
         "snapshot_provider",
         "pre_submit_check",
         "strategy_manifest_provider",
+        "oms",
     }
 )
 
@@ -166,6 +167,9 @@ def runtime_configuration(runtime: SwarmPaperTradingService) -> dict:
             item.observations for item in runtime.attribution.attribution()
         ),
         "killSwitchEngaged": runtime.kill_switch.engaged,
+        # OMS state itself is per-run evidence; whether durable OMS enforcement is armed is
+        # a traded-runtime policy difference and must not drift between compared runtimes.
+        "orderManagement": {"durableOms": runtime.oms is not None},
         "hooks": {
             "snapshotProvider": runtime.snapshot_provider is not None,
             "preSubmitCheck": runtime.pre_submit_check is not None,
