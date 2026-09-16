@@ -285,6 +285,36 @@ class DurableOms:
             client_order_id, OrderState.SUBMISSION_UNCERTAIN, reason=reason, now=now
         )
 
+    def bind_broker_identity(
+        self, client_order_id: str, *, broker_order_id: str, reason: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        """Bind an externally observed broker ID without inventing a state transition."""
+        self._validate_id(client_order_id, "client_order_id")
+        self._validate_id(broker_order_id, "broker_order_id")
+        if not reason.strip():
+            raise ValueError("broker_identity_binding_reason_required")
+        at = now or datetime.now(timezone.utc)
+        with self.db:
+            row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(client_order_id)
+            current = self._decode(row)
+            broker = self._broker_identity(current.broker_order_id, broker_order_id)
+            if current.broker_order_id == broker:
+                return current
+            self.db.execute(
+                "UPDATE oms_orders SET broker_order_id=?,updated_at=? WHERE client_order_id=?",
+                (broker, _instant(at, "broker_identity_observed_at"), client_order_id),
+            )
+            self._append_event_locked(client_order_id, "BROKER_ID_OBSERVED", at, {
+                "brokerOrderId": broker, "reason": reason.strip(),
+                "state": current.state.value,
+            })
+        return self.get(client_order_id)
+
     def reject(self, client_order_id: str, *, reason: str, now: datetime | None = None) -> OmsOrder:
         if not reason.strip():
             raise ValueError("order_rejection_reason_required")
@@ -541,6 +571,21 @@ class DurableOms:
         if row is None:
             raise KeyError(client_order_id)
         return self._decode(row)
+
+    def fill_ids(self, client_order_id: str) -> tuple[str, ...]:
+        """Recorded fill identities, for external lifecycle reconciliation only."""
+        self._validate_id(client_order_id, "client_order_id")
+        if self.db.execute(
+            "SELECT 1 FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+        ).fetchone() is None:
+            raise KeyError(client_order_id)
+        return tuple(
+            str(row[0])
+            for row in self.db.execute(
+                "SELECT fill_id FROM oms_fills WHERE client_order_id=? ORDER BY at,fill_id",
+                (client_order_id,),
+            ).fetchall()
+        )
 
     def open_orders(self, tenant_id: str) -> tuple[OmsOrder, ...]:
         rows = self.db.execute(
