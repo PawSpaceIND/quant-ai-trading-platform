@@ -66,8 +66,18 @@ parent rebinding failed five; dropping the instrument at risk approval failed th
 end-to-end test. All mutations were restored and the 26 tests then passed.
 
 The complete unmodified-source Mac run recorded 1610 passed, 13 failed and 14 subtests.
-All 423 tracked source/test files plus new source/test files in the certification manifest
+All 423 source/test files in that certification manifest, including the new files,
 were hashed before and after the run with no changes. Exact JUnit comparison confirms the
 13 failures match the existing deployment-portability failure set. They remain open.
 GitHub exact-head Linux CI is the separate cross-platform certification authority; a green
 run does not establish qualified real-market data, live readiness, or profitable AI edge.
+
+
+## Concurrent broker-source follow-up
+
+The integration also incorporates the later #127 source-authority guard (`51cfd6a`).
+A namespaced ID alone does not authorize an imported fill: the source must match the saved
+account, exchange, order and execution day, including during event replay. Seven additional
+synthetic tests cover these boundaries. This follow-up is independently recertified on the
+combined tree; previous counts above describe the earlier frozen checkpoint, not its final
+successor head. Exact-head CI results are recorded in the PR certification comments.
