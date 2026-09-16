@@ -78,12 +78,12 @@ With no `--symbols`, the pilot watchlist is read from `deploy/founder-directives
 Then:
 
 ```bash
-python -m quant_ai.cli baselines --market india --data var/replay-datasets/RELIANCE.json
+python -m quant_ai.cli baselines --data var/replay-datasets/RELIANCE.json
 ```
 
 `--start` and `--end` narrow the window. The run registers five candidate evaluations in the trial register for the same reason a replay does: a sweep of windows must not be reportable as one lucky look. The full report is written to `latest-baselines.json` in the proof directory under schema `pramana.baseline_comparison.v1`, including the SHA-256 of the exact bars it scored. That file is a single slot: a second run overwrites it, so keep a copy before scoring the next symbol.
 
-**Always pass `--market` explicitly.** It selects the statutory fee schedule and the session length the annualisation is derived from, and it has no India default — omitting it scores the series as a US instrument.
+**`--market` is only for a dataset that does not say what it holds.** A file written by `fetch_historical_bars.py` declares its own symbol, market, asset class, exchange and currency, and that declaration is what the run is scored as; the flag can be omitted, and a flag that contradicts the file is refused rather than obeyed. A hand-written fixture or a CSV declares nothing, and there the flag is *required* — it selects the statutory fee schedule and the session length ratios are annualised against, and neither can be guessed from the prices.
 
 ## What this does not do
 
