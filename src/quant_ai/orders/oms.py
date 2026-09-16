@@ -21,7 +21,11 @@ from typing import Self
 from uuid import uuid4
 
 from quant_ai.domain.models import OrderIntent
-from quant_ai.orders.execution_identity import execution_identity, external_fill_id
+from quant_ai.orders.execution_identity import (
+    assert_fill_source,
+    execution_identity,
+    external_fill_id,
+)
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
@@ -539,12 +543,18 @@ class DurableOms:
         fill_price = _decimal(price, "fill_price", positive=True)
         at = now or datetime.now(timezone.utc)
         source = None if source_identity is None else execution_identity(source_identity)
+        if fill_id.startswith("KITE2:") and source is None:
+            raise ValueError("external_fill_source_required")
         if source is not None and (external_fill_id(source) != fill_id
                                    or source["brokerOrderId"] != broker_order_id):
             raise ValueError("external_fill_identity_mismatch")
         with self.transaction():
-            if source is not None and self.get(client_order_id).tenant_id != source["tenantId"]:
-                raise ValueError("external_fill_tenant_mismatch")
+            if source is not None:
+                assert_fill_source(
+                    source, tenant_id=self.get(client_order_id).tenant_id,
+                    broker_order_id=broker_order_id, at=at,
+                    binding=self.broker_evidence_binding(client_order_id),
+                )
             duplicate = self.db.execute("SELECT * FROM oms_fills WHERE fill_id=?", (fill_id,)).fetchone()
             if duplicate is not None:
                 if (
@@ -741,8 +751,14 @@ class DurableOms:
                 state = target
                 broker = self._broker_identity(broker, payload.get("brokerOrderId"))
                 fill_id = payload["fillId"]
+                if fill_id.startswith("KITE2:") and "sourceIdentity" not in payload:
+                    raise ValueError("oms_external_fill_source_missing")
                 if "sourceIdentity" in payload:
                     source = execution_identity(payload["sourceIdentity"])
+                    assert_fill_source(
+                        source, tenant_id=current.tenant_id, broker_order_id=broker,
+                        at=datetime.fromisoformat(row["at"]), binding=evidence_binding,
+                    )
                     if (external_fill_id(source) != fill_id or source["tenantId"] != current.tenant_id
                             or source["brokerOrderId"] != broker):
                         raise ValueError("oms_external_fill_identity_mismatch")

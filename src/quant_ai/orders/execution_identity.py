@@ -5,7 +5,8 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 SCHEMA = "pramana.broker_execution_identity.v1"
 _FIELDS = {"schema", "broker", "tenantId", "accountRef", "tradingDay", "exchange", "tradeId", "brokerOrderId"}
@@ -32,3 +33,22 @@ def execution_identity(value: Mapping[str, str]) -> dict[str, str]:
 def external_fill_id(value: Mapping[str, str]) -> str:
     raw = json.dumps(execution_identity(value), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return "KITE2:" + hashlib.sha256(raw.encode()).hexdigest()
+
+
+def assert_fill_source(
+    source: Mapping[str, str], *, tenant_id: str, broker_order_id: str | None,
+    at: datetime, binding: Mapping[str, str] | None,
+) -> None:
+    """Check economic attribution in addition to the source identity digest."""
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("external_fill_time_must_be_timezone_aware")
+    if source["tradingDay"] != at.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat():
+        raise ValueError("external_fill_trading_day_mismatch")
+    if source["tenantId"] != tenant_id or source["brokerOrderId"] != broker_order_id:
+        raise ValueError("external_fill_order_scope_mismatch")
+    if binding is None:
+        raise ValueError("external_fill_broker_binding_required")
+    expected = {"broker": "broker", "accountRef": "account_ref",
+                "brokerOrderId": "broker_order_id", "exchange": "exchange"}
+    if any(source[key] != binding.get(field) for key, field in expected.items()):
+        raise ValueError("external_fill_broker_scope_mismatch")
