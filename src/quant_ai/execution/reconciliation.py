@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-FUTURES_ASSET_CLASSES = frozenset({"FUTURE", "FX", "COMMODITY", "METAL"})
+FUTURES_ASSET_CLASSES = frozenset({"FUTURE", "COMMODITY", "METAL"})
 
 
 def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:

@@ -128,7 +128,7 @@ class RiskWarden:
             require_protective_stop=True,
             blocked_asset_classes=self.blocked_asset_classes,
         )
-        decision = RiskFirewall(policy).evaluate(order, portfolio)
+        decision = RiskFirewall(policy).evaluate(order, portfolio, now)
         if not decision.approved:
             return self._reject(decision.reason, proposal, tenant_id)
         # A pure unwind has already been approved on the grounds that it removes

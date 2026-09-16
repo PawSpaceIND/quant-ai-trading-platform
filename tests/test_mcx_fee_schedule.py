@@ -193,7 +193,7 @@ def test_fill_proof_carries_rate_source_date_and_reconciled_note(tmp_path) -> No
             source="synthetic margin evidence for fee-proof regression",
             observed_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
         ),
-    ))
+    ), max_age_seconds=86400)
     broker = PaperBrokerService(
         tmp_path / "mcx-fee-proof.db",
         starting_capital=D("10000"),
@@ -202,7 +202,9 @@ def test_fill_proof_carries_rate_source_date_and_reconciled_note(tmp_path) -> No
         ),
         margin_source=margin_source,
     )
-    broker.set_friction_context(_context())
+    broker.set_friction_context(
+        _context(), execution_time=datetime(2026, 9, 16, 12, tzinfo=timezone.utc)
+    )
     broker.submit_with_evidence(
         _order("GOLD", Side.BUY),
         {"schema": "pramana.swarm_fill.v1", "event_type": "swarm_fill"},

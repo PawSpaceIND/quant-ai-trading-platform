@@ -514,10 +514,11 @@ class PaperBrokerService(BrokerAdapter):
                         raise ValueError(
                             f"derivative_margin_requirement_unavailable:{order.symbol}"
                         )
-                    requirement = self.margin_source.requirement_for(order)
+                    requirement = self.margin_source.requirement_for(order, now=now)
                     margin_change = requirement.margin_for_quantity(order.quantity)
                     margin_provenance = json.dumps(
-                        requirement.provenance(), sort_keys=True, allow_nan=False
+                        self.margin_source.provenance_for(requirement),
+                        sort_keys=True, allow_nan=False
                     )
                     if margin_change + statutory_fees > cash:
                         raise ValueError("insufficient_derivative_margin")
@@ -804,13 +805,6 @@ class PaperBrokerService(BrokerAdapter):
             row["reserved_margin"], "invalid_reserved_derivative_margin", nonnegative=True
         )
 
-    def total_reserved_margin(self, tenant_id: str = "default") -> Decimal:
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT reserved_margin FROM paper_derivative_margin WHERE tenant_id=?", (tenant_id,)
-            ).fetchall()
-        return sum((finite_amount(row["reserved_margin"], "invalid_reserved_derivative_margin", nonnegative=True) for row in rows), Decimal(0))
-
     def get_margin(self, tenant_id: str = "default") -> BrokerMargin:
         with self._lock, self._connection:
             self._ensure_account(tenant_id)
@@ -819,16 +813,42 @@ class PaperBrokerService(BrokerAdapter):
                 (tenant_id,),
             ).fetchone()
             positions = self.get_positions(tenant_id)
-        gross = sum(
-            (row.average_price * row.quantity for row in positions),
+            margin_rows = self._connection.execute(
+                "SELECT reserved_margin FROM paper_derivative_margin WHERE tenant_id=?",
+                (tenant_id,),
+            ).fetchall()
+        # BrokerMargin.gross_position_value is an account-value input used by the generic
+        # account-summary adapter, not the risk engine's gross-notional measure. Cash
+        # instruments contribute their entry cost; futures contribute only collateral.
+        # Full futures notional remains available from PortfolioSnapshot.gross_exposure.
+        cash_position_value = sum(
+            (
+                row.average_price * row.quantity
+                for row in positions
+                if row.asset_class not in MARGINED_FUTURES_ASSET_CLASSES
+            ),
             Decimal(0),
         )
+        reserved_margin = sum(
+            (
+                finite_amount(
+                    row["reserved_margin"],
+                    "invalid_reserved_derivative_margin",
+                    nonnegative=True,
+                )
+                for row in margin_rows
+            ),
+            Decimal(0),
+        )
+        account_position_value = cash_position_value + reserved_margin
         cash = finite_amount(account["cash_balance"], "invalid_account_cash")
         return BrokerMargin(
             tenant_id,
             finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True),
             cash,
-            finite_amount(gross, "invalid_gross_position_value", nonnegative=True),
+            finite_amount(
+                account_position_value, "invalid_gross_position_value", nonnegative=True
+            ),
             cash,
         )
 
