@@ -25,6 +25,59 @@ class TradingAccounting:
             ),
         )
 
+
+    def buy_security(
+        self, transaction_id: str, *, currency: str, notional: Decimal,
+        base_notional: Decimal, reference: str, at: datetime | None = None,
+    ):
+        return self.journal.post(
+            transaction_id=transaction_id, tenant_id=self.tenant_id,
+            kind=TransactionKind.TRADE, reference=reference, at=at,
+            postings=(
+                Posting("SECURITIES_COST", EntrySide.DEBIT, currency, notional, base_notional),
+                Posting("CASH_AVAILABLE", EntrySide.CREDIT, currency, notional, base_notional),
+            ),
+        )
+
+    def sell_security(
+        self,
+        transaction_id: str,
+        *,
+        currency: str,
+        proceeds: Decimal,
+        released_cost: Decimal,
+        base_proceeds: Decimal,
+        base_released_cost: Decimal,
+        reference: str,
+        at: datetime | None = None,
+    ):
+        if any(
+            not value.is_finite() or value <= 0
+            for value in (proceeds, released_cost, base_proceeds, base_released_cost)
+        ):
+            raise ValueError("security_sale_values_must_be_positive_finite")
+        native_pnl = proceeds - released_cost
+        base_pnl = base_proceeds - base_released_cost
+        if (native_pnl > 0) != (base_pnl > 0) and native_pnl != 0 and base_pnl != 0:
+            raise ValueError("security_sale_native_and_base_pnl_sign_mismatch")
+        postings = [
+            Posting("CASH_AVAILABLE", EntrySide.DEBIT, currency, proceeds, base_proceeds),
+            Posting("SECURITIES_COST", EntrySide.CREDIT, currency, released_cost, base_released_cost),
+        ]
+        if native_pnl > 0:
+            postings.append(
+                Posting("REALIZED_PNL", EntrySide.CREDIT, currency, native_pnl, base_pnl)
+            )
+        elif native_pnl < 0:
+            postings.append(
+                Posting("REALIZED_PNL", EntrySide.DEBIT, currency, -native_pnl, -base_pnl)
+            )
+        return self.journal.post(
+            transaction_id=transaction_id, tenant_id=self.tenant_id,
+            kind=TransactionKind.TRADE, reference=reference, at=at,
+            postings=tuple(postings),
+        )
+
     def reserve_margin(
         self, transaction_id: str, *, currency: str, amount: Decimal,
         base_amount: Decimal, reference: str, at: datetime | None = None,
