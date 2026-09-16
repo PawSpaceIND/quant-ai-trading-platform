@@ -60,6 +60,14 @@ class YahooFinanceMarketDataAdapter(MarketDataFeed):
             if any(index >= len(items) or items[index] is None for items in values):
                 continue
             open_, high, low, close, volume = (Decimal(str(items[index])) for items in values)
+            # Yahoo also reports a session as a literal zero rather than a null - seen on
+            # thinly traded NSE ETFs in their early years. Zero is not a price anything
+            # changed hands at, so the session is skipped exactly as a null one is, and
+            # shows up in the provenance gap report. Passing it on would either raise out
+            # of ``Candle`` and abort a whole symbol, or, if the guard were relaxed,
+            # register as a 100% drawdown the market never had.
+            if min(open_, high, low, close) <= 0:
+                continue
             candles.append(
                 Candle(
                     instrument,

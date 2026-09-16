@@ -162,14 +162,21 @@ class ChartServer:
         base: float = 100.0,
         blank: frozenset[datetime] = frozenset(),
         skip: frozenset[datetime] = frozenset(),
+        zeroed: frozenset[datetime] = frozenset(),
     ) -> None:
-        """``blank`` sessions come back as Yahoo nulls; ``skip`` sessions are absent."""
+        """``blank`` sessions come back as Yahoo nulls; ``skip`` sessions are absent;
+        ``zeroed`` sessions come back priced at zero, which Yahoo also does."""
         book: dict[datetime, dict[str, float | None]] = {}
         for index, opened in enumerate(opens):
             if opened in skip:
                 continue
             if opened in blank:
                 book[opened] = dict.fromkeys(("open", "high", "low", "close", "volume"))
+                continue
+            if opened in zeroed:
+                book[opened] = {
+                    "open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0, "volume": 0,
+                }
                 continue
             price = base + index
             book[opened] = {
@@ -372,6 +379,37 @@ def test_a_session_the_symbol_did_not_print_is_counted_and_named_never_filled() 
     assert report["dates"] == local_dates(missing)
     assert report["dates_truncated"] is False
     # And nothing was invented in their place: every close is still its own session's.
+    for bar in payload["bars"]:
+        index = opens.index(datetime.fromisoformat(bar["timestamp"]))
+        assert Decimal(bar["close"]) == Decimal(str(1000.0 + index))
+
+
+def test_a_session_priced_at_zero_is_a_gap_and_does_not_abort_the_symbol() -> None:
+    """Yahoo's other way of saying a session has no prices, which used to kill a decade.
+
+    A null session is skipped already. A session priced at a literal **zero** was not: the
+    row reached ``Candle``, which correctly refuses a non-positive price, and that raised
+    out through ``_chunk`` as a failed chunk - so one defective row in one year discarded
+    every other year of that symbol and wrote no file at all. GOLDBEES has such a row in
+    2009-2010, which is what stopped a real 17-year fetch on the pilot host.
+
+    Zero is not a price anything traded at, so it is the same fact a null is: no prices for
+    this session. It is skipped, counted in the gap report, and never priced. The
+    alternative - admitting it - would register as a 100% drawdown the market never had.
+    """
+    opens = session_opens()
+    dead = frozenset(opens[index] for index in (30, 200))
+    server, _ = equity_and_index(zeroed=dead)
+
+    payload = one_dataset(server, opens)
+
+    stamps = {datetime.fromisoformat(bar["timestamp"]) for bar in payload["bars"]}
+    assert stamps.isdisjoint(dead)
+    assert len(payload["bars"]) == len(opens) - len(dead)
+    assert payload["provenance"]["missing_sessions"]["count"] == 2
+    assert payload["provenance"]["missing_sessions"]["dates"] == local_dates(dead)
+    # Every surviving bar is still its own session's, and every price is a real one.
+    assert all(Decimal(bar["low"]) > 0 for bar in payload["bars"])
     for bar in payload["bars"]:
         index = opens.index(datetime.fromisoformat(bar["timestamp"]))
         assert Decimal(bar["close"]) == Decimal(str(1000.0 + index))
