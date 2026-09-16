@@ -191,15 +191,32 @@ class ChartServer:
     def request(self, method, url, *, params, headers, timeout_seconds, max_bytes):
         provider_symbol = url.rsplit("/", 1)[-1]
         self.requests.append((provider_symbol, dict(params or {}), headers))
+        book = self.books.get(provider_symbol)
+        # A ``range=`` request carries no window and asks only what this symbol is. It is
+        # not recorded as a window, so ``fail_windows`` keeps counting the ranged requests
+        # it has always counted.
+        if "period1" not in (params or {}):
+            if book is None:
+                return HttpResponse(404, b'{"chart":{"result":null,"error":"not_found"}}', {})
+            return HttpResponse(200, json.dumps({
+                "chart": {"result": [{"meta": self._meta(book)}], "error": None}
+            }).encode(), {})
         window = (provider_symbol, params["period1"], params["period2"])
         if window not in self.windows:
             self.windows.append(window)
         if self.windows.index(window) in self.fail_windows:
             raise OSError("provider_unreachable")
-        book = self.books.get(provider_symbol)
         if book is None:
             return HttpResponse(404, b'{"chart":{"result":null,"error":"not_found"}}', {})
         low, high = int(params["period1"]), int(params["period2"])
+        # What Yahoo answers for a window that ends before the symbol ever traded: a 400
+        # naming the range, not an empty series. Reproduced here because a fake that
+        # returns nothing instead would make the clamp look unnecessary.
+        if book and high <= int(min(book).timestamp()):
+            return HttpResponse(400, json.dumps({"chart": {"result": None, "error": {
+                "code": "Bad Request",
+                "description": f"Data doesn't exist for startDate = {low}, endDate = {high}",
+            }}}).encode(), {})
         rows = [
             (opened, values)
             for opened, values in sorted(book.items())
@@ -216,6 +233,7 @@ class ChartServer:
             "chart": {
                 "result": [
                     {
+                        "meta": self._meta(book),
                         "timestamp": [int(opened.timestamp()) for opened, _ in rows],
                         "indicators": {"quote": [quote], "adjclose": [{"adjclose": adjusted}]},
                     }
@@ -224,6 +242,11 @@ class ChartServer:
             }
         }
         return HttpResponse(200, json.dumps(payload).encode(), {})
+
+    @staticmethod
+    def _meta(book: dict[datetime, dict[str, float | None]]) -> dict[str, object]:
+        """Yahoo carries ``firstTradeDate`` on every chart response, window or not."""
+        return {"firstTradeDate": int(min(book).timestamp())} if book else {}
 
 
 def bulk_fetcher(server: ChartServer, **kwargs) -> BulkDailyHistoryFetcher:
@@ -415,6 +438,76 @@ def test_a_session_priced_at_zero_is_a_gap_and_does_not_abort_the_symbol() -> No
         assert Decimal(bar["close"]) == Decimal(str(1000.0 + index))
 
 
+def test_a_symbol_younger_than_the_request_is_written_rather_than_abandoned() -> None:
+    """The failure that cost a 20-year sweep every year of a 2009 ETF.
+
+    Yahoo does not answer a window before an instrument's first trade with an empty series.
+    It answers ``400 Bad Request``, which arrives as an ordinary rejected request - and a
+    rejected window aborts the symbol, because a chunk that failed is not a chunk with no
+    sessions in it. So asking a watchlist for twenty years wrote no file at all for the
+    members that had not existed for twenty years, however many of those years they did
+    have. GOLDBEES, whose record begins 2009-01-01, died on a 2006 window.
+
+    Reading ``meta.firstTradeDate`` first and starting there costs one bounded request and
+    turns "no file" into "every year this symbol has".
+    """
+    opens = session_opens()
+    listed_late = opens[200:]
+    server = ChartServer()
+    server.add("INFY.NS", listed_late, base=1000.0)   # the symbol is younger than the ask
+    server.add("^NSEI", opens, base=18000.0)          # the index covers the whole span
+
+    payload = one_dataset(server, opens)
+
+    assert len(payload["bars"]) == len(listed_late)
+    assert datetime.fromisoformat(payload["bars"][0]["timestamp"]) == listed_late[0]
+    provenance = payload["provenance"]
+    # What was asked for is preserved; what could be served is stated beside it, so a file
+    # holding fewer years than requested says why instead of looking like it lost them.
+    assert provenance["requested_range"]["start"] == span(opens)[0].isoformat()
+    assert provenance["provider_first_trade_date"] == listed_late[0].isoformat()
+    assert provenance["effective_start"] == listed_late[0].isoformat()
+    assert provenance["bar_count"] == len(listed_late)
+    # The dead years are not reported as sessions this symbol missed: it did not exist.
+    assert provenance["missing_sessions"]["count"] == 0
+
+
+def test_the_clamp_is_inert_unless_the_record_begins_after_the_request() -> None:
+    """The decision rule itself, which must move a start in one direction only.
+
+    A provider that reports a first trade *before* the window asked for has nothing to say
+    about it, and neither has one that will not say. Only a record beginning inside the
+    window moves the start, and only forward - the alternative is a tool that quietly
+    fetches a different range than the one it was asked for.
+    """
+    asked = datetime(2015, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    clamp = BulkDailyHistoryFetcher._effective_start
+
+    assert clamp("INFY.NS", asked, end, None) == asked
+    assert clamp("INFY.NS", asked, end, datetime(1996, 1, 1, tzinfo=timezone.utc)) == asked
+    assert clamp("INFY.NS", asked, end, asked) == asked
+    later = datetime(2019, 6, 3, tzinfo=timezone.utc)
+    assert clamp("GOLDBEES.NS", asked, end, later) == later
+
+
+def test_a_window_that_ends_before_the_record_begins_fails_instead_of_inverting() -> None:
+    """Clamping a start past its own end would ask for a backwards range.
+
+    There is no history to return for such a request and no smaller one to fall back to, so
+    it fails the symbol loudly rather than being quietly repaired into something that
+    cannot be fetched.
+    """
+    opens = session_opens()
+    server = ChartServer()
+    server.add("INFY.NS", opens, base=1000.0)
+    start = opens[0] - timedelta(days=900)
+    end = opens[0] - timedelta(days=500)
+
+    with pytest.raises(HistoryFetchError, match="no_history_before_requested_end:INFY.NS"):
+        bulk_fetcher(server).fetch(INFY, start, end, opens[-1] + timedelta(days=2))
+
+
 def test_a_benchmark_close_is_never_carried_forward_to_keep_the_lengths_equal() -> None:
     """``benchmark_closes`` is read positionally against the equity curve.
 
@@ -486,7 +579,9 @@ def test_a_ticker_the_provider_does_not_know_fails_loudly_instead_of_writing_not
     """
     server, opens = equity_and_index()
     start, end, now = span(opens)
-    with pytest.raises(HistoryFetchError, match="chunk_fetch_failed:TCS.NS"):
+    # It fails on the metadata request now, before any window is asked for - earlier than
+    # it used to, and by twenty requests. Still one error type, still no file.
+    with pytest.raises(HistoryFetchError, match="first_trade_date_failed:TCS.NS"):
         bulk_fetcher(server).fetch(TCS, start, end, now)
 
     server.add("TCS.NS", [])  # known to the provider, and empty in every window
@@ -520,7 +615,11 @@ def test_an_interrupted_run_resumes_from_the_cache_instead_of_refetching(
     payload = one_dataset(server, opens, cache_dir=cache)
     resumed = len(server.requests) - first_attempt
     # The benchmark and the symbol's first window came off disk; the rest were refetched.
-    assert resumed == per_symbol - 1
+    # Plus one metadata request each for the benchmark and the symbol: those are not cached,
+    # because a symbol's first trade date is one bounded request against twenty windows and
+    # caching it would mean deciding when a cached answer about coverage goes stale.
+    metadata_requests = 2
+    assert resumed == (per_symbol - 1) + metadata_requests
     from_cache = [chunk["from_cache"] for chunk in payload["provenance"]["chunks"]]
     assert from_cache == [True] + [False] * (per_symbol - 1)
     assert len(payload["bars"]) == len(opens)
@@ -546,7 +645,8 @@ def test_a_cache_entry_is_never_served_for_a_window_it_was_not_fetched_for(
 
     before = len(server.requests)
     payload = one_dataset(server, opens, cache_dir=cache)
-    assert len(server.requests) == before + 1  # refetched, not trusted
+    metadata_requests = 2  # one each for the benchmark and the symbol; never cached
+    assert len(server.requests) == before + 1 + metadata_requests  # refetched, not trusted
     assert len(payload["bars"]) == len(opens)
 
 
