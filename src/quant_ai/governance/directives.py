@@ -39,7 +39,8 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from decimal import Decimal
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -163,4 +164,44 @@ def _instrument_from_json(item: dict[str, Any]) -> Instrument:
         str(item.get("currency", "USD")).upper(),
         str(item.get("exchange", "")).upper(),
         metadata=metadata,
+        # Contract identity, for a watchlist entry that names a dated contract rather than
+        # a share. Absent for every cash instrument, and `Instrument` refuses a derivative
+        # that leaves them out - so a directives file cannot declare a half-named contract.
+        expiry=_contract_date(item.get("expiry")),
+        lot_size=_contract_int(item.get("lot_size")),
+        tick_size=_contract_decimal(item.get("tick_size")),
+        underlying=(str(item["underlying"]).strip().upper() or None) if item.get("underlying") else None,
     )
+
+
+def _contract_date(value: Any) -> date | None:
+    """An ISO expiry, or nothing. A date this cannot read is an error, never a silent None.
+
+    Dropping an unparseable expiry would turn a malformed contract into a cash instrument,
+    which `Instrument` would then accept without complaint - the exact silent widening this
+    whole change exists to prevent.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError as error:
+        raise ValueError(f"watchlist_expiry_not_a_date:{value}") from error
+
+
+def _contract_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value).strip())
+    except ValueError as error:
+        raise ValueError(f"watchlist_lot_size_not_an_integer:{value}") from error
+
+
+def _contract_decimal(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value).strip())
+    except InvalidOperation as error:
+        raise ValueError(f"watchlist_tick_size_not_a_number:{value}") from error

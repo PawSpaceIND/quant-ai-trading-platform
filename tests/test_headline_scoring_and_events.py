@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -515,7 +515,8 @@ def test_metal_etfs_validate_as_pilot_instruments(tmp_path) -> None:
     broker.configure_pilot(watchlist, "pilot")
     # An MCX metal contract is still out of scope; the ETF is the NSE-cash way in.
     with pytest.raises(ValueError, match="not_supported"):
-        validate_pilot_instruments((Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX"),))
+        validate_pilot_instruments((Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX",
+                   expiry=date(2026, 12, 5), lot_size=100, tick_size=Decimal(1)),))
 
 
 def test_the_example_directives_carry_a_risk_off_destination() -> None:

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from threading import Thread
 from types import SimpleNamespace
@@ -26,7 +26,8 @@ def test_pilot_scope_survives_restart_and_blocks_mixed_money(tmp_path):
     with pytest.raises(ValueError, match="out_of_scope"):
         broker.buy(OrderIntent("AAPL", Market.USA, Side.BUY, 1, Decimal(100), "test", tenant_id="pilot"))
     with pytest.raises(ValueError, match="not_supported"):
-        validate_pilot_instruments((Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX"),))
+        validate_pilot_instruments((Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX",
+                   expiry=date(2026, 12, 5), lot_size=100, tick_size=Decimal(1)),))
     assert broker.get_margin("pilot").cash_balance == Decimal(100000)
 
 

@@ -51,8 +51,12 @@ DIRECTIVES = {
     "max_open_positions": 3,
     "watchlist": [
         {"symbol": "NIFTY", "market": "INDIA", "asset_class": "INDEX", "currency": "INR", "exchange": "NSE"},
-        {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX"},
-        {"symbol": "USDINR", "market": "INDIA", "asset_class": "FX", "currency": "INR", "exchange": "CDS"},
+        {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX",
+         # An MCX row is a dated contract, so the directives file has to name which one.
+         "expiry": "2026-12-05", "lot_size": 100, "tick_size": "1"},
+        {"symbol": "USDINR", "market": "INDIA", "asset_class": "FX", "currency": "INR", "exchange": "CDS",
+         # Currency derivatives are dated too: USDINR is a monthly contract, 1000 USD a lot.
+         "expiry": "2026-12-29", "lot_size": 1000, "tick_size": "0.0025"},
         {"symbol": "AAPL", "market": "USA", "asset_class": "EQUITY", "currency": "USD", "exchange": "NASDAQ"},
     ],
     "instructions": "Preserve capital first. Prefer liquid, large instruments.",
