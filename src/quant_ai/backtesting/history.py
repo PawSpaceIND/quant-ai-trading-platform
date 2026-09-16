@@ -203,6 +203,12 @@ class SymbolHistory:
     instrument: Instrument
     bars: tuple[Candle, ...]
     chunks: tuple[ChunkReport, ...]
+    # When the provider's record begins, and the start actually asked for once that was
+    # taken into account. Both travel to the provenance block: a file that holds 17 years
+    # because the instrument is 17 years old has to say so, or it reads as a 20-year
+    # request that lost three years somewhere.
+    first_trade_date: datetime | None = None
+    effective_start: datetime | None = None
 
 
 def watchlist_instruments(path: str | Path | None = None) -> tuple[Instrument, ...]:
@@ -284,6 +290,8 @@ class BulkDailyHistoryFetcher:
         self, instrument: Instrument, start: datetime, end: datetime, now: datetime
     ) -> SymbolHistory:
         provider_symbol = yahoo_symbol(instrument.symbol, instrument.market)
+        first_trade = self._first_trade_date(instrument)
+        start = self._effective_start(provider_symbol, start, end, first_trade)
         collected: list[Candle] = []
         reports: list[ChunkReport] = []
         for chunk_start, chunk_end in chunk_ranges(start, end, self.chunk_days):
@@ -304,7 +312,56 @@ class BulkDailyHistoryFetcher:
             closed[0].timestamp.isoformat(),
             closed[-1].timestamp.isoformat(),
         )
-        return SymbolHistory(instrument, closed, tuple(reports))
+        return SymbolHistory(instrument, closed, tuple(reports), first_trade, start)
+
+    def _first_trade_date(self, instrument: Instrument) -> datetime | None:
+        """What the feed says about its own coverage, when it can say anything.
+
+        Optional on purpose: ``MarketDataFeed`` does not require it, and a feed without it
+        simply gets no clamp and the behaviour it had before.
+        """
+        reader = getattr(self.feed, "first_trade_date", None)
+        if reader is None:
+            return None
+        try:
+            return reader(instrument)
+        except BaseException as exc:
+            # Wrapped like a failed chunk, and for the same reason: the caller decides what
+            # to do about a symbol it could not fetch, and it can only do that if every way
+            # of failing arrives as the one error type. A ticker the provider does not know
+            # now fails here rather than on its first window - earlier, and by 20 requests.
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            symbol = yahoo_symbol(instrument.symbol, instrument.market)
+            raise HistoryFetchError(f"first_trade_date_failed:{symbol}:{detail}") from exc
+
+    @staticmethod
+    def _effective_start(
+        provider_symbol: str, start: datetime, end: datetime, first_trade: datetime | None
+    ) -> datetime:
+        """The later of what was asked for and when the provider's record begins.
+
+        Asking for years that precede an instrument's first trade is not a smaller request
+        that returns less; on Yahoo it is a rejected one, and a rejected window aborts the
+        symbol. A 20-year sweep of a watchlist holding a 2009 ETF therefore wrote no file
+        for it at all, however many of those years existed.
+
+        A window that ends before the record begins is a different thing and still fails:
+        there is no history to return and a clamp would silently invert the range.
+        """
+        if first_trade is None or first_trade <= start:
+            return start
+        if first_trade >= end:
+            raise HistoryFetchError(
+                f"no_history_before_requested_end:{provider_symbol}:"
+                f"first_trade={first_trade.date()}:end={end.date()}"
+            )
+        LOGGER.info(
+            "bulk history: symbol=%s start clamped %s -> %s (provider record begins then)",
+            provider_symbol,
+            start.date(),
+            first_trade.date(),
+        )
+        return first_trade
 
     def _chunk(
         self, instrument: Instrument, provider_symbol: str, start: datetime, end: datetime
@@ -483,6 +540,19 @@ def build_payload(
                 "end": requested_end.isoformat(),
                 "years": years,
             },
+            # What was asked for stays above, unaltered. These say what the provider could
+            # actually serve, so a file holding fewer years than requested says why rather
+            # than looking like a request that lost them.
+            "provider_first_trade_date": (
+                history.first_trade_date.isoformat()
+                if history.first_trade_date is not None
+                else None
+            ),
+            "effective_start": (
+                history.effective_start.isoformat()
+                if history.effective_start is not None
+                else requested_start.isoformat()
+            ),
             "interval": INTERVAL,
             "price_series": PRICE_SERIES,
             "adjustment_policy": ADJUSTMENT_POLICY,

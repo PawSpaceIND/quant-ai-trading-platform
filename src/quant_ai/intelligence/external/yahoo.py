@@ -73,6 +73,26 @@ class YahooFinanceMarketDataAdapter(MarketDataFeed):
             )
         return tuple(candles)
 
+    def first_trade_date(self, instrument: Instrument) -> datetime | None:
+        """When Yahoo's own record for this instrument begins, or ``None`` if it won't say.
+
+        Yahoo does not answer a window that ends before an instrument's first trade with an
+        empty series. It answers ``400 Bad Request`` and ``"Data doesn't exist for startDate
+        = ..."``, which reaches a caller as an ordinary rejected request - indistinguishable
+        from an unreachable provider, and fatal to anything that treats a failed window as a
+        reason to abandon the symbol. ``meta.firstTradeDate`` is on every chart response and
+        says where to start asking instead. Reading it costs one bounded request over the
+        shortest range the API serves.
+        """
+        payload = self.client.get_json(
+            f"{self.base_url}/{self._provider_symbol(instrument)}",
+            params={"range": "1d", "interval": "1d"},
+        )
+        raw = (self._result(payload).get("meta") or {}).get("firstTradeDate")
+        if raw is None:
+            return None
+        return datetime.fromtimestamp(int(raw), timezone.utc)
+
     def latest_tick(self, instrument: Instrument) -> MarketTick:
         payload = self.client.get_json(
             f"{self.base_url}/{self._provider_symbol(instrument)}",
