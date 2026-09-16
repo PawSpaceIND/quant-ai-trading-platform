@@ -34,7 +34,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from quant_ai.analytics.metrics import MINIMUM_RATIO_OBSERVATIONS
-from quant_ai.backtest.costs import CostModel
 from quant_ai.backtesting.baselines import (
     MINIMUM_ROUND_TRIPS,
     BaselineEvaluator,
@@ -62,6 +61,13 @@ IST = ZoneInfo("Asia/Kolkata")
 FIRST_CLOSE = datetime(2025, 1, 1, 15, 30, tzinfo=IST)
 INDIA = baseline_instrument(Market.INDIA)
 BARS = 160
+
+# Total one-way cost, in basis points of notional, of the flat ``backtest/costs.py`` model
+# that used to sit beside this package: 1 commission + 2 slippage + 1 spread. It is written
+# out here rather than imported because the class that held those three constants has been
+# deleted, and this number now exists only as the thing the statutory note is measured
+# against.
+FLAT_BPS_STAND_IN = Decimal(4)
 
 
 def _uniform(seed: int, count: int) -> list[float]:
@@ -282,7 +288,7 @@ def test_the_engine_refuses_to_offer_a_baseline_the_bar_it_is_about_to_trade_int
 def test_every_fill_pays_the_statutory_contract_note_and_not_a_flat_bps_stand_in():
     """The costs charged here are the ones the ledger charges, line by line.
 
-    The vestigial ``backtest/costs.py`` model would charge 4 bps of notional and call it a
+    The deleted ``backtest/costs.py`` model would charge 4 bps of notional and call it a
     day: no STT, no stamp duty, no depository charge on the delivery sell, no GST on the
     right base. A baseline priced that way trades almost free and beats anything. This
     reconstructs the exact friction the engine charged for a single buy-and-hold entry from
@@ -315,8 +321,14 @@ def test_every_fill_pays_the_statutory_contract_note_and_not_a_flat_bps_stand_in
     assert trade.cash_charges == expected.cash_charges
     codes = {item.code for item in expected.charges}
     assert {"BROKERAGE", "STT", "EXCHANGE", "SEBI", "GST", "STAMP"} <= codes
-    flat_bps = CostModel().one_way_cost(expected.execution_price * Decimal(trade.quantity))
-    assert trade.cash_charges != flat_bps
+    # The one-way cost the deleted flat model would have charged on this same notional:
+    # 1 bps commission + 2 bps slippage + 1 bps spread, and nothing else. The class is
+    # gone; the number it produced is kept here as arithmetic so the comparison it existed
+    # for outlives it. The real note is several times that, and the gap is the finding.
+    flat_four_bps = (
+        expected.execution_price * Decimal(trade.quantity) * FLAT_BPS_STAND_IN / Decimal(10000)
+    )
+    assert trade.cash_charges > flat_four_bps * Decimal(2)
 
 
 def test_the_exit_leg_pays_the_depository_charge_a_buy_never_does():
@@ -660,6 +672,33 @@ def test_daily_bars_annualise_against_sessions_and_an_intraday_series_is_refused
     )
     with pytest.raises(ValueError, match="expects daily bars"):
         evaluator().evaluate(minutes)
+
+
+def test_the_curve_carries_exactly_one_mark_per_bar_and_one_return_per_step():
+    """The denominator of every ratio on the sheet, checked rather than assumed.
+
+    The deleted ``backtest/replay.py`` engine asserted its own version of this as
+    ``len(equity_curve) == len(bars) + 1``, because it marked the account once before the
+    first bar and again after every bar including it. This engine marks once at the
+    starting capital and once per execution bar, so the curve is exactly as long as the
+    series and the return series is one shorter.
+
+    The count is not cosmetic. ``observations`` is the *n* under the square root in the
+    annualisation and the *n* in the t-statistic's standard error, so a curve that marked a
+    bar twice, or skipped one, would move every Sharpe and every t-statistic printed beside
+    it without moving a single trade.
+    """
+    for build in (trending, mean_reverting, volatile, shallow_chop, flat):
+        bars = build()
+        for baseline in default_baselines():
+            run = evaluator().run(baseline, bars)
+            assert len(run.equity_curve) == len(bars), baseline.baseline_id
+            assert len(run.shares_held) == len(bars), baseline.baseline_id
+            assert len(run.returns) == len(bars) - 1, baseline.baseline_id
+        for report in evaluator().evaluate(bars):
+            assert report.bars == len(bars)
+            assert report.observations == len(bars) - 1
+            assert report.mean_return_observations in (0, len(bars) - 1)
 
 
 def test_a_baseline_is_a_pure_function_of_closed_bars_and_its_own_holding():

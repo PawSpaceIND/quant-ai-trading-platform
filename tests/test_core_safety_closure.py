@@ -6,8 +6,7 @@ from types import SimpleNamespace
 
 from quant_ai.agents.swarm import AgentAnalysisRequest, TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
-from quant_ai.backtest.costs import CostModel
-from quant_ai.backtest.replay import ReplayEngine
+from quant_ai.backtesting.baselines import BaselineEvaluator, PriceOnlyBaseline
 from quant_ai.backtesting.replay import HistoricalReplayDataset, HistoricalReplayHarness
 from quant_ai.domain.models import (
     AssetClass,
@@ -20,6 +19,7 @@ from quant_ai.domain.models import (
 )
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.daemon import AutonomousTradingDaemon
+from quant_ai.execution.friction import MarketFrictionModel
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
@@ -40,7 +40,6 @@ from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.portfolio.sizing import PositionSizer
 from quant_ai.risk.policy import RiskFirewall, RiskPolicy
 from quant_ai.risk.warden import RiskWarden
-from quant_ai.strategies.base import StrategySignal
 
 INSTRUMENT = Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
 NOW = datetime(2026, 9, 14, 14, 0, tzinfo=timezone.utc)
@@ -364,32 +363,62 @@ def test_wilder_adx_and_live_stop_are_directionally_sane() -> None:
     assert adjusted.take_profit_fraction == adjusted.stop_loss_fraction * adjusted.reward_risk_ratio
 
 
-class AlwaysBuy:
-    strategy_id = "always-buy"
+class AlwaysLong(PriceOnlyBaseline):
+    """Fully invested from the first closed bar. The simplest rule that must still wait."""
 
-    def on_bar(self, history: tuple[Candle, ...]) -> StrategySignal | None:
-        return StrategySignal(Side.BUY, Decimal(1), "test") if history else None
+    baseline_id = "baseline.always_long"
+    label = "Always long"
+    catalog_strategy_id = None
+    warmup_bars = 1
+
+    def target_weight(self, history: tuple[Candle, ...], held_weight: Decimal) -> Decimal:
+        del history, held_weight
+        return Decimal(1)
 
 
-def test_simple_replay_enters_at_next_bar_open_not_signal_close() -> None:
+def test_a_close_derived_decision_fills_at_the_next_bar_open_not_at_that_close() -> None:
+    """A rule that decides on bar N's close may not be filled at bar N's close.
+
+    This is the property the deleted ``backtest/replay.py`` engine held, re-expressed
+    against the engine that actually runs. The two bars are separated by a 100% gap so the
+    two candidate fill prices cannot be confused for one another: filling at the decision
+    close (100) buys 1000 shares and ends the run at 210,000, filling at the next bar's
+    open (200) buys 500 and ends at 105,000.
+
+    Friction is switched off for the same reason the deleted test zeroed its cost model -
+    the property under test is *when* the fill happens, and a contract note would only
+    obscure it by a few rupees. What the note costs, and that it is the statutory one
+    rather than a flat-bps stand-in, is held by ``tests/test_baseline_strategies.py``.
+    """
     bars = (
-        Candle(INSTRUMENT, NOW, Decimal(100), Decimal(101), Decimal(99), Decimal(100), Decimal(1)),
+        Candle(
+            INSTRUMENT, NOW, Decimal(100), Decimal(101), Decimal(99), Decimal(100), Decimal(1000000)
+        ),
         Candle(
             INSTRUMENT,
-            NOW + timedelta(minutes=1),
+            NOW + timedelta(days=1),
             Decimal(200),
             Decimal(211),
             Decimal(199),
             Decimal(210),
-            Decimal(1),
+            Decimal(1000000),
         ),
     )
-    result = ReplayEngine(CostModel(Decimal(0), Decimal(0), Decimal(0))).run(
-        bars,
-        AlwaysBuy(),
-        Decimal(1000),
-    )
-    assert result.trade_pnls == (Decimal(10),)
+    run = BaselineEvaluator(
+        instrument=INSTRUMENT,
+        starting_capital=Decimal(100000),
+        friction_model=MarketFrictionModel.compatibility(Decimal(0)),
+    ).run(AlwaysLong(), bars)
+
+    assert len(run.trades) == 1
+    trade = run.trades[0]
+    assert trade.side == Side.BUY
+    assert trade.reference_price == bars[1].open == Decimal(200)
+    assert trade.execution_price == Decimal(200)
+    # 100,000 of cash buys 500 shares at the next open, not 1000 at the signal's close.
+    assert trade.quantity == 500
+    assert run.equity_curve == (Decimal(100000), Decimal(105000))
+    assert run.equity_curve[-1] != Decimal(210000)
 
 
 def test_historical_harness_decides_on_bar_n_and_executes_at_bar_n_plus_one_open(
