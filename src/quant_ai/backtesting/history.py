@@ -50,13 +50,11 @@ import json
 import logging
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from quant_ai.domain.models import AssetClass, Instrument, Market
-from quant_ai.execution.session import SESSIONS, GlobalVenue
 from quant_ai.governance.directives import FounderDirectives
 from quant_ai.intelligence.external.yahoo import YahooFinanceMarketDataAdapter, yahoo_symbol
 from quant_ai.intelligence.resilience import (
@@ -68,7 +66,12 @@ from quant_ai.intelligence.resilience import (
 )
 from quant_ai.marketdata.feed import MarketDataFeed
 from quant_ai.marketdata.models import Candle
-from quant_ai.marketdata.timeframes import closed_sessions, session_close_at, venue_for
+from quant_ai.marketdata.timeframes import (
+    closed_sessions,
+    session_close_at,
+    session_date,
+    venue_for,
+)
 
 LOGGER = logging.getLogger("quant_ai.bulk_history")
 
@@ -245,12 +248,6 @@ def chunk_ranges(
         windows.append((cursor, min(cursor + step, end)))
         cursor += step
     return tuple(windows)
-
-
-def session_date(timestamp: datetime, venue: GlobalVenue | None) -> date:
-    """The local trading date a bar belongs to, for human-readable gap reports."""
-    zone = ZoneInfo(SESSIONS[venue].timezone) if venue is not None else timezone.utc
-    return timestamp.astimezone(zone).date()
 
 
 class BulkDailyHistoryFetcher:

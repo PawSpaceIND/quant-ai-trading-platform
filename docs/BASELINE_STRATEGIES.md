@@ -63,7 +63,9 @@ The significance note carried on every report is not boilerplate: the t-statisti
 
 Ratios are annualised against `annualisation_periods` at the sampling interval of the series. A daily bar is one sample per session, so the factor is derived from the venue's own session length rather than hardcoded to 252.
 
-The evaluator **refuses** a series whose bars are not daily rather than quietly scaling one basis to another. Bars must be spaced at least 20 hours apart (weekends and holidays make gaps longer, never shorter, so only the lower bound is checked). Handing the evaluator one-minute bars raises; it does not annualise them against the wrong basis and print the result.
+The evaluator **refuses** a series whose bars are not daily rather than quietly scaling one basis to another. "Daily" is enforced as **one bar per local trading date**: two bars sharing a date is an intraday series however far apart they sit, and one bar per date is a daily series however close two dates happen to fall. Handing the evaluator one-minute bars raises; it does not annualise them against the wrong basis and print the result.
+
+The date is the venue's, not UTC, and the rule is deliberately not a minimum wall-clock spacing. NSE closes its regular session on Diwali and holds a one-hour Muhurat sitting at 18:15 IST instead; the next session opens at 09:15 the following morning, fifteen hours later. That is one bar per session and entirely legitimate, and a spacing rule refuses it. Ordering is checked separately, so a misordered series is still rejected.
 
 ## Running it
 
