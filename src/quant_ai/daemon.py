@@ -37,7 +37,7 @@ from quant_ai.execution.session import (
 from quant_ai.governance.directives import FounderDirectives, country_for
 from quant_ai.governance.event_calendar import EventCalendar, event_calendar_from_env
 from quant_ai.intelligence.external.fred import FredMacroProvider
-from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
+from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter, symbol_aliases_from_env
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
 from quant_ai.intelligence.headline_sentiment import (
     HeadlineSentimentScorer,
@@ -548,8 +548,11 @@ def _env_intelligence_providers() -> tuple[
     registry = ProviderFailoverRegistry()
     client = ResilientHttpClient(UrllibTransport())
     feeds = tuple(item.strip() for item in os.getenv("PRAMANA_NEWS_RSS_URLS", "").split(",") if item.strip())
+    # Read before the feed check on purpose: a malformed alias map stops the boot even when
+    # no feed is configured, rather than waiting for a tick to quietly attribute nothing.
+    aliases = symbol_aliases_from_env()
     if feeds:
-        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds))
+        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds, aliases))
     fred_key = os.getenv("FRED_API_KEY", "").strip()
     if fred_key:
         registry.register(ProviderCategory.MACRO, FredMacroProvider(client, fred_key))

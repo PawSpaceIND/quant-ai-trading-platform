@@ -37,6 +37,10 @@ services:
       PRAMANA_TARGET_EXCHANGE: NSE
       PRAMANA_IBKR_ENABLED: "false"
       PRAMANA_NEWS_RSS_URLS: ${PRAMANA_NEWS_RSS_URLS:-}
+      # Operator-asserted names a symbol's news is also published under ("Infosys" for
+      # INFY). Unset means only the symbol itself matches, as before. An unparseable or
+      # out-of-bounds map stops the daemon at boot rather than attributing nothing.
+      PRAMANA_NEWS_SYMBOL_ALIASES_JSON: ${PRAMANA_NEWS_SYMBOL_ALIASES_JSON:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
       # Second candidate in the research comparison only. The engine never calls OpenAI:
       # `quant_ai.research` is offline by construction and touches no broker credential,

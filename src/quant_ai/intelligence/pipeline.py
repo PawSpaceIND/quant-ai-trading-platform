@@ -712,7 +712,8 @@ class SwarmMarketAnalysisPipeline:
         Headline text is third-party data: it is collapsed to one line and cut to
         ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize. Each
         headline arrives paired with the score that was taken for it, so the rendered
-        evidence says which scorer produced the number and why.
+        evidence says which scorer produced the number and why, and carries the alias when
+        an operator's assertion - rather than the headline itself - attached it here.
         ``timeframes`` and ``regime`` arrive already bounded from ``MarketContext``.
         """
         bars = tuple(_evidence_bar(candle) for candle in candles[-max_bars:])
@@ -726,6 +727,7 @@ class SwarmMarketAnalysisPipeline:
                 signal.source,
                 score.scorer,
                 score.rationale,
+                signal.matched_alias or "",
             )
             for signal, score in newest
         )
