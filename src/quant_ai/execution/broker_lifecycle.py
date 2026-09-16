@@ -17,6 +17,8 @@ from decimal import Decimal, InvalidOperation
 from quant_ai.execution.broker_journal import validate_capture
 from quant_ai.execution.broker_observation import IST, inspect_capture
 from quant_ai.execution.external_account_snapshot import SCOPE as ACCOUNT_SCOPE
+from quant_ai.orders.execution_identity import SCHEMA as EXECUTION_IDENTITY_SCHEMA
+from quant_ai.orders.execution_identity import external_fill_id
 from quant_ai.orders.oms import TERMINAL, DurableOms, OmsOrder
 from quant_ai.orders.state import OrderState
 
@@ -74,10 +76,24 @@ def _evidence_binding(capture, broker_order):
     }
 
 
-def _fill_id(trade: Mapping[str, object]) -> str:
+def _legacy_fill_id(trade: Mapping[str, object]) -> str:
     exchange = str(trade["exchange"])
     trade_id = str(trade["tradeId"])
     return f"KITE:{exchange}:{trade_id}"
+
+
+def _fill_source(trade, capture):
+    return {
+        "schema": EXECUTION_IDENTITY_SCHEMA, "broker": "zerodha-kite",
+        "tenantId": capture["tenantId"], "accountRef": capture["accountRef"],
+        "tradingDay": _trade_instant(trade).astimezone(IST).date().isoformat(),
+        "exchange": trade["exchange"], "tradeId": trade["tradeId"],
+        "brokerOrderId": trade["orderId"],
+    }
+
+
+def _fill_id(trade, capture):
+    return external_fill_id(_fill_source(trade, capture))
 
 
 def _capture_age_issue(capture, now, max_age_seconds):
@@ -213,18 +229,28 @@ class OmsBrokerLifecycleReconciler:
                 )
                 continue
             known_fill_ids = set(oms.fill_ids(client_id))
-            broker_by_fill = {_fill_id(trade): trade for trade in linked}
+            broker_by_fill = {_fill_id(trade, evidence): trade for trade in linked}
+            # Old IDs remain immutable. Accept them only on this order with its previously
+            # persisted account/contract binding and exact historical execution timestamp.
+            legacy_ids = {_legacy_fill_id(trade) for trade in linked} & known_fill_ids
+            if legacy_ids and existing_binding is None:
+                issues.append(BrokerLifecycleIssue("legacy_broker_fill_scope_unverified", client_id, bound))
+                continue
+            for trade in linked:
+                if _legacy_fill_id(trade) in legacy_ids:
+                    broker_by_fill[_legacy_fill_id(trade)] = trade
             changed_known_fill = False
             for recorded in oms.db.execute(
                 "SELECT * FROM oms_fills WHERE client_order_id=?", (client_id,)
             ).fetchall():
                 observed = broker_by_fill.get(recorded["fill_id"])
-                if recorded["fill_id"].startswith("KITE:") and observed is None:
+                if recorded["fill_id"].startswith(("KITE:", "KITE2:")) and observed is None:
                     changed_known_fill = True
                 if observed is not None and (
                     recorded["quantity"] != observed["quantity"]
                     or _decimal(recorded["price"], "recorded_price") != _decimal(observed["price"], "observed_price")
                     or recorded["broker_order_id"] not in {None, bound}
+                    or datetime.fromisoformat(recorded["at"]) != _trade_instant(observed)
                 ):
                     changed_known_fill = True
             if changed_known_fill:
@@ -238,7 +264,9 @@ class OmsBrokerLifecycleReconciler:
                 if current.average_fill_price != broker_average:
                     issues.append(BrokerLifecycleIssue("broker_fill_price_mismatch", client_id, bound))
                     continue
-            unseen = tuple(trade for trade in linked if _fill_id(trade) not in known_fill_ids)
+            unseen = tuple(trade for trade in linked
+                           if _fill_id(trade, evidence) not in known_fill_ids
+                           and _legacy_fill_id(trade) not in legacy_ids)
             fill_delta = broker_filled - current.filled_quantity
             if fill_delta == 0:
                 unseen = ()
@@ -294,7 +322,8 @@ class OmsBrokerLifecycleReconciler:
             for trade in linked:
                 current = oms.fill(
                     client_id,
-                    fill_id=_fill_id(trade),
+                    fill_id=_fill_id(trade, evidence),
+                    source_identity=_fill_source(trade, evidence),
                     quantity=int(trade["quantity"]),
                     price=_decimal(trade["price"], "broker_trade_price"),
                     broker_order_id=broker_id,
