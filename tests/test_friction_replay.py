@@ -113,6 +113,113 @@ def test_a_one_way_cost_is_the_sum_of_its_parts_and_a_sizeless_order_is_refused(
             model.evaluate(broken, context)
 
 
+def test_an_instrument_the_fee_schedules_cannot_price_is_refused_not_charged() -> None:
+    """The India schedule is a cash-equity contract note, and it used to charge everything.
+
+    ``_charges`` branched on the market alone. An MCX gold future, an NFO index future, a
+    CDS currency pair - all of them are ``Market.INDIA``, so all of them were handed STT at
+    the equity delivery rate, equity stamp duty, and the depository charge for delivering
+    shares into a demat account. A commodity pays CTT, not STT. A future delivers nothing,
+    so no DP charge exists to pay. Not one of those lines was the right number, and none of
+    them announced it.
+
+    None of the correct rates are in the module, so the fix cannot be to charge them. It is
+    to refuse: the model says which instrument it cannot price and stops, and the refusal
+    names the symbol, the market and the asset class so the operator is told what to add
+    rather than left reading a plausible-looking total.
+    """
+    model = MarketFrictionModel(fee_schedule=FeeSchedule.current_2026())
+    unpriced = (
+        (Market.INDIA, AssetClass.METAL),      # MCX gold
+        (Market.INDIA, AssetClass.COMMODITY),  # MCX crude
+        (Market.INDIA, AssetClass.FUTURE),     # NFO index future
+        (Market.INDIA, AssetClass.FX),         # CDS currency pair
+        (Market.INDIA, AssetClass.OPTION),
+        (Market.INDIA, AssetClass.INDEX),      # not buyable at all
+        (Market.INDIA, AssetClass.BOND),
+        (Market.USA, AssetClass.FUTURE),       # Section 31 is not levied on futures
+        (Market.USA, AssetClass.OPTION),
+    )
+    for market, asset_class in unpriced:
+        order = replace(_order(market, Side.BUY), asset_class=asset_class)
+        with pytest.raises(ValueError) as refusal:
+            model.evaluate(order, _zero_context())
+        # The operator has to be able to read what was refused off the message alone.
+        assert str(refusal.value) == (
+            f"friction_unpriced_instrument:TEST:{market.value}:{asset_class.value}:"
+            "cash_equity_and_etf_only"
+        )
+        # Selling one is refused for the same reason. A model that only guarded the buy
+        # would still let a position be closed at a charge it cannot compute.
+        with pytest.raises(ValueError, match="friction_unpriced_instrument"):
+            model.evaluate(replace(order, side=Side.SELL), _zero_context())
+
+    # A market with no schedule at all prices nothing, whatever it is holding. GLOBAL fell
+    # past both branches of ``_charges`` and came back with an empty tuple - a fill that
+    # looked costless rather than one that was never priced.
+    with pytest.raises(ValueError, match="friction_unpriced_instrument:TEST:GLOBAL:EQUITY"):
+        model.evaluate(_order(Market.GLOBAL, Side.BUY), _zero_context())
+
+
+def test_the_cash_market_the_pilot_actually_trades_is_still_priced_in_full() -> None:
+    """The guard above must not have closed the door the pilot walks through.
+
+    An ETF is charged the same contract note as a share - it settles into the same demat
+    account under the same levies - so both have to come back with the full India note, not
+    an empty one. A guard that refused too much would show up here as a refusal; one that
+    quietly charged nothing would show up as a missing line.
+    """
+    model = MarketFrictionModel(fee_schedule=FeeSchedule.current_2026())
+    share = model.evaluate(_order(Market.INDIA, Side.SELL), _zero_context())
+    etf = model.evaluate(
+        replace(_order(Market.INDIA, Side.SELL), asset_class=AssetClass.ETF), _zero_context()
+    )
+    # A sell: the full note minus stamp duty, which is levied on the buy leg only.
+    assert {item.code for item in share.charges} == {
+        "BROKERAGE", "STT", "EXCHANGE", "SEBI", "DP", "GST"
+    }
+    assert [(item.code, item.amount) for item in etf.charges] == [
+        (item.code, item.amount) for item in share.charges
+    ]
+    assert etf.statutory_fees > 0
+
+    # And the US sell leg keeps both of its fees rather than being caught by the new guard.
+    us_etf = model.evaluate(
+        replace(_order(Market.USA, Side.SELL), asset_class=AssetClass.ETF), _zero_context()
+    )
+    assert {item.code for item in us_etf.charges} == {"SEC", "FINRA_TAF"}
+
+
+def test_an_unpriceable_order_never_reaches_the_ledger(tmp_path) -> None:
+    """A refusal that still filled would be worse than no refusal at all.
+
+    ``evaluate`` is called before the fill is written, so the ValueError has to come back
+    out of ``submit`` with the account untouched: no order row, no cost rows, no cash
+    moved. This is the assertion that makes the guard operational rather than cosmetic.
+    """
+    broker = PaperBrokerService(
+        tmp_path / "unpriced.db",
+        starting_capital=Decimal(100000),
+        friction_model=MarketFrictionModel(fee_schedule=FeeSchedule.current_2026()),
+    )
+    broker.set_friction_context(_zero_context())
+    gold = replace(_order(Market.INDIA, Side.BUY), symbol="GOLD", asset_class=AssetClass.METAL)
+
+    with pytest.raises(ValueError, match="friction_unpriced_instrument:GOLD:INDIA:METAL"):
+        broker.submit(gold)
+
+    assert broker.get_margin("tenant").cash_balance == Decimal(100000)
+    assert broker.cost_entries("tenant") == ()
+    assert broker.ledger_entries("tenant") == ()
+    assert broker.get_positions("tenant") == ()
+
+    # The share that is priced still fills through the same broker, so the refusal above
+    # was about the instrument and not about a broker left in a broken state.
+    broker.submit(_order(Market.INDIA, Side.BUY))
+    assert broker.get_margin("tenant").cash_balance < Decimal(100000)
+    assert [item.symbol for item in broker.get_positions("tenant")] == ["TEST"]
+
+
 def test_us_fees_sell_only_and_current_rates() -> None:
     model = MarketFrictionModel(fee_schedule=FeeSchedule.current_2026())
     assert model.evaluate(_order(Market.USA, Side.BUY), _zero_context()).charges == ()

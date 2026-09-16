@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from quant_ai.domain.models import Market, OrderIntent, Side
+from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
 
 LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +68,37 @@ class FrictionContext:
             "assumedHalfSpreadFloor": str(self.assumed_half_spread_floor),
             "delivery": "true" if self.delivery else "false",
         }
+
+
+# What the schedules below can actually price, as market -> asset classes. Both of them
+# are cash-market schedules for shares and the ETFs that trade alongside them: STT at the
+# delivery and intraday rates, stamp duty on the buy and the depository charge on a
+# delivery sell in India; the Section 31 fee and the FINRA TAF on a sell in the US.
+#
+# Every one of those lines is charged differently on anything else. A commodity pays CTT
+# rather than STT; an equity future pays its own rate on its own side; neither pays a
+# depository charge, because nothing is delivered. The US Section 31 fee is levied on
+# securities sales and not on futures at all. None of those rates are in this module, and
+# a rate that is not here cannot be guessed from one that is.
+#
+# So an order these schedules cannot price is refused rather than charged the nearest
+# thing they can. The cost of getting it wrong is not a rounding error: over a real
+# 19-year series, friction was the difference between a +832% gross return and a +206%
+# net one. A strategy priced on the wrong schedule is profitable on paper and not in the
+# account, and that is the more expensive failure of the two.
+#
+# A market absent from this mapping prices nothing: Market.GLOBAL used to fall past both
+# branches below and come back with no charges at all, which is the same wrong number
+# wearing a friendlier face.
+PRICED_ASSET_CLASSES: dict[Market, frozenset[AssetClass]] = {
+    Market.INDIA: frozenset({AssetClass.EQUITY, AssetClass.ETF}),
+    Market.USA: frozenset({AssetClass.EQUITY, AssetClass.ETF}),
+}
+
+
+def priced_by_the_fee_schedules(order: OrderIntent) -> bool:
+    """Whether a statutory charge exists in this module for what the order is buying."""
+    return order.asset_class in PRICED_ASSET_CLASSES.get(order.market, frozenset())
 
 
 @dataclass(frozen=True)
@@ -338,6 +369,15 @@ class MarketFrictionModel:
     def evaluate(self, order: OrderIntent, context: FrictionContext) -> FrictionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")
+        # Before any of it is priced. The spread and impact model would happily quote a
+        # gold future - it reads an ATR and a volume and knows nothing about what it is
+        # pricing - and the result would carry a real-looking drag next to charges taken
+        # from a schedule that does not apply. Refuse the whole fill instead.
+        if not priced_by_the_fee_schedules(order):
+            raise ValueError(
+                f"friction_unpriced_instrument:{order.symbol}:{order.market.value}:"
+                f"{order.asset_class.value}:cash_equity_and_etf_only"
+            )
         sigma = context.atr / order.reference_price
         half_spread_fraction = self.half_spread_fraction(order, context)
         participation = Decimal(order.quantity) / context.average_daily_volume

@@ -203,8 +203,12 @@ def test_daemon_evaluates_every_watchlist_instrument_and_charges_country_exposur
     for minute in range(61):
         at = start + timedelta(minutes=minute)
         buffer.put(LiveTick("NIFTY", Decimal(24000 + minute), Decimal(1000 * minute), None, None, at, "test"))
+        buffer.put(LiveTick("RELIANCE", Decimal(24000 + minute), Decimal(1000 * minute), None, None, at, "test"))
         buffer.put(LiveTick("AAPL", Decimal(220), Decimal(1000 * minute), None, None, at, "test"))
-    broker.buy(OrderIntent("NIFTY", Market.INDIA, Side.BUY, 2, Decimal(24000), "seed", AssetClass.INDEX, "watch", Decimal(23500), Decimal(24500)))
+    # The seeded holding is an NSE share, not the index the watchlist is briefed on. An
+    # index cannot be bought - you buy a future or an ETF on it - and the friction model
+    # now refuses to price one rather than charging it the cash-equity schedule.
+    broker.buy(OrderIntent("RELIANCE", Market.INDIA, Side.BUY, 2, Decimal(24000), "seed", AssetClass.EQUITY, "watch", Decimal(23500), Decimal(24500)))
 
     brief = asyncio.run(daemon.run_once(now))
 
