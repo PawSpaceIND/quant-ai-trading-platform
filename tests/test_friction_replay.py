@@ -129,9 +129,20 @@ def test_an_instrument_the_fee_schedules_cannot_price_is_refused_not_charged() -
     rather than left reading a plausible-looking total.
     """
     model = MarketFrictionModel(fee_schedule=FeeSchedule.current_2026())
+    # MCX now has a separate operator-sourced schedule, but without one the exact
+    # fail-closed behaviour remains on both legs.
+    for asset_class in (AssetClass.METAL, AssetClass.COMMODITY):
+        order = replace(_order(Market.INDIA, Side.BUY), asset_class=asset_class)
+        with pytest.raises(ValueError) as refusal:
+            model.evaluate(order, _zero_context())
+        assert str(refusal.value) == (
+            f"friction_unpriced_instrument:TEST:INDIA:{asset_class.value}:"
+            "mcx_derivative_schedule_missing"
+        )
+        with pytest.raises(ValueError, match="mcx_derivative_schedule_missing"):
+            model.evaluate(replace(order, side=Side.SELL), _zero_context())
+
     unpriced = (
-        (Market.INDIA, AssetClass.METAL),      # MCX gold
-        (Market.INDIA, AssetClass.COMMODITY),  # MCX crude
         (Market.INDIA, AssetClass.FUTURE),     # NFO index future
         (Market.INDIA, AssetClass.FX),         # CDS currency pair
         (Market.INDIA, AssetClass.OPTION),
