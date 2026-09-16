@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
@@ -46,7 +47,9 @@ class RiskFirewall:
         self.policy = policy or RiskPolicy()
         self.margin_source = margin_source if margin_source is not None else DerivativeMarginSource.from_env()
 
-    def evaluate(self, order: OrderIntent, portfolio: PortfolioSnapshot) -> RiskDecision:
+    def evaluate(
+        self, order: OrderIntent, portfolio: PortfolioSnapshot, now: datetime | None = None
+    ) -> RiskDecision:
         if order.quantity <= 0 or order.reference_price <= 0:
             return RiskDecision(False, "invalid_order")
         if portfolio.equity <= 0:
@@ -62,6 +65,7 @@ class RiskFirewall:
         # held; only the slice beyond the holding would *add* (short) exposure and is
         # therefore the only slice the caps apply to. A BUY adds all of its notional.
         reducing, adding = exposure_delta(order, portfolio, notional, current_symbol)
+        projected_gross = portfolio.gross_exposure - reducing + adding
 
         if adding == 0:
             # Pure de-risking. Founder scope, concentration caps and loss/drawdown halts
@@ -89,7 +93,10 @@ class RiskFirewall:
         # A future ties up margin but carries its full notional price risk. Margin may
         # answer the cash question below; it must never shrink the exposure being compared
         # with leverage, concentration, asset-class or gross-notional caps.
-        if notional > portfolio.equity * self.policy.max_leverage_multiple:
+        # Leverage is a book property, not a per-ticket property. A sequence of individually
+        # sub-1x futures orders must not accumulate beyond the declared leverage ceiling when
+        # the ordinary gross-exposure cap is intentionally widened for derivative pilot scope.
+        if projected_gross > portfolio.equity * self.policy.max_leverage_multiple:
             return RiskDecision(False, "leverage_limit")
         if order.asset_class in MARGINED_FUTURES_ASSET_CLASSES:
             if self.margin_source is None:
@@ -97,14 +104,14 @@ class RiskFirewall:
                     False, f"derivative_margin_requirement_unavailable:{order.symbol}"
                 )
             held = max(0, portfolio.symbol_quantity.get(order.symbol, 0))
-            adding_quantity = (
-                order.quantity
-                if order.side == Side.BUY
-                else max(0, order.quantity - held)
-            )
+            if order.side == Side.SELL and order.quantity > held:
+                # The paper ledger is long-only today. Refuse a new futures short explicitly
+                # instead of letting the risk layer imply support that the ledger cannot book.
+                return RiskDecision(False, "derivative_short_opening_unsupported")
+            adding_quantity = order.quantity if order.side == Side.BUY else 0
             try:
                 required_margin = self.margin_source.margin_for_order(
-                    order, quantity=adding_quantity
+                    order, quantity=adding_quantity, now=now
                 )
             except ValueError as error:
                 return RiskDecision(False, str(error))
@@ -129,7 +136,6 @@ class RiskFirewall:
         projected_asset = current_asset - reducing + adding
         if projected_asset > portfolio.equity * self.policy.max_asset_class_exposure:
             return RiskDecision(False, "asset_class_exposure_limit")
-        projected_gross = portfolio.gross_exposure - reducing + adding
         if projected_gross > portfolio.equity * self.policy.max_gross_exposure:
             return RiskDecision(False, "gross_exposure_limit")
         # Exposure-opening orders must carry protection on the correct side of entry.
@@ -285,7 +291,9 @@ class BookRiskFirewall:
         """Whether any cross-position limit has the data it needs to apply."""
         return self.history_provider is not None or bool(self.sector_map)
 
-    def evaluate(self, order: OrderIntent, portfolio: PortfolioSnapshot) -> RiskDecision:
+    def evaluate(
+        self, order: OrderIntent, portfolio: PortfolioSnapshot, now: datetime | None = None
+    ) -> RiskDecision:
         """Judge the book this exposure-adding order would create.
 
         Never raises: a caller on the cadence path gets a decision, and an

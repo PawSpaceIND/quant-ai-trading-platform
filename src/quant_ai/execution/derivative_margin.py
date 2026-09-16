@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -14,8 +14,12 @@ from quant_ai.domain.models import AssetClass, Market, OrderIntent
 LOGGER = logging.getLogger(__name__)
 DERIVATIVE_MARGIN_JSON_ENV = "PRAMANA_DERIVATIVE_MARGIN_JSON"
 DERIVATIVE_MARGIN_FILE_ENV = "PRAMANA_DERIVATIVE_MARGIN_FILE"
+# Contract-aware futures categories used by the paper margin engine. AssetClass.FX is
+# intentionally excluded: the catalog also contains OTC spot FX rows, and OrderIntent
+# does not yet carry exchange/contract identity. Currency futures must remain refused
+# until the contract-aware order model can distinguish them from spot FX.
 MARGINED_FUTURES_ASSET_CLASSES = frozenset(
-    {AssetClass.FUTURE, AssetClass.FX, AssetClass.COMMODITY, AssetClass.METAL}
+    {AssetClass.FUTURE, AssetClass.COMMODITY, AssetClass.METAL}
 )
 
 
@@ -89,16 +93,31 @@ class ContractMarginRequirement:
 
 
 class DerivativeMarginSource:
-    """Exact contract margin snapshot supplied from broker evidence; no fallback rate."""
+    """Exact contract margin snapshot supplied from broker evidence; no fallback rate.
 
-    def __init__(self, requirements: tuple[ContractMarginRequirement, ...]) -> None:
+    Every source declares an operator-chosen maximum evidence age. There is no implicit
+    freshness window: omitting it makes the source invalid, and stale/future snapshots
+    refuse new derivative risk instead of silently reusing yesterday's SPAN.
+    """
+
+    def __init__(
+        self,
+        requirements: tuple[ContractMarginRequirement, ...],
+        *,
+        max_age_seconds: int,
+    ) -> None:
+        if type(max_age_seconds) is not int or max_age_seconds <= 0:
+            raise ValueError("derivative_margin_max_age_seconds_must_be_positive_integer")
         by_key: dict[tuple[str, Market, AssetClass], ContractMarginRequirement] = {}
         for item in requirements:
             key = (item.symbol.strip().upper(), item.market, item.asset_class)
             if key in by_key:
                 raise ValueError(f"duplicate_derivative_margin_requirement:{item.symbol}")
             by_key[key] = item
+        if not by_key:
+            raise ValueError("derivative_margin_contracts_required")
         self._requirements = by_key
+        self.max_age_seconds = max_age_seconds
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> DerivativeMarginSource | None:
@@ -122,9 +141,20 @@ class DerivativeMarginSource:
         payload = json.loads(raw) if isinstance(raw, str) else dict(raw)
         source = str(payload.get("source", "")).strip()
         observed_raw = str(payload.get("observedAt", "")).strip()
+        max_age_raw = str(payload.get("maxAgeSeconds", "")).strip()
         contracts = payload.get("contracts")
-        if not source or not observed_raw or not isinstance(contracts, list):
-            raise ValueError("derivative_margin_source_observed_at_and_contracts_required")
+        if (
+            not source
+            or not observed_raw
+            or not max_age_raw.isdigit()
+            or not isinstance(contracts, list)
+        ):
+            raise ValueError(
+                "derivative_margin_source_observed_at_max_age_and_contracts_required"
+            )
+        max_age_seconds = int(max_age_raw)
+        if max_age_seconds <= 0:
+            raise ValueError("derivative_margin_max_age_seconds_must_be_positive_integer")
         observed_at = datetime.fromisoformat(observed_raw)
         rows: list[ContractMarginRequirement] = []
         for row in contracts:
@@ -143,18 +173,41 @@ class DerivativeMarginSource:
                     observed_at=observed_at,
                 )
             )
-        if not rows:
-            raise ValueError("derivative_margin_contracts_required")
-        return cls(tuple(rows))
+        return cls(tuple(rows), max_age_seconds=max_age_seconds)
 
-    def requirement_for(self, order: OrderIntent) -> ContractMarginRequirement:
+    def requirement_for(
+        self, order: OrderIntent, *, now: datetime | None = None
+    ) -> ContractMarginRequirement:
         key = (order.symbol.strip().upper(), order.market, order.asset_class)
         requirement = self._requirements.get(key)
         if requirement is None:
             raise ValueError(f"derivative_margin_requirement_unavailable:{order.symbol}")
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("derivative_margin_now_must_be_timezone_aware")
+        age_seconds = (
+            instant.astimezone(timezone.utc)
+            - requirement.observed_at.astimezone(timezone.utc)
+        ).total_seconds()
+        if age_seconds < 0:
+            raise ValueError(f"derivative_margin_snapshot_from_future:{order.symbol}")
+        if age_seconds > self.max_age_seconds:
+            raise ValueError(f"derivative_margin_snapshot_stale:{order.symbol}")
         return requirement
 
-    def margin_for_order(self, order: OrderIntent, *, quantity: int | None = None) -> Decimal:
-        return self.requirement_for(order).margin_for_quantity(
+    def provenance_for(self, requirement: ContractMarginRequirement) -> dict[str, str]:
+        return {
+            **requirement.provenance(),
+            "maxAgeSeconds": str(self.max_age_seconds),
+        }
+
+    def margin_for_order(
+        self,
+        order: OrderIntent,
+        *,
+        quantity: int | None = None,
+        now: datetime | None = None,
+    ) -> Decimal:
+        return self.requirement_for(order, now=now).margin_for_quantity(
             order.quantity if quantity is None else quantity
         )
