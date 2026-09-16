@@ -21,6 +21,7 @@ from typing import Self
 from uuid import uuid4
 
 from quant_ai.domain.models import OrderIntent
+from quant_ai.orders.execution_identity import execution_identity, external_fill_id
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
@@ -527,6 +528,7 @@ class DurableOms:
         price: Decimal,
         broker_order_id: str | None = None,
         now: datetime | None = None,
+        source_identity: dict[str, str] | None = None,
     ) -> OmsOrder:
         self._validate_id(client_order_id, "client_order_id")
         self._validate_id(fill_id, "fill_id")
@@ -536,7 +538,13 @@ class DurableOms:
             raise ValueError("fill_quantity_must_be_positive_integer")
         fill_price = _decimal(price, "fill_price", positive=True)
         at = now or datetime.now(timezone.utc)
+        source = None if source_identity is None else execution_identity(source_identity)
+        if source is not None and (external_fill_id(source) != fill_id
+                                   or source["brokerOrderId"] != broker_order_id):
+            raise ValueError("external_fill_identity_mismatch")
         with self.transaction():
+            if source is not None and self.get(client_order_id).tenant_id != source["tenantId"]:
+                raise ValueError("external_fill_tenant_mismatch")
             duplicate = self.db.execute("SELECT * FROM oms_fills WHERE fill_id=?", (fill_id,)).fetchone()
             if duplicate is not None:
                 if (
@@ -544,6 +552,7 @@ class DurableOms:
                     or duplicate["quantity"] != quantity
                     or _decimal(duplicate["price"], "fill_price") != fill_price
                     or duplicate["broker_order_id"] != broker_order_id
+                    or source is not None and datetime.fromisoformat(duplicate["at"]) != at
                 ):
                     raise ValueError("fill_id_payload_mismatch")
                 return self.get(client_order_id)
@@ -588,6 +597,7 @@ class DurableOms:
                 "fillId": fill_id, "quantity": quantity, "price": str(fill_price),
                 "cumulativeFilled": total, "averageFillPrice": str(average),
                 "state": target.value, "brokerOrderId": broker,
+                **({"sourceIdentity": source} if source is not None else {}),
             })
         return self.get(client_order_id)
 
@@ -731,6 +741,11 @@ class DurableOms:
                 state = target
                 broker = self._broker_identity(broker, payload.get("brokerOrderId"))
                 fill_id = payload["fillId"]
+                if "sourceIdentity" in payload:
+                    source = execution_identity(payload["sourceIdentity"])
+                    if (external_fill_id(source) != fill_id or source["tenantId"] != current.tenant_id
+                            or source["brokerOrderId"] != broker):
+                        raise ValueError("oms_external_fill_identity_mismatch")
                 if fill_id in expected_fills:
                     raise ValueError("oms_duplicate_fill_event")
                 expected_fills[fill_id] = (qty, price, row["at"], broker)
