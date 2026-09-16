@@ -6,7 +6,7 @@ bookkeeping. Three consumers decide whether an MCX metal trades in its evening s
 the cadence scheduler, the entry gate, and the overnight firewall - and each one is here.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -28,7 +28,13 @@ from quant_ai.risk.overnight import OvernightExposureFirewall, OvernightRiskPoli
 IST = ZoneInfo("Asia/Kolkata")
 # 20:00 IST on a Wednesday: MCX is trading, NSE closed for four and a half hours.
 EVENING = datetime(2026, 9, 16, 20, tzinfo=IST).astimezone(timezone.utc)
-GOLD = Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX")
+# A tradable MCX row is a contract, not a listing: MCX gold is 100 grams a lot on a
+# INR 1 tick, and it dies on a date. December 2026 is comfortably ahead of every
+# timestamp these tests pin, so none of them sit in a rollover window by accident.
+GOLD = Instrument(
+    "GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX",
+    expiry=date(2026, 12, 5), lot_size=100, tick_size=Decimal(1), underlying="GOLD",
+)
 NIFTY = Instrument("NIFTY", Market.INDIA, AssetClass.INDEX, "INR", "NSE")
 BOOK = {"GOLD": "MCX", "NIFTY": "NSE"}
 EQUITY = Decimal(1_000_000)

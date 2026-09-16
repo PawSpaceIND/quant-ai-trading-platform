@@ -37,7 +37,13 @@ from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 
 T0 = datetime(2026, 9, 14, 9, 30, tzinfo=timezone.utc)
 NIFTY = Instrument("NIFTY", Market.INDIA, AssetClass.INDEX, "INR", "NSE")
-GOLD = Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX")
+# A tradable MCX row is a contract, not a listing: MCX gold is 100 grams a lot on a
+# INR 1 tick, and it dies on a date. December 2026 is comfortably ahead of every
+# timestamp these tests pin, so none of them sit in a rollover window by accident.
+GOLD = Instrument(
+    "GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX",
+    expiry=date(2026, 12, 5), lot_size=100, tick_size=Decimal(1), underlying="GOLD",
+)
 
 
 def tick(symbol: str, at: datetime, ltp: str, volume: str = "0", bid: str | None = None, ask: str | None = None) -> LiveTick:
