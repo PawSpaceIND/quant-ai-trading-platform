@@ -10,7 +10,14 @@ from uuid import uuid4
 
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
-from quant_ai.domain.models import AssetClass, Instrument, Market, OrderIntent, Side
+from quant_ai.domain.models import (
+    AssetClass,
+    Instrument,
+    InstrumentBoundOrderIntent,
+    Market,
+    OrderIntent,
+    Side,
+)
 from quant_ai.execution.overnight import OvernightGapMonitor
 from quant_ai.execution.paper_ledger import (
     PaperBrokerDatabaseLockedError,
@@ -341,8 +348,13 @@ class ProtectiveExitEngine:
         }
         cooldown_until = now + self.re_entry_cooldown if self.re_entry_cooldown > timedelta(0) else None
         try:
+            instrument = self.broker.bound_instrument_for_position(
+                position.symbol, position.market, position.asset_class, self.tenant_id
+            )
+            if instrument is not None:
+                order = InstrumentBoundOrderIntent(**vars(order), instrument=instrument)
             fill: ExecutionResult = self.broker.sell_protected(order, proof, cooldown_until)
-        except (ValueError, PaperBrokerDatabaseLockedError) as error:
+        except (KeyError, TypeError, ValueError, PaperBrokerDatabaseLockedError) as error:
             LOGGER.error(
                 "protective_exit_failed symbol=%s trigger=%s error=%s",
                 position.symbol,
