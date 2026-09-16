@@ -11,11 +11,14 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import RLock
 from typing import Self
+from uuid import uuid4
 
 from quant_ai.domain.models import OrderIntent
 from quant_ai.orders.state import OrderLifecycle, OrderState
@@ -78,6 +81,7 @@ class DurableOms:
     """SQLite OMS projection plus append-only event/fill history."""
 
     def __init__(self, path: str | Path) -> None:
+        self._lock = RLock()
         self.path = Path(path)
         if self.path != Path(":memory:") and self.path.exists() and self.path.is_symlink():
             raise ValueError("oms_symlink_unsupported")
@@ -143,6 +147,13 @@ class DurableOms:
                     at TEXT NOT NULL,
                     broker_order_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS oms_broker_evidence_bindings(
+                    client_order_id TEXT PRIMARY KEY,
+                    broker TEXT NOT NULL, account_ref TEXT NOT NULL,
+                    broker_order_id TEXT NOT NULL, instrument_id TEXT NOT NULL,
+                    exchange TEXT NOT NULL, product TEXT NOT NULL,
+                    UNIQUE(broker,account_ref,broker_order_id)
+                );
                 CREATE TABLE IF NOT EXISTS oms_replacements(
                     original_client_order_id TEXT PRIMARY KEY,
                     replacement_client_order_id TEXT NOT NULL UNIQUE,
@@ -155,13 +166,32 @@ class DurableOms:
                 self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
             elif row[0] != SCHEMA_VERSION:
                 raise ValueError("oms_schema_version_mismatch")
-            for table in ("oms_events", "oms_fills", "oms_replacements"):
+            for table in ("oms_events", "oms_fills", "oms_replacements", "oms_broker_evidence_bindings"):
                 for verb in ("UPDATE", "DELETE"):
                     name = f"{table}_{verb.lower()}_blocked"
                     self.db.execute(
                         f"CREATE TRIGGER IF NOT EXISTS {name} BEFORE {verb} ON {table} "
                         "BEGIN SELECT RAISE(ABORT,'OMS history is append-only'); END"
                     )
+
+    @contextmanager
+    def transaction(self):
+        """Serialize before reading and preserve outer atomicity across nested mutations."""
+        with self._lock:
+            nested = self.db.in_transaction
+            savepoint = "oms_" + uuid4().hex
+            self.db.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
+            try:
+                yield
+                self.db.execute(f"RELEASE SAVEPOINT {savepoint}" if nested else "COMMIT")
+            except BaseException:
+                if self.db.in_transaction:
+                    if nested:
+                        self.db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                        self.db.execute(f"RELEASE SAVEPOINT {savepoint}")
+                    else:
+                        self.db.rollback()
+                raise
 
     @staticmethod
     def client_order_id(order: OrderIntent, decision_id: str) -> str:
@@ -192,7 +222,7 @@ class DurableOms:
         at = now or datetime.now(timezone.utc)
         stamp = _instant(at, "order_created_at")
         client_id = self.client_order_id(order, decision_id)
-        with self.db:
+        with self.transaction():
             existing = self.db.execute(
                 "SELECT * FROM oms_orders WHERE client_order_id=?", (client_id,)
             ).fetchone()
@@ -244,7 +274,7 @@ class DurableOms:
         if broker_order_id is not None:
             self._validate_id(broker_order_id, "broker_order_id")
         at = now or datetime.now(timezone.utc)
-        with self.db:
+        with self.transaction():
             row = self.db.execute(
                 "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
             ).fetchone()
@@ -295,7 +325,7 @@ class DurableOms:
         if not reason.strip():
             raise ValueError("broker_identity_binding_reason_required")
         at = now or datetime.now(timezone.utc)
-        with self.db:
+        with self.transaction():
             row = self.db.execute(
                 "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
             ).fetchone()
@@ -314,6 +344,42 @@ class DurableOms:
                 "state": current.state.value,
             })
         return self.get(client_order_id)
+
+    def broker_evidence_binding(self, client_order_id: str) -> dict[str, str] | None:
+        self._validate_id(client_order_id, "client_order_id")
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM oms_broker_evidence_bindings WHERE client_order_id=?",
+                (client_order_id,),
+            ).fetchone()
+            return None if row is None else {key: value for key, value in dict(row).items() if key != "client_order_id"}
+
+    def bind_broker_evidence(
+        self, client_order_id: str, binding: dict[str, str], *, now: datetime,
+    ) -> None:
+        """Persist observed account/contract identity; never infer a broker submission."""
+        fields = ("broker", "account_ref", "broker_order_id", "instrument_id", "exchange", "product")
+        if set(binding) != set(fields) or binding["broker"] != "zerodha-kite":
+            raise ValueError("broker_evidence_binding_invalid")
+        if not _SHA.fullmatch(binding["account_ref"]):
+            raise ValueError("broker_evidence_account_invalid")
+        for key in fields:
+            self._validate_id(binding[key], key)
+        with self.transaction():
+            current = self.get(client_order_id)
+            if current.state is OrderState.CREATED:
+                raise ValueError("broker_evidence_requires_risk_approval")
+            self._broker_identity(current.broker_order_id, binding["broker_order_id"])
+            existing = self.broker_evidence_binding(client_order_id)
+            if existing is not None:
+                if existing != binding:
+                    raise ValueError("broker_evidence_binding_changed")
+                return
+            self.db.execute(
+                "INSERT INTO oms_broker_evidence_bindings VALUES(?,?,?,?,?,?,?)",
+                (client_order_id, *(binding[key] for key in fields)),
+            )
+            self._append_event_locked(client_order_id, "BROKER_EVIDENCE_BOUND", now, binding)
 
     def reject(self, client_order_id: str, *, reason: str, now: datetime | None = None) -> OmsOrder:
         if not reason.strip():
@@ -354,7 +420,7 @@ class DurableOms:
         at = now or datetime.now(timezone.utc)
         stamp = _instant(at, "replacement_at")
         replacement_id = self.client_order_id(replacement, decision_id)
-        with self.db:
+        with self.transaction():
             existing_link = self.db.execute(
                 "SELECT * FROM oms_replacements WHERE original_client_order_id=?",
                 (original_client_order_id,),
@@ -470,7 +536,7 @@ class DurableOms:
             raise ValueError("fill_quantity_must_be_positive_integer")
         fill_price = _decimal(price, "fill_price", positive=True)
         at = now or datetime.now(timezone.utc)
-        with self.db:
+        with self.transaction():
             duplicate = self.db.execute("SELECT * FROM oms_fills WHERE fill_id=?", (fill_id,)).fetchone()
             if duplicate is not None:
                 if (
@@ -494,8 +560,12 @@ class DurableOms:
             total = current.filled_quantity + quantity
             if total > current.requested_quantity:
                 raise ValueError("fill_exceeds_requested_quantity")
-            prior_notional = (
-                (current.average_fill_price or Decimal(0)) * current.filled_quantity
+            prior_notional = sum(
+                (_decimal(row["price"], "fill_price") * row["quantity"]
+                 for row in self.db.execute(
+                     "SELECT quantity,price FROM oms_fills WHERE client_order_id=? ORDER BY rowid",
+                     (client_order_id,),
+                 ).fetchall()), Decimal(0),
             )
             average = (prior_notional + fill_price * quantity) / total
             target = (
@@ -587,23 +657,38 @@ class DurableOms:
             ).fetchall()
         )
 
+    def all_orders(self, tenant_id: str) -> tuple[OmsOrder, ...]:
+        """Include terminal orders: completion does not end reconciliation obligations."""
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT * FROM oms_orders WHERE tenant_id=? ORDER BY created_at,client_order_id",
+                (tenant_id,),
+            ).fetchall()
+            return tuple(self._decode(row) for row in rows)
+
     def open_orders(self, tenant_id: str) -> tuple[OmsOrder, ...]:
-        rows = self.db.execute(
-            "SELECT * FROM oms_orders WHERE tenant_id=? ORDER BY created_at,client_order_id",
-            (tenant_id,),
-        ).fetchall()
-        return tuple(self._decode(row) for row in rows if OrderState(row["state"]) not in TERMINAL)
+        return tuple(row for row in self.all_orders(tenant_id) if row.state not in TERMINAL)
 
     def verify(self, client_order_id: str) -> dict[str, object]:
-        """Replay the hash chain and compare event-derived fill totals to the projection."""
+        """Replay identity, legal states, broker binding and immutable fills in one snapshot."""
+        with self.transaction():
+            return self._verify_locked(client_order_id)
+
+    def _verify_locked(self, client_order_id: str) -> dict[str, object]:
         current = self.get(client_order_id)
         events = self.db.execute(
             "SELECT * FROM oms_events WHERE client_order_id=? ORDER BY sequence",
             (client_order_id,),
         ).fetchall()
+        if not events or events[0]["kind"] != "CREATED":
+            raise ValueError("oms_event_chain_incomplete")
         previous = None
         fill_total = 0
         weighted = Decimal(0)
+        state = OrderState.CREATED
+        broker = None
+        expected_fills = {}
+        evidence_binding = None
         for expected, row in enumerate(events, 1):
             if row["sequence"] != expected or row["previous_hash"] != previous:
                 raise ValueError("oms_event_chain_incomplete")
@@ -615,24 +700,94 @@ class DurableOms:
             if row["event_hash"] != _hash(body):
                 raise ValueError("oms_event_hash_mismatch")
             previous = row["event_hash"]
-            if row["kind"] == "FILL":
-                qty = int(payload["quantity"])
+            kind = row["kind"]
+            if kind == "CREATED":
+                identity = {
+                    "tenantId": current.tenant_id, "strategyId": current.strategy_id,
+                    "market": current.market, "assetClass": current.asset_class,
+                    "symbol": current.symbol, "side": current.side,
+                    "quantity": current.requested_quantity,
+                    "referencePrice": str(current.reference_price),
+                }
+                if expected != 1 or payload.get("order") != identity:
+                    raise ValueError("oms_identity_projection_mismatch")
+                if datetime.fromisoformat(row["at"]) != current.created_at:
+                    raise ValueError("oms_created_at_projection_mismatch")
+            elif kind == "FILL":
+                qty = payload["quantity"]
+                if type(qty) is not int or qty <= 0:
+                    raise ValueError("oms_fill_event_invalid")
                 price = _decimal(payload["price"], "fill_price", positive=True)
                 fill_total += qty
                 weighted += price * qty
+                target = (OrderState.FILLED if fill_total == current.requested_quantity
+                          else OrderState.PARTIALLY_FILLED)
+                if (fill_total > current.requested_quantity
+                        or payload["cumulativeFilled"] != fill_total
+                        or payload["state"] != target.value
+                        or _decimal(payload["averageFillPrice"], "fill_average") != weighted / fill_total):
+                    raise ValueError("oms_fill_event_projection_mismatch")
+                OrderLifecycle(state).transition(target)
+                state = target
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
+                fill_id = payload["fillId"]
+                if fill_id in expected_fills:
+                    raise ValueError("oms_duplicate_fill_event")
+                expected_fills[fill_id] = (qty, price, row["at"], broker)
+            elif kind == "BROKER_EVIDENCE_BOUND":
+                if evidence_binding is not None or state is OrderState.CREATED:
+                    raise ValueError("oms_broker_evidence_event_invalid")
+                evidence_binding = payload
+                if self.broker_evidence_binding(client_order_id) != payload:
+                    raise ValueError("oms_broker_evidence_projection_mismatch")
+            elif kind == "BROKER_ID_OBSERVED":
+                if payload.get("state") != state.value:
+                    raise ValueError("oms_state_projection_mismatch")
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
+            elif kind == "REPLACED_BY":
+                if state is not OrderState.CANCELLED:
+                    raise ValueError("oms_replacement_without_cancellation")
+                if self.replacement_for(client_order_id) != payload.get("replacementClientOrderId"):
+                    raise ValueError("oms_replacement_projection_mismatch")
+            else:
+                target = OrderState(kind)
+                if payload.get("from") != state.value or payload.get("to") != target.value:
+                    raise ValueError("oms_state_projection_mismatch")
+                OrderLifecycle(state).transition(target)
+                state = target
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
         if len(events) != current.last_event_sequence:
             raise ValueError("oms_projection_event_sequence_mismatch")
+        if self.broker_evidence_binding(client_order_id) != evidence_binding:
+            raise ValueError("oms_broker_evidence_projection_mismatch")
+        if state is OrderState.FILLED and fill_total != current.requested_quantity:
+            raise ValueError("oms_fill_projection_mismatch")
+        if state != current.state or broker != current.broker_order_id:
+            raise ValueError("oms_state_or_broker_projection_mismatch")
         projected_average = weighted / fill_total if fill_total else None
         if fill_total != current.filled_quantity or projected_average != current.average_fill_price:
             raise ValueError("oms_fill_projection_mismatch")
+        actual_fills = {
+            row["fill_id"]: (row["quantity"], _decimal(row["price"], "fill_price"),
+                             row["at"], row["broker_order_id"])
+            for row in self.db.execute(
+                "SELECT * FROM oms_fills WHERE client_order_id=?", (client_order_id,)
+            ).fetchall()
+        }
+        # A callback may omit a broker ID that was already established on the order.
+        for fill_id, (qty, price, at, fill_broker) in actual_fills.items():
+            expected_row = expected_fills.get(fill_id)
+            if expected_row is None or (qty, price, at) != expected_row[:3]:
+                raise ValueError("oms_fill_history_projection_mismatch")
+            if fill_broker is not None and fill_broker != expected_row[3]:
+                raise ValueError("oms_fill_history_projection_mismatch")
+        if set(actual_fills) != set(expected_fills):
+            raise ValueError("oms_fill_history_projection_mismatch")
         return {
             "schema": "pramana.oms_verification.v1",
-            "clientOrderId": client_order_id,
-            "state": current.state.value,
-            "events": len(events),
-            "filledQuantity": fill_total,
-            "pendingQuantity": current.pending_quantity,
-            "headHash": previous,
+            "clientOrderId": client_order_id, "state": current.state.value,
+            "events": len(events), "filledQuantity": fill_total,
+            "pendingQuantity": current.pending_quantity, "headHash": previous,
             "verified": True,
         }
 
