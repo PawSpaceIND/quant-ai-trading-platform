@@ -10,6 +10,9 @@ from pathlib import Path
 MAX_PAYLOAD = 65_536
 MAX_AGE_SECONDS = 15
 FUTURE_TOLERANCE_SECONDS = 5
+# Watchlist entries this check will read before giving up. The heartbeat is already
+# bounded; this bounds the loop independently so a malformed payload cannot cost time.
+MAX_WATCHLIST = 64
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -20,6 +23,51 @@ def _timestamp(value: object) -> datetime | None:
         return parsed.astimezone(timezone.utc) if parsed.utcoffset() is not None else None
     except (ValueError, OverflowError):
         return None
+
+
+def _blind_through_an_open_session(payload: dict, now: datetime) -> bool:
+    """Whether every instrument on the watchlist is stale while its market is open.
+
+    A pilot with a dead feed is not idle, it is blind, and the two look identical from
+    outside: it keeps its heartbeat, keeps deciding, and records a well-formed abstention
+    every cadence because no specialist has anything to say. A whole session of those sits
+    in the journal looking exactly like considered restraint.
+
+    The existing feed-loss halt does not cover it. That one fires when an *open position*
+    cannot be priced - which is the right rule for protecting a position, and no rule at
+    all for a book that is flat. The pilot has never held one.
+
+    Two deliberate narrowings, because a health check that cries wolf gets ignored:
+
+    * **Every** instrument must be stale, not any. One stale symbol is a provider gap; the
+      whole watchlist at once is the feed.
+    * The market must be in regular hours. Staleness outside them is the normal state of a
+      closed exchange, and reporting it would make the container unhealthy every night and
+      teach a reader to disregard the signal.
+    """
+    watchlist = payload.get("watchlist")
+    if not isinstance(watchlist, list) or not watchlist or len(watchlist) > MAX_WATCHLIST:
+        return False
+    markets: set[str] = set()
+    for entry in watchlist:
+        if not isinstance(entry, dict) or entry.get("fresh") is not False:
+            return False
+        market = entry.get("market")
+        if not isinstance(market, str) or len(market) > 32:
+            return False
+        markets.add(market)
+    from quant_ai.domain.models import Market
+    from quant_ai.execution.session import MarketCalendar, MarketState
+
+    calendar = MarketCalendar()
+    for name in markets:
+        try:
+            market = Market(name)
+        except ValueError:
+            return False
+        if calendar.state(market, now) != MarketState.REGULAR_HOURS:
+            return False
+    return True
 
 
 def protection_health(database: Path, tenant: str, *, now: datetime | None = None) -> dict:
@@ -80,6 +128,8 @@ def protection_health(database: Path, tenant: str, *, now: datetime | None = Non
     halted = payload.get("halted")
     if halted is not True and halted is not False:
         reasons.append("halt_state_unknown")
+    if _blind_through_an_open_session(payload, now):
+        reasons.append("market_data_stale_during_session")
     alive = not reasons
     if halted is True:
         reasons.append("engine_halted")
@@ -92,5 +142,6 @@ def protection_health(database: Path, tenant: str, *, now: datetime | None = Non
         "observed_at": stored_at.isoformat() if stored_at is not None else None,
         "halted": halted if halted is True or halted is False else None,
         "checked_at": now.isoformat(),
-        "note": "Persisted paper protection observation only; not feed, execution or strategy readiness",
+        "note": "Persisted paper protection observation, plus whether the whole watchlist "
+                "is stale while its market is open; not execution or strategy readiness",
     }
