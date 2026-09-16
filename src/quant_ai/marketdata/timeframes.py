@@ -167,6 +167,17 @@ def opens_the_regular_session(bar: Candle, venue: GlobalVenue | None) -> bool:
     return local.timetz().replace(tzinfo=None) == session.regular_open
 
 
+def session_date(timestamp: datetime, venue: GlobalVenue | None) -> date:
+    """The local trading date a bar belongs to.
+
+    A daily bar is stamped in UTC but belongs to a session held in the venue's own day, and
+    which day that is decides whether two bars are one session or two. Venue-less markets
+    have no local day; theirs is the UTC one.
+    """
+    zone = ZoneInfo(SESSIONS[venue].timezone) if venue is not None else timezone.utc
+    return _utc(timestamp).astimezone(zone).date()
+
+
 def closed_sessions(
     bars: tuple[Candle, ...], now: datetime, venue: GlobalVenue | None
 ) -> tuple[Candle, ...]:

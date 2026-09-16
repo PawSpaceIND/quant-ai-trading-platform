@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -672,6 +673,89 @@ def test_daily_bars_annualise_against_sessions_and_an_intraday_series_is_refused
     )
     with pytest.raises(ValueError, match="expects daily bars"):
         evaluator().evaluate(minutes)
+
+
+def test_a_diwali_muhurat_session_is_a_daily_bar_and_is_not_refused():
+    """The real NSE calendar, which the old spacing rule rejected outright.
+
+    On 24 October 2022 NSE closed its regular session for Diwali and held only the one-hour
+    Muhurat sitting at 18:15 IST. The next session opened at 09:15 the following morning -
+    fifteen hours later, and the only pair under twenty hours in a real 19-year INFY series
+    of 4,660 bars. That is one bar per session, so it is a daily series, and requiring a
+    minimum wall-clock spacing refused every Indian series spanning a Diwali.
+    """
+    bars = list(trending()[:40])
+    # This fixture stamps each bar at 15:30 IST. Pull one bar back to 09:15 on its own
+    # date and the gap from the previous session closes to under twenty hours, exactly as
+    # the morning after a Muhurat sitting does - while every bar keeps its own date.
+    bars[20] = replace(bars[20], timestamp=bars[20].timestamp - timedelta(hours=6, minutes=15))
+    assert bars[20].timestamp - bars[19].timestamp < timedelta(hours=20)
+    assert len({bar.timestamp.astimezone(IST).date() for bar in bars}) == len(bars)
+
+    reports = evaluator().evaluate(tuple(bars))
+
+    assert [report.bars for report in reports] == [len(bars)] * len(reports)
+
+
+def test_the_date_that_counts_is_the_venues_and_not_utc():
+    """Two sessions can share a UTC date and still be two sessions.
+
+    India runs five and a half hours ahead, so an evening bar and the next morning's sit on
+    one UTC date while belonging to two Indian ones - and on MCX, whose session runs to
+    23:30 IST, that pairing is ordinary rather than exotic. Counting UTC dates would refuse
+    a perfectly good daily series as intraday, so the rule reads the venue's day.
+
+    Written because the first version of these tests did not catch it: this fixture stamps
+    bars at 15:30 IST, which is 10:00 UTC on the same date, so UTC and IST agree and a
+    UTC-based rule passes every one of them.
+    """
+    bars = [replace(bar, timestamp=bar.timestamp.astimezone(timezone.utc)) for bar in
+            trending()[:40]]
+    # Stamped in UTC, as a fetched dataset is: reading the date off the stamp is then the
+    # UTC day, and only converting to the venue's zone gives the trading day.
+    evening = bars[19].timestamp.astimezone(IST).replace(hour=23, minute=0)
+    morning = bars[20].timestamp.astimezone(IST).replace(hour=4, minute=0)
+    bars[19] = replace(bars[19], timestamp=evening.astimezone(timezone.utc))
+    bars[20] = replace(bars[20], timestamp=morning.astimezone(timezone.utc))
+
+    assert bars[19].timestamp.date() == bars[20].timestamp.date()          # one UTC day
+    assert evening.astimezone(IST).date() != morning.astimezone(IST).date()  # two IST days
+
+    reports = evaluator().evaluate(tuple(bars))
+    assert [report.bars for report in reports] == [len(bars)] * len(reports)
+
+
+def test_two_bars_on_one_trading_date_are_still_refused_however_far_apart():
+    """What the rule is actually for, stated as the thing it means.
+
+    ``daily_annualisation_periods`` assumes one sample per session. A date carrying two
+    bars is an intraday series whatever the clock says between them, and annualising it
+    against 252 is the inflated Sharpe this module exists to stop printing.
+    """
+    bars = list(trending()[:40])
+    # Two bars on one date, twenty-three hours apart: a spacing rule of any plausible size
+    # waves this through, and it is unambiguously an intraday pair.
+    day = bars[19].timestamp.astimezone(IST).date()
+    opened = datetime.combine(day, time(0, 30), tzinfo=IST)
+    bars[19] = replace(bars[19], timestamp=opened)
+    bars[20] = replace(bars[20], timestamp=opened + timedelta(hours=23))
+    assert bars[20].timestamp - bars[19].timestamp > timedelta(hours=20)
+
+    with pytest.raises(ValueError, match="carries two"):
+        evaluator().evaluate(tuple(bars))
+
+
+def test_a_misordered_series_is_refused_rather_than_silently_reordered():
+    """Ordering used to fall out of the spacing comparison; now it is checked on its own.
+
+    A negative gap was smaller than the minimum, so a series out of order tripped the old
+    rule by accident. Counting bars per date would not notice, so the check is explicit.
+    """
+    bars = list(trending()[:40])
+    bars[20], bars[21] = bars[21], bars[20]
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        evaluator().evaluate(tuple(bars))
 
 
 def test_the_curve_carries_exactly_one_mark_per_bar_and_one_return_per_step():

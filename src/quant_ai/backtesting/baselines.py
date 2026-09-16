@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from math import sqrt
 from statistics import mean, pstdev
@@ -57,17 +57,13 @@ from quant_ai.execution.friction import FrictionContext, MarketFrictionModel
 from quant_ai.execution.live_friction import friction_context_from_bars
 from quant_ai.execution.session import regular_session_length
 from quant_ai.marketdata.models import Candle
+from quant_ai.marketdata.timeframes import session_date, venue_for
 
 # A mean of a handful of trades has a standard error the size of itself. Below this count
 # the expectancy and hit rate are still printed - suppressing them would hide that the
 # strategy barely traded - but they are labelled as descriptive, and the t-statistic that
 # would make them evidence stays absent until the sample can support one.
 MINIMUM_ROUND_TRIPS = 20
-
-# One daily bar per session. Anything sampled faster is not a daily series, and a daily
-# annualisation applied to it is the error this module exists to stop printing. Weekends
-# and holidays make gaps longer, never shorter, so only the lower bound is checked.
-MINIMUM_DAILY_BAR_SPACING = timedelta(hours=20)
 
 # What replay scores a historical counter at. The baseline uses the same figure so a
 # baseline fill and a replayed fill cannot be priced by two different assumptions.
@@ -796,6 +792,25 @@ def _assert_closed_history(history: tuple[Candle, ...], execution: Candle) -> No
 
 
 def _assert_daily_bars(bars: tuple[Candle, ...]) -> None:
+    """One bar per trading date, in order, for one instrument.
+
+    The property this defends is that the series is sampled once a session, because that
+    is what :func:`daily_annualisation_periods` assumes and annualising an intraday series
+    against the daily basis is what inflates a Sharpe.
+
+    It used to be enforced as a minimum wall-clock spacing of 20 hours, which is a proxy
+    for that property and not the property itself. NSE closes its regular session on Diwali
+    and holds a one-hour Muhurat sitting at 18:15 IST instead; the next session opens at
+    09:15 the following morning, 15 hours later. That is one bar per session and entirely
+    legitimate, and the spacing rule refused every Indian daily series spanning a Diwali
+    because of it - including a real 19-year INFY series whose 4,660 bars contained exactly
+    one such pair.
+
+    Counting bars per local trading date says what was meant. Two bars on one date is an
+    intraday series however far apart they sit; one bar per date is a daily one however
+    close two dates happen to fall. Ordering is checked separately rather than falling out
+    of a spacing comparison, so a misordered series is still refused.
+    """
     if len(bars) < 2:
         raise ValueError("baseline evaluation needs at least two bars")
     if any(
@@ -804,15 +819,27 @@ def _assert_daily_bars(bars: tuple[Candle, ...]) -> None:
     ):
         raise ValueError("baseline bars must be timezone-aware")
     for previous, current in zip(bars, bars[1:]):
-        gap = current.timestamp - previous.timestamp
-        if gap < MINIMUM_DAILY_BAR_SPACING:
+        if current.timestamp <= previous.timestamp:
             raise ValueError(
-                f"baseline evaluation expects daily bars; found a {gap} gap at "
-                f"{current.timestamp.isoformat()}. Annualising an intraday series against "
-                "the daily basis is what inflates a Sharpe; resample or score it elsewhere."
+                "baseline bars must be strictly increasing in time; found "
+                f"{current.timestamp.isoformat()} at or before "
+                f"{previous.timestamp.isoformat()}."
             )
     if any(bar.instrument != bars[0].instrument for bar in bars):
         raise ValueError("baseline evaluation requires one instrument per series")
+    venue = venue_for(bars[0].instrument.market)
+    seen: dict[date, datetime] = {}
+    for bar in bars:
+        day = session_date(bar.timestamp, venue)
+        earlier = seen.get(day)
+        if earlier is not None:
+            raise ValueError(
+                f"baseline evaluation expects daily bars; {day.isoformat()} carries two, at "
+                f"{earlier.isoformat()} and {bar.timestamp.isoformat()}. Annualising an "
+                "intraday series against the daily basis is what inflates a Sharpe; "
+                "resample or score it elsewhere."
+            )
+        seen[day] = bar.timestamp
 
 
 def _total_return(curve: tuple[Decimal, ...], starting_capital: Decimal) -> Decimal:
