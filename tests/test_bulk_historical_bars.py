@@ -53,7 +53,11 @@ from quant_ai.backtesting.history import (
     watchlist_instruments,
     write_dataset,
 )
-from quant_ai.backtesting.replay import HistoricalReplayHarness, load_replay_dataset
+from quant_ai.backtesting.replay import (
+    HistoricalReplayHarness,
+    dataset_instrument,
+    load_replay_dataset,
+)
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.intelligence.external.yahoo import yahoo_symbol
 from quant_ai.intelligence.resilience import (
@@ -719,3 +723,153 @@ def test_the_script_exits_nonzero_and_writes_nothing_for_a_symbol_it_could_not_f
     assert run_cli(server, opens, out, chunk_days=800) == 2
     assert (out / "INFY.json").exists()
     assert not (out / "TCS.json").exists()
+
+
+# ------------------------------------------- the dataset says what it holds, and is believed
+
+
+def score_baselines(argv: list[str], tmp_path: Path, monkeypatch) -> dict:
+    """Run the operator's ``baselines`` command and return the document it wrote."""
+    from quant_ai.cli import main as cli_main
+
+    monkeypatch.setenv("QUANT_AI_PAPER_DB", str(tmp_path / "ledger.db"))
+    monkeypatch.setenv("PRAMANA_XAI_DIR", str(tmp_path / "xai"))
+    assert cli_main(argv) == 0
+    return json.loads((tmp_path / "xai" / "latest-baselines.json").read_text())
+
+
+def test_a_fetched_dataset_is_scored_as_the_symbol_it_holds_not_a_hardcoded_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The writer and the reader agree about what is in the file, end to end.
+
+    ``load_replay_dataset`` stamps every bar with the instrument its caller passes in, and
+    the CLI used to build that instrument from ``--market`` alone - RELIANCE for india,
+    AAPL for anything else. So a run over ``INFY.json`` produced a table, a trial-register
+    study (``baselines:RELIANCE:INDIA``) and a proof that all named RELIANCE while every
+    price in them was Infosys's. Nothing in the output said so, and a second run over
+    ``TCS.json`` collided with the first under the same study name.
+
+    Nothing here is hand-shaped: the file is written by the real script and read by the
+    real command, so a provenance block either side stops emitting or stops reading is a
+    failure rather than a silently narrower test.
+    """
+    server, opens = cli_server()
+    out = tmp_path / "datasets"
+    assert run_cli(server, opens, out, chunk_days=CHUNK_DAYS) == 0
+
+    for instrument in (INFY, TCS):
+        payload = score_baselines(
+            ["baselines", "--data", str(out / f"{instrument.symbol}.json")], tmp_path, monkeypatch
+        )
+        assert payload["instrument"] == {
+            "symbol": instrument.symbol,
+            "market": instrument.market.value,
+        }
+        assert payload["bars"] > 0
+
+
+def test_a_market_flag_that_contradicts_the_dataset_is_refused_rather_than_obeyed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Two answers and no way to tell which is right is not a case for picking one.
+
+    An operator who passes ``--market us`` at an NSE file has mixed up two things, and
+    either resolution - trusting the flag and mispricing the friction, or trusting the file
+    and ignoring what was typed - hides the mistake instead of reporting it.
+    """
+    from quant_ai.cli import main as cli_main
+
+    server, opens = cli_server()
+    out = tmp_path / "datasets"
+    assert run_cli(server, opens, out, chunk_days=CHUNK_DAYS) == 0
+
+    monkeypatch.setenv("QUANT_AI_PAPER_DB", str(tmp_path / "ledger.db"))
+    monkeypatch.setenv("PRAMANA_XAI_DIR", str(tmp_path / "xai"))
+    with pytest.raises(SystemExit) as refused:
+        cli_main(["baselines", "--data", str(out / "INFY.json"), "--market", "us"])
+    assert "contradicts" in str(refused.value) and "INFY" in str(refused.value)
+
+    # The flag that agrees with the file is not an error, and does not change the answer.
+    payload = score_baselines(
+        ["baselines", "--data", str(out / "INFY.json"), "--market", "india"], tmp_path, monkeypatch
+    )
+    assert payload["instrument"]["symbol"] == "INFY"
+
+
+def test_a_dataset_that_declares_nothing_is_refused_without_a_flag_not_scored_as_american(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The silent US default, which is the half of the bug that had no symptom at all.
+
+    ``--market`` carries no argparse default, but the resolver used to read an absent flag
+    as ``us``. An NSE series scored that way pays the US fee schedule - no STT, no stamp
+    duty, no depository charge - and annualises against the US session length. Both are
+    wrong, both are invisible, and the resulting Sharpe is the one an operator would act on.
+
+    A hand-written fixture that declares no provenance is still legitimate, so the fix is
+    to require the flag rather than to reject the file.
+    """
+    from quant_ai.cli import main as cli_main
+
+    bars = []
+    moment = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+    for index in range(60):
+        price = 100 + (index % 9)
+        bars.append({
+            "timestamp": (moment + timedelta(days=index)).isoformat(),
+            "open": str(price), "high": str(price + 2), "low": str(price - 2),
+            "close": str(price + 1), "volume": "100000",
+        })
+    undeclared = tmp_path / "undeclared.json"
+    undeclared.write_text(json.dumps({"bars": bars}))
+
+    monkeypatch.setenv("QUANT_AI_PAPER_DB", str(tmp_path / "ledger.db"))
+    monkeypatch.setenv("PRAMANA_XAI_DIR", str(tmp_path / "xai"))
+    with pytest.raises(SystemExit) as refused:
+        cli_main(["baselines", "--data", str(undeclared)])
+    assert "--market is required" in str(refused.value)
+
+    payload = score_baselines(
+        ["baselines", "--data", str(undeclared), "--market", "india"], tmp_path, monkeypatch
+    )
+    assert payload["instrument"]["market"] == "INDIA"
+
+
+def test_a_declaration_that_is_absent_abstains_and_one_that_is_broken_raises(
+    tmp_path: Path,
+) -> None:
+    """Abstain on silence, refuse on a lie. The two are not the same failure.
+
+    A file with no provenance predates the block and cannot be blamed for it; the caller
+    is told nothing and says what it knows. A file that carries the block and fills it with
+    something that is not a market has made a claim that cannot be honoured, and handing
+    back ``None`` for it would quietly route it into the same fallback as the honest silent
+    file - which is how a wrong declaration becomes a US default.
+    """
+    silent = tmp_path / "silent.json"
+    silent.write_text(json.dumps({"bars": []}))
+    assert dataset_instrument(silent) is None
+
+    no_block = tmp_path / "no-instrument.json"
+    no_block.write_text(json.dumps({"bars": [], "provenance": {"source": "somewhere"}}))
+    assert dataset_instrument(no_block) is None
+
+    assert dataset_instrument(tmp_path / "bars.csv") is None
+
+    not_a_mapping = tmp_path / "not-a-mapping.json"
+    not_a_mapping.write_text(json.dumps({"provenance": {"instrument": "INFY"}}))
+    with pytest.raises(TypeError, match="dataset_instrument_malformed"):
+        dataset_instrument(not_a_mapping)
+
+    for broken in (
+        {"symbol": "INFY", "market": "MOON", "asset_class": "EQUITY",
+         "exchange": "NSE", "currency": "INR"},
+        {"symbol": "INFY", "market": "INDIA", "asset_class": "DREAMS",
+         "exchange": "NSE", "currency": "INR"},
+        {"symbol": "INFY", "market": "INDIA", "exchange": "NSE", "currency": "INR"},
+    ):
+        lying = tmp_path / "lying.json"
+        lying.write_text(json.dumps({"provenance": {"instrument": broken}}))
+        with pytest.raises(ValueError, match="dataset_instrument_malformed"):
+            dataset_instrument(lying)

@@ -15,7 +15,14 @@ from quant_ai.agents.traded_runtime import (
     build_traded_runtime,
 )
 from quant_ai.backtesting.intrabar import IntrabarWindow, first_breach
-from quant_ai.domain.models import Instrument, OrderIntent, PortfolioSnapshot, Side
+from quant_ai.domain.models import (
+    AssetClass,
+    Instrument,
+    Market,
+    OrderIntent,
+    PortfolioSnapshot,
+    Side,
+)
 from quant_ai.execution.audit import XAITraceLogger
 from quant_ai.execution.friction import FrictionContext
 from quant_ai.execution.live_friction import friction_context_from_bars
@@ -595,6 +602,48 @@ def load_replay_dataset(path: str | Path, instrument: Instrument) -> HistoricalR
     with source.open(newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     return HistoricalReplayDataset(tuple(_bar_from_mapping(item, instrument) for item in rows))
+
+
+def dataset_instrument(path: str | Path) -> Instrument | None:
+    """The instrument a replay dataset declares about itself, or ``None`` if it declares none.
+
+    ``load_replay_dataset`` stamps every bar with whatever instrument its caller hands in
+    and never reads the file's own ``provenance.instrument`` block. A caller that guesses
+    wrong therefore produces a report, a trial-register study and a proof that all name one
+    security while the prices inside them belong to another - and nothing in the output
+    says so. A dataset written by ``scripts/fetch_historical_bars.py`` states exactly what
+    it holds, down to the asset class and the exchange; this reads that statement so the
+    caller does not have to guess.
+
+    A file that declares nothing returns ``None``: hand-written fixtures and CSV exports
+    predate the provenance block and are still legitimate, and the caller falls back to
+    saying what they are. A file that declares something unusable raises instead, because
+    a dataset that says what it is and says it wrong is worse than one that stays silent
+    (``TypeError`` when the block is not a mapping, ``ValueError`` when a field inside it
+    is missing or names something that is not a market or an asset class).
+    """
+    source = Path(path)
+    if source.suffix.lower() != ".json":
+        return None
+    payload = json.loads(source.read_text())
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict):
+        return None
+    declared = provenance.get("instrument")
+    if declared is None:
+        return None
+    if not isinstance(declared, dict):
+        raise TypeError("dataset_instrument_malformed")
+    try:
+        return Instrument(
+            str(declared["symbol"]),
+            Market(str(declared["market"])),
+            AssetClass(str(declared["asset_class"])),
+            str(declared["currency"]),
+            str(declared["exchange"]),
+        )
+    except (KeyError, ValueError) as error:
+        raise ValueError("dataset_instrument_malformed") from error
 
 
 def _bar_from_mapping(item: dict[str, object], instrument: Instrument) -> Candle:

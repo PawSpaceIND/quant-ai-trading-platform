@@ -552,13 +552,16 @@ def test_backtest_registers_every_window_it_is_run_over(tmp_path, monkeypatch, c
     monkeypatch.setenv("PRAMANA_PROOF_DIR", str(tmp_path / "proofs"))
     monkeypatch.setenv("PRAMANA_TENANT_ID", "backtest")
 
-    assert cli_main(["backtest", "--data", str(data)]) == 0
+    # The CSV declares no instrument, so the market it is scored in has to be stated.
+    assert cli_main(["backtest", "--data", str(data), "--market", "us"]) == 0
     first = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert first["registered_runs"] == 1
     assert first["registered_candidate_trials"] == 1
     assert "not corrected for multiple testing" in first["significance_note"]
 
-    assert cli_main(["backtest", "--data", str(data), "--start", "2026-01-05"]) == 0
+    assert cli_main(
+        ["backtest", "--data", str(data), "--market", "us", "--start", "2026-01-05"]
+    ) == 0
     second = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert second["registered_runs"] == 2
     assert second["registered_candidate_trials"] == 2
