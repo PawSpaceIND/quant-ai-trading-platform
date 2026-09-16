@@ -134,6 +134,44 @@ class OrderIntent:
 
 
 @dataclass(frozen=True)
+class InstrumentBoundOrderIntent(OrderIntent):
+    """Order whose executable instrument identity is immutable at decision time.
+
+    This is opt-in so existing cash-order provenance/idempotency remains unchanged.
+    Derivative/pilot expansion can require this type without making a fill-time registry
+    lookup or retroactively changing every legacy OrderIntent.
+    """
+
+    instrument: Instrument | None = None
+
+    def __post_init__(self) -> None:
+        instrument = self.instrument
+        if instrument is None:
+            raise ValueError("instrument_bound_order_requires_instrument")
+        if not isinstance(instrument, Instrument) or instrument.tradable is not True:
+            raise ValueError("instrument_bound_order_requires_tradable_instrument")
+        from quant_ai.instruments.identity import immutable_instrument_snapshot
+
+        instrument = immutable_instrument_snapshot(instrument)
+        object.__setattr__(self, "instrument", instrument)
+        if (
+            self.symbol != instrument.symbol
+            or self.market is not instrument.market
+            or self.asset_class is not instrument.asset_class
+        ):
+            raise ValueError("instrument_bound_order_identity_mismatch")
+        if instrument.lot_size is not None and (
+            type(self.quantity) is not int
+            or self.quantity <= 0
+            or self.quantity % instrument.lot_size
+        ):
+            raise ValueError(
+                f"instrument_bound_order_not_whole_lots:{instrument.symbol}:"
+                f"{instrument.lot_size}"
+            )
+
+
+@dataclass(frozen=True)
 class PortfolioSnapshot:
     equity: Decimal
     daily_realized_pnl: Decimal

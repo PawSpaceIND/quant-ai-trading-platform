@@ -10,6 +10,8 @@ import sqlite3
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+from quant_ai.instruments.identity import stored_identity
+
 
 def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
     issues: list[dict] = []
@@ -54,8 +56,16 @@ def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
             if type(quantity) is not int or quantity <= 0 or price <= 0 or notional != price * quantity:
                 issue("invalid_fill_geometry", order_id)
                 continue
+            try:
+                identity = stored_identity(fill)
+            except (TypeError, ValueError):
+                issue("invalid_fill_instrument_identity", order_id)
+                identity = None
             state = positions.setdefault(key, {"quantity": 0, "average_price": Decimal(0),
-                                                "stop_price": None, "take_profit_price": None})
+                                                "stop_price": None, "take_profit_price": None,
+                                                "instrument_identity": identity})
+            if state["instrument_identity"] != identity:
+                issue("fill_instrument_identity_mismatch", order_id)
             if fill["side"] == "BUY":
                 new_quantity = state["quantity"] + quantity
                 state["average_price"] = (state["average_price"] * state["quantity"] + notional) / new_quantity
@@ -88,6 +98,11 @@ def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
             if expected is None or actual is None:
                 issue("position_presence_mismatch", label)
                 continue
+            try:
+                if expected["instrument_identity"] != stored_identity(actual):
+                    issue("position_instrument_identity_mismatch", label)
+            except (TypeError, ValueError):
+                issue("invalid_position_instrument_identity", label)
             if expected["quantity"] != actual["quantity"]:
                 issue("position_quantity_mismatch", label)
             if abs(expected["average_price"] - number(actual["average_price"])) > Decimal("0.00000001"):

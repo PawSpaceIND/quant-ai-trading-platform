@@ -20,9 +20,9 @@ function source(name = "fresh") {
   const db = new DatabaseSync(file);
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE paper_accounts(tenant_id TEXT PRIMARY KEY,starting_capital TEXT,cash_balance TEXT,updated_at TEXT);
-    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT);
+    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT,instrument_identity TEXT);
     CREATE TABLE paper_cost_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,code TEXT,amount TEXT,cash_debit INTEGER,created_at TEXT);
-    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT);
+    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT,instrument_identity TEXT);
     CREATE TABLE paper_live_valuations(tenant_id TEXT,timestamp TEXT,ledger_id INTEGER,payload TEXT);`);
   db.prepare("INSERT INTO paper_accounts VALUES ('default',?,?,?)").run(fixture.account.starting_capital, fixture.account.cash_balance, fixture.valuations[name].updatedAt);
   for (const [table, records] of [["paper_ledger", fixture.fills], ["paper_cost_ledger", fixture.costs], ["paper_positions", fixture.positions]] as const) {
@@ -111,7 +111,7 @@ test("snapshot and attribution stay coherent when another WAL writer commits bet
     if (!committed && sql === "SELECT starting_capital,cash_balance FROM paper_accounts WHERE tenant_id=?") {
       committed = true;
       writer.exec(`BEGIN;
-        INSERT INTO paper_ledger VALUES(7,'new-fill','default','TCS','INDIA','EQUITY','BUY',1,'100','100','FILLED','2000-01-01T04:00:59Z',NULL,NULL);
+        INSERT INTO paper_ledger (id,order_id,tenant_id,symbol,market,asset_class,side,quantity,fill_price,notional,status,created_at,stop_price,take_profit_price) VALUES(7,'new-fill','default','TCS','INDIA','EQUITY','BUY',1,'100','100','FILLED','2000-01-01T04:00:59Z',NULL,NULL);
         INSERT INTO paper_cost_ledger VALUES(100,'new-fill','default','SPREAD','0',0,'2000-01-01T04:00:59Z');
         INSERT INTO paper_cost_ledger VALUES(101,'new-fill','default','SLIPPAGE','0',0,'2000-01-01T04:00:59Z');
         UPDATE paper_accounts SET cash_balance='9544.39626';

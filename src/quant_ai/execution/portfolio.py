@@ -53,7 +53,8 @@ class PortfolioTracker:
         self.broker = broker
         self.market_feed = market_feed
         self.tenant_id = tenant_id
-        self.instrument_resolver = instrument_resolver or self._default_instrument
+        self._fallback_instrument_resolver = instrument_resolver or self._default_instrument
+        self.instrument_resolver = self._resolve_instrument
         starting_capital = broker.get_starting_capital(tenant_id)
         self.risk_state = risk_state or risk_state_for_broker(
             broker,
@@ -205,6 +206,17 @@ class PortfolioTracker:
         if market == Market.INDIA:
             return "India"
         return "Global"
+
+    def _resolve_instrument(self, position: BrokerPosition) -> Instrument:
+        # A persisted position's own snapshot wins over a mutable watchlist/catalog.
+        try:
+            instrument = self.broker.bound_instrument_for_position(
+                position.symbol, position.market, position.asset_class, position.tenant_id
+            )
+        except KeyError:
+            # Daemon callers also resolve prospective, not-yet-held cash instruments.
+            instrument = None
+        return instrument if instrument is not None else self._fallback_instrument_resolver(position)
 
     @staticmethod
     def _default_instrument(position: BrokerPosition) -> Instrument:

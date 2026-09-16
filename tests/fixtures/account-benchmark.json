@@ -18,7 +18,8 @@
       "status": "FILLED",
       "created_at": "2026-08-03T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "id": 2,
@@ -34,7 +35,8 @@
       "status": "FILLED",
       "created_at": "2026-08-05T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "id": 3,
@@ -50,7 +52,8 @@
       "status": "FILLED",
       "created_at": "2026-08-10T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "id": 4,
@@ -66,7 +69,8 @@
       "status": "FILLED",
       "created_at": "2026-08-13T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "id": 5,
@@ -82,7 +86,8 @@
       "status": "FILLED",
       "created_at": "2026-08-20T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "id": 6,
@@ -98,7 +103,8 @@
       "status": "FILLED",
       "created_at": "2026-08-26T10:00:00+05:30",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     }
   ],
   "costs": [
@@ -274,7 +280,8 @@
       "quantity": 1,
       "average_price": "80.880",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "tenant_id": "default",
@@ -284,7 +291,8 @@
       "quantity": 3,
       "average_price": "107.840",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     }
   ],
   "valuation": {
