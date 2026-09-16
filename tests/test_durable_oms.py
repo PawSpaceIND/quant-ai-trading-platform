@@ -110,3 +110,100 @@ def test_event_history_is_append_only_and_projection_tampering_is_detected(tmp_p
         )
         with pytest.raises(ValueError, match="oms_fill_projection_mismatch"):
             oms.verify(row.client_order_id)
+
+
+def test_cancel_replace_is_durable_bounded_and_restart_safe(tmp_path) -> None:
+    path = tmp_path / "oms-replace.sqlite"
+    with DurableOms(path) as oms:
+        original = oms.create(order(10), decision_id="decision-original", now=NOW)
+        oms.approve_risk(original.client_order_id, now=NOW + timedelta(seconds=1))
+        oms.submitted(
+            original.client_order_id,
+            broker_order_id="broker-original",
+            now=NOW + timedelta(seconds=2),
+        )
+        partial = oms.fill(
+            original.client_order_id,
+            fill_id="partial-before-cancel",
+            quantity=4,
+            price=Decimal(1500),
+            broker_order_id="broker-original",
+            now=NOW + timedelta(seconds=3),
+        )
+        assert partial.pending_quantity == 6
+        cancelled = oms.cancel(
+            original.client_order_id,
+            reason="operator_replace_price",
+            now=NOW + timedelta(seconds=4),
+        )
+        assert cancelled.state is OrderState.CANCELLED
+        replacement_order = OrderIntent(
+            "INFY", Market.INDIA, Side.BUY, 6, Decimal(1495), "strategy-a",
+            AssetClass.EQUITY, "tenant-a", Decimal(1450), Decimal(1600),
+        )
+        replacement = oms.replace_cancelled(
+            original.client_order_id,
+            replacement_order,
+            decision_id="decision-replacement",
+            reason="operator_replace_price",
+            now=NOW + timedelta(seconds=5),
+        )
+        assert replacement.state is OrderState.CREATED
+        assert replacement.requested_quantity == 6
+        assert oms.replacement_for(original.client_order_id) == replacement.client_order_id
+        assert oms.replacement_parent(replacement.client_order_id) == original.client_order_id
+        assert oms.verify(original.client_order_id)["verified"] is True
+        assert oms.verify(replacement.client_order_id)["verified"] is True
+
+    with DurableOms(path) as restarted:
+        restored = restarted.get(replacement.client_order_id)
+        assert restarted.replacement_parent(restored.client_order_id) == original.client_order_id
+        same = restarted.replace_cancelled(
+            original.client_order_id,
+            replacement_order,
+            decision_id="decision-replacement",
+            reason="operator_replace_price",
+            now=NOW + timedelta(seconds=6),
+        )
+        assert same.client_order_id == restored.client_order_id
+        assert same.last_event_sequence == restored.last_event_sequence
+
+
+def test_replacement_refuses_race_overfill_and_identity_change(tmp_path) -> None:
+    with DurableOms(tmp_path / "oms-replace.sqlite") as oms:
+        original = oms.create(order(10), decision_id="decision-original", now=NOW)
+        oms.approve_risk(original.client_order_id)
+        oms.submitted(original.client_order_id, broker_order_id="broker-original")
+        with pytest.raises(ValueError, match="replacement_requires_confirmed_cancel"):
+            oms.replace_cancelled(
+                original.client_order_id,
+                order(10),
+                decision_id="replacement-too-early",
+                reason="not_cancelled_yet",
+            )
+        oms.fill(
+            original.client_order_id,
+            fill_id="partial-before-cancel",
+            quantity=4,
+            price=Decimal(1500),
+            broker_order_id="broker-original",
+        )
+        oms.cancel(original.client_order_id, reason="replace")
+        with pytest.raises(ValueError, match="replacement_exceeds_cancelled_remainder"):
+            oms.replace_cancelled(
+                original.client_order_id,
+                order(7),
+                decision_id="replacement-too-large",
+                reason="replace",
+            )
+        changed_symbol = OrderIntent(
+            "TCS", Market.INDIA, Side.BUY, 6, Decimal(1495), "strategy-a",
+            AssetClass.EQUITY, "tenant-a", Decimal(1450), Decimal(1600),
+        )
+        with pytest.raises(ValueError, match="replacement_economic_identity_changed"):
+            oms.replace_cancelled(
+                original.client_order_id,
+                changed_symbol,
+                decision_id="replacement-wrong-symbol",
+                reason="replace",
+            )
