@@ -24,6 +24,7 @@ from quant_ai.agents.swarm import (
     CommodityYieldAgent,
     GeopoliticalAnalystAgent,
     IndianEquitiesAgent,
+    InstrumentBoundAnalysisRequest,
     TechnicalQuantAgent,
     USEquitiesAgent,
 )
@@ -192,7 +193,11 @@ class SwarmMarketAnalysisPipeline:
         lessons_provider: Callable[[], Sequence[str]] | None = None,
         intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
         headline_scorer: HeadlineSentimentScorer | None = None,
+        bind_order_instruments: bool = False,
     ) -> None:
+        if type(bind_order_instruments) is not bool:
+            raise TypeError("bind_order_instruments_must_be_boolean")
+        self.bind_order_instruments = bind_order_instruments
         if news_window <= timedelta(0):
             raise ValueError("news_window must be positive")
         if intraday_window <= timedelta(0):
@@ -229,6 +234,13 @@ class SwarmMarketAnalysisPipeline:
         self._macro_current_at: datetime | None = None
         self._macro_current: dict[str, Decimal] = {}
         self._macro_previous: dict[str, Decimal] = {}
+
+    def _analysis_request(self, instrument, now, metrics, max_age):
+        request = AgentAnalysisRequest(instrument.symbol, instrument.market,
+                                       instrument.asset_class, now, metrics, max_age)
+        if self.bind_order_instruments:
+            return InstrumentBoundAnalysisRequest(**vars(request), instrument=instrument)
+        return request
 
     def _resolve_quantity(
         self,
@@ -352,14 +364,7 @@ class SwarmMarketAnalysisPipeline:
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
             requests.append(
-                AgentAnalysisRequest(
-                    instrument.symbol,
-                    instrument.market,
-                    instrument.asset_class,
-                    now,
-                    metrics,
-                    max_age,
-                )
+                self._analysis_request(instrument, now, metrics, max_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
@@ -498,14 +503,7 @@ class SwarmMarketAnalysisPipeline:
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
             requests.append(
-                AgentAnalysisRequest(
-                    instrument.symbol,
-                    instrument.market,
-                    instrument.asset_class,
-                    now,
-                    metrics,
-                    max_age,
-                )
+                self._analysis_request(instrument, now, metrics, max_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)

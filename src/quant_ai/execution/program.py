@@ -61,6 +61,7 @@ class ExecutionProgram:
     parent_quantity: int
     created_at: datetime
     slices: tuple[ProgramSlice, ...]
+    parent_order_payload: str | None = None
 
     @property
     def executed_quantity(self) -> int:
@@ -102,6 +103,9 @@ class ExecutionProgramJournal:
                     PRIMARY KEY(program_id,sequence)
                 );
             """)
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(execution_programs)")}
+            if "parent_order_payload" not in columns:
+                self.db.execute("ALTER TABLE execution_programs ADD COLUMN parent_order_payload TEXT")
             self.db.execute(
                 """CREATE TRIGGER IF NOT EXISTS execution_program_slice_delete_blocked
                    BEFORE DELETE ON execution_program_slices BEGIN
@@ -151,6 +155,7 @@ class ExecutionProgramJournal:
         plan: ExecutionPlan,
         runtime_context_sha256: str,
         created_at: datetime,
+        parent_order_payload: str | None = None,
     ) -> ExecutionProgram:
         for value in (program_id, tenant_id, decision_id, symbol):
             if not _ID.fullmatch(value):
@@ -178,16 +183,19 @@ class ExecutionProgramJournal:
                 or existing["plan_sha256"] != digest
                 or existing["runtime_context_sha256"] != runtime_context_sha256
                 or existing["parent_quantity"] != plan.parent_quantity
+                or existing["parent_order_payload"] != parent_order_payload
             ):
                 raise ValueError("execution_program_decision_payload_mismatch")
             return self.get(program_id)
         with self.db:
             self.db.execute(
-                "INSERT INTO execution_programs VALUES(?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO execution_programs
+                (program_id,tenant_id,decision_id,symbol,state,plan_sha256,runtime_context_sha256,
+                 parent_quantity,created_at,parent_order_payload) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     program_id, tenant_id, decision_id, symbol, ProgramState.PLANNED.value,
                     digest, runtime_context_sha256, plan.parent_quantity,
-                    created_at.astimezone(timezone.utc).isoformat(),
+                    created_at.astimezone(timezone.utc).isoformat(), parent_order_payload,
                 ),
             )
             self.db.executemany(
@@ -364,4 +372,5 @@ class ExecutionProgramJournal:
             row["program_id"], row["tenant_id"], row["decision_id"], row["symbol"],
             ProgramState(row["state"]), row["plan_sha256"], row["runtime_context_sha256"],
             int(row["parent_quantity"]), datetime.fromisoformat(row["created_at"]), slices,
+            row["parent_order_payload"],
         )

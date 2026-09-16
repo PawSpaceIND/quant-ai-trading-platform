@@ -21,7 +21,9 @@ from typing import Self
 from uuid import uuid4
 
 from quant_ai.domain.models import OrderIntent
+from quant_ai.instruments.identity import stored_identity
 from quant_ai.orders.execution_identity import execution_identity, external_fill_id
+from quant_ai.orders.intent import bound_identity
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
@@ -72,6 +74,7 @@ class OmsOrder:
     created_at: datetime
     updated_at: datetime
     last_event_sequence: int
+    instrument_identity: str | None = None
 
     @property
     def pending_quantity(self) -> int:
@@ -162,6 +165,9 @@ class DurableOms:
                     at TEXT NOT NULL
                 );
             """)
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(oms_orders)")}
+            if "instrument_identity" not in columns:
+                self.db.execute("ALTER TABLE oms_orders ADD COLUMN instrument_identity TEXT")
             row = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
             if row is None:
                 self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
@@ -209,6 +215,9 @@ class DurableOms:
             "referencePrice": str(order.reference_price),
             "decisionId": decision_id,
         }
+        identity = bound_identity(order)
+        if identity is not None:
+            raw["instrumentIdentity"] = identity
         return "OMS-" + _hash(raw)[:40]
 
     def create(
@@ -232,10 +241,15 @@ class DurableOms:
                 self._assert_same_intent(decoded, order)
                 return decoded
             self.db.execute(
-                """INSERT INTO oms_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (client_id, order.tenant_id, order.strategy_id, OrderState.CREATED.value,
                  order.symbol, order.market.value, order.asset_class.value, order.side.value,
-                 order.quantity, str(order.reference_price), 0, None, None, stamp, stamp, 0),
+                 order.quantity, str(order.reference_price), 0, None, None, stamp, stamp, 0,
+                 bound_identity(order)),
             )
             self._append_event_locked(client_id, "CREATED", at, {
                 "decisionId": decision_id,
@@ -244,6 +258,7 @@ class DurableOms:
                     "market": order.market.value, "assetClass": order.asset_class.value,
                     "symbol": order.symbol, "side": order.side.value,
                     "quantity": order.quantity, "referencePrice": str(order.reference_price),
+                    **({"instrumentIdentity": bound_identity(order)} if bound_identity(order) is not None else {}),
                 },
             })
         return self.get(client_id)
@@ -259,6 +274,7 @@ class DurableOms:
             or current.side != order.side.value
             or current.requested_quantity != order.quantity
             or current.reference_price != order.reference_price
+            or current.instrument_identity != bound_identity(order)
         ):
             raise ValueError("client_order_id_intent_mismatch")
 
@@ -459,6 +475,7 @@ class DurableOms:
                 or original.market != replacement.market.value
                 or original.asset_class != replacement.asset_class.value
                 or original.side != replacement.side.value
+                or original.instrument_identity != bound_identity(replacement)
             ):
                 raise ValueError("replacement_economic_identity_changed")
             if replacement.quantity > original.pending_quantity:
@@ -469,12 +486,17 @@ class DurableOms:
             if collision is not None:
                 raise ValueError("replacement_order_preexists_without_lineage")
             self.db.execute(
-                "INSERT INTO oms_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     replacement_id, replacement.tenant_id, replacement.strategy_id,
                     OrderState.CREATED.value, replacement.symbol, replacement.market.value,
                     replacement.asset_class.value, replacement.side.value, replacement.quantity,
                     str(replacement.reference_price), 0, None, None, stamp, stamp, 0,
+                    bound_identity(replacement),
                 ),
             )
             self._append_event_locked(replacement_id, "CREATED", at, {
@@ -489,6 +511,8 @@ class DurableOms:
                     "side": replacement.side.value,
                     "quantity": replacement.quantity,
                     "referencePrice": str(replacement.reference_price),
+                    **({"instrumentIdentity": bound_identity(replacement)}
+                       if bound_identity(replacement) is not None else {}),
                 },
             })
             self.db.execute(
@@ -719,6 +743,8 @@ class DurableOms:
                     "quantity": current.requested_quantity,
                     "referencePrice": str(current.reference_price),
                 }
+                if current.instrument_identity is not None:
+                    identity["instrumentIdentity"] = current.instrument_identity
                 if expected != 1 or payload.get("order") != identity:
                     raise ValueError("oms_identity_projection_mismatch")
                 if datetime.fromisoformat(row["at"]) != current.created_at:
@@ -818,4 +844,5 @@ class DurableOms:
             None if average is None else _decimal(average, "average_fill_price", positive=True),
             row["broker_order_id"], datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]), int(row["last_event_sequence"]),
+            stored_identity(row),
         )

@@ -1,0 +1,30 @@
+# Closure checkpoint — broker namespace and decision identity
+
+This checkpoint records specific engineering closures, not a percentage of platform or
+launch readiness. PR #127 is the broker lane; draft #126 is cumulative integration.
+No changes in this continuation were made to PR #112 or to main. No PR was merged.
+
+| Requirement | Verified engineering evidence | Boundary still open |
+| --- | --- | --- |
+| Imported execution identity | 17 namespace/legacy tests in test_broker_fill_namespace.py | Real account evidence and full routing model |
+| Decision contract propagation | 26 tests in test_decision_contract_propagation.py | Opt-in rollout and release-manifest wiring |
+| Exact parent recovery | Changed parent refuses; TWAP restart does not replay completed slice | All other cross-database crash windows are not certified here |
+| Legacy safety | IDs/events unchanged; missing binding or parent refuses | Operator-reviewed migration and compatible rollback |
+| Combined regression | Full source-hashed Mac run and required exact-head Linux CI | 13 Mac deployment-portability cases remain open |
+
+## Release blockers retained
+
+- Dependency review/merge order, including the existing margin prerequisite for MCX Part 4.
+- MCX pilot admission, exact contract-to-margin/fee source linkage, authentic contract-note
+  reconciliation and fresh qualified margin capture. No invented rates or reconciled notes.
+- Qualified point-in-time feeds, corporate-action adjustments, instrument source coverage,
+  derivative lifecycle/delivery calendars, options fees/spread-margin and settlement evidence.
+- Complete decision-time broker routing identity, operator configuration and full default
+  runtime integration; an optional bound request is not a claim that the running daemon uses it.
+- Mac deployment portability. The previously safety-blocked separate candidate is untouched.
+- Target-host sustained burn-in, off-host restore, alert receipts, security review and human UAT.
+- Forward strategy and probability-calibration evidence after costs. No passing test count
+  proves alpha, profitability, or eligibility to enable live-money execution.
+
+The 33-capability register remains an evidence-reference/dependency checker, not an artifact
+authenticator. No placeholder, synthetic capture or nearby module is treated as external proof.

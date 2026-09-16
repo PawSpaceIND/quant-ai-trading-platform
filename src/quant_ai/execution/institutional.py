@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -29,6 +29,7 @@ from quant_ai.execution.planner import (
     VolumeBucket,
 )
 from quant_ai.execution.program import ExecutionProgram, ExecutionProgramJournal
+from quant_ai.orders.intent import canonical_order_intent
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -88,6 +89,9 @@ class InstitutionalTradeRequest:
             raise ValueError("institutional_trade_currency_invalid")
         if not self.base_rate.is_finite() or self.base_rate <= 0:
             raise ValueError("institutional_trade_base_rate_must_be_positive")
+        instrument = getattr(self.proposal, "instrument", None)
+        if instrument is not None and instrument.currency != self.currency:
+            raise ValueError("institutional_contract_currency_mismatch")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
             raise ValueError("institutional_trade_observed_at_must_be_timezone_aware")
 
@@ -121,7 +125,7 @@ SliceVolumeProvider = Callable[[ExecutionProgram, int, datetime], int]
 def _stable(value):
     if isinstance(value, Decimal):
         return str(value)
-    if isinstance(value, datetime):
+    if isinstance(value, (date, datetime)):
         return value.isoformat()
     if isinstance(value, Enum):
         return value.value
@@ -258,6 +262,7 @@ class InstitutionalPaperCoordinator:
         program_id = "PROGRAM-" + hashlib.sha256(
             f"{request.tenant_id}|{proposal.decision_id}|{plan.algorithm.value}".encode()
         ).hexdigest()[:32]
+        parent_order = replace(risk.order, strategy_id=request.strategy_id)
         program = self.programs.create(
             program_id=program_id,
             tenant_id=request.tenant_id,
@@ -266,9 +271,10 @@ class InstitutionalPaperCoordinator:
             plan=plan,
             runtime_context_sha256=request_fingerprint(request),
             created_at=request.observed_at,
+            parent_order_payload=canonical_order_intent(parent_order),
         )
         self._requests[program.program_id] = request
-        self._orders[program.program_id] = replace(risk.order, strategy_id=request.strategy_id)
+        self._orders[program.program_id] = parent_order
         return InstitutionalPreparation(
             approved=True,
             stage=InstitutionalStage.READY,
@@ -353,7 +359,13 @@ class InstitutionalPaperCoordinator:
                     InstitutionalStage.FAILED, self.programs.get(program_id),
                     tuple(executed), risk.reason,
                 )
-            child = replace(risk.order, strategy_id=request.strategy_id)
+            approved_child = replace(risk.order, strategy_id=request.strategy_id)
+            if canonical_order_intent(approved_child) != canonical_order_intent(child):
+                reason = "execution_child_approval_identity_mismatch"
+                self.programs.mark_failed(program_id, slice_.sequence, reason)
+                return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                    self.programs.get(program_id), tuple(executed), reason)
+            child = approved_child
             before = self._position(child)
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
             oms_row = self.oms.create(child, decision_id=decision_id, now=now)
@@ -438,6 +450,8 @@ class InstitutionalPaperCoordinator:
             or parent_order.tenant_id != request.tenant_id
             or parent_order.symbol != program.symbol
             or request_fingerprint(request) != program.runtime_context_sha256
+            or program.parent_order_payload is None
+            or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
             raise ValueError("execution_program_runtime_context_mismatch")
         self._requests[program_id] = request
