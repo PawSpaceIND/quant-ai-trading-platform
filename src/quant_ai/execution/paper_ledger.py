@@ -263,6 +263,10 @@ class PaperBrokerService(BrokerAdapter):
         }
         if context is not None:
             proof["inputs"] = context.provenance()
+        if friction.fee_schedule_provenance is not None:
+            # Statutory rates are evidence too. MCX fills carry the source/date and the
+            # real contract note that reconciled those rates, beside market-input provenance.
+            proof["feeSchedule"] = friction.fee_schedule_provenance
         return proof
 
     def configure_pilot(self, instruments, tenant_id: str) -> None:
