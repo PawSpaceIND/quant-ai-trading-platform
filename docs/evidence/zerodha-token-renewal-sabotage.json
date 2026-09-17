@@ -258,11 +258,27 @@
       "caught": true
     }
   ],
-  "restored_sha256": {
-    "src/quant_ai/daemon.py": "402b62256f710bea88e0b75440681cf4366b53400b8029e1c7bc6d0736bd4346",
-    "src/quant_ai/operations/zerodha_renewal.py": "1b50b8b343efa5952d90ca38dc0ea4f6bbb9885b5f7200f3937cb9fbce8a03a0",
-    "scripts/renew_pilot_token.py": "88fa3709f206fb7f9356f749a38231557aff667bcf0a8d65080166f903671427",
-    "deploy/docker-compose.yml": "61877d2209ae51da3187400bdba312de1920f5204a5e39adca7206c067ea6334",
-    "src/quant_ai/operations/zerodha_session.py": "e8b2889d31159741cb93755aaee323748540c874302a541caf4513d80822eae7"
-  }
+  "restored_files": [
+    {
+      "path": "src/quant_ai/daemon.py",
+      "sha256": "402b62256f710bea88e0b75440681cf4366b53400b8029e1c7bc6d0736bd4346"
+    },
+    {
+      "path": "src/quant_ai/operations/zerodha_renewal.py",
+      "sha256": "1b50b8b343efa5952d90ca38dc0ea4f6bbb9885b5f7200f3937cb9fbce8a03a0"
+    },
+    {
+      "path": "scripts/renew_pilot_token.py",
+      "sha256": "88fa3709f206fb7f9356f749a38231557aff667bcf0a8d65080166f903671427"
+    },
+    {
+      "path": "deploy/docker-compose.yml",
+      "sha256": "61877d2209ae51da3187400bdba312de1920f5204a5e39adca7206c067ea6334"
+    },
+    {
+      "path": "src/quant_ai/operations/zerodha_session.py",
+      "sha256": "e8b2889d31159741cb93755aaee323748540c874302a541caf4513d80822eae7"
+    }
+  ],
+  "legacy_document_sha256": "edde011d0024e8946ddd1ef8f3017eeb85a3762283aa021911f09dfeacba2c47"
 }

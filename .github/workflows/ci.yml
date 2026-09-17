@@ -135,10 +135,17 @@ jobs:
           # and unlike a base..head diff it can never silently scan nothing (first
           # push of a branch, force-push, or a zeroed github.event.before). It also
           # catches a secret that was committed and later deleted.
-          "$tmp/gitleaks" git . --redact --no-banner --log-level info
-          # ...and the checked-out tree, which catches a secret that is live in the
-          # current code even if the commit that introduced it is outside the range.
-          "$tmp/gitleaks" dir . --redact --no-banner --log-level info
+          # The wrapper retains both full-history and working-tree scans, checks that
+          # a synthetic finding still blocks, and publishes locations without secrets.
+          python3 scripts/scan_repository_secrets.py --scanner "$tmp/gitleaks" \
+            --report-directory "$RUNNER_TEMP/pramana-secret-scan"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secret-scan-location-summary
+          path: ${{ runner.temp }}/pramana-secret-scan/secret-scan-summary.json
+          if-no-files-found: warn
 
       - uses: actions/setup-python@v5
         with:
