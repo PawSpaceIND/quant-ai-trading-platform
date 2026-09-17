@@ -174,11 +174,12 @@ class DaemonRunner:
         skips the analysis pipeline and otherwise leaves required correlation/ES gates
         reporting ``history_scope_incomplete`` until the next session.
 
-        Warm the exact provider owned by ``DailyCloseHistory`` here, before protection
-        starts and again before each cadence.  Daily providers already cache by UTC day,
-        so the cadence call is local after the first observation and naturally refreshes
-        after a day rollover.  A provider failure is evidence unavailability, not a runner
-        failure: the gates remain fail-closed and telemetry reports the missing history.
+        Warm the exact provider owned by ``DailyCloseHistory`` at runner startup while
+        independent protection is already active, and again before each cadence. Daily
+        providers already cache by UTC day, so same-day cadence calls are local and the
+        cache naturally refreshes after a day rollover. A provider failure is evidence
+        unavailability, not a runner failure: the gates remain fail-closed and telemetry
+        reports the missing history.
         """
         try:
             runtime = self.daemon.scheduler.pipeline.runtime
@@ -192,6 +193,8 @@ class DaemonRunner:
                 self._logger.warning("required_book_history_warmup_unavailable")
                 return
             for symbol in required:
+                if self._stop_requested:
+                    return
                 instrument = history.instruments.get(symbol.strip().upper())
                 if instrument is None:
                     self._logger.warning(
@@ -200,8 +203,10 @@ class DaemonRunner:
                     continue
                 try:
                     bars = fetch(instrument, now)
-                except Exception:  # one provider fault must not hide the rest of the scope
-                    self._logger.exception(
+                except Exception:  # noqa: BLE001 - provider boundary must fail closed and continue
+                    # External exception text can contain provider diagnostics. Keep this
+                    # boundary deliberately redacted while leaving the gates fail-closed.
+                    self._logger.warning(
                         "required_book_history_warmup_failed symbol=%s", symbol
                     )
                     continue
@@ -209,8 +214,8 @@ class DaemonRunner:
                     self._logger.warning(
                         "required_book_history_warmup_abstained symbol=%s", symbol
                     )
-        except Exception:  # malformed optional wiring must not take the paper runner down
-            self._logger.exception("required_book_history_warmup_unavailable")
+        except Exception:  # noqa: BLE001 - malformed optional wiring must not take runner down
+            self._logger.warning("required_book_history_warmup_unavailable")
 
     def _protect(self) -> None:
         # A dedicated thread keeps protection responsive even when synchronous provider
@@ -227,14 +232,19 @@ class DaemonRunner:
             self._protection_stop.wait(self.protection_interval)
 
     async def start(self) -> None:
-        # Populate fail-closed book controls before the protection heartbeat publishes its
-        # first runtime snapshot.  Provider I/O is synchronous, so keep it off the event loop.
-        await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
+        # Protection and market streams must become live before any optional provider I/O.
+        # History warm-up runs off the event loop while telemetry remains fail-closed until
+        # real cached evidence exists.
         protection = Thread(target=self._protect, name="pramana-protection", daemon=True)
         protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
-        cadence_task = asyncio.create_task(self._run_aligned_cadence())
+        cadence_task: asyncio.Task[None] | None = None
         try:
+            if not self._stop_requested:
+                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
+            if self._stop_requested:
+                return
+            cadence_task = asyncio.create_task(self._run_aligned_cadence())
             await cadence_task
         finally:
             self._stop_requested = True
@@ -274,9 +284,14 @@ class DaemonRunner:
                 return
             current = _as_utc(self.clock())
             try:
-                # Refresh once per UTC day through the provider's own cache.  This stays
+                # Refresh once per UTC day through the provider's own cache. This stays
                 # outside every broker lock and keeps off-hours restarts data-ready.
                 await asyncio.to_thread(self._warm_required_book_history, current)
+                if self._stop_requested:
+                    return
+                # Provider I/O can take time. Execution and proof timestamps must reflect
+                # the post-warmup clock rather than the pre-network observation.
+                current = _as_utc(self.clock())
                 await self.daemon.run_once(current)
                 await self._capture_xai_proofs(current)
             except asyncio.CancelledError:
