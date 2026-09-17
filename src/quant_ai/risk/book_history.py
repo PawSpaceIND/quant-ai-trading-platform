@@ -198,6 +198,6 @@ class DailyCloseHistory:
             result["reason"] = reason or ("ready" if intervals >= MIN_TAIL_INTERVALS
                                           else "insufficient_tail_history")
             result["dataReady"] = not reason and intervals >= MIN_TAIL_INTERVALS
-        except (ValueError, TypeError, AttributeError, ArithmeticError):
+        except (ValueError, TypeError, AttributeError, ArithmeticError, OSError, RuntimeError):
             result["reason"] = "history_invalid_or_stale"
         return result
