@@ -36,3 +36,7 @@ apps/pramana-ui/test-results/
 
 # Fetched market data: bulk historical bars and the resume chunk cache (never commit prices)
 var/
+
+# Private cooperating lock for the owner-run token publisher.
+.env.zerodha.lock
+.zerodha-env-*.tmp

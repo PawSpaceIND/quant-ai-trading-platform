@@ -67,6 +67,7 @@ from quant_ai.marketdata.ticker_stream import (
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
+from quant_ai.operations.zerodha_renewal import check_runtime_token
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.book_history import DailyCloseHistory
@@ -655,6 +656,8 @@ def _env_notifications() -> TradingNotificationDispatcher:
 def build_ghost_runner_from_env() -> DaemonRunner:
     """Build the headless ghost runner from deployment environment variables."""
     _assert_ghost_mode()
+    dispatcher = _env_notifications()
+    credentials = check_runtime_token(dispatcher=dispatcher)
     ib_module = import_module("ib_async")
     ib = ib_module.IB()
     contracts = tuple(
@@ -683,10 +686,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         history_provider=daily_history,
         book_risk_history=_env_book_risk_history_provider(daily_history),
         holidays=_env_holidays(),
-        notifications=_env_notifications(),
+        notifications=dispatcher,
         halt_file=paths.halt_file(),
-        zerodha_api_key=_required_env("ZERODHA_API_KEY"),
-        zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
+        zerodha_api_key=credentials.api_key,
+        zerodha_access_token=credentials.access_token,
         zerodha_instrument_tokens=tokens,
         zerodha_symbol_by_token=symbols,
         ib_client=ib,

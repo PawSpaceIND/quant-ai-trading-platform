@@ -181,6 +181,14 @@ def test_env_runner_can_boot_zerodha_only_with_explicit_india_target(tmp_path, m
     class FakeIB:
         pass
 
+    class FakeKite:
+        def set_access_token(self, token):
+            assert token == "test-token"
+
+        def profile(self):
+            return {"user_id": "SYNTHETIC"}
+
+    monkeypatch.setattr("quant_ai.operations.zerodha_renewal._kite_client", lambda key: FakeKite())
     monkeypatch.setattr("quant_ai.daemon.AnthropicSwarmClient", FakeAnthropicClient)
     monkeypatch.setattr("quant_ai.daemon.import_module", lambda name: SimpleNamespace(IB=FakeIB))
 
