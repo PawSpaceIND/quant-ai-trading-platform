@@ -61,8 +61,10 @@ def _config(path, tenant, now):
             or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > 16384):
         raise ValueError("monitor_config_not_private_regular_file")
     data = json.loads(path.read_text(), object_pairs_hook=_unique)
-    if not isinstance(data, dict) or set(data) != FIELDS or data["schema"] != SCHEMA:
+    if not isinstance(data, dict) or set(data) not in (FIELDS, FIELDS | {"require_shadow_lineage"}) or data["schema"] != SCHEMA:
         raise ValueError("monitor_config_schema_invalid")
+    if "require_shadow_lineage" in data and data["require_shadow_lineage"] is not True:
+        raise ValueError("monitor_shadow_requirement_must_be_true")
     if data["tenant_id"] != tenant:
         raise ValueError("monitor_tenant_mismatch")
     if not isinstance(data["candidate_id"], str) or not re.fullmatch(r"[A-Za-z0-9._:/-]{1,180}", data["candidate_id"]):
@@ -158,6 +160,14 @@ def observe_probability_drift(config_path, *, tenant_id, now):
         with closing(sqlite3.connect(journal.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA trusted_schema=OFF")
+            db.execute("BEGIN")
+            has_shadow = db.execute("SELECT 1 FROM sqlite_master WHERE name='shadow_journal_meta' AND type='table'").fetchone()
+            if config.get("require_shadow_lineage") or has_shadow:
+                from quant_ai.learning.shadow import validate_shadow_lineage
+
+                result["shadow_lineage"] = validate_shadow_lineage(db, tenant_id=tenant_id)
+
             raw = db.execute("""SELECT f.*,o.resolved_at,o.gross_return,o.cost_return,
                 o.after_cost_return,o.positive_after_cost,o.payload_sha256 AS outcome_sha256
                 FROM probability_forecasts f JOIN forecast_outcomes o USING(forecast_id)
