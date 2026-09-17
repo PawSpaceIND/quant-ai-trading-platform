@@ -334,3 +334,32 @@ Published-head Linux/UI/browser/security results are recorded separately in the
 PR certification comment. A copied consistent local snapshot is not a trading
 permission, real-market acceptance result or profitable-edge demonstration.
 See `docs/INSTITUTIONAL_STATE_BACKUP.md` for exact scope and nonclaims.
+
+## Selected AI-registry/training-evidence recovery
+
+Continues #126 from `94c63230be9daeb5724edd0b29b7544f2e8fbd50` with main
+`13bbdec81fe59332513260b746d51ec75bcf565d` unchanged. The optional schema-5
+AI inventory preserves the complete selected candidate log, one declared training
+run/dataset manifest pair per candidate and the exact opaque artifact bytes.
+Reuses existing candidate replay and training-contract validation. No model is
+loaded, trained, registered, promoted or activated by capture/restore.
+
+The new 67-case suite and the 250-case focused AI/recovery set passed. Full local
+Mac suite: **2336 passed / 0 failed**, two warnings and 14 additional subtests,
+237.22 seconds. Separate risk acceptance: **15 failed / 2 passed**, 3.99 seconds.
+All 641 selected non-Markdown tracked/new files matched their hashes through the
+full run. Ruff, whitespace checks and full-history/current-tree secret scans pass.
+Four guard removals in disposable interpreter memory reproduced failures without
+changing certified source files. No existing assertions, risk controls or CI
+selection were changed. Published-head CI is recorded separately in the PR.
+
+The initial three failing cases specified a previously unsupported API. Two later
+cases reproduced boolean/numeric verification coercion and were fixed by canonical
+JSON comparison. A model/dataset change cannot reuse a training binding, and a
+hash-valid but invalid historical approval still fails the existing replay.
+
+Tenant and run selection remain operator declarations. No cryptographic linkage
+from existing approvals to artifact bytes, authenticated reviewer, dataset-byte
+validation or genuine performance evidence is fabricated. Unselected AI files,
+in-memory ModelRegistry state, coordinated automatic backup and actual off-host
+acceptance are not covered. See `docs/AI_REGISTRY_RECOVERY.md` for precise limits.
