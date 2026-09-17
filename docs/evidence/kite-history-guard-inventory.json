@@ -1,0 +1,404 @@
+{
+  "scope": "Offline candidate-history guards; no provider account or deployment",
+  "mutations": [
+    {
+      "id": "fixed_get_endpoint",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "raise KiteHistoryError(\"kite_history_endpoint_refused\")",
+      "new": "pass",
+      "test": "tests/test_kite_daily_history.py::test_transport_refuses_orders_other_hosts_and_redirects"
+    },
+    {
+      "id": "no_redirect",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None",
+      "new": "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return urllib.request.Request(newurl)",
+      "test": "tests/test_kite_daily_history.py::test_transport_refuses_orders_other_hosts_and_redirects"
+    },
+    {
+      "id": "transport_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if len(body) > max_bytes:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_transport_read_is_bounded_and_does_not_follow_http_redirects"
+    },
+    {
+      "id": "aware_times",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not isinstance(moment, datetime) or moment.utcoffset() is None:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_invalid_time_windows_refuse_before_provider[naive_start]"
+    },
+    {
+      "id": "cash_scope",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "    if (not isinstance(instrument, Instrument) or instrument.market is not Market.INDIA\n            or instrument.exchange != \"NSE\" or instrument.currency != \"INR\"\n            or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}\n            or instrument.tradable is not True or instrument.is_dated_contract\n            or not re.fullmatch(r\"[A-Z0-9][A-Z0-9&_.-]{0,79}\", instrument.symbol)):\n",
+      "new": "    if False:\n",
+      "test": "tests/test_kite_daily_history.py::test_out_of_scope_instruments_refuse_before_requests"
+    },
+    {
+      "id": "json_duplicate_keys",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if key in result:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted"
+    },
+    {
+      "id": "numeric_type",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if type(value) not in (int, Decimal):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_numeric_parser_rejects_non_json_number_types"
+    },
+    {
+      "id": "numeric_finite",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not result.is_finite():",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_decimal_nonfinite_guard_has_its_own_regression"
+    },
+    {
+      "id": "header_safe_credentials",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if any(not isinstance(v, str) or not re.fullmatch(r\"[A-Za-z0-9_-]{1,512}\", v)\n               for v in (api_key, access_token)):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_header_unsafe_credentials_never_reach_a_request"
+    },
+    {
+      "id": "one_http_attempt",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "KiteHistoryTransport(), max_attempts=1,",
+      "new": "KiteHistoryTransport(), max_attempts=2,",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider"
+    },
+    {
+      "id": "bounded_http_payload_setting",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "max_payload_bytes=MAX_BYTES,",
+      "new": "max_payload_bytes=MAX_BYTES*2,",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider"
+    },
+    {
+      "id": "conservative_request_rate",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "TokenBucketRateLimiter(1.0, 1.0)",
+      "new": "TokenBucketRateLimiter(2.0, 1.0)",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider"
+    },
+    {
+      "id": "auth_latch_before_http",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if self.authentication_rejected:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_raw_auth_response_is_also_latched"
+    },
+    {
+      "id": "revoke_evidence_storage",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "            self._evidence.clear()",
+      "new": "            pass",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history"
+    },
+    {
+      "id": "auth_error_latch",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if error.status_code in (401, 403):",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_rejected_auth_after_master_load_cannot_retry_on_another_symbol"
+    },
+    {
+      "id": "raw_auth_latch",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if response.status_code in (401, 403):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_raw_auth_response_is_also_latched"
+    },
+    {
+      "id": "diagnostic_sanitization",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "except Exception:  # noqa: BLE001 - external diagnostics must never enter history logs",
+      "new": "except OSError:",
+      "test": "tests/test_kite_history_boundaries.py::test_unexpected_transport_diagnostic_is_sanitized"
+    },
+    {
+      "id": "successful_status_required",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if response.status_code != 200:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_incomplete_success_status_is_refused"
+    },
+    {
+      "id": "raw_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not isinstance(response.body, bytes) or len(response.body) > MAX_BYTES:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_response_size_refuses_in_get_before_any_decoder"
+    },
+    {
+      "id": "daily_master_reuse",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if self._master_day == day:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_gzip_master_and_daily_master_reuse"
+    },
+    {
+      "id": "decompressed_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if len(body) > MAX_BYTES:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_decompressed_master_size_refuses_before_csv_validation"
+    },
+    {
+      "id": "master_header",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames) or not required <= set(reader.fieldnames):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_duplicate_master_header_has_an_explicit_schema_refusal"
+    },
+    {
+      "id": "master_row_boundary",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if index >= MAX_ROWS or None in row or any(v is None for v in row.values()):",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bounded_provider_payloads_are_not_silently_truncated[row_count]"
+    },
+    {
+      "id": "master_exchange",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if row[\"exchange\"] != \"NSE\":",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[wrong_exchange]"
+    },
+    {
+      "id": "master_cash_segment",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if row[\"instrument_type\"] not in {\"EQ\", \"ETF\"} or row[\"segment\"] != \"NSE\":",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_master_shape_and_canonical_identity_refuse_before_candles"
+    },
+    {
+      "id": "master_token_expiry",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if row[\"expiry\"] or not re.fullmatch(r\"[1-9][0-9]{0,9}\", token) or int(token) > 4294967295:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[expiry]"
+    },
+    {
+      "id": "canonical_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if len(canonical) != 1 or canonical[0][\"symbol\"] != symbol or canonical[0][\"providerInstrumentId\"] != token:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_master_guards_refuse_at_the_master_boundary"
+    },
+    {
+      "id": "master_lot_tick",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not lot.is_finite() or lot <= 0 or lot != lot.to_integral_value() or not tick.is_finite() or tick <= 0:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[bad_lot]"
+    },
+    {
+      "id": "unique_master_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if symbol in result or token in tokens:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[duplicate_token]"
+    },
+    {
+      "id": "nonempty_master",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not result:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_master_guards_refuse_at_the_master_boundary"
+    },
+    {
+      "id": "exact_request_window",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if interval != \"1d\" or start >= end or (end - start) > timedelta(days=366):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_window_ceiling_is_exact_not_rounded_down_to_whole_days"
+    },
+    {
+      "id": "missing_instrument",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if identity is None:",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_missing_master_symbol_and_contract_units_have_specific_refusals"
+    },
+    {
+      "id": "matching_instrument_units",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if ((instrument.lot_size is not None and instrument.lot_size != lot)\n                        or (instrument.tick_size is not None and instrument.tick_size != tick)):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_missing_master_symbol_and_contract_units_have_specific_refusals"
+    },
+    {
+      "id": "decimal_decoder",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "parse_float=Decimal",
+      "new": "parse_float=float",
+      "test": "tests/test_kite_daily_history.py::test_daily_candles_derive_tokens_and_preserve_decimal_and_source"
+    },
+    {
+      "id": "strict_json_constants",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "parse_constant=_constant",
+      "new": "parse_constant=lambda _: None",
+      "test": "tests/test_kite_daily_history.py::test_nonfinite_unused_json_field_is_still_invalid_json"
+    },
+    {
+      "id": "duplicate_decoder_hook",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "object_pairs_hook=_pairs",
+      "new": "object_pairs_hook=dict",
+      "test": "tests/test_kite_daily_history.py::test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted"
+    },
+    {
+      "id": "success_envelope",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not isinstance(payload, dict) or payload.get(\"status\") != \"success\" or not isinstance(payload.get(\"data\"), dict):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_error_envelope_cannot_smuggle_otherwise_valid_candles"
+    },
+    {
+      "id": "candle_count_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not isinstance(rows, list) or len(rows) > MAX_CANDLES:",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_bounded_provider_payloads_are_not_silently_truncated[candle_count]"
+    },
+    {
+      "id": "candle_shape",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if not isinstance(row, list) or len(row) != 6 or not isinstance(row[0], str):",
+      "new": "if False:",
+      "test": "tests/test_kite_history_boundaries.py::test_candle_shape_reports_its_own_refusal"
+    },
+    {
+      "id": "candle_session_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if (timestamp > end or not local_start.date() <= day <= local_end.date()\n                            or day in days or (previous is not None and timestamp <= previous)):",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_out_of_order_daily_rows_do_not_get_silently_sorted"
+    },
+    {
+      "id": "whole_volume",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if numbers[-1] != numbers[-1].to_integral_value():",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_invalid_candles_refuse_whole_series[fractional_volume]"
+    },
+    {
+      "id": "closed_session_only",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "if session_close_at(timestamp, venue_for(instrument.market)) <= end:",
+      "new": "if True:",
+      "test": "tests/test_kite_daily_history.py::test_live_session_is_not_counted_as_completed_history"
+    },
+    {
+      "id": "evidence_source_hash",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "self._master_hash = hashlib.sha256(body).hexdigest()",
+      "new": "self._master_hash = \"0\"*64",
+      "test": "tests/test_kite_history_boundaries.py::test_feed_evidence_fingerprints_match_actual_response_bytes"
+    },
+    {
+      "id": "evidence_response_hash",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "\"responseSha256\": hashlib.sha256(body).hexdigest()",
+      "new": "\"responseSha256\": \"0\"*64",
+      "test": "tests/test_kite_history_boundaries.py::test_feed_evidence_fingerprints_match_actual_response_bytes"
+    },
+    {
+      "id": "failed_observation_evidence_clear",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "                self._evidence.pop(instrument.symbol, None)",
+      "new": "                pass",
+      "test": "tests/test_kite_history_boundaries.py::test_failed_refresh_erases_previous_symbol_evidence"
+    },
+    {
+      "id": "nonblocking_evidence_read",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "    def evidence(self):\n        # This lock is never held during provider I/O.\n        with self._state_lock:",
+      "new": "    def evidence(self):\n        # Deliberately broken only in the offline copy.\n        with self._lock:",
+      "test": "tests/test_kite_history_boundaries.py::test_provider_evidence_read_does_not_wait_behind_network"
+    },
+    {
+      "id": "exact_cache_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "instrument.underlying, tuple(sorted(instrument.metadata.items()))",
+      "new": "instrument.underlying, ()",
+      "test": "tests/test_kite_daily_history.py::test_metadata_is_part_of_cache_identity"
+    },
+    {
+      "id": "fetch_rejected_auth_cache",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "                if self.feed._authentication_failed:\n                    self._observations.clear()\n                    return ()\n                held",
+      "new": "                if False:\n                    self._observations.clear()\n                    return ()\n                held",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history[fetch]"
+    },
+    {
+      "id": "post_fetch_rejected_auth",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "                if self.feed._authentication_failed:\n                    self._observations.clear()\n                    return ()\n                self._observations[key]",
+      "new": "                if False:\n                    self._observations.clear()\n                    return ()\n                self._observations[key]",
+      "test": "tests/test_kite_history_boundaries.py::test_auth_failure_during_refresh_discards_the_entire_observation_store"
+    },
+    {
+      "id": "cached_rejected_auth",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "            if self.feed._authentication_failed:\n                self._observations.clear()\n                return ()\n            held",
+      "new": "            if False:\n                self._observations.clear()\n                return ()\n            held",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history[cached]"
+    },
+    {
+      "id": "fetch_observation_no_future",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "return held[1] if held[0] <= current else ()",
+      "new": "return held[1]",
+      "test": "tests/test_kite_daily_history.py::test_exact_identity_and_observation_time_bound_daily_cache"
+    },
+    {
+      "id": "cached_observation_time",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "return held[1] if held and held[0].date() == current.date() and held[0] <= current else ()",
+      "new": "return held[1] if held else ()",
+      "test": "tests/test_kite_daily_history.py::test_exact_identity_and_observation_time_bound_daily_cache"
+    },
+    {
+      "id": "nonblocking_cached_read",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "old": "    def cached(self, instrument, now):\n        current, key = _aware(now), self._identity(instrument)\n        with self.feed._state_lock, self._cache_lock:",
+      "new": "    def cached(self, instrument, now):\n        current, key = _aware(now), self._identity(instrument)\n        with self._fetch_lock, self._cache_lock:",
+      "test": "tests/test_kite_daily_history.py::test_protection_cache_read_does_not_wait_on_inflight_network"
+    },
+    {
+      "id": "paper_only_selection",
+      "path": "src/quant_ai/marketdata/history_selection.py",
+      "old": "if environment.get(\"TRADING_LIVE_MONEY_ACTIVE\", \"false\").strip().lower() != \"false\":",
+      "new": "if False:",
+      "test": "tests/test_kite_daily_history.py::test_kite_selection_cannot_acquire_live_authority"
+    },
+    {
+      "id": "unknown_source_refused",
+      "path": "src/quant_ai/marketdata/history_selection.py",
+      "old": "raise KiteHistoryError(\"unsupported_daily_history_provider\")",
+      "new": "return None",
+      "test": "tests/test_kite_daily_history.py::test_default_yahoo_and_none_remain_unchanged"
+    },
+    {
+      "id": "regime_source_fingerprint",
+      "path": "src/quant_ai/governance/runtime_manifest.py",
+      "old": "\"provider\": getattr(p.history, \"provider_id\", None)",
+      "new": "\"provider\": None",
+      "test": "tests/test_kite_daily_history.py::test_runtime_fingerprint_changes_on_history_source"
+    },
+    {
+      "id": "risk_source_fingerprint",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "\"historySource\": getattr(getattr(history, \"provider\", None), \"provider_id\", None)",
+      "new": "\"historySource\": None",
+      "test": "tests/test_kite_daily_history.py::test_warden_configuration_identity_includes_risk_history_source"
+    }
+  ]
+}

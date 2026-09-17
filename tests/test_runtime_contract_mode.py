@@ -257,6 +257,10 @@ def test_environment_wires_bound_mode_and_selected_oms(tmp_path, monkeypatch, mo
         monkeypatch.setenv(key,value)
     monkeypatch.setattr("quant_ai.daemon.import_module", lambda _: SimpleNamespace(IB=SimpleNamespace))
     monkeypatch.setattr("quant_ai.daemon.AnthropicSwarmClient", lambda **kw: None)
+    # Existing factory now checks the provider profile before constructing the runner.
+    # Exercise that real check with the same explicit offline SDK fake as renewal tests.
+    from test_zerodha_renewal import FakeKite
+    monkeypatch.setattr("quant_ai.operations.zerodha_renewal._kite_client", lambda _: FakeKite())
     runner = build_ghost_runner_from_env()
     try:
         assert runner.daemon.scheduler.pipeline.bind_order_instruments is (mode == "bound_v1")

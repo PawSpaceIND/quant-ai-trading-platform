@@ -33,6 +33,17 @@ GATES = {"sector_concentration", "correlation_adjusted_gross", "book_expected_sh
 
 @pytest.fixture(autouse=True)
 def isolated_environment(monkeypatch):
+    # Item 1 now validates profile before Item 2's boot checks. Keep that real
+    # validation active, but supply an offline SDK boundary for these synthetic tests.
+    from quant_ai.operations import zerodha_renewal
+    class Profile:
+        def set_access_token(self, token):
+            assert token == "test"
+        def profile(self):
+            return {"user_id": "FIXTURE"}
+    monkeypatch.setattr(zerodha_renewal, "_kite_client", lambda _key: Profile())
+    monkeypatch.delenv("PRAMANA_ZERODHA_TOKEN_ISSUED_AT", raising=False)
+    monkeypatch.delenv("PRAMANA_ZERODHA_USER_ID", raising=False)
     for name in ("PRAMANA_SECTOR_MAP_JSON", "PRAMANA_SECTOR_MAP_FILE", "PRAMANA_REQUIRE_BOOK_RISK_GATES",
                  "PRAMANA_BOOK_RISK_HISTORY", "PRAMANA_FOUNDER_DIRECTIVES_JSON", "PRAMANA_FOUNDER_DIRECTIVES_FILE"):
         monkeypatch.delenv(name, raising=False)

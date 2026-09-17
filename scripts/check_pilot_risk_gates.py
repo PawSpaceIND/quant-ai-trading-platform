@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only public-history preflight. No broker, ledger, LLM or account credentials.
+"""Read-only history preflight. No broker orders, ledger or LLM.
 
-Use --online to authorize the existing Yahoo daily-history HTTP provider. This checks
+Use --online to authorize the selected history provider. Kite uses environment credentials only. This checks
 source availability and sample coverage; it neither starts nor certifies the pilot host.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from quant_ai.governance.directives import FounderDirectives
-from quant_ai.intelligence.resilience import ResilientHttpClient, UrllibTransport
+from quant_ai.marketdata.history_selection import daily_history_from_env
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.risk.book_history import DailyCloseHistory, _unique_pairs, normalize_sector_map
 from quant_ai.risk.policy import BookRiskFirewall
@@ -136,10 +136,11 @@ def main(argv=None):
     parser.add_argument("--directives", type=Path, default=ROOT / "deploy/founder-directives.example.json")
     parser.add_argument("--sector-map", type=Path, default=ROOT / "deploy/pilot-sector-map.example.json")
     parser.add_argument("--online", action="store_true")
+    parser.add_argument("--history-provider", choices=("yahoo", "kite"))
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not args.online:
-        print("Explicit --online required for public historical data requests.", file=sys.stderr)
+        print("Explicit --online required for historical data requests.", file=sys.stderr)
         return 2
     try:
         paths = tuple(path.expanduser().absolute() for path in (args.directives, args.sector_map))
@@ -148,8 +149,12 @@ def main(argv=None):
         sectors = normalize_sector_map(_input_object(originals[1]))
         output = args.output.expanduser().absolute() if args.output else None
         with _prepared_report(output) as prepared:
-            provider = DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
+            provider = daily_history_from_env(source=args.history_provider, yahoo_factory=DailyHistoryProvider)
+            if provider is None:
+                raise ValueError("history_provider_required")
             report = check(directives, sectors, provider, datetime.now(timezone.utc))
+            if callable(getattr(provider, "evidence", None)):
+                report["historyEvidence"] = provider.evidence()
             _unchanged(paths, originals)
             report["inputs"] = {
                 "directivesSha256": hashlib.sha256(originals[0]).hexdigest(),

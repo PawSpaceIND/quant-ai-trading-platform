@@ -1,0 +1,91 @@
+{
+  "base_commit": "d0dc5d203b3946eb8294157716bff10056080fbf",
+  "synthetic_only": true,
+  "before_repair_final_regression_set": {
+    "guard": "prior-source",
+    "test": "tests/test_zerodha_renewal_env_syntax.py",
+    "exit": 1,
+    "failures": 35,
+    "collection_errors": 0,
+    "passed": 9,
+    "caught": true
+  },
+  "mutations": [
+    {
+      "guard": "colon_delimiters",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_documented_delimiters_have_identical_field_authority",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "passed": 2,
+      "caught": true
+    },
+    {
+      "guard": "multiline_refusal",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_unterminated_foreign_value_refuses_before_any_provider_call",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    },
+    {
+      "guard": "unsupported_assignment_refusal",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_unsupported_assignment_syntax_is_not_silently_ignored",
+      "exit": 1,
+      "failures": 3,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    },
+    {
+      "guard": "control_character_refusal",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_non_line_ending_controls_cannot_create_assignments",
+      "exit": 1,
+      "failures": 6,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    },
+    {
+      "guard": "escaped_quote_boundary",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_unrelated_escaped_quotes_remain_byte_identical",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    },
+    {
+      "guard": "quoted_trailing_data_refusal",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_quoted_scalar_cannot_hide_trailing_value",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    },
+    {
+      "guard": "literal_managed_scalars",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_shell_only_or_interpolated_credentials_are_not_reinterpreted",
+      "exit": 1,
+      "failures": 3,
+      "collection_errors": 0,
+      "passed": 1,
+      "caught": true
+    },
+    {
+      "guard": "literal_hash_semantics",
+      "test": "tests/test_zerodha_renewal_env_syntax.py::test_unquoted_hash_without_space_is_literal_not_a_shell_comment",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "passed": 0,
+      "caught": true
+    }
+  ],
+  "production_tree_never_mutated": true,
+  "source_unchanged": true,
+  "source_sha256": "40917f1a9e6594352512a622b05352545ccbe6674950f32c9ffe69c3c1b3ed52",
+  "test_sha256": "cdcdcc2a6f2f52e32d8f1ad4ccd36fc570b3830281b6cc8a72e3335734fc3870"
+}

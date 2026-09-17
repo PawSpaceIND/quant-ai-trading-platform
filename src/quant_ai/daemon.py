@@ -71,6 +71,7 @@ from quant_ai.marketdata.ticker_stream import (
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
+from quant_ai.operations.zerodha_renewal import check_runtime_token
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.orders.oms import DurableOms
 from quant_ai.planning.capital import CapitalGoalEngine
@@ -627,15 +628,15 @@ def _lessons_provider(
 
 
 def _env_daily_history_provider() -> DailyHistoryProvider | None:
-    """Closed daily bars for regime context; ``none`` leaves the regime to intraday bars."""
-    source = os.getenv("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower()
-    if source in {"", "yahoo"}:
-        # Own client so a Yahoo rate-limit opens this circuit only. Construction performs
-        # no I/O; the first cadence tick fetches, at most once per instrument per UTC day.
-        return DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
-    if source == "none":
-        return None
-    raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
+    """Shared explicit selection; constructing a history reader performs no I/O."""
+    from quant_ai.marketdata.history_selection import daily_history_from_env
+    from quant_ai.marketdata.kite_history import KiteHistoryError
+    try:
+        return daily_history_from_env(yahoo_factory=DailyHistoryProvider)
+    except KiteHistoryError as error:
+        if str(error) == "unsupported_daily_history_provider":
+            raise RuntimeError("unsupported PRAMANA_DAILY_HISTORY_PROVIDER") from None
+        raise
 
 
 def _env_required_book_risk() -> bool:
@@ -701,6 +702,8 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     pilot_mode = _env_flag("PRAMANA_PILOT_MODE", True)
     validate_identity_storage(order_identity_mode, pilot_mode=pilot_mode,
         database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
+    dispatcher = _env_notifications()
+    credentials = check_runtime_token(dispatcher=dispatcher)
     ib_module = import_module("ib_async")
     ib = ib_module.IB()
     contracts = tuple(
@@ -732,10 +735,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         book_risk_history=_env_book_risk_history_provider(daily_history),
         require_book_risk_gates=_env_required_book_risk(),
         holidays=_env_holidays(),
-        notifications=_env_notifications(),
+        notifications=dispatcher,
         halt_file=paths.halt_file(),
-        zerodha_api_key=_required_env("ZERODHA_API_KEY"),
-        zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
+        zerodha_api_key=credentials.api_key,
+        zerodha_access_token=credentials.access_token,
         zerodha_instrument_tokens=tokens,
         zerodha_symbol_by_token=symbols,
         ib_client=ib,

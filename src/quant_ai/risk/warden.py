@@ -72,7 +72,8 @@ class RiskWarden:
         history = self.book_risk.history_provider
         return {"requiredSymbols": self.book_risk.required_symbols,
                 "sectorMap": dict(self.book_risk.sector_map),
-                "historyMaxAge": getattr(history, "max_age", None)}
+                "historyMaxAge": getattr(history, "max_age", None),
+                "historySource": getattr(getattr(history, "provider", None), "provider_id", None)}
 
     @property
     def overnight_risk_policy(self) -> OvernightRiskPolicy:
