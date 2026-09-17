@@ -18,12 +18,19 @@ from pathlib import Path
 from quant_ai.domain.models import AssetClass, Market, Side
 from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.execution.shared_risk import SharedRiskError, _json, verify_shared_risk
+from quant_ai.execution.shared_risk_admission import TABLE as ADMISSION_TABLE
+from quant_ai.execution.shared_risk_admission import (
+    create_schema,
+    record_admission,
+    verify_admissions,
+)
 from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 
 TABLE = "paper_shared_risk_bindings"
 COLUMN = "shared_risk_binding_sha256"
-SCHEMA = "pramana.paper_shared_risk_binding.v1"
+LEGACY_SCHEMA = "pramana.paper_shared_risk_binding.v1"
+SCHEMA = "pramana.paper_shared_risk_binding.v2"
 SHA = re.compile(r"[0-9a-f]{64}")
 JID = re.compile(r"[0-9a-f]{32}")
 MAX_COMMITTED_ENTRIES = 100_000
@@ -70,7 +77,7 @@ def read_binding(ledger, tenant):
     _check(isinstance(value, dict) and set(value) == {"schema", "tenantId", "accountRef",
         "currency", "journalId", "journalPath", "ledgerPath", "ledgerKey", "policySha256"},
         "binding_fields_invalid")
-    _check(value["schema"] == SCHEMA and value["tenantId"] == tenant
+    _check(value["schema"] in {LEGACY_SCHEMA, SCHEMA} and value["tenantId"] == tenant
            and isinstance(value["journalId"], str) and JID.fullmatch(value["journalId"])
            and value["currency"] in {"INR", "USD"}
            and row[1] == witness == _sha(row[0]), "binding_integrity_mismatch")
@@ -86,6 +93,10 @@ def read_binding(ledger, tenant):
 
 def verify_binding_pair(ledger, journal, tenant, *, check_paths=True):
     """Offline restore can compare identities without silently rebinding saved paths."""
+    return _verify_binding_pair(ledger, journal, tenant, check_paths=check_paths)
+
+
+def _verify_binding_pair(ledger, journal, tenant, *, check_paths=True, pending_program_id=None):
     pin = read_binding(ledger, tenant)
     try:
         report = verify_shared_risk(journal, tenant)
@@ -104,6 +115,10 @@ def verify_binding_pair(ledger, journal, tenant, *, check_paths=True):
         _check(database_path(ledger) == pin["ledgerPath"]
                and database_path(journal) == pin["journalPath"], "journal_path_mismatch")
     verify_committed_entry_coverage(ledger, journal, tenant, pin)
+    if pin["schema"] == LEGACY_SCHEMA:
+        _check(not check_paths, "admission_witness_migration_required")
+    else:
+        verify_admissions(ledger, journal, pin, pending_program_id=pending_program_id)
     return pin
 
 
@@ -210,7 +225,7 @@ def verify_committed_entry_coverage(ledger, journal, tenant, pin):
     return len(rows)
 
 
-def pin_account(broker, journal, tenant, *, allow_create):
+def pin_account(broker, journal, tenant, *, allow_create, program_id):
     """The journal transaction is held; a later journal rollback leaves entries held.
 
     This is deliberately not presented as a cross-database atomic commit. The ledger
@@ -225,6 +240,8 @@ def pin_account(broker, journal, tenant, *, allow_create):
         broker._ensure_account(tenant)
         old = read_binding(db, tenant)
         if old is not None:
+            _verify_binding_pair(db, journal, tenant, pending_program_id=program_id)
+            record_admission(db, journal, old, program_id)
             verify_binding_pair(db, journal, tenant)
             return _sha(_raw(old))
         _check(allow_create is True and not broker.ledger_entries(tenant)
@@ -246,6 +263,11 @@ def pin_account(broker, journal, tenant, *, allow_create):
             db.execute(f"CREATE TRIGGER IF NOT EXISTS shared_broker_binding_{action.lower()}_blocked BEFORE {action} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Shared broker binding is immutable'); END")
         db.execute(f"INSERT INTO {TABLE}(tenant_id,payload,sha256) VALUES(?,?,?)", (tenant, raw, _sha(raw)))
         db.execute(f"UPDATE paper_accounts SET {COLUMN}=? WHERE tenant_id=?", (_sha(raw), tenant))
+        # The optional table is created only for a new explicit binding, never to
+        # hide a missing witness table on an already-bound account.
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ADMISSION_TABLE,)).fetchone() is None:
+            create_schema(db)
+        record_admission(db, journal, pin, program_id)
         verify_binding_pair(db, journal, tenant)
         return _sha(raw)
 

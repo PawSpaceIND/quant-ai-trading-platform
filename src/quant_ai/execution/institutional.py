@@ -437,7 +437,7 @@ class InstitutionalPaperCoordinator:
                         self.shared_risk.reserve(program, evidence=request.edge_evidence, equity=request.portfolio.equity,
                             currency=request.currency, at=request.observed_at)
                         pin_account(self.broker, self.programs.db, request.tenant_id,
-                                    allow_create=not configured)
+                                    allow_create=not configured, program_id=program.program_id)
             except SharedRiskError as error:
                 return self._reject(InstitutionalStage.RISK, str(error))
         self._requests[program.program_id] = request

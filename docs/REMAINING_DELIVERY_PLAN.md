@@ -69,3 +69,15 @@ journal rollback cannot hide a BUY still present in the broker ledger. See
 `SHARED_RISK_COMMITTED_COVERAGE.md`. This is not detection of lost unexecuted history
 or simultaneous rollback of all stores. Position-linked capacity release and the
 remaining account/fencing boundaries stay open; M01 and the milestone count are unchanged.
+
+### Pending-reservation rollback continuation
+
+New v2 shared-account pins now retain broker-owned admission witnesses even before
+any purchase fills. Restoring only an older execution journal cannot silently lose
+those reserved programmes: pairing, admission, final BUY and offline checks refuse.
+Journal failure after the broker witness commits also leaves an explicit hold.
+Old v1 pins require reviewed migration for runtime use; no actual migration occurred.
+See `SHARED_RISK_ADMISSION_WITNESS.md`. This closes the named missing-never-executed
+reservation case relative to the retained broker ledger, not rollback of both stores,
+cross-host fencing or authenticated external authority. Used-position release remains
+unimplemented, so M01 stays partial and the 12 milestone count is unchanged.
