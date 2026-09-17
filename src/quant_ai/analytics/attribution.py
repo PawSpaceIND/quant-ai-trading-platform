@@ -104,6 +104,11 @@ class AgentAttributionEngine:
         self, evidence: tuple[AgentEvidence, ...], regime: str | None = None
     ) -> tuple[AgentEvidence, ...]:
         self._refresh_bound()
+        basis = self.feedback.get("basis_sha256")
+        policy_rationale = (() if not basis else (
+            "attribution_policy=pramana.entry_supporter_credit.v1",
+            f"attribution_basis_sha256={basis}",
+        ))
         adjusted = []
         for item in evidence:
             weight, source = self.weight_for(item.agent_id, regime)
@@ -111,7 +116,7 @@ class AgentAttributionEngine:
             adjusted.append(AgentEvidence(
                 item.agent_id, item.domain, item.subject, item.stance, confidence,
                 item.expected_return, item.expected_risk,
-                item.rationale + (f"attribution_weight={weight}:{source}",),
+                item.rationale + (f"attribution_weight={weight}:{source}",) + policy_rationale,
                 item.observed_at, item.source_freshness_seconds,
             ))
         return tuple(adjusted)

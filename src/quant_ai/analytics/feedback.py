@@ -142,6 +142,7 @@ def refresh_feedback(engine, broker, *, tenant_id, now=None, since=None):
     engine.feedback = status
     try:
         at = aware(now or datetime.now(timezone.utc))
+        status["checked_at"] = at.isoformat()
         cutoff = aware(since) if since is not None else None
         with broker._lock:
             if broker._connection.in_transaction:
@@ -178,11 +179,12 @@ def refresh_feedback(engine, broker, *, tenant_id, now=None, since=None):
                 status="partial" if skipped else "applied" if events else "no_closed_entries",
                 credited_entries=len(events), skipped=dict(skipped), events=audit[-50:],
                 event_count=len(audit),
+                basis_sha256=hashlib.sha256(_canonical([POLICY, tenant_id, [item["source_sha256"] for item in audit]]).encode()).hexdigest(),
                 agents=[{"agent_id": item.agent_id, "observations": item.observations,
                          "weight": str(item.conviction_weight)} for item in replay.attribution()],
             )
             return len(events)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - never leak evidence or break protection
         engine._records = {}
         status.update(status="refused", reason=type(error).__name__)
         return 0

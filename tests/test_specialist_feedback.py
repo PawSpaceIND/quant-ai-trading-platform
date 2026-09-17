@@ -141,9 +141,8 @@ def test_feedback_audit_is_append_only(broker, verb):
     add(broker)
     restore(AgentAttributionEngine(), broker)
     sql = f"UPDATE {feedback.TABLE} SET sha256='changed'" if verb == "UPDATE" else f"DELETE FROM {feedback.TABLE}"
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-        with broker._connection as db:
-            db.execute(sql)
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"), broker._connection as db:
+        db.execute(sql)
 
 
 def test_corrupt_audit_digest_refuses_even_when_source_payload_is_unchanged(broker):

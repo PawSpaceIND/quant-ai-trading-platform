@@ -35,6 +35,7 @@ def closed_trade(broker, decision_id, *, pnl, minutes):
         "take_profit_price": "110", "regime": "trending_up", "mode": "llm",
         "governance": "filled", "reason": None, "order_id": decision_id,
         "agents": json.dumps(AGENTS), "realized_net_pnl": str(pnl),
+        "exit_at": (SESSION + timedelta(minutes=minutes + 1)).isoformat(),
     })
 
 
