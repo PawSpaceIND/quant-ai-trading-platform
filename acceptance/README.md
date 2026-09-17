@@ -13,8 +13,12 @@ TRADING_LIVE_MONEY_ACTIVE=false PYTHONPATH=src:tests \
 
 Current result: **15 failed, 2 passed**. This is a blocking acceptance failure,
 not an expected-failure waiver and not evidence of 100% platform readiness.
-Existing configured CI uses pytest's `testpaths = ["tests"]`; that configuration
-has not changed. Normal-suite success must be reported separately from this audit.
+The normal Python job still uses pytest's `testpaths = ["tests"]`. A separate
+`institutional-risk-acceptance` CI job now executes this file explicitly and publishes
+its JUnit report. Any failing case makes that job fail; no success override, skip,
+or expected-failure marker is used. Normal-suite success must still be reported
+separately from this blocking acceptance job. GitHub branch-protection settings
+are not changed by adding a workflow job.
 
 Findings: modeled-loss allowance across sliced parent orders; after-cost Kelly
 sizing; complete projected factor-book identity; finite/nonnegative strategy

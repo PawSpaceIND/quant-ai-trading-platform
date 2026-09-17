@@ -1,0 +1,5 @@
+# One verified non-credential: the SHA-256 of scripts/renew_pilot_token.py.
+# The evidence value equals the bytes of that file at commit 916ff168... .
+# Exact historical fingerprint only; other commits/lines/rules remain scanned.
+# Verification and retirement criteria: docs/SECRET_SCAN_CLOSURE.md
+916ff1681cacf1395476dfdbf41378eddd5a6bb0:docs/evidence/zerodha-token-renewal-sabotage.json:generic-api-key:264

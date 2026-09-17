@@ -115,3 +115,22 @@ existing daemon, migration, deployment and external-evidence gates remain releas
 
 Exact commit, normal-suite results and remaining Mac failures are recorded in the PR
 certification; normal-suite success must not be represented as risk-acceptance success.
+
+
+## Secret-scan closure and CI risk-acceptance visibility
+
+The history finding in token-renewal evidence was independently verified as the exact
+SHA-256 of its corresponding committed script, not a credential. One historical
+fingerprint is exempted; full history/current-tree scanning and synthetic detection
+checks remain active. Safe location-only CI summaries now make later findings diagnosable.
+
+The existing 17-case institutional risk suite now runs in its own non-waived CI job.
+It remains 15 failed / 2 passed, with unchanged assertions and unchanged risk production
+code. This is visibility and enforcement in CI, not repair of the prior blocked changes.
+
+Local new scanner/gate suite: 18 passed. Fresh normal Mac baseline: 1853 passed / 13 failed;
+candidate: 1871 passed / exactly the same 13 deployment failures. All 437 selected
+source/test/script/config files were unchanged through full certification. Two guard
+removal checks failed as intended; the original source was restored to that manifest.
+Exact published head and Linux CI results belong in the PR certification checkpoint.
+See docs/SECRET_SCAN_CLOSURE.md. No deployment, merge or live-money activation.
