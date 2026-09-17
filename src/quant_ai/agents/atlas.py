@@ -66,6 +66,16 @@ class AtlasInvestmentAgent:
         knowledge_context: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
         relevant = tuple(item for item in evidence if item.subject == subject)
+        if knowledge_context is not None:
+            try:
+                if type(knowledge_context) is not DecisionKnowledgeContext:
+                    raise TypeError("decision_knowledge_context_required")
+                knowledge_context.validate(as_of=now)
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                # Invalid evidence must neither reach inference nor be included as trusted
+                # provenance. An optional knowledge policy does not waive supplied errors.
+                return self._hold(subject, now, relevant, "governed_knowledge_invalid",
+                                  market_tick, evidence_context, None)
         if self.policy.require_governed_knowledge and knowledge_context is None:
             return self._hold(
                 subject, now, relevant, "governed_knowledge_missing", market_tick,
@@ -156,6 +166,7 @@ class AtlasInvestmentAgent:
             "specialist_veto",
             "zero_confidence",
             "governed_knowledge_missing",
+            "governed_knowledge_invalid",
         }
         if self.llm_client is None or any(item in hard_holds for item in deterministic.rationale):
             return deterministic

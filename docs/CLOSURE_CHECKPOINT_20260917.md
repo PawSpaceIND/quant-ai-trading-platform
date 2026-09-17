@@ -134,3 +134,28 @@ source/test/script/config files were unchanged through full certification. Two g
 removal checks failed as intended; the original source was restored to that manifest.
 Exact published head and Linux CI results belong in the PR certification checkpoint.
 See docs/SECRET_SCAN_CLOSURE.md. No deployment, merge or live-money activation.
+
+## Decision-time knowledge validation continuation
+
+Baseline: `050a16ae8a87882f14cc477043d7a13f962d6628` on existing draft #126.
+Only `learning/router.py` and the Atlas knowledge-consumption checks change in
+production. The four previously blocked trading-risk repairs are not retried.
+
+The new v2 context binds the UTC selection instant, complete item metadata including
+observed time, source-grant declarations and required categories. Atlas revalidates
+before consensus/inference; invalid explicit input holds and is excluded from model
+calls/provenance even when knowledge is optional. Legacy unbound contexts are not
+retroactively qualified. See `DECISION_KNOWLEDGE_BINDING.md` for trust limitations.
+
+38 new synthetic tests; focused knowledge/Atlas/learning/candidate suite: 175 passed.
+Fresh Mac baseline: 1871 passed / 13 failed. Candidate: 1909 passed / exactly the
+same 13 deployment failures, compared by JUnit failure identities. All 439 selected
+source/test/script/configuration files were stable during certification. Removing
+consumer-time, selection-digest or content-byte checks made their behavioral tests
+fail; after restoration the 175-test suite and Ruff passed. Actual history/tree
+secret scans also passed. Published SHA and GitHub CI are recorded in the PR.
+
+Risk acceptance remains 15 failed / 2 passed; its production code, assertions and CI
+job are unchanged. No running-daemon change, new source grant, real model training,
+model promotion, deployment, merge or live-money activation occurred. The full
+institutional runtime and external acceptance/forward-performance gates remain open.
