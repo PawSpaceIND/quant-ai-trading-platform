@@ -1,0 +1,26 @@
+name: Development dependency snapshot
+on:
+  push:
+    branches: [ci/source-snapshot-47e2d5c-20260918]
+permissions:
+  contents: read
+jobs:
+  wheels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download test dependencies without credentials
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-wheels"
+          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/test-wheels" 'anthropic>=0.39,<2' 'ruff>=0.6' 'eval-type-backport>=0.2,<1' 'pytest>=8' 'pyyaml>=6,<7'
+          cd "$RUNNER_TEMP/test-wheels"
+          sha256sum *.whl > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: isolated-test-wheels-py313
+          path: ${{ runner.temp }}/test-wheels/
+          retention-days: 1
+          if-no-files-found: error
