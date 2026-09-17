@@ -1,0 +1,284 @@
+{
+  "restored": true,
+  "mutations": [
+    {
+      "guard": "boot_preflight",
+      "test": "tests/test_zerodha_renewal.py::test_bad_token_never_reaches_daemon_assembly",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "profile_request",
+      "test": "tests/test_zerodha_renewal.py::test_provider_failure_emits_critical_durable_alert_without_secret_or_traceback",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "missing_credentials",
+      "test": "tests/test_zerodha_renewal.py::test_invalid_local_credentials_refuse_before_any_provider_call",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "local_expiry",
+      "test": "tests/test_zerodha_renewal.py::test_invalid_local_credentials_refuse_before_any_provider_call",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "future_issuance",
+      "test": "tests/test_zerodha_renewal.py::test_invalid_local_credentials_refuse_before_any_provider_call",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "account_binding",
+      "test": "tests/test_zerodha_renewal.py::test_wrong_or_missing_profile_identity_refuses",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "profile_identity",
+      "test": "tests/test_zerodha_renewal.py::test_wrong_or_missing_profile_identity_refuses",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "paper_only",
+      "test": "tests/test_zerodha_renewal.py::test_invalid_local_credentials_refuse_before_any_provider_call",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "aware_clock",
+      "test": "tests/test_zerodha_renewal.py::test_naive_watch_clock_refuses",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "critical_priority",
+      "test": "tests/test_zerodha_renewal.py::test_provider_failure_emits_critical_durable_alert_without_secret_or_traceback",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "preopen_execution",
+      "test": "tests/test_zerodha_renewal.py::test_preopen_failure_alert_survives_daemon_absence",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "ist_window",
+      "test": "tests/test_zerodha_renewal.py::test_preopen_window_uses_ist",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "partial_write_check",
+      "test": "tests/test_zerodha_renewal.py::test_partial_candidate_is_detected_before_replacement",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "atomic_rename",
+      "test": "tests/test_zerodha_renewal.py::test_atomic_env_publication_preserves_unrelated_bytes_and_old_open_reader",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "concurrent_edit_check",
+      "test": "tests/test_zerodha_renewal.py::test_concurrent_operator_edit_is_never_overwritten",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "private_permissions",
+      "test": "tests/test_zerodha_renewal.py::test_public_file_permissions_refuse",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "regular_unlinked_file",
+      "test": "tests/test_zerodha_renewal.py::test_linked_environment_refuses",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "owner_binding",
+      "test": "tests/test_zerodha_renewal.py::test_foreign_environment_owner_refuses",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "duplicate_keys",
+      "test": "tests/test_zerodha_renewal.py::test_duplicate_managed_fields_are_refused_without_writing",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "publish_account_binding",
+      "test": "tests/test_zerodha_renewal.py::test_account_switch_is_not_silently_published",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "publish_freshness",
+      "test": "tests/test_zerodha_renewal.py::test_expired_publish_does_not_modify_environment",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "environment_injection",
+      "test": "tests/test_zerodha_renewal.py::test_unsafe_token_cannot_inject_environment_lines",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "dotenv_scalar_validation",
+      "test": "tests/test_zerodha_renewal.py::test_uninterpretable_dotenv_scalars_refuse",
+      "exit": 1,
+      "failures": 2,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "alert_phase_validation",
+      "test": "tests/test_zerodha_renewal.py::test_invalid_alert_phase_refuses_without_serializing_input",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "main_branch_refresh",
+      "test": "tests/test_zerodha_renewal.py::test_owner_refresh_gates",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "clean_tree_refresh",
+      "test": "tests/test_zerodha_renewal.py::test_owner_refresh_gates",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "session_refresh_gate",
+      "test": "tests/test_zerodha_renewal.py::test_owner_refresh_gates",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "refresh_time_recheck",
+      "test": "tests/test_zerodha_renewal.py::test_refresh_rechecks_gate_immediately_before_docker",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "private_request_prompt",
+      "test": "tests/test_zerodha_renewal.py::test_request_token_prompt_requires_a_terminal",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "private_prompt_wiring",
+      "test": "tests/test_zerodha_renewal.py::test_owner_helper_wires_private_login_atomic_publish_and_refresh",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "watcher_liveness_probe",
+      "test": "tests/test_container_healthchecks.py::test_token_watch_probe_rejects_missing_and_stale_heartbeat",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "secret_repr",
+      "test": "tests/test_zerodha_renewal.py::test_profile_validation_is_read_only_and_token_repr_is_private",
+      "exit": 1,
+      "failures": 1,
+      "collection_errors": 0,
+      "caught": true
+    }
+  ],
+  "restored_files": [
+    {
+      "path": "src/quant_ai/daemon.py",
+      "sha256": "402b62256f710bea88e0b75440681cf4366b53400b8029e1c7bc6d0736bd4346"
+    },
+    {
+      "path": "src/quant_ai/operations/zerodha_renewal.py",
+      "sha256": "1b50b8b343efa5952d90ca38dc0ea4f6bbb9885b5f7200f3937cb9fbce8a03a0"
+    },
+    {
+      "path": "scripts/renew_pilot_token.py",
+      "sha256": "88fa3709f206fb7f9356f749a38231557aff667bcf0a8d65080166f903671427"
+    },
+    {
+      "path": "deploy/docker-compose.yml",
+      "sha256": "61877d2209ae51da3187400bdba312de1920f5204a5e39adca7206c067ea6334"
+    },
+    {
+      "path": "src/quant_ai/operations/zerodha_session.py",
+      "sha256": "e8b2889d31159741cb93755aaee323748540c874302a541caf4513d80822eae7"
+    }
+  ],
+  "legacy_document_sha256": "edde011d0024e8946ddd1ef8f3017eeb85a3762283aa021911f09dfeacba2c47"
+}

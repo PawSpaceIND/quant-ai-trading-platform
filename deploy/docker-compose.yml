@@ -30,7 +30,10 @@ services:
       PRAMANA_FOUNDER_DIRECTIVES_FILE: /app/directives.json
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}
       ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
-      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
+      # Missing/expired tokens reach the guarded boot and durable pre-open alert path.
+      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:-}
+      PRAMANA_ZERODHA_TOKEN_ISSUED_AT: ${PRAMANA_ZERODHA_TOKEN_ISSUED_AT:-}
+      PRAMANA_ZERODHA_USER_ID: ${PRAMANA_ZERODHA_USER_ID:-}
       PRAMANA_ZERODHA_TOKENS_JSON: ${PRAMANA_ZERODHA_TOKENS_JSON:?required}
       PRAMANA_ZERODHA_SYMBOLS_JSON: ${PRAMANA_ZERODHA_SYMBOLS_JSON:?required}
       PRAMANA_TARGET_SYMBOL: ${PRAMANA_TARGET_SYMBOL:-INFY}
@@ -161,7 +164,10 @@ services:
     environment:
       <<: *shared
       ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
-      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:?required}
+      # Missing/expired tokens reach the guarded boot and durable pre-open alert path.
+      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:-}
+      PRAMANA_ZERODHA_TOKEN_ISSUED_AT: ${PRAMANA_ZERODHA_TOKEN_ISSUED_AT:-}
+      PRAMANA_ZERODHA_USER_ID: ${PRAMANA_ZERODHA_USER_ID:-}
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
       PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON: ${PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON:-}
       PRAMANA_ZERODHA_INSTRUMENTS_FILE: ${PRAMANA_ZERODHA_INSTRUMENTS_FILE:-}
@@ -256,6 +262,31 @@ services:
       <<: *shared
     volumes: ["pramana-data:/data"]
     mem_limit: 256m
+    logging: *logging
+  # Independent of daemon boot/health: a bad token must not suppress its own alert.
+  token-watch:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "quant_ai.operations.zerodha_renewal", "watch"]
+    environment:
+      <<: *shared
+      ZERODHA_API_KEY: ${ZERODHA_API_KEY:?required}
+      ZERODHA_ACCESS_TOKEN: ${ZERODHA_ACCESS_TOKEN:-}
+      PRAMANA_ZERODHA_TOKEN_ISSUED_AT: ${PRAMANA_ZERODHA_TOKEN_ISSUED_AT:-}
+      PRAMANA_ZERODHA_USER_ID: ${PRAMANA_ZERODHA_USER_ID:-}
+      PRAMANA_ALERT_LOG: /data/alerts.jsonl
+      PRAMANA_TELEGRAM_BOT_TOKEN: ${PRAMANA_TELEGRAM_BOT_TOKEN:-}
+      PRAMANA_TELEGRAM_CHAT_ID: ${PRAMANA_TELEGRAM_CHAT_ID:-}
+    volumes: ["pramana-data:/data"]
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "find /data/zerodha-watch.json -newermt '180 seconds ago' | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     logging: *logging
 volumes:
   pramana-data:
