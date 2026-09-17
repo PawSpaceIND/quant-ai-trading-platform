@@ -449,3 +449,20 @@ def test_independent_protective_exit_is_available_while_new_program_has_policy_h
         assert h.programs.get(second.program.program_id).slices[0].state.value == "PENDING"
     finally:
         h.close()
+
+
+
+def test_version_one_cannot_drop_parent_snapshot_at_insert(tmp_path, monkeypatch):
+    h = Harness(tmp_path)
+    try:
+        create = h.programs.create
+        def inconsistent(**kwargs):
+            kwargs["parent_order_payload"] = None
+            return create(**kwargs)
+        monkeypatch.setattr(h.programs, "create", inconsistent)
+        with pytest.raises(ValueError, match="execution_risk_authority_binding_mismatch"):
+            h.coordinator.prepare(make_request(h.broker))
+        assert h.programs.db.execute("SELECT COUNT(*) FROM execution_programs").fetchone()[0] == 0
+        assert h.broker.ledger_entries("tenant") == ()
+    finally:
+        h.close()

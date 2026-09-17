@@ -58,13 +58,13 @@ SELL cannot use an exit exemption to evade the saved-policy requirement.
 
 ## Evidence and limits
 
-The new test file contains 44 synthetic cases. It covers every policy parameter,
+The new test file contains 45 synthetic cases. It covers every policy parameter,
 configuration drift at preparation/dispatch/restart, concurrent different-policy
 claims on the same decision, immutable database fields, malformed payloads, legacy
 entry holds, receipt/backup matching, covered sales and independent exits. Abrupt
 subprocess termination before and after commit confirms that policy and parent
 state do not split. Changed policy does not prevent committed-fill accounting.
-The focused coordinator/recovery/protection/acceptance run passes 186 tests.
+The focused coordinator/recovery/protection/acceptance run passes 213 tests.
 
 Four isolated in-memory guard-removal experiments cause their corresponding tests
 to fail. No certified source is edited by those experiments. Existing acceptance
@@ -84,3 +84,10 @@ budget. Complete runtime request/liquidity-plan persistence, daemon/accounting w
 reviewed migration and rollback, automatic multi-store/off-host recovery, authentic
 feeds and broker evidence, operational acceptance and forward after-cost performance
 remain release gates. No real account, daemon, model or live-money mode was changed.
+
+The first complete run recorded 2,466 passes and one legacy-writer fixture failure:
+the fixture omitted its parent while still passing the newly added v1 policy data.
+The fixture now models the entire original v0 insertion shape, with every existing
+assertion preserved. A separate v1 regression proves that dropping the parent while
+retaining a v1 authority is rejected before inserting any program. Initial failure
+logs remain retained; this is not a waiver or a relaxation of the new binding.
