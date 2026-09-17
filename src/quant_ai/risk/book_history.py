@@ -27,14 +27,14 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from quant_ai.domain.models import Instrument
 from quant_ai.execution.session import SESSIONS
-from quant_ai.marketdata.timeframes import venue_for
+from quant_ai.marketdata.timeframes import session_close_at, venue_for
 
 SECTOR_MAP_JSON_ENV = "PRAMANA_SECTOR_MAP_JSON"
 SECTOR_MAP_FILE_ENV = "PRAMANA_SECTOR_MAP_FILE"
@@ -42,26 +42,42 @@ SECTOR_MAP_FILE_ENV = "PRAMANA_SECTOR_MAP_FILE"
 
 def normalize_sector_map(mapping: Mapping[str, str] | None) -> dict[str, str]:
     """Upper-cased ``symbol -> group``; blank entries are dropped, not guessed."""
-    if not mapping:
+    if mapping is None:
         return {}
+    if not isinstance(mapping, Mapping):
+        raise TypeError("sector_map_must_be_object")
     normalized: dict[str, str] = {}
     for symbol, group in mapping.items():
-        key = str(symbol).strip().upper()
-        value = str(group).strip().upper()
+        if not isinstance(symbol, str) or not isinstance(group, str):
+            raise TypeError("sector_map_requires_string_pairs")
+        key = symbol.strip().upper()
+        value = group.strip().upper()
+        if key in normalized:
+            raise ValueError("sector_map_duplicate_symbol")
         if key and value:
             normalized[key] = value
     return normalized
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("sector_map_duplicate_symbol")
+        result[key] = value
+    return result
 
 
 def sector_map_from_env() -> dict[str, str]:
     """Operator-supplied grouping from the environment, or ``{}`` when unset."""
     inline = os.getenv(SECTOR_MAP_JSON_ENV, "").strip()
     if inline:
-        return normalize_sector_map(json.loads(inline))
+        return normalize_sector_map(json.loads(inline, object_pairs_hook=_unique_pairs))
     location = os.getenv(SECTOR_MAP_FILE_ENV, "").strip()
     if location:
         return normalize_sector_map(
-            json.loads(Path(location).expanduser().read_text(encoding="utf-8"))
+            json.loads(Path(location).expanduser().read_text(encoding="utf-8"),
+                       object_pairs_hook=_unique_pairs)
         )
     return {}
 
@@ -94,23 +110,94 @@ class DailyCloseHistory:
         provider,
         instruments: Iterable[Instrument],
         clock: Callable[[], datetime] | None = None,
+        *, max_age: timedelta | None = None,
     ) -> None:
         self.provider = provider
         self.instruments = {item.symbol.strip().upper(): item for item in instruments}
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        if max_age is not None and max_age <= timedelta(0):
+            raise ValueError("book_history_max_age_must_be_positive")
+        self.max_age = max_age
+        self._observed = {}
+
+    def _rows(self, instrument, bars, now):
+        if now.utcoffset() is None:
+            raise ValueError("book_history_clock_must_be_aware")
+        venue = venue_for(instrument.market)
+        zone = ZoneInfo(SESSIONS[venue].timezone) if venue is not None else timezone.utc
+        rows = {}
+        for bar in bars:
+            if self.max_age is not None:
+                if bar.timestamp.utcoffset() is None or bar.timestamp > now:
+                    raise ValueError("book_history_timestamp_invalid")
+                if bar.instrument != instrument:
+                    raise ValueError("book_history_instrument_mismatch")
+                if session_close_at(bar.timestamp, venue) > now:
+                    raise ValueError("book_history_unclosed_session")
+                if _session_key(bar.timestamp, zone) in rows:
+                    raise ValueError("book_history_duplicate_session")
+            rows[_session_key(bar.timestamp, zone)] = bar.close
+        if self.max_age is not None and rows:
+            latest = datetime.fromisoformat(max(rows)).replace(tzinfo=zone)
+            if now - latest > self.max_age:
+                raise ValueError("book_history_stale")
+        return tuple((key, rows[key]) for key in sorted(rows))
 
     def __call__(self, symbols: Sequence[str]) -> dict[str, tuple[tuple[str, Decimal], ...]]:
         now = self.clock()
-        series: dict[str, tuple[tuple[str, Decimal], ...]] = {}
+        series = {}
         for symbol in symbols:
-            instrument = self.instruments.get(symbol.strip().upper())
+            key = symbol.strip().upper()
+            instrument = self.instruments.get(key)
             if instrument is None:
                 continue
-            venue = venue_for(instrument.market)
-            zone = ZoneInfo(SESSIONS[venue].timezone) if venue is not None else timezone.utc
-            rows: dict[str, Decimal] = {}
-            for bar in self.provider.fetch(instrument, now):
-                rows[_session_key(bar.timestamp, zone)] = bar.close
+            # Clear old observations before a failed fetch so telemetry cannot retain green.
+            self._observed.pop(key, None)
+            bars = self.provider.fetch(instrument, now)
+            rows = self._rows(instrument, bars, now)
+            self._observed[key] = (now, tuple(bars))
             if rows:
-                series[symbol] = tuple((key, rows[key]) for key in sorted(rows))
+                series[symbol] = rows
         return series
+
+    def readiness(self, symbols: Sequence[str], now: datetime) -> dict:
+        """Read cached observations only; never perform network I/O under the broker lock.
+
+        `dataReady` is the sample/coverage check, not approval of a proposed allocation.
+        The firewall still calculates risk for the exact projected book on every entry.
+        """
+        from quant_ai.risk.portfolio_risk import MIN_TAIL_INTERVALS, align_daily_closes
+        result = {"dataReady": False, "records": 0, "coveredSymbols": 0,
+                  "alignedIntervals": 0, "reason": "history_not_observed",
+                  "source": getattr(self.provider, "provider_id", type(self.provider).__name__)}
+        try:
+            series = {}
+            for symbol in symbols:
+                instrument = self.instruments.get(symbol.upper())
+                if instrument is None:
+                    continue
+                # Regime history and risk reuse the same cached source. No extra fetch.
+                cached = getattr(self.provider, "cached", None)
+                if callable(cached):
+                    bars = cached(instrument, now)
+                else:
+                    observed = self._observed.get(symbol.upper())
+                    bars = (observed[1] if observed and observed[0].date() == now.date()
+                            and observed[0] <= now else ())
+                rows = self._rows(instrument, bars or (), now)
+                if rows:
+                    series[symbol] = rows
+            result.update(records=sum(len(rows) for rows in series.values()),
+                          coveredSymbols=len(series))
+            if set(series) != set(symbols) or not symbols:
+                result["reason"] = "history_scope_incomplete"
+                return result
+            aligned, reason = align_daily_closes(series)
+            intervals = len(next(iter(aligned.values()), ())) - 1
+            result["alignedIntervals"] = max(0, intervals)
+            result["reason"] = reason or ("ready" if intervals >= MIN_TAIL_INTERVALS
+                                          else "insufficient_tail_history")
+            result["dataReady"] = not reason and intervals >= MIN_TAIL_INTERVALS
+        except (ValueError, TypeError, AttributeError, ArithmeticError):
+            result["reason"] = "history_invalid_or_stale"
+        return result

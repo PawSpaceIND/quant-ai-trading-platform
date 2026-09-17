@@ -50,6 +50,7 @@ FIELDS = {
         "blocked_asset_classes",
         "book_risk_policy",
         "book_risk_armed",
+        "book_risk_inputs",
         "overnight_risk_policy",
     ),
     "quant_ai.intelligence.adversarial.AdversarialStressAgent": (
