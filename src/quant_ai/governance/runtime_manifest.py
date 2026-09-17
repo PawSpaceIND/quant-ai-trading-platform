@@ -50,6 +50,7 @@ FIELDS = {
         "blocked_asset_classes",
         "book_risk_policy",
         "book_risk_armed",
+        "book_risk_inputs",
         "overnight_risk_policy",
     ),
     "quant_ai.intelligence.adversarial.AdversarialStressAgent": (
@@ -381,6 +382,11 @@ class RuntimeManifest:
             "components": components,
             "streams": [describe(s, issues) for s in self.streams],
             "specialists": agents,
+            "daily_history": {
+                "provider": getattr(p.history, "provider_id", None),
+                "sessions": getattr(p.history, "sessions", None),
+                "type": None if p.history is None else f"{type(p.history).__module__}.{type(p.history).__qualname__}",
+            },
             "news_window_seconds": p.news_window.total_seconds(),
             "baseline_risk_policy": stable(RiskPolicy()),
         }

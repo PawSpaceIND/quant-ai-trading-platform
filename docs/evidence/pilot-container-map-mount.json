@@ -1,0 +1,102 @@
+{
+  "parent": "fc78ef807151931ab538dd9101a2070d3bd673d2",
+  "failed_ci_run": 35188422874,
+  "failed_container_job": 105095401025,
+  "failure": "FileNotFoundError: /app/pilot-sector-map.json",
+  "diagnosis": "Both images built. Isolated smoke container inherited the declared environment path without its bind mount.",
+  "parent_mac_result": "13 failed, 1575 passed, 2 warnings, 14 subtests passed in 57.55s",
+  "candidate_mac_result": "13 failed, 1584 passed, 2 warnings, 14 subtests passed in 47.80s",
+  "identical_failure_identities": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "added_fixture_cases": 9,
+  "focused_passed": 109,
+  "source_files_checked": 454,
+  "source_hashes_unchanged": true,
+  "runtime_src_unchanged": true,
+  "fixture_mutation_evidence": {
+    "scope": "CI fixture mount only; no trading-risk source mutations",
+    "results": [
+      {
+        "guard": "readonly_declaration_required",
+        "test": "tests/test_container_declared_file_mount.py::test_incomplete_or_unsafe_fixture_mount_refuses[writable]",
+        "exit": 1,
+        "failures": 1,
+        "errors": 0,
+        "caught": true
+      },
+      {
+        "guard": "existing_file_required",
+        "test": "tests/test_container_declared_file_mount.py::test_a_rendered_path_is_not_proof_the_bind_source_exists[absent]",
+        "exit": 1,
+        "failures": 1,
+        "errors": 0,
+        "caught": true
+      },
+      {
+        "guard": "readonly_docker_argument",
+        "test": "tests/test_container_declared_file_mount.py::test_mount_binds_the_file_declared_by_the_actual_service",
+        "exit": 1,
+        "failures": 1,
+        "errors": 0,
+        "caught": true
+      }
+    ],
+    "working_source_never_mutated": true,
+    "source_sha256": "a7f599bbdd139760fef0c355cab2e6da4f3220e45cf6ef44731f61fc263d7042"
+  },
+  "trading_guard_removal_certification": "still incomplete; prior blocked risk-test edit was not retried",
+  "real_history_data_ready": false,
+  "target_host_acceptance": false
+}

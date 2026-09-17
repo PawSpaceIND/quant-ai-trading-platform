@@ -203,64 +203,71 @@ compose() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 # --quiet: `config` without it writes the fully rendered configuration, credentials and
 # all, to stdout. This validates interpolation and required variables and prints nothing.
 compose config --quiet || fail "the rendered compose configuration is invalid; nothing was deployed"
-# Capture status explicitly: a process substitution can hide a failed config command.
-service_list="$(compose config --services)" || fail "could not inspect compose services"
 services=()
+service_output="$(compose config --services 2>/dev/null)" \
+  || fail "could not enumerate compose services; readiness is unknown"
 while IFS= read -r service; do
   [ -n "$service" ] || continue
-  [[ "$service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid compose service name"
-  for ((index=0; index<${#services[@]}; index++)); do
-    [ "${services[$index]}" != "$service" ] || fail "duplicate compose service name"
+  [[ "$service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid compose service identifier"
+  for existing in "${services[@]+${services[@]}}"; do
+    [ "$existing" != "$service" ] || fail "duplicate compose service identifier"
   done
   services+=("$service")
-done <<<"$service_list"
+done <<<"$service_output"
 [ "${#services[@]}" -gt 0 ] || fail "the compose file declares no services"
+
 
 compose up -d --build
 
-# --- Verify ---------------------------------------------------------------------------
+# --- Verify ------------------------------------------------------------------------------
 inspect_format='{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
 
-# Aligned indexed arrays work in Bash 3.2 as well as modern Linux Bash. Only our numeric
-# indices are array subscripts; Docker-supplied names never become arithmetic expressions.
+# An inspection is evidence only when the command succeeds AND its fields validate.
+# Keep this self-contained for the existing host runbook and Bash 3.2 fixture.
+read_container_state() {
+  local raw
+  raw="$(docker inspect --format "$inspect_format" "$1" 2>/dev/null)" \
+    || fail "could not inspect service '$2'; container inspection failed; readiness is unknown"
+  local pattern='^(created|running|paused|restarting|removing|exited|dead) (true|false) (0|[1-9][0-9]*) (none|starting|healthy|unhealthy)$'
+  [[ "$raw" =~ $pattern ]] || fail "invalid inspection for service '$2'; invalid container inspection; readiness is unknown"
+  status="${BASH_REMATCH[1]}"
+  restarting="${BASH_REMATCH[2]}"
+  count="${BASH_REMATCH[3]}"
+  health="${BASH_REMATCH[4]}"
+  # Shell integer comparisons must never silently fail on overflow.
+  if [ "${#count}" -gt 19 ] || { [ "${#count}" -eq 19 ] && [[ "$count" > "9223372036854775807" ]]; }; then
+    fail "invalid restart count for service '$2'; invalid container inspection restart count; readiness is unknown"
+  fi
+}
+
+# Use matching numeric indexes: the system Bash on macOS has no associative arrays.
+# Service names stay data, never array arithmetic; each container keeps its own baseline.
 containers=()
-restarts_before=()
+
 for service in "${services[@]}"; do
-  container="$(compose ps --all --quiet "$service")" || fail "could not inspect container for '$service'"
+  container="$(compose ps --all --quiet "$service" 2>/dev/null)" \
+    || fail "could not resolve container for service '$service'"
   [ -n "$container" ] || fail "service '$service' has no container after 'up -d --build'"
   [[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] \
-    || fail "expected exactly one container for service '$service'"
+    || fail "service '$service' has ambiguous container identity; expected exactly one container"
   containers+=("$container")
 done
 
-inspect_container() {
-  local inspection extra
-  inspection="$(docker inspect --format "$inspect_format" "$1")" \
-    || fail "container inspection failed"
-  [[ "$inspection" != *$'\n'* ]] || fail "invalid multiline container inspection"
-  read -r status restarting count health extra <<<"$inspection"
-  [ -n "$status" ] && [ -n "$health" ] && [ -z "$extra" ] \
-    || fail "incomplete or extra container inspection fields"
-  [[ "$count" =~ ^(0|[1-9][0-9]{0,8})$ ]] || fail "invalid container inspection restart count"
-  case "$restarting" in true|false) ;; *) fail "invalid container inspection restart flag" ;; esac
-  case "$health" in none|starting|healthy|unhealthy) ;; *) fail "invalid container inspection health" ;; esac
-  case "$status" in created|running|paused|restarting|removing|exited|dead) ;; *) fail "invalid container inspection state" ;; esac
-}
-
-for ((index=0; index<${#services[@]}; index++)); do
-  inspect_container "${containers[$index]}"
-  restarts_before+=("$count")
+restarts_before=()
+for index in "${!services[@]}"; do
+  read_container_state "${containers[$index]}" "${services[$index]}"
+  restarts_before[$index]="$count"
 done
 
-# A running state alone cannot distinguish recovery from a repeated crash. Compare the
-# same container's restart counter across the settle window, once for every service.
+# A container that exits and is restarted by `unless-stopped` is "running" again a second
+# later, so a single look cannot tell a healthy start from a crash loop. Look twice and
+# compare the restart counter: it is the only thing that distinguishes them.
 if [ "$SETTLE_SECONDS" -gt 0 ]; then sleep "$SETTLE_SECONDS"; fi
 
 failures=0
-for ((index=0; index<${#services[@]}; index++)); do
+for index in "${!services[@]}"; do
   service="${services[$index]}"
-  inspect_container "${containers[$index]}"
-  before="${restarts_before[$index]}"
+  read_container_state "${containers[$index]}" "$service"
   echo "deploy: $service status=$status restarts=$count health=$health"
   if [ "$status" != "running" ]; then
     echo "deploy: $service is '$status', not running" >&2
@@ -270,14 +277,16 @@ for ((index=0; index<${#services[@]}; index++)); do
     echo "deploy: $service is mid-restart" >&2
     failures=$((failures + 1))
   fi
-  if [ "$count" -gt "$before" ]; then
-    echo "deploy: $service restarted $before->$count during the ${SETTLE_SECONDS}s settle window; it is in a restart loop" >&2
-    failures=$((failures + 1))
-  elif [ "$count" -lt "$before" ]; then
-    echo "deploy: $service inspection restart counter decreased $before->$count" >&2
+  if [ "$count" -lt "${restarts_before[$index]}" ]; then
+    echo "deploy: $service restart count decreased; continuity is unknown (restart counter decreased)" >&2
     failures=$((failures + 1))
   fi
-  # Preserve the existing startup semantics: 'starting' is not full application readiness.
+  if [ "$count" -gt "${restarts_before[$index]}" ]; then
+    echo "deploy: $service restarted ${restarts_before[$index]}->$count during the ${SETTLE_SECONDS}s settle window; it is in a restart loop" >&2
+    failures=$((failures + 1))
+  fi
+  # `starting` is not a failure: market-monitor's check has a 300s start_period because
+  # its first snapshot waits on the daily instrument-master download.
   if [ "$health" = "unhealthy" ]; then
     echo "deploy: $service is unhealthy" >&2
     failures=$((failures + 1))
