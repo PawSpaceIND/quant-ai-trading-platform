@@ -48,8 +48,7 @@ def inputs(tmp_path):
     source=tmp_path/'source.db'; plan=populate(source,40)
     config=tmp_path/'plan.json';config.write_bytes(fd.canonical(plan));config.chmod(0o600)
     g=tmp_path/'grants.json'
-    g.write_text(json.dumps([dict(source_id='recorded',provider='synthetic-test',categories=['MARKET','BROKER'],
-        planes=['TRAINING'],point_in_time=True,rights_status='INTERNAL',max_age_seconds=None)]));g.chmod(0o600)
+    g.write_text(json.dumps([{'source_id': 'recorded', 'provider': 'synthetic-test', 'categories': ['MARKET','BROKER'], 'planes': ['TRAINING'], 'point_in_time': True, 'rights_status': 'INTERNAL', 'max_age_seconds': None}]));g.chmod(0o600)
     return source,config,g
 
 
@@ -64,8 +63,7 @@ def test_actual_build_and_fit_commands_reuse_private_publication(tmp_path):
     args=['build','--source',source,'--plan',p,'--grants',g,'--output',output]
     completed=run_cli(args,tmp_path)
     assert completed.returncode==0,completed.stderr
-    assert json.loads(completed.stdout)==dict(mode='TRAINING_DATA_ONLY',rows=40,trading_authorized=False,
-        source_authenticity_verified=False,out_of_sample_evaluated=False)
+    assert json.loads(completed.stdout)=={'mode': 'TRAINING_DATA_ONLY', 'rows': 40, 'trading_authorized': False, 'source_authenticity_verified': False, 'out_of_sample_evaluated': False}
     assert 'signal' not in completed.stdout and str(tmp_path) not in completed.stdout+completed.stderr
     assert output.stat().st_mode & 0o077==0
     before=output.read_bytes(); repeated=run_cli(args,tmp_path)

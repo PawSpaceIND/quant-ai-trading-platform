@@ -27,17 +27,8 @@ def grants():
 
 def plan(count=1):
     def rule(feature, schema, category):
-        return dict(feature=feature, source_id='recorded', schema_id=schema,
-                    max_age_seconds=60, category=category)
-    return dict(schema=fd.PLAN_SCHEMA, partition='training', dataset_id='synthetic-data',
-        cutoff=(T + timedelta(hours=4)).isoformat(), horizon_seconds=60,
-        maximum_feature_age_seconds=60, cost_policy_id='supplied-test-cost',
-        cost_policy_sha256='c'*64, adjustment_policy_id='unadjusted-test',
-        features=[rule('signal', 'feature:v1', 'MARKET')],
-        price=rule('price', 'price:unadjusted-test', 'MARKET'),
-        cost=rule('cost', 'cost_fraction:'+'c'*64, 'BROKER'),
-        decisions=[dict(row_id=f'r{i}', subject='INDIA:NSE:TEST:INR',
-                        decision_at=(T + timedelta(minutes=2*i)).isoformat()) for i in range(count)])
+        return {'feature': feature, 'source_id': 'recorded', 'schema_id': schema, 'max_age_seconds': 60, 'category': category}
+    return {'schema': fd.PLAN_SCHEMA, 'partition': 'training', 'dataset_id': 'synthetic-data', 'cutoff': (T + timedelta(hours=4)).isoformat(), 'horizon_seconds': 60, 'maximum_feature_age_seconds': 60, 'cost_policy_id': 'supplied-test-cost', 'cost_policy_sha256': 'c'*64, 'adjustment_policy_id': 'unadjusted-test', 'features': [rule('signal', 'feature:v1', 'MARKET')], 'price': rule('price', 'price:unadjusted-test', 'MARKET'), 'cost': rule('cost', 'cost_fraction:'+'c'*64, 'BROKER'), 'decisions': [{'row_id': f'r{i}', 'subject': 'INDIA:NSE:TEST:INR', 'decision_at': (T + timedelta(minutes=2*i)).isoformat()} for i in range(count)]}
 
 
 def populate(path, count=1):

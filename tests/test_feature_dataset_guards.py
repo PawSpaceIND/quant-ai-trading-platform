@@ -75,13 +75,10 @@ def cases():
     result=[]
     for call in calls:
         reason=call.args[1].value; target=TARGETS[reason]
-        result.append(dict(id=reason,path=MODULE,old=ast.get_source_segment(source,call),new='None',
-                           test=target if target.startswith('tests/') else TEST+target))
+        result.append({'id': reason, 'path': MODULE, 'old': ast.get_source_segment(source,call), 'new': 'None', 'test': target if target.startswith('tests/') else TEST+target})
     result.extend([
-        dict(id='single_snapshot',path=MODULE,old='store.db.execute("BEGIN")',new='None',
-             test=TEST+'test_single_read_snapshot_ignores_concurrent_later_revision'),
-        dict(id='endpoint_digest',path=MODULE,old='store._verify_row(row)',new='None',
-             test=TEST+'test_endpoint_digest_is_checked_before_use'),
+        {'id': 'single_snapshot', 'path': MODULE, 'old': 'store.db.execute("BEGIN")', 'new': 'None', 'test': TEST+'test_single_read_snapshot_ignores_concurrent_later_revision'},
+        {'id': 'endpoint_digest', 'path': MODULE, 'old': 'store._verify_row(row)', 'new': 'None', 'test': TEST+'test_endpoint_digest_is_checked_before_use'},
     ])
     script='scripts/build_feature_training_data.py'
     for reason,old,target in (
@@ -90,7 +87,7 @@ def cases():
         ('output_preflight','args.output.exists() or args.output.is_symlink()',
          'test_existing_output_refused_before_any_input_read'),
     ):
-        result.append(dict(id=reason,path=script,old=old,new='False',test=INTEGRATION+target))
+        result.append({'id': reason, 'path': script, 'old': old, 'new': 'False', 'test': INTEGRATION+target})
     return result
 
 
