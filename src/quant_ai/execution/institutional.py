@@ -129,6 +129,83 @@ StrategyExposureProvider = Callable[[str], Decimal]
 SliceVolumeProvider = Callable[[ExecutionProgram, int, datetime], int]
 
 
+
+def _nonnegative_amount(value) -> bool:
+    return isinstance(value, Decimal) and value.is_finite() and value >= 0
+
+
+def _parent_edge_risk_issue(parent, evidence, edge, equity) -> str | None:
+    """The full approved parent's modeled loss, never a fresh allowance per slice.
+
+    Conservative proxy: the larger of stop-distance loss and empirical adverse
+    payoff plus declared costs. This is not a guaranteed maximum realized loss.
+    Rechecking uses current equity without subtracting previously executed slices.
+    """
+    if (evidence is None or not _nonnegative_amount(equity) or equity <= 0
+            or type(parent.quantity) is not int or not 0 < parent.quantity <= 2**53 - 1
+            or not _nonnegative_amount(parent.reference_price) or parent.reference_price <= 0
+            or not _nonnegative_amount(parent.stop_price) or parent.stop_price <= 0
+            or not _nonnegative_amount(edge.recommended_risk_fraction)
+            or not 0 < edge.recommended_risk_fraction <= 1):
+        return "edge_planned_risk_unavailable"
+    stop_loss = abs(parent.reference_price - parent.stop_price) * parent.quantity
+    adverse_loss = (parent.reference_price * parent.quantity
+                    * (evidence.average_loss_return + evidence.expected_cost_return))
+    if max(stop_loss, adverse_loss) > equity * edge.recommended_risk_fraction:
+        return "edge_planned_risk_limit"
+    return None
+
+
+def _factor_book_projection_issue(order, snapshot, positions) -> str | None:
+    """Bind supplied factor inputs to every held symbol plus the proposed change.
+
+    Quantities and marked exposure come from the supplied portfolio snapshot, not
+    from the factor provider's own totals. This long-only book does not infer shorts,
+    missing marks or omitted holdings. Source authentication remains separate.
+    """
+    try:
+        quantities, exposures = snapshot.symbol_quantity, snapshot.symbol_exposure
+        if not isinstance(quantities, Mapping) or not isinstance(exposures, Mapping):
+            raise TypeError("snapshot_maps_invalid")
+        if set(quantities) != set(exposures):
+            raise ValueError("snapshot_coverage_invalid")
+        expected = {}
+        for symbol, quantity in quantities.items():
+            value = exposures[symbol]
+            if (not isinstance(symbol, str) or not symbol.strip()
+                    or type(quantity) is not int or not 0 <= quantity <= 2**53 - 1
+                    or not _nonnegative_amount(value) or (quantity == 0) != (value == 0)):
+                raise ValueError("snapshot_position_invalid")
+            if quantity:
+                expected[symbol] = (quantity, value)
+        if (not _nonnegative_amount(snapshot.gross_exposure)
+                or sum(exposures.values(), Decimal(0)) != snapshot.gross_exposure):
+            raise ValueError("snapshot_gross_mismatch")
+        if (order.side is not Side.BUY or type(order.quantity) is not int
+                or not 0 < order.quantity <= 2**53 - 1
+                or not _nonnegative_amount(order.reference_price) or order.reference_price <= 0):
+            raise ValueError("unsupported_adding_order")
+        held, value = expected.get(order.symbol, (0, Decimal(0)))
+        expected[order.symbol] = (held + order.quantity,
+                                  value + order.reference_price * order.quantity)
+        if not isinstance(positions, (tuple, list)):
+            raise TypeError("positions_invalid")
+        observed = {}
+        for position in positions:
+            if not isinstance(position, FactorLiquidityPosition):
+                raise TypeError("position_type_invalid")
+            # Revalidate mutable nested inputs before the firewall consumes them.
+            replace(position)
+            if position.symbol in observed:
+                raise ValueError("duplicate_symbol")
+            observed[position.symbol] = (position.quantity, position.market_value)
+        if observed != expected:
+            raise ValueError("positions_do_not_match_projected_book")
+    except (TypeError, ValueError, ArithmeticError, AttributeError) as error:
+        return f"factor_book_projection_mismatch:{error}"
+    return None
+
+
 def _stable(value):
     if isinstance(value, Decimal):
         return str(value)
@@ -225,6 +302,10 @@ class InstitutionalPaperCoordinator:
                 return InstitutionalPreparation(
                     False, InstitutionalStage.EDGE, ";".join(edge.reasons), edge=edge
                 )
+            issue = _parent_edge_risk_issue(proposal, request.edge_evidence, edge,
+                                            request.portfolio.equity)
+            if issue:
+                return InstitutionalPreparation(False, InstitutionalStage.EDGE, issue, edge=edge)
             allocation = self.optimizer.optimize(
                 request.strategy_opportunities,
                 correlations=request.strategy_correlations,
@@ -237,12 +318,21 @@ class InstitutionalPaperCoordinator:
                     False, InstitutionalStage.ALLOCATION, "strategy_not_allocated",
                     edge=edge, allocation=allocation,
                 )
+            current_exposure = self._strategy_exposure(request.strategy_id)
+            if current_exposure is None:
+                return InstitutionalPreparation(False, InstitutionalStage.ALLOCATION,
+                    "strategy_exposure_measure_unavailable", edge=edge, allocation=allocation)
             max_notional = request.portfolio.equity * strategy_weight
-            if proposal.reference_price * proposal.quantity > max_notional:
+            if current_exposure + proposal.reference_price * proposal.quantity > max_notional:
                 return InstitutionalPreparation(
                     False, InstitutionalStage.ALLOCATION, "strategy_allocation_notional_limit",
                     edge=edge, allocation=allocation,
                 )
+            issue = _factor_book_projection_issue(proposal, request.portfolio,
+                                                   request.projected_factor_positions)
+            if issue:
+                return InstitutionalPreparation(False, InstitutionalStage.FACTOR_LIQUIDITY,
+                    issue, edge=edge, allocation=allocation)
             factor = FactorLiquidityFirewall(request.factor_policy).evaluate(
                 request.projected_factor_positions, equity=request.portfolio.equity
             )
@@ -293,6 +383,13 @@ class InstitutionalPaperCoordinator:
             approved_order=self._orders[program.program_id],
         )
 
+    def _strategy_exposure(self, strategy_id: str) -> Decimal | None:
+        try:
+            value = self.strategy_exposure_provider(strategy_id)
+        except (TypeError, ValueError, ArithmeticError, OSError, RuntimeError):
+            return None
+        return value if _nonnegative_amount(value) else None
+
     @staticmethod
     def _reject(stage: InstitutionalStage, reason: str) -> InstitutionalPreparation:
         return InstitutionalPreparation(False, stage, reason)
@@ -324,6 +421,20 @@ class InstitutionalPaperCoordinator:
             held = current_snapshot.symbol_quantity.get(child.symbol, 0)
             de_risking = child.side is Side.SELL and held > 0 and child.quantity <= held
             if not de_risking:
+                if request.edge_evidence is None:
+                    edge_issue = "edge_evidence_required_at_slice"
+                else:
+                    edge = self.edge_gate.evaluate(request.edge_evidence)
+                    edge_issue = ("edge_recheck_failed:" + ";".join(edge.reasons)
+                                  if not edge.approved else
+                                  _parent_edge_risk_issue(parent, request.edge_evidence, edge,
+                                                         current_snapshot.equity))
+                    if edge_issue in {"edge_planned_risk_limit", "edge_planned_risk_unavailable"}:
+                        edge_issue += "_at_slice"
+                if edge_issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, edge_issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), edge_issue)
                 allocation = self.optimizer.optimize(
                     request.strategy_opportunities,
                     correlations=request.strategy_correlations,
@@ -331,7 +442,12 @@ class InstitutionalPaperCoordinator:
                     policy=request.allocation_policy,
                 )
                 strategy_weight = allocation.weights().get(request.strategy_id, Decimal(0))
-                current_strategy_exposure = self.strategy_exposure_provider(request.strategy_id)
+                current_strategy_exposure = self._strategy_exposure(request.strategy_id)
+                if current_strategy_exposure is None:
+                    reason = "strategy_exposure_measure_unavailable"
+                    self.programs.mark_failed(program_id, slice_.sequence, reason)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), reason)
                 if (
                     strategy_weight <= 0
                     or current_strategy_exposure + child.reference_price * child.quantity
@@ -359,7 +475,15 @@ class InstitutionalPaperCoordinator:
                         InstitutionalStage.FAILED, self.programs.get(program_id),
                         tuple(executed), reason,
                     )
-                factor_positions = self.factor_position_provider(child, current_snapshot)
+                try:
+                    factor_positions = self.factor_position_provider(child, current_snapshot)
+                    issue = _factor_book_projection_issue(child, current_snapshot, factor_positions)
+                except (TypeError, ValueError, ArithmeticError, AttributeError, OSError, RuntimeError):
+                    issue = "factor_book_projection_mismatch:provider_unavailable"
+                if issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), issue)
                 factor = FactorLiquidityFirewall(request.factor_policy).evaluate(
                     factor_positions, equity=current_snapshot.equity
                 )
