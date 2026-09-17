@@ -28,28 +28,36 @@ class AgentAttribution:
 
 
 class AgentAttributionEngine:
-    """Scores each specialist by realised outcome and weights its future conviction.
+    """Bounded specialist influence from resolved outcomes, not demonstrated skill.
 
-    This is the one part of the engine that adapts from results. An agent that keeps
-    being right is heard louder on later decisions; one that keeps being wrong is
-    quieted. The weight band is deliberately narrow, so a run of luck cannot hand any
-    single agent the book.
+    The live factory calls restore_from_journal, binding this engine to one tenant's
+    durable decision journal. A bound engine refreshes before weighting evidence.
+    Its old record(agent_ids, delta) callback now only requests that same refresh:
+    a latest trace or account-wide delta cannot assign credit to an unrelated entry.
 
-    Records are kept per agent and per regime. An agent that reads trends well can be
-    useless in a range, and one blended number hides exactly that. Regime weights apply
-    only after ``MIN_REGIME_OBSERVATIONS``; until then the blended record governs.
-
-    The engine holds no database of its own. It is rebuilt at boot from the decision
-    journal by :func:`restore_from_journal`, so what it learned survives the daily
-    restart instead of resetting every morning.
+    Unbound instances retain the explicit record API for offline replay/tests. They
+    never import live history unless their caller explicitly binds a journal.
+    Both modes retain the original 0.75--1.25 band and regime sample threshold.
     """
 
     def __init__(self) -> None:
         self._records: dict[tuple[str, str], list[Decimal]] = {}
+        self._journal_binding = None
+        self.feedback: dict = {"status": "not_refreshed", "credited_entries": 0}
+
+    def _refresh_bound(self) -> None:
+        if self._journal_binding is not None:
+            from quant_ai.analytics.feedback import refresh_feedback
+
+            broker, tenant, since = self._journal_binding
+            refresh_feedback(self, broker, tenant_id=tenant, since=since)
 
     def record(
         self, agent_ids: tuple[str, ...], realized_pnl: Decimal, regime: str | None = None
     ) -> None:
+        if self._journal_binding is not None:
+            self._refresh_bound()
+            return
         if not agent_ids:
             return
         share = realized_pnl / Decimal(len(agent_ids))
@@ -95,6 +103,7 @@ class AgentAttributionEngine:
     def weight_evidence(
         self, evidence: tuple[AgentEvidence, ...], regime: str | None = None
     ) -> tuple[AgentEvidence, ...]:
+        self._refresh_bound()
         adjusted = []
         for item in evidence:
             weight, source = self.weight_for(item.agent_id, regime)
@@ -109,46 +118,18 @@ class AgentAttributionEngine:
 
 
 def restore_from_journal(
-    engine: AgentAttributionEngine, broker, *, tenant_id: str, since=None
+    engine: AgentAttributionEngine, broker, *, tenant_id: str, since=None, now=None
 ) -> int:
-    """Rebuild an engine's scores from closed trades in the decision journal.
+    """Bind and replay one tenant's audited, resolved entry outcomes.
 
-    The journal is the durable record of what each specialist said and what the trade
-    it produced actually earned, so attribution is rebuilt from it at boot rather than
-    kept in a store of its own. Without this the engine forgets every night, and the
-    daily token restart means it would never learn anything at all.
-
-    The journal also attributes more accurately than the live path: it scores the agents
-    that argued for the *entry*, in the regime that entry was made in, rather than
-    whichever agents happened to speak on the tick the position closed.
-
-    Returns the number of closed trades restored. Any failure logs and restores nothing;
-    an unreadable history is a cold start, never a broken boot.
+    Repeat restoration replaces the projection instead of adding the same trades.
+    Missing/inconsistent history clears adaptive weights and records refusal. The
+    caller can inspect engine.feedback; failed evidence never breaks protection.
     """
-    import json
+    from quant_ai.analytics.feedback import refresh_feedback
 
-    from quant_ai.analytics.decision_journal import load_rows
-
-    restored = 0
-    try:
-        rows = load_rows(broker, tenant_id=tenant_id, since=since)
-    except Exception:  # a cold start beats a daemon that will not boot
-        LOGGER.exception("attribution_restore_failed tenant=%s", tenant_id)
-        return 0
-    for row in rows:
-        raw = row.get("realized_net_pnl")
-        if raw in (None, ""):
-            continue  # still open, or never filled: nothing realised to attribute
-        try:
-            agents = json.loads(row.get("agents") or "{}")
-            agent_ids = tuple(str(name) for name in agents)
-            if not agent_ids:
-                continue
-            engine.record(agent_ids, Decimal(str(raw)), row.get("regime"))
-        except (ValueError, TypeError, ArithmeticError, AttributeError):
-            LOGGER.warning("attribution_restore_skipped_row id=%s", row.get("decision_id"))
-            continue
-        restored += 1
-    if restored:
-        LOGGER.info("attribution_restored trades=%d tenant=%s", restored, tenant_id)
+    engine._journal_binding = (broker, tenant_id, since)
+    restored = refresh_feedback(engine, broker, tenant_id=tenant_id, since=since, now=now)
+    if engine.feedback.get("status") == "refused":
+        LOGGER.warning("attribution_restore_refused tenant=%s", tenant_id)
     return restored
