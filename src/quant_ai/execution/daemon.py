@@ -610,17 +610,18 @@ class AutonomousTradingDaemon:
             report = build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
             from quant_ai.analytics.learning_monitor import enrich_learning_report
 
-            self.scheduler.pipeline.runtime.attribution._refresh_bound()
+            observed_at = self.clock()
+            self.scheduler.pipeline.runtime.attribution._refresh_bound(observed_at)
             drift = enrich_learning_report(
                 report, self.scheduler.pipeline.runtime.attribution,
                 config_path=self.decision_quality_report_path.parent / "learning-monitor.json",
-                tenant_id=self.tenant_id, now=timestamp,
+                tenant_id=self.tenant_id, now=observed_at,
             )
             budget = self._ai_budget_status()
             if budget is not None:
                 report["ai_budget"] = budget
             write_report(self.decision_quality_report_path, report)
-            self._notify_learning_evidence(drift, timestamp)
+            self._notify_learning_evidence(drift, observed_at)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_quality_report_failed")
 

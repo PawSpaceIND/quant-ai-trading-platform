@@ -96,7 +96,7 @@ class SwarmPaperTradingService:
         tenant_id: str = "default",
         evidence_context: EvidenceContext | None = None,
     ) -> SwarmExecutionResult:
-        weighted = self.attribution.weight_evidence(evidence)
+        weighted = self.attribution.weight_evidence(evidence, now=request.observed_at)
         proposal = self.cio.propose(
             request, weighted, quantity=quantity, reference_price=reference_price,
             stop_price=stop_price, take_profit_price=take_profit_price, country=country,
@@ -124,7 +124,9 @@ class SwarmPaperTradingService:
         tenant_id: str = "default",
         evidence_context: EvidenceContext | None = None,
     ) -> SwarmExecutionResult:
-        weighted = self.attribution.weight_evidence(evidence, _regime_of(evidence_context))
+        weighted = self.attribution.weight_evidence(
+            evidence, _regime_of(evidence_context), now=request.observed_at
+        )
         if preflight_veto_reason is not None:
             proposal = self.cio.propose(
                 request, weighted, quantity=quantity, reference_price=reference_price,

@@ -172,6 +172,7 @@ def test_existing_daemon_report_and_alert_paths_publish_the_observation(tmp_path
     (tmp_path / "runtime").mkdir()
     runner = runner_for(tmp_path / "runtime")
     daemon = runner.daemon
+    daemon.clock = lambda: NOW
     daemon.decision_quality_report_path = path.parent / "decision-quality.json"
     alertfile = tmp_path / "alerts.jsonl"
     daemon.notifications = TradingNotificationDispatcher((JsonlFileSink(alertfile),))

@@ -34,7 +34,7 @@ CASES = [
      FB + "test_feedback_audit_is_append_only"),
     ("unrelated_trace_credit", A, [("        if self._journal_binding is not None:\n            self._refresh_bound()\n            return", "        if False:\n            self._refresh_bound()\n            return")],
      FB + "test_bound_legacy_delta_callback_cannot_credit_the_latest_unrelated_trace"),
-    ("next_decision_refresh", A, [("        self._refresh_bound()\n        basis =", "        basis =")],
+    ("next_decision_refresh", A, [("        self._refresh_bound(now)\n        basis =", "        basis =")],
      FB + "test_new_resolved_outcome_is_used_before_next_evidence_weighting"),
     ("monitor_sample_floor", M, [("if len(reference) < MIN_SAMPLES or len(current) < MIN_SAMPLES:", "if False:"),
                                   ("min_samples=MIN_SAMPLES", "min_samples=1")],

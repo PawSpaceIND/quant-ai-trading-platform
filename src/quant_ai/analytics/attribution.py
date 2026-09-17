@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from quant_ai.agents.contracts import AgentEvidence
@@ -45,12 +46,15 @@ class AgentAttributionEngine:
         self._journal_binding = None
         self.feedback: dict = {"status": "not_refreshed", "credited_entries": 0}
 
-    def _refresh_bound(self) -> None:
+    def _refresh_bound(self, now: datetime | None = None) -> None:
         if self._journal_binding is not None:
             from quant_ai.analytics.feedback import refresh_feedback
 
-            broker, tenant, since = self._journal_binding
-            refresh_feedback(self, broker, tenant_id=tenant, since=since)
+            broker, tenant, since, upper_bound = self._journal_binding
+            refresh_feedback(
+                self, broker, tenant_id=tenant, since=since,
+                now=now, upper_bound=upper_bound,
+            )
 
     def record(
         self, agent_ids: tuple[str, ...], realized_pnl: Decimal, regime: str | None = None
@@ -101,9 +105,10 @@ class AgentAttributionEngine:
         return self._score(agent_id, BLENDED, blended).conviction_weight, "blended"
 
     def weight_evidence(
-        self, evidence: tuple[AgentEvidence, ...], regime: str | None = None
+        self, evidence: tuple[AgentEvidence, ...], regime: str | None = None,
+        *, now: datetime | None = None
     ) -> tuple[AgentEvidence, ...]:
-        self._refresh_bound()
+        self._refresh_bound(now)
         basis = self.feedback.get("basis_sha256")
         policy_rationale = (() if not basis else (
             "attribution_policy=pramana.entry_supporter_credit.v1",
@@ -130,10 +135,12 @@ def restore_from_journal(
     Repeat restoration replaces the projection instead of adding the same trades.
     Missing/inconsistent history clears adaptive weights and records refusal. The
     caller can inspect engine.feedback; failed evidence never breaks protection.
+    An explicit now is a retained upper bound for this binding. Only a new explicit
+    restoration can widen it. Normal live bindings omit it and use each request time.
     """
     from quant_ai.analytics.feedback import refresh_feedback
 
-    engine._journal_binding = (broker, tenant_id, since)
+    engine._journal_binding = (broker, tenant_id, since, now)
     restored = refresh_feedback(engine, broker, tenant_id=tenant_id, since=since, now=now)
     if engine.feedback.get("status") == "refused":
         LOGGER.warning("attribution_restore_refused tenant=%s", tenant_id)

@@ -225,3 +225,42 @@ def test_actual_factory_binds_feedback_not_the_unrelated_trace(tmp_path):
         assert engine.feedback["events"][0]["decision_id"] == "factory-entry"
     finally:
         broker.close()
+
+
+def test_explicit_restore_cutoff_survives_later_weighting(broker):
+    add(broker, exit_at=(SESSION + timedelta(hours=1)).isoformat())
+    engine = AgentAttributionEngine()
+    cutoff = SESSION + timedelta(minutes=5)
+    assert restore_from_journal(engine, broker, tenant_id=TENANT, now=cutoff) == 0
+    evidence = AgentEvidence("supporter", AgentDomain.TECHNICAL, "INFY", Stance.BUY,
+                             D("0.5"), D("0.01"), D("0.005"), (), cutoff, 0)
+    assert engine.weight_evidence((evidence,))[0].confidence == D("0.5")
+    assert engine.attribution() == ()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_swarm_uses_the_analysis_cutoff_for_feedback(broker, monkeypatch, asynchronous):
+    import asyncio
+
+    from quant_ai.agents.swarm import AgentAnalysisRequest
+    from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+    from quant_ai.domain.models import AssetClass, Market
+
+    add(broker, exit_at=(SESSION + timedelta(hours=1)).isoformat())
+    engine = AgentAttributionEngine()
+    restore_from_journal(engine, broker, tenant_id=TENANT)
+    service = SwarmPaperTradingService(broker=broker, attribution=engine)
+    cutoff = SESSION + timedelta(minutes=5)
+    evidence = AgentEvidence("supporter", AgentDomain.TECHNICAL, "INFY", Stance.BUY,
+                             D("0.5"), D("0.01"), D("0.005"), (), cutoff, 0)
+    monkeypatch.setattr(service.cio, "propose", lambda *args, **kwargs: None)
+    async def proposal(*args, **kwargs):
+        return None
+    monkeypatch.setattr(service.cio, "propose_async", proposal)
+    monkeypatch.setattr(service, "_execute_proposal", lambda request, weighted, *args: weighted[0].confidence)
+    args = (AgentAnalysisRequest("INFY", Market.INDIA, AssetClass.EQUITY, cutoff, {}), (evidence,), None, None)
+    kwargs = {"quantity": 1, "reference_price": D(100), "stop_price": D(95),
+              "take_profit_price": D(110), "country": "INDIA"}
+    result = asyncio.run(service.execute_async(*args, **kwargs)) if asynchronous else service.execute(*args, **kwargs)
+    assert result == D("0.5")
+    assert engine.attribution() == ()

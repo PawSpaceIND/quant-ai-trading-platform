@@ -124,7 +124,7 @@ def _persist(broker, events, *, tenant, now, since):
                 raise ValueError("feedback_entry_reused")
 
 
-def refresh_feedback(engine, broker, *, tenant_id, now=None, since=None):
+def refresh_feedback(engine, broker, *, tenant_id, now=None, since=None, upper_bound=None):
     """Rebuild from validated closed entries; repeated refresh never increments twice.
 
     Source audit records are immutable. Before/after weights are a deterministic
@@ -142,6 +142,8 @@ def refresh_feedback(engine, broker, *, tenant_id, now=None, since=None):
     engine.feedback = status
     try:
         at = aware(now or datetime.now(timezone.utc))
+        if upper_bound is not None:
+            at = min(at, aware(upper_bound))
         status["checked_at"] = at.isoformat()
         cutoff = aware(since) if since is not None else None
         with broker._lock:
