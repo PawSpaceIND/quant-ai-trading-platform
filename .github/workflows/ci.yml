@@ -135,7 +135,24 @@ jobs:
           # and unlike a base..head diff it can never silently scan nothing (first
           # push of a branch, force-push, or a zeroed github.event.before). It also
           # catches a secret that was committed and later deleted.
-          "$tmp/gitleaks" git . --redact --no-banner --log-level info
+          if "$tmp/gitleaks" git . --redact --no-banner --log-level info \
+            --report-format json --report-path "$tmp/gitleaks-findings.json"; then
+            :
+          else
+            scan_status=$?
+            # Only location metadata is printed. Never echo Match or Secret fields.
+            python3 - "$tmp/gitleaks-findings.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+          report = pathlib.Path(sys.argv[1])
+          if report.is_file():
+              for finding in json.loads(report.read_text()):
+                  print(json.dumps({key: finding.get(key) for key in
+                                    ("RuleID", "File", "StartLine", "EndLine", "Commit")}))
+          PY
+            exit "$scan_status"
+          fi
           # ...and the checked-out tree, which catches a secret that is live in the
           # current code even if the commit that introduced it is outside the range.
           "$tmp/gitleaks" dir . --redact --no-banner --log-level info

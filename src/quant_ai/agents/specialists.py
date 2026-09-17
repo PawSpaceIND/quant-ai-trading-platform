@@ -113,15 +113,3 @@ def _specialist_prompt(evidence: AgentEvidence, tick: LiveTick | None) -> str:
         *tick_lines,
         "Return a conservative structured consensus for paper trading only.",
     ))
-
-
-DEFAULT_SPECIALISTS = (
-    SpecialistAgent("technical-quant", AgentDomain.TECHNICAL),
-    SpecialistAgent("news-intelligence", AgentDomain.NEWS, 600),
-    SpecialistAgent("macro-rates", AgentDomain.MACRO, 3600),
-    SpecialistAgent("country-opportunity", AgentDomain.COUNTRY, 3600),
-    SpecialistAgent("derivatives-volatility", AgentDomain.DERIVATIVES, 300),
-    SpecialistAgent("liquidity-execution", AgentDomain.LIQUIDITY, 120),
-    SpecialistAgent("risk-sentinel", AgentDomain.RISK, 120),
-    SpecialistAgent("portfolio-construction", AgentDomain.PORTFOLIO, 300),
-)

@@ -614,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "baselines", "contest", "friction-audit", "halt", "resume",
+            "backtest", "baselines", "contest", "publish-research", "friction-audit", "halt", "resume",
             "zerodha-login", "decision-quality", "post-mortem",
         ),
     )
@@ -665,6 +665,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         _backtest(args)
         return 0
+    if args.command == "publish-research":
+        from quant_ai.backtesting.research_publisher import publish_from_args
+
+        return publish_from_args(args)
     if args.command == "contest":
         _contest(args)
         return 0

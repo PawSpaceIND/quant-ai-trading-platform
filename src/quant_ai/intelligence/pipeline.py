@@ -351,6 +351,7 @@ class SwarmMarketAnalysisPipeline:
             required = self._required_freshness(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
+            metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
                 AgentAnalysisRequest(
                     instrument.symbol,
@@ -497,6 +498,7 @@ class SwarmMarketAnalysisPipeline:
             required = self._required_freshness(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
+            metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
                 AgentAnalysisRequest(
                     instrument.symbol,
@@ -623,18 +625,34 @@ class SwarmMarketAnalysisPipeline:
         return tick
 
     @staticmethod
-    def _required_freshness(agent_id: str, states: PipelineFreshness) -> Decimal:
+    def _freshness_sources(agent_id: str) -> tuple[str, ...]:
         if agent_id == "geopolitical-analyst":
-            return states.news.confidence_multiplier
+            return ("news",)
         if agent_id == "commodity-yield":
-            return states.macro.confidence_multiplier
-        if agent_id in {"indian-equities", "us-equities"}:
-            return min(
-                states.news.confidence_multiplier,
-                states.macro.confidence_multiplier,
-                states.fundamentals.confidence_multiplier,
-            )
-        return states.price.confidence_multiplier
+            return ("macro",)
+        if agent_id == "indian-equities":
+            # This specialist scores valuation/balance-sheet fields plus equity news only.
+            # Requiring macro data here silences a valid India vote when the unrelated macro
+            # provider is unavailable.
+            return ("news", "fundamentals")
+        if agent_id == "us-equities":
+            # US10Y is part of the score, so macro freshness remains a genuine dependency.
+            return ("news", "macro", "fundamentals")
+        return ("price",)
+
+    @classmethod
+    def _required_freshness(cls, agent_id: str, states: PipelineFreshness) -> Decimal:
+        sources = cls._freshness_sources(agent_id)
+        return min(getattr(states, source).confidence_multiplier for source in sources)
+
+    @classmethod
+    def _freshness_diagnostic(cls, agent_id: str, states: PipelineFreshness) -> str:
+        parts = []
+        for source in cls._freshness_sources(agent_id):
+            result = getattr(states, source)
+            age = "unknown" if result.age_seconds is None else str(result.age_seconds)
+            parts.append(f"{source}={result.state.value}(age_seconds={age})")
+        return ",".join(parts)
 
     def _approved_lessons(self) -> tuple[str, ...]:
         """Bounded operator-approved lessons, or nothing.
