@@ -36,6 +36,7 @@ from quant_ai.execution.program import (
     ProgramState,
     SliceState,
 )
+from quant_ai.execution.request_context import ExecutionContextError, decode_context, encode_context
 from quant_ai.execution.risk_authority import (
     authority_digest,
     bound_policy,
@@ -50,7 +51,7 @@ from quant_ai.execution.shared_risk import (
     selected,
 )
 from quant_ai.execution.shared_risk_binding import pin_account, read_binding, verify_binding_pair
-from quant_ai.orders.intent import bound_identity, canonical_order_intent
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -305,6 +306,7 @@ class InstitutionalPaperCoordinator:
         self._orders: dict[str, OrderIntent] = {}
 
     def prepare(self, request: InstitutionalTradeRequest) -> InstitutionalPreparation:
+        initial_request_digest = request_fingerprint(request)
         proposal = request.proposal
         held = request.portfolio.symbol_quantity.get(proposal.symbol, 0)
         de_risking = (
@@ -405,10 +407,21 @@ class InstitutionalPaperCoordinator:
         authority = build_authority(program_id=program_id, tenant_id=request.tenant_id,
             request_sha256=request_fingerprint(request), parent_payload=parent_payload,
             policy=approved_policy)
+        if request_fingerprint(request) != initial_request_digest:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, "execution_context_request_changed")
+        try:
+            context_payload = encode_context(request, plan)
+            # Separate both caller-owned and returned objects from the inputs bound
+            # in memory. The persisted payload is immutable and can be decoded afresh.
+            saved = decode_context(context_payload)
+            request = saved.request
+        except ExecutionContextError as error:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, str(error))
         program_args = {"program_id": program_id, "tenant_id": request.tenant_id,
             "decision_id": proposal.decision_id, "symbol": proposal.symbol, "plan": plan,
             "runtime_context_sha256": authority_digest(authority), "created_at": request.observed_at,
-            "parent_order_payload": parent_payload, "risk_authority_payload": authority}
+            "parent_order_payload": parent_payload, "risk_authority_payload": authority,
+            "context_payload": context_payload}
         if de_risking:
             program = self.programs.create(**program_args)
         else:
@@ -793,6 +806,19 @@ class InstitutionalPaperCoordinator:
                 pre_fill_average_price=None if receipt.prior_average is None else str(receipt.prior_average))
         return unresolved
 
+    def restore_runtime_context(self, program_id: str, *, tenant_id: str):
+        """Bind saved data explicitly; execution still requires its normal fresh gates.
+
+        Not an authenticated operator endpoint or an automatic restart policy. No
+        provider, broker submit, accounting repair, halt change or risk release runs.
+        """
+        stored = self.programs.load_context(program_id, tenant_id=tenant_id)
+        program = self.programs.get(program_id)
+        self.bind_runtime_context(program_id, request=stored.request,
+                                  parent_order=order_from_snapshot(program.parent_order_payload))
+        # Do not expose the coordinator's mutable nested objects to the caller.
+        return self.programs.load_context(program_id, tenant_id=tenant_id)
+
     def bind_runtime_context(
         self,
         program_id: str,
@@ -814,6 +840,12 @@ class InstitutionalPaperCoordinator:
             or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
             raise ValueError("execution_program_runtime_context_mismatch")
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=request.tenant_id)
+            if request_fingerprint(stored.request) != request_fingerprint(request):
+                raise ValueError("execution_program_runtime_context_mismatch")
+            request = stored.request
+            parent_order = order_from_snapshot(program.parent_order_payload)
         self._requests[program_id] = request
         self._orders[program_id] = parent_order
 
