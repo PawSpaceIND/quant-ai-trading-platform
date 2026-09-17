@@ -397,7 +397,7 @@ def test_policy_change_during_preparation_cannot_label_old_assessment_as_new_pol
 
 
 @pytest.mark.parametrize("committed", [False, True])
-def test_abrupt_process_exit_never_splits_parent_from_policy(tmp_path, committed):
+def test_abrupt_process_exit_never_splits_parent_from_policy(tmp_path, committed, monkeypatch):
     import json
     import os
     import subprocess
@@ -414,8 +414,12 @@ if sys.argv[2] == 'uncommitted':
 h.coordinator.prepare(make_request(h.broker))
 os._exit(74)
 """
+    from pathlib import Path
+    checkout = Path(__file__).resolve().parents[1]
+    monkeypatch.delenv("PYTHONPATH", raising=False)
     result = subprocess.run([sys.executable, "-c", code, str(tmp_path),
         "committed" if committed else "uncommitted"], env={**os.environ,
+        "PYTHONPATH": os.pathsep.join((str(checkout / "src"), str(checkout / "tests"))),
         "TRADING_LIVE_MONEY_ACTIVE": "false"}, capture_output=True, timeout=30, check=False)
     assert result.returncode == (74 if committed else 73), result.stderr.decode()
     with ExecutionProgramJournal(tmp_path / "programs.sqlite") as journal:

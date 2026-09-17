@@ -91,3 +91,8 @@ The fixture now models the entire original v0 insertion shape, with every existi
 assertion preserved. A separate v1 regression proves that dropping the parent while
 retaining a v1 authority is rejected before inserting any program. Initial failure
 logs remain retained; this is not a waiver or a relaxation of the new binding.
+
+The subprocess crash tests explicitly set the tested checkout's source and fixture
+paths, while deleting any inherited PYTHONPATH in the parent test. A clean child
+otherwise cannot import the fixture module outside pytest's own import setup. This
+is test-process portability only; the abrupt exits and all assertions are retained.
