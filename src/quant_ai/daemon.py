@@ -410,6 +410,12 @@ def build_ghost_runner(
     directives = directives or FounderDirectives()
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    if pilot_mode and len(instruments) > 5:
+        # Expanded cash scope must have a complete, unambiguous subscription BEFORE any
+        # persistent broker state is opened. Keep the existing five-name path unchanged.
+        from quant_ai.governance.nse_watchlist import validate_subscription_mapping
+        zerodha_instrument_tokens = tuple(zerodha_instrument_tokens)
+        validate_subscription_mapping(instruments, zerodha_instrument_tokens, zerodha_symbol_by_token)
     if order_identity_mode == "bound_v1":
         from quant_ai.governance.pilot import validate_pilot_instruments
         validate_pilot_instruments(instruments)
