@@ -97,3 +97,16 @@ acceptance still needs actual source/feature/model lineage and release evidence
 from the integrated producer path. M03 daemon wiring, M01 completion and the other
 milestones remain open. No current account or running daemon is migrated or switched.
 See `PERSISTED_EXECUTION_CONTEXT.md` and the scoped PR's exact test evidence.
+
+### M02 integration follow-up — selected accounting namespace
+
+Review of the stored-context restart path reproduced a genuine attribution defect:
+a request/fill for one tenant could be completed using another tenant's accounting
+adapter. Existing #140 now gains explicit process-local accounting scope checks at
+preparation, binding, dispatch and recovery, plus transactional trade/cost posting
+and stable protective-accounting selection. Mid-posting scope drift rolls back
+journal records while retaining the committed fill for idempotent recovery.
+See `INSTITUTIONAL_ACCOUNTING_SCOPE.md`. This closes the named misattribution paths,
+not authenticated account ownership or a persistent signed accounting-file bind.
+M01 release, full M02 producer/source lineage, M03 runtime assembly and the remaining
+milestones stay open; no live setting or real account is changed by these tests.

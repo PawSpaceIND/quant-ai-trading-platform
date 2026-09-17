@@ -292,6 +292,16 @@ class InstitutionalPaperCoordinator:
         self.oms = oms
         self.programs = programs
         self.accounting = accounting
+        if (not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or not accounting.tenant_id or accounting.tenant_id != accounting.tenant_id.strip()):
+            raise ValueError("institutional_accounting_scope_invalid")
+        # This coordinator owns one explicitly selected accounting namespace/store.
+        # These local identities are not external broker or operator authentication.
+        self._accounting_tenant_id = accounting.tenant_id
+        self._accounting_journal = accounting.journal
+        self._accounting_connection = accounting.journal.db
+        self._accounting_base_currency = accounting.journal.base_currency
         self.warden = warden
         self.snapshot_provider = snapshot_provider
         self.factor_position_provider = factor_position_provider
@@ -306,7 +316,22 @@ class InstitutionalPaperCoordinator:
         self._orders: dict[str, OrderIntent] = {}
         self._source_requests: dict[str, InstitutionalTradeRequest] = {}
 
+    def _assert_accounting_scope(self, tenant_id: str) -> None:
+        accounting = self.accounting
+        if (type(tenant_id) is not str or tenant_id != self._accounting_tenant_id
+                or not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or accounting.tenant_id != self._accounting_tenant_id
+                or accounting.journal is not self._accounting_journal
+                or accounting.journal.db is not self._accounting_connection
+                or accounting.journal.base_currency != self._accounting_base_currency):
+            raise ValueError("institutional_accounting_scope_mismatch")
+
     def prepare(self, request: InstitutionalTradeRequest) -> InstitutionalPreparation:
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
         original_request = request
         initial_request_digest = request_fingerprint(request)
         proposal = request.proposal
@@ -419,6 +444,11 @@ class InstitutionalPaperCoordinator:
             request = saved.request
         except ExecutionContextError as error:
             return self._reject(InstitutionalStage.EXECUTION_PLAN, str(error))
+        # Providers/planners can run between admission and durable preparation.
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
         program_args = {"program_id": program_id, "tenant_id": request.tenant_id,
             "decision_id": proposal.decision_id, "symbol": proposal.symbol, "plan": plan,
             "runtime_context_sha256": authority_digest(authority), "created_at": request.observed_at,
@@ -687,6 +717,8 @@ class InstitutionalPaperCoordinator:
                 "instrument_identity": bound_identity(child),
             }
             try:
+                # Recheck after position/OMS callbacks, immediately before dispatch.
+                self._assert_accounting_scope(request.tenant_id)
                 fill = self.broker.submit_with_evidence(
                     child, evidence, f"{program_id}:{slice_.sequence}"
                 )
@@ -816,6 +848,7 @@ class InstitutionalPaperCoordinator:
         provider, broker submit, accounting repair, halt change or risk release runs.
         """
         stored = self.programs.load_context(program_id, tenant_id=tenant_id)
+        self._assert_accounting_scope(tenant_id)
         program = self.programs.get(program_id)
         self.bind_runtime_context(program_id, request=stored.request,
                                   parent_order=order_from_snapshot(program.parent_order_payload))
@@ -830,6 +863,7 @@ class InstitutionalPaperCoordinator:
         parent_order: OrderIntent,
     ) -> None:
         """Rebind exact runtime inputs after restart without resubmitting any slice."""
+        self._assert_accounting_scope(request.tenant_id)
         program = self.programs.get(program_id)
         if (
             program.tenant_id != request.tenant_id
@@ -855,6 +889,7 @@ class InstitutionalPaperCoordinator:
         self._orders[program_id] = parent_order
 
     def _assert_runtime_intent(self, program, request, parent) -> None:
+        self._assert_accounting_scope(request.tenant_id)
         original = self._source_requests.get(program.program_id)
         if original is not None and request_fingerprint(original) != request_fingerprint(request):
             raise ValueError("execution_program_runtime_context_mismatch")
@@ -866,7 +901,13 @@ class InstitutionalPaperCoordinator:
     def reconcile_protective_accounting(self, *, currency: str) -> ProtectiveAccountingReport:
         """Mirror committed exits outside the independent protection/execution path."""
         try:
-            return ProtectiveExitAccounting(self.broker, self.accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            # A stable tenant wrapper prevents mutable adapter selection from
+            # redirecting this historical mirror. Independent exits are unchanged.
+            accounting = TradingAccounting(self._accounting_journal, self._accounting_tenant_id)
+            result = ProtectiveExitAccounting(self.broker, accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            return result
         except (TypeError, ValueError) as error:
             return ProtectiveAccountingReport("unavailable", (), str(error))
 
@@ -963,6 +1004,27 @@ class InstitutionalPaperCoordinator:
         before: BrokerPosition | None,
         request: InstitutionalTradeRequest,
     ) -> None:
+        self._assert_accounting_scope(request.tenant_id)
+        if order.tenant_id != request.tenant_id:
+            raise ValueError("institutional_accounting_scope_mismatch")
+        accounting = self.accounting
+        # A committed paper fill remains FILLED_UNACCOUNTED on posting failure.
+        # All trade/cost postings in this journal roll back together if the
+        # selected namespace changes inside a posting callback.
+        with self._accounting_journal.atomic():
+            self._assert_accounting_scope(request.tenant_id)
+            self._post_accounting_records(accounting, order, broker_order_id, fill_price, before, request)
+            self._assert_accounting_scope(request.tenant_id)
+
+    def _post_accounting_records(
+        self,
+        accounting: TradingAccounting,
+        order: OrderIntent,
+        broker_order_id: str,
+        fill_price: Decimal,
+        before: BrokerPosition | None,
+        request: InstitutionalTradeRequest,
+    ) -> None:
         ledger = next(
             item for item in self.broker.ledger_entries(order.tenant_id)
             if item.order_id == broker_order_id
@@ -973,14 +1035,14 @@ class InstitutionalPaperCoordinator:
             if ledger.margin_change is None:
                 raise ValueError("derivative_fill_missing_margin_change")
             if ledger.margin_change > 0:
-                self.accounting.reserve_margin(
+                accounting.reserve_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=ledger.margin_change, base_amount=ledger.margin_change * rate,
                     reference=reference, at=ledger.created_at,
                 )
             elif ledger.margin_change < 0:
                 released = -ledger.margin_change
-                self.accounting.release_margin(
+                accounting.release_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=released, base_amount=released * rate,
                     reference=reference, at=ledger.created_at,
@@ -990,7 +1052,7 @@ class InstitutionalPaperCoordinator:
                     raise ValueError("derivative_close_cost_basis_unavailable")
                 pnl = (fill_price - before.average_price) * Decimal(order.quantity)
                 if pnl != 0:
-                    self.accounting.realize_pnl(
+                    accounting.realize_pnl(
                         f"pnl:{broker_order_id}", currency=request.currency,
                         pnl=pnl, base_pnl=pnl * rate, reference=reference,
                         at=ledger.created_at,
@@ -998,7 +1060,7 @@ class InstitutionalPaperCoordinator:
         else:
             notional = fill_price * Decimal(order.quantity)
             if order.side is Side.BUY:
-                self.accounting.buy_security(
+                accounting.buy_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     notional=notional, base_notional=notional * rate,
                     reference=reference, at=ledger.created_at,
@@ -1007,7 +1069,7 @@ class InstitutionalPaperCoordinator:
                 if before is None or before.quantity < order.quantity:
                     raise ValueError("security_sale_cost_basis_unavailable")
                 released = before.average_price * Decimal(order.quantity)
-                self.accounting.sell_security(
+                accounting.sell_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     proceeds=notional, released_cost=released,
                     base_proceeds=notional * rate, base_released_cost=released * rate,
@@ -1016,7 +1078,7 @@ class InstitutionalPaperCoordinator:
         for cost in self.broker.cost_entries(order.tenant_id):
             if cost.order_id != broker_order_id or not cost.cash_debit or cost.amount == 0:
                 continue
-            self.accounting.cash_fee(
+            accounting.cash_fee(
                 f"cost:{broker_order_id}:{cost.code}", currency=request.currency,
                 amount=cost.amount, base_amount=cost.amount * rate,
                 reference=f"{reference} cost {cost.code}", tax=cost.code in TAX_CODES,
