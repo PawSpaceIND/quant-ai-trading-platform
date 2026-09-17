@@ -183,3 +183,22 @@ No merge, deployment, real environment rewrite, daemon restart or live-money
 activation occurred. This closes the named Mac portability failures, not full
 rollout, rollback, hardware durability or trading/platform acceptance.
 See `docs/DEPLOYMENT_PORTABILITY_CLOSURE.md` for scope and limitations.
+
+### Final portability candidate after main refresh
+
+Main advanced to `9bf0c29a042502303f0afdee8229ebbd9382a84f` (#131/#132) before
+publication. Its specialist freshness updates and exact scanner exception are
+retained. The deployment implementation is isolated in commit `0f59bb4`.
+A first combined run recorded 1955 passed / 2 failed; both failures were telemetry
+fixture quotes aging against the wall clock. The fixture now pins the already
+injectable daemon clock; original test functions/assertions are unchanged. Two
+new delayed-collection regressions reproduce and protect this correction.
+
+Final combined Mac normal suite: **1959 passed / 0 failed**, two warnings,
+14 additional subtests, 121.11 seconds. All 439 selected executable/configuration
+files remained unchanged during certification. The count includes 32 deployment
+regressions, two clock-fixture regressions and three newly merged upstream cases.
+The separate institutional risk acceptance remains **15 failed / 2 passed**.
+Actual published-head Linux/macOS CI results belong in the PR certification record.
+No target-host deployment, main-branch merge, live activation or production freshness
+limit change was performed by this continuation.

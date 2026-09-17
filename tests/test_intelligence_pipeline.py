@@ -5,8 +5,13 @@ from quant_ai.agents.contracts import Stance
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.domain.models import AssetClass, Instrument, Market, PortfolioSnapshot, RiskMode
 from quant_ai.execution.paper_ledger import PaperBrokerService
-from quant_ai.intelligence.freshness import DataCategory, FreshnessState, FreshnessValidator
-from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
+from quant_ai.intelligence.freshness import (
+    DataCategory,
+    FreshnessResult,
+    FreshnessState,
+    FreshnessValidator,
+)
+from quant_ai.intelligence.pipeline import PipelineFreshness, SwarmMarketAnalysisPipeline
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
     SandboxMacroIndicatorProvider,
@@ -44,6 +49,37 @@ def test_freshness_validator_ttls_and_penalties() -> None:
     assert missing.state == FreshnessState.MISSING
     assert missing.confidence_multiplier == 0
 
+
+
+def _freshness_result(state: FreshnessState, multiplier: str) -> FreshnessResult:
+    age = None if state is FreshnessState.MISSING else 10
+    return FreshnessResult(state, age, 3600, Decimal(multiplier))
+
+
+def test_specialist_freshness_dependencies_match_inputs() -> None:
+    states = PipelineFreshness(
+        _freshness_result(FreshnessState.FRESH, "1"),
+        _freshness_result(FreshnessState.FRESH, "1"),
+        _freshness_result(FreshnessState.MISSING, "0"),
+        _freshness_result(FreshnessState.FRESH, "1"),
+    )
+    # India valuation does not consume macro metrics and must not be muted by a macro outage.
+    assert SwarmMarketAnalysisPipeline._required_freshness("indian-equities", states) == Decimal(1)
+    # Commodity and US equity agents do consume macro evidence and remain capital-preserving.
+    assert SwarmMarketAnalysisPipeline._required_freshness("commodity-yield", states) == Decimal(0)
+    assert SwarmMarketAnalysisPipeline._required_freshness("us-equities", states) == Decimal(0)
+    assert "macro=MISSING" in SwarmMarketAnalysisPipeline._freshness_diagnostic("commodity-yield", states)
+
+
+def test_indian_equities_is_silenced_when_its_actual_fundamentals_are_missing() -> None:
+    states = PipelineFreshness(
+        _freshness_result(FreshnessState.FRESH, "1"),
+        _freshness_result(FreshnessState.FRESH, "1"),
+        _freshness_result(FreshnessState.FRESH, "1"),
+        _freshness_result(FreshnessState.MISSING, "0"),
+    )
+    assert SwarmMarketAnalysisPipeline._required_freshness("indian-equities", states) == Decimal(0)
+    assert "fundamentals=MISSING" in SwarmMarketAnalysisPipeline._freshness_diagnostic("indian-equities", states)
 
 def test_stale_news_penalizes_confidence_and_blocks_execution(tmp_path) -> None:
     now = datetime.now(timezone.utc)

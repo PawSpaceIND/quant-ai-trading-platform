@@ -57,3 +57,19 @@ No market calendar, regular-hours override or trading admission rule was changed
 The four institutional risk findings and their failing CI acceptance remain open.
 Full daemon integration, migration/recovery, market/settlement coverage, authentic
 data and forward performance, and human/target-host acceptance remain separate gates.
+
+## Concurrent main refresh and clock-fixture correction
+
+Before publication, main advanced to `9bf0c29a042502303f0afdee8229ebbd9382a84f`
+through #132 and #131. Their same-fingerprint scanner exception and specialist
+freshness diagnostics are preserved. The exception-file conflict was comments only;
+its noncomment fingerprints were compared for exact equality before resolution.
+Both upstream freshness diagnostics and existing bound analysis requests remain.
+
+A slower full combined run then exposed two telemetry fixture failures: their
+module-collection timestamp aged while the resolver used the wall clock. The test
+factory now uses the daemon's existing injectable clock, without changing production
+freshness or protection. Two added delayed-collection cases reproduce the defect
+and retain the original fresh/stale/rebased assertions. The surrounding protection,
+pilot and runtime-contract set passes 96 cases. Final combined full-suite and CI
+results are recorded separately; the earlier 1954-pass result predates this refresh.
