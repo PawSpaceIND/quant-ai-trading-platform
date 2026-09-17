@@ -9,10 +9,10 @@ from quant_ai.accounting.trading import TradingAccounting
 from quant_ai.execution.institutional import InstitutionalPaperCoordinator
 
 
-def restarted(h, journal, programs=None):
+def restarted(h, journal, programs=None, tenant="tenant"):
     old = h.coordinator
     return InstitutionalPaperCoordinator(broker=h.broker, oms=h.oms, programs=programs or h.programs,
-        accounting=TradingAccounting(journal, "tenant"), warden=old.warden,
+        accounting=TradingAccounting(journal, tenant), warden=old.warden,
         snapshot_provider=old.snapshot_provider, factor_position_provider=old.factor_position_provider,
         strategy_exposure_provider=old.strategy_exposure_provider,
         slice_volume_provider=old.slice_volume_provider, edge_gate=old.edge_gate,
@@ -382,5 +382,27 @@ os._exit(82)
             assert rows[0][1]
             h.coordinator.restore_runtime_context(rows[0][0], tenant_id="tenant")
         assert h.broker.ledger_entries("tenant") == ()
+    finally:
+        h.close()
+
+
+def test_rejected_foreign_programme_rebind_cannot_change_current_binding(tmp_path):
+    from dataclasses import replace
+    h = Harness(tmp_path)
+    try:
+        request = make_request(h.broker)
+        first = h.coordinator.prepare(request)
+        other = restarted(h, h.journal, tenant="other")
+        other_request = replace(make_request(h.broker, p=proposal(decision_id="other-decision")),
+                                tenant_id="other")
+        foreign = other.prepare(other_request)
+        assert foreign.approved
+        before = h.coordinator._accounting_binding
+        with pytest.raises(ValueError):
+            h.coordinator.bind_runtime_context(foreign.program.program_id, request=request,
+                                               parent_order=foreign.approved_order)
+        assert h.coordinator._accounting_binding == before
+        assert h.coordinator.execute_due(first.program.program_id, now=NOW).stage.value == "COMPLETE"
+        assert h.broker.ledger_entries("other") == ()
     finally:
         h.close()

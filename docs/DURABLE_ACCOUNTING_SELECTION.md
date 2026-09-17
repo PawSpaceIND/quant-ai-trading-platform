@@ -86,3 +86,7 @@ and missing older programme bindings remain outside this guarantee. An in-memory
 journal has no durable host identity. The operator must still select the right
 initial stores. M01 release, complete M02 evidence lineage and M03 operating-loop
 integration remain open; this closes a prerequisite restart-selection defect.
+
+A programme from another tenant is rejected before changing the coordinator's
+cached durable selection. The negative rebind test also executes the original
+legitimate programme afterwards, proving refusal does not poison its selected scope.

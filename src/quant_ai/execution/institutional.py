@@ -356,6 +356,8 @@ class InstitutionalPaperCoordinator:
         return scope
 
     def _match_program_accounting(self, program) -> None:
+        if program.tenant_id != self._accounting_tenant_id:
+            raise ValueError("execution_program_runtime_context_mismatch")
         raw = program.accounting_scope_payload
         if raw is not None:
             verify_binding(raw, self._accounting_journal, program.tenant_id)
