@@ -94,3 +94,24 @@ not in collected CI. The four risk-code findings remain unrepaired/tool-blocked.
 No hidden green claim covers that suite; no risk or coordinator source was changed.
 Exact published commit and Linux CI evidence are recorded in the PR discussion.
 See `docs/AI_KNOWLEDGE_TRAINING_BOUNDARIES.md` for scope and limitations.
+
+## Candidate registry continuation (from 05134b2)
+
+New paper-approval events require a passing recorded assessment, matching candidate
+identity, exact assessment digest and a named reviewer. Replay independently verifies
+stage history, timestamps, declaration types and the persisted assessment. v1 approvals
+without this binding require review; history is never silently upgraded.
+
+Local cooperating readers/writers use file locking; partial/ambiguous JSON refuses.
+Forty-nine synthetic regression cases were added, with 137 focused AI tests passing.
+No actual model was trained, approved, deployed or granted new capabilities.
+
+The prior 17-case institutional risk acceptance audit is now preserved byte-for-byte in
+`acceptance/test_institutional_edge_authority.py`, with its explicit command in the
+adjacent README. It still reports 15 failures / 2 passes. Existing configured CI does
+not collect that directory; neither testpaths nor assertions were changed or waived.
+The earlier blocked risk-production repair was not retried. That acceptance and the
+existing daemon, migration, deployment and external-evidence gates remain release blockers.
+
+Exact commit, normal-suite results and remaining Mac failures are recorded in the PR
+certification; normal-suite success must not be represented as risk-acceptance success.
