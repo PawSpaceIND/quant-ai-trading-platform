@@ -49,6 +49,12 @@ def test_specialist_agents_emit_canonical_evidence() -> None:
     assert evidence[-1].stance in {Stance.BUY, Stance.STRONG_BUY}
 
 
+
+def test_us_equities_refuses_india_market() -> None:
+    evidence = USEquitiesAgent().analyze(request(Market.INDIA))
+    assert evidence.stance == Stance.NEUTRAL
+    assert "non_us_market" in evidence.rationale
+
 def test_atlas_cio_creates_proposal_but_does_not_execute() -> None:
     req = request()
     agents = (
