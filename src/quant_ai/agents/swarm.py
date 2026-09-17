@@ -59,6 +59,9 @@ class SwarmAgent(ABC):
         reasons = [rationale]
         if freshness < 1:
             reasons.append(f"freshness_penalty={freshness}")
+            diagnostic = request.metrics.get("freshness_diagnostic")
+            if isinstance(diagnostic, str) and diagnostic:
+                reasons.append(f"freshness_sources={diagnostic}")
         if freshness <= Decimal("0.25"):
             reasons.append("capital_preservation_stale_or_missing_data")
         return AgentEvidence(
