@@ -233,3 +233,30 @@ Actual published-head GitHub results are recorded in the PR certification commen
 No risk implementation or acceptance assertion was changed, and no real account
 recovery, merge into main, deployment, model promotion or live-money activation
 occurred. See `docs/PAPER_OMS_RECOVERY.md` for scope and remaining release gates.
+
+## Private workspace paper-OMS inspection
+
+Continues #126 from `bbd730c369399ab7f3aa0d43839e8e06332a85c6`. The Activity
+view now reads a session-protected, server-tenant-bound GET endpoint for stored
+paper OMS state. Both stores open read-only; no recovery, submission, cancellation
+or halt-release operation is exposed. Missing/invalid state stays unavailable;
+observed states and recovery-audit counts do not assert event/receipt verification.
+The shared OMS path is passed to the dashboard without enabling a running mode.
+
+Local validation: 40 new SQLite/handler cases; 191 full UI tests; typecheck and
+production build; six browser journeys, including two new real-schema desktop/
+mobile cases. The seed uses production paper broker/OMS classes with synthetic
+stored orders and no dispatched fill. A separate agent-browser inspection verified
+the authenticated Activity view at 390px. The private test server was stopped.
+Full Python suite: 2167 passed; risk acceptance: the same 15 failed / 2 passed.
+Python/engine inputs remain identical after the final UI-only layout/selector
+polish, which was rebuilt and browser-tested. Exact-head CI results are recorded
+in the PR certification comment, not inferred from adjacent passing tests.
+
+Clean-source history and working-tree scans passed using the existing pinned
+scanner. No source under src/, Python test, risk acceptance assertion or CI gate
+was modified. Four risk repairs, full institutional runtime, authenticated reviewed
+recovery/migration, segment/settlement fidelity and real operational/forward trading
+evidence remain open. This closes operator visibility, not recovery authorization
+or launch readiness. No real account recovery, deployment or live activation.
+See docs/PAPER_OMS_INSPECTION.md for limits and semantics.

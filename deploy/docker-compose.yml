@@ -91,6 +91,8 @@ services:
     environment:
       <<: *shared
       PRAMANA_CONSOLE_DB: /data/pilot-console.sqlite
+      # Same selected OMS path as the paper engine, exposed only through read-only inspection.
+      PRAMANA_OMS_DB: ${PRAMANA_OMS_DB:-}
       PRAMANA_REVIEW_DIR: ${PRAMANA_REVIEW_DIR:-/data/reviews}
       PRAMANA_RESEARCH_REPORT: ${PRAMANA_RESEARCH_REPORT:-/data/research-report.json}
       PRAMANA_BENCHMARK_ATTRIBUTION_REPORT: ${PRAMANA_BENCHMARK_ATTRIBUTION_REPORT:-}
