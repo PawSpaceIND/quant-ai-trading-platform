@@ -25,7 +25,9 @@ class KnowledgeRecord:
     content: str
 
     def __post_init__(self) -> None:
-        if not self.content.strip():
+        if not isinstance(self.item, KnowledgeItem):
+            raise TypeError("knowledge_record_item_required")
+        if not isinstance(self.content, str) or not self.content.strip():
             raise ValueError("knowledge_record_content_required")
         if any(char in self.content for char in "\r\n"):
             raise ValueError("knowledge_record_content_must_be_single_line")
@@ -80,9 +82,9 @@ class DecisionKnowledgeContext:
         """JSON-quote untrusted content so it stays one `content=` value on one data line."""
         return tuple(
             "knowledge="
-            f"category={record.item.category.value};source={record.item.source_id};"
+            f"category={record.item.category.value};source={json.dumps(record.item.source_id, ensure_ascii=True)};"
             f"available_at={record.item.available_at.isoformat()};"
-            f"sha256={record.item.content_sha256};reference={record.item.reference};"
+            f"sha256={record.item.content_sha256};reference={json.dumps(record.item.reference, ensure_ascii=True)};"
             f"content={json.dumps(record.content, ensure_ascii=True)}"
             for record in self.records
         )

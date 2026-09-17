@@ -71,3 +71,26 @@ See RUNTIME_ORDER_IDENTITY.md and the exact-head CI comment for 38 added regress
 This does not switch the running daemon or assemble the institutional coordinator as its
 main execution path. That assembly, accounting-wide restart/operations, reviewed migration,
 qualified external evidence and the previously listed release gates remain open.
+
+## AI knowledge/training boundary continuation
+
+Base: `ac3ee5f0b2eb3af56bfeb6ec1b49e73c415e2a56`.
+
+| Requirement | Engineering result | Remaining boundary |
+| --- | --- | --- |
+| Knowledge permissions | Strict enum/boolean/integer inputs; frozen scopes; read-only controller grants | Grants are operator declarations, not provider-rights authentication |
+| Prompt metadata | Control/line separators rejected; source/reference JSON quoted | Not general prompt-injection immunity or default-daemon knowledge rollout |
+| Training preflight | Run metadata validated before trainer invocation | Trainer behavior and raw dataset authenticity remain external |
+| Dataset provenance | Full declared dataset contract hash retained beside artifact hash | Legacy missing binding stays unknown; no promotion authority |
+
+Two new test files add 74 synthetic cases; focused AI/Atlas/learning tests pass 88/88.
+Fresh Mac baseline is 1730 passed + 13 failed; candidate is 1804 passed + the exact
+same 13 deployment failures, compared by JUnit identities. All 416 candidate Python
+files are unchanged through full certification. Removing the plane guard, trainer
+preflight or dataset binding fails the corresponding regressions; all were restored.
+
+The separate prior edge-authority suite still reports 15 failures / 2 passes and is
+not in collected CI. The four risk-code findings remain unrepaired/tool-blocked.
+No hidden green claim covers that suite; no risk or coordinator source was changed.
+Exact published commit and Linux CI evidence are recorded in the PR discussion.
+See `docs/AI_KNOWLEDGE_TRAINING_BOUNDARIES.md` for scope and limitations.

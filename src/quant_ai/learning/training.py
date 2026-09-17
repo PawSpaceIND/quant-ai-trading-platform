@@ -2,12 +2,35 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from quant_ai.learning.contracts import TrainingDatasetManifest, TrainingRunManifest
+from quant_ai.learning.contracts import (
+    TrainingDatasetManifest,
+    TrainingRunManifest,
+    validate_training_run_inputs,
+)
 
 Trainer = Callable[[TrainingDatasetManifest, int], bytes]
+
+
+def training_dataset_digest(dataset: TrainingDatasetManifest) -> str:
+    """Bind declared provenance, not dataset bytes or provider authenticity."""
+    if not isinstance(dataset, TrainingDatasetManifest):
+        raise TypeError("training_dataset_manifest_required")
+    payload = {
+        "schema": "pramana.training_dataset_manifest.v1", "dataset_id": dataset.dataset_id,
+        "cutoff": dataset.cutoff.astimezone(timezone.utc).isoformat(),
+        "row_count": dataset.row_count, "source_ids": list(dataset.source_ids),
+        "source_snapshot_sha256": dataset.source_snapshot_sha256,
+        "feature_schema_sha256": dataset.feature_schema_sha256,
+        "label_schema_sha256": dataset.label_schema_sha256,
+        "cost_policy_id": dataset.cost_policy_id,
+        "adjustment_policy_id": dataset.adjustment_policy_id,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def execute_training(
@@ -28,9 +51,15 @@ def execute_training(
     feature/label contracts and cost/adjustment policy, while the artifact digest makes a
     candidate reproducible and reviewable.  Nothing here can change a traded model.
     """
-    moment = trained_at or datetime.now(timezone.utc)
-    if moment.tzinfo is None or moment.utcoffset() is None:
-        raise ValueError("trained_at_must_be_timezone_aware")
+    dataset_digest = training_dataset_digest(dataset)
+    moment = trained_at if trained_at is not None else datetime.now(timezone.utc)
+    validate_training_run_inputs(
+        run_id=run_id, candidate_id=candidate_id, model_family=model_family,
+        dataset_id=dataset.dataset_id, trained_at=moment, seed=seed,
+        code_sha256=code_sha256, configuration_sha256=configuration_sha256,
+    )
+    if not callable(trainer):
+        raise TypeError("training_trainer_must_be_callable")
     if moment < dataset.cutoff:
         raise ValueError("training_before_dataset_cutoff")
     artifact = trainer(dataset, seed)
@@ -46,5 +75,6 @@ def execute_training(
         code_sha256=code_sha256,
         configuration_sha256=configuration_sha256,
         artifact_sha256=hashlib.sha256(artifact).hexdigest(),
+        dataset_manifest_sha256=dataset_digest,
     )
     return artifact, manifest
