@@ -1,0 +1,54 @@
+{
+  "base_commit": "7ac330fc59cf85f7aeaa593d4df10318e217dcee",
+  "scope": "Deployment-script portability only; not portfolio-risk guard certification",
+  "runtime": "macOS system Bash 3.2 and system BSD sed",
+  "checks": [
+    {
+      "regression": "bash32_container_array",
+      "test": "tests/test_deploy_pilot_portability.py::test_native_tools_can_stamp_twice_without_backup_or_unrelated_byte_changes",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "regression": "bash32_restart_array",
+      "test": "tests/test_deploy_pilot_portability.py::test_native_tools_can_stamp_twice_without_backup_or_unrelated_byte_changes",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "regression": "bsd_sed_empty_suffix",
+      "test": "tests/test_deploy_pilot_portability.py::test_native_tools_can_stamp_twice_without_backup_or_unrelated_byte_changes",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "regression": "container_identity_per_index",
+      "test": "tests/test_deploy_pilot_portability.py::test_each_service_retains_its_own_unchanged_restart_baseline",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "regression": "restart_baseline_per_index",
+      "test": "tests/test_deploy_pilot_portability.py::test_each_service_retains_its_own_unchanged_restart_baseline",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    }
+  ],
+  "disposable_source_copies": true,
+  "working_script_unchanged": true,
+  "script_sha256": "dbceac1fde3ed4801204f9f5b9803c412256ab711d3f9a69c19d1866dd2f24f4",
+  "production_deployments": 0,
+  "docker_calls": "fixture executable only",
+  "real_credential_reads": 0,
+  "final_test_file_sha256": "f1571b2bf2c26a319880d2a3d14de1ca77c34e07a0a8ff861406322e2e7f72b3"
+}

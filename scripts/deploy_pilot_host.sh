@@ -126,7 +126,13 @@ fi
 # a rewrite through a temporary file is one chmod away from publishing every credential in
 # it. The revision is a validated 40-character hex string, so it carries no sed delimiter.
 if grep -q '^PRAMANA_RELEASE_REVISION=' "$ENV_FILE"; then
-  sed -i "s|^PRAMANA_RELEASE_REVISION=.*|PRAMANA_RELEASE_REVISION=${revision}|" "$ENV_FILE"
+  # BSD sed requires a separate empty backup suffix; GNU sed does not.
+  # Neither invocation creates a backup containing the environment's credentials.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    sed -i '' "s|^PRAMANA_RELEASE_REVISION=.*|PRAMANA_RELEASE_REVISION=${revision}|" "$ENV_FILE"
+  else
+    sed -i "s|^PRAMANA_RELEASE_REVISION=.*|PRAMANA_RELEASE_REVISION=${revision}|" "$ENV_FILE"
+  fi
 else
   printf 'PRAMANA_RELEASE_REVISION=%s\n' "$revision" >>"$ENV_FILE"
 fi
@@ -147,7 +153,9 @@ compose up -d --build
 # --- Verify ------------------------------------------------------------------------------
 inspect_format='{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
 
-declare -A container_of=()
+# Use matching numeric indexes: the system Bash on macOS has no associative arrays.
+# Service names stay data, never array arithmetic; each container keeps its own baseline.
+containers=()
 services=()
 while read -r service; do
   [ -n "$service" ] || continue
@@ -158,13 +166,13 @@ done < <(compose config --services)
 for service in "${services[@]}"; do
   container="$(compose ps --all --quiet "$service" | head -n 1)"
   [ -n "$container" ] || fail "service '$service' has no container after 'up -d --build'"
-  container_of["$service"]="$container"
+  containers+=("$container")
 done
 
-declare -A restarts_before=()
-for service in "${services[@]}"; do
-  read -r _ _ count _ <<<"$(docker inspect --format "$inspect_format" "${container_of[$service]}")"
-  restarts_before["$service"]="$count"
+restarts_before=()
+for index in "${!services[@]}"; do
+  read -r _ _ count _ <<<"$(docker inspect --format "$inspect_format" "${containers[$index]}")"
+  restarts_before[$index]="$count"
 done
 
 # A container that exits and is restarted by `unless-stopped` is "running" again a second
@@ -173,9 +181,10 @@ done
 if [ "$SETTLE_SECONDS" -gt 0 ]; then sleep "$SETTLE_SECONDS"; fi
 
 failures=0
-for service in "${services[@]}"; do
+for index in "${!services[@]}"; do
+  service="${services[$index]}"
   read -r status restarting count health \
-    <<<"$(docker inspect --format "$inspect_format" "${container_of[$service]}")"
+    <<<"$(docker inspect --format "$inspect_format" "${containers[$index]}")"
   echo "deploy: $service status=$status restarts=$count health=$health"
   if [ "$status" != "running" ]; then
     echo "deploy: $service is '$status', not running" >&2
@@ -185,8 +194,8 @@ for service in "${services[@]}"; do
     echo "deploy: $service is mid-restart" >&2
     failures=$((failures + 1))
   fi
-  if [ "$count" -gt "${restarts_before[$service]}" ]; then
-    echo "deploy: $service restarted ${restarts_before[$service]}->$count during the ${SETTLE_SECONDS}s settle window; it is in a restart loop" >&2
+  if [ "$count" -gt "${restarts_before[$index]}" ]; then
+    echo "deploy: $service restarted ${restarts_before[$index]}->$count during the ${SETTLE_SECONDS}s settle window; it is in a restart loop" >&2
     failures=$((failures + 1))
   fi
   # `starting` is not a failure: market-monitor's check has a 300s start_period because
