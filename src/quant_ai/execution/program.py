@@ -21,6 +21,7 @@ from typing import Self
 from uuid import uuid4
 
 from quant_ai.execution.planner import ExecutionPlan
+from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.orders.intent import order_from_snapshot
 
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,180}")
@@ -68,6 +69,8 @@ class ExecutionProgram:
     created_at: datetime
     slices: tuple[ProgramSlice, ...]
     parent_order_payload: str | None = None
+    risk_authority_payload: str | None = None
+    risk_authority_version: int = 0
 
     @property
     def executed_quantity(self) -> int:
@@ -118,7 +121,15 @@ class ExecutionProgramJournal:
                     PRIMARY KEY(program_id,sequence)
                 );
             """)
+            self.db.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in self.db.execute("PRAGMA table_info(execution_programs)")}
+            if "risk_authority_version" not in columns:
+                self.db.execute("ALTER TABLE execution_programs ADD COLUMN risk_authority_version INTEGER NOT NULL DEFAULT 0")
+            if "risk_authority_payload" not in columns:
+                self.db.execute("ALTER TABLE execution_programs ADD COLUMN risk_authority_payload TEXT")
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS execution_program_risk_authority_immutable
+                BEFORE UPDATE OF risk_authority_version,risk_authority_payload ON execution_programs
+                BEGIN SELECT RAISE(ABORT,'Approved risk authority is immutable'); END""")
             if "parent_order_payload" not in columns:
                 self.db.execute("ALTER TABLE execution_programs ADD COLUMN parent_order_payload TEXT")
             self.db.execute(
@@ -232,6 +243,7 @@ class ExecutionProgramJournal:
         runtime_context_sha256: str,
         created_at: datetime,
         parent_order_payload: str | None = None,
+        risk_authority_payload: str | None = None,
     ) -> ExecutionProgram:
         for value in (program_id, tenant_id, decision_id, symbol):
             if not _ID.fullmatch(value):
@@ -247,6 +259,9 @@ class ExecutionProgramJournal:
             parent = order_from_snapshot(parent_order_payload)
             if (parent.tenant_id, parent.symbol, parent.quantity) != (tenant_id, symbol, plan.parent_quantity):
                 raise ValueError("execution_program_parent_identity_mismatch")
+        authority_version = 0 if risk_authority_payload is None else 1
+        validate_authority(authority_version, risk_authority_payload, program_id=program_id,
+            tenant_id=tenant_id, parent_payload=parent_order_payload, runtime_digest=runtime_context_sha256)
         plan.assert_conservative()
         payload = self._plan_payload(plan)
         digest = hashlib.sha256(
@@ -264,6 +279,8 @@ class ExecutionProgramJournal:
                 or existing["runtime_context_sha256"] != runtime_context_sha256
                 or existing["parent_quantity"] != plan.parent_quantity
                 or existing["parent_order_payload"] != parent_order_payload
+                or existing["risk_authority_version"] != authority_version
+                or existing["risk_authority_payload"] != risk_authority_payload
             ):
                 raise ValueError("execution_program_decision_payload_mismatch")
             return self.get(program_id)
@@ -271,11 +288,13 @@ class ExecutionProgramJournal:
             self.db.execute(
                 """INSERT INTO execution_programs
                 (program_id,tenant_id,decision_id,symbol,state,plan_sha256,runtime_context_sha256,
-                 parent_quantity,created_at,parent_order_payload) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                 parent_quantity,created_at,parent_order_payload,risk_authority_version,risk_authority_payload)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     program_id, tenant_id, decision_id, symbol, ProgramState.PLANNED.value,
                     digest, runtime_context_sha256, plan.parent_quantity,
                     created_at.astimezone(timezone.utc).isoformat(), parent_order_payload,
+                    authority_version, risk_authority_payload,
                 ),
             )
             self.db.executemany(
@@ -457,9 +476,12 @@ class ExecutionProgramJournal:
         )
         if sum(item.quantity for item in slices) != int(row["parent_quantity"]):
             raise ValueError("execution_program_quantity_projection_mismatch")
+        validate_authority(row["risk_authority_version"], row["risk_authority_payload"],
+            program_id=row["program_id"], tenant_id=row["tenant_id"],
+            parent_payload=row["parent_order_payload"], runtime_digest=row["runtime_context_sha256"])
         return ExecutionProgram(
             row["program_id"], row["tenant_id"], row["decision_id"], row["symbol"],
             ProgramState(row["state"]), row["plan_sha256"], row["runtime_context_sha256"],
             int(row["parent_quantity"]), datetime.fromisoformat(row["created_at"]), slices,
-            row["parent_order_payload"],
+            row["parent_order_payload"], row["risk_authority_payload"], row["risk_authority_version"],
         )

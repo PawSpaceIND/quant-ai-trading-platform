@@ -35,6 +35,13 @@ from quant_ai.execution.program import (
     ProgramState,
     SliceState,
 )
+from quant_ai.execution.risk_authority import (
+    authority_digest,
+    bound_policy,
+    build_authority,
+    parse_authority,
+    policy_values,
+)
 from quant_ai.orders.intent import bound_identity, canonical_order_intent
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
@@ -292,12 +299,20 @@ class InstitutionalPaperCoordinator:
         de_risking = (
             proposal.side is Side.SELL and held > 0 and proposal.quantity <= held
         )
+        approved_policy = None
         edge: EdgeDecision | None = None
         allocation: PortfolioOptimizationResult | None = None
         if not de_risking:
             if request.edge_evidence is None:
                 return self._reject(InstitutionalStage.EDGE, "edge_evidence_required")
-            edge = self.edge_gate.evaluate(request.edge_evidence)
+            try:
+                values = policy_values(self.edge_gate.policy)
+                approved_policy = replace(self.edge_gate.policy)
+                if values != policy_values(approved_policy):
+                    raise ValueError("execution_risk_policy_changed")
+            except (TypeError, ValueError, ArithmeticError, AttributeError):
+                return self._reject(InstitutionalStage.EDGE, "execution_risk_policy_unavailable")
+            edge = CalibratedEdgeGate(approved_policy).evaluate(request.edge_evidence)
             if not edge.approved:
                 return InstitutionalPreparation(
                     False, InstitutionalStage.EDGE, ";".join(edge.reasons), edge=edge
@@ -360,15 +375,27 @@ class InstitutionalPaperCoordinator:
             f"{request.tenant_id}|{proposal.decision_id}|{plan.algorithm.value}".encode()
         ).hexdigest()[:32]
         parent_order = replace(risk.order, strategy_id=request.strategy_id)
+        if not de_risking:
+            try:
+                changed = policy_values(self.edge_gate.policy) != policy_values(approved_policy)
+            except (TypeError, ValueError, ArithmeticError, AttributeError):
+                changed = True
+            if changed:
+                return self._reject(InstitutionalStage.EDGE, "execution_risk_policy_changed")
+        parent_payload = canonical_order_intent(parent_order)
+        authority = build_authority(program_id=program_id, tenant_id=request.tenant_id,
+            request_sha256=request_fingerprint(request), parent_payload=parent_payload,
+            policy=approved_policy)
         program = self.programs.create(
             program_id=program_id,
             tenant_id=request.tenant_id,
             decision_id=proposal.decision_id,
             symbol=proposal.symbol,
             plan=plan,
-            runtime_context_sha256=request_fingerprint(request),
+            runtime_context_sha256=authority_digest(authority),
             created_at=request.observed_at,
-            parent_order_payload=canonical_order_intent(parent_order),
+            parent_order_payload=parent_payload,
+            risk_authority_payload=authority,
         )
         self._requests[program.program_id] = request
         self._orders[program.program_id] = parent_order
@@ -382,6 +409,26 @@ class InstitutionalPaperCoordinator:
             execution_plan=plan,
             approved_order=self._orders[program.program_id],
         )
+
+    def _policy_issue(self, program, parent) -> str | None:
+        # Covered sales retain normal Warden checks without acquiring entry-only authority.
+        if parent.side is Side.SELL:
+            return None
+        if program.risk_authority_version != 1:
+            return "execution_risk_policy_binding_missing"
+        try:
+            saved = bound_policy(program.risk_authority_payload)
+            if saved is None or policy_values(saved) != policy_values(self.edge_gate.policy):
+                return "execution_risk_policy_changed"
+        except (TypeError, ValueError, ArithmeticError, AttributeError):
+            return "execution_risk_policy_unavailable"
+        return None
+
+    @staticmethod
+    def _bound_request_digest(program) -> str:
+        if program.risk_authority_version == 1:
+            return parse_authority(program.risk_authority_payload)["requestSha256"]
+        return program.runtime_context_sha256
 
     def _strategy_exposure(self, strategy_id: str) -> Decimal | None:
         try:
@@ -407,6 +454,9 @@ class InstitutionalPaperCoordinator:
         if self.programs.recovery_required(request.tenant_id):
             return self._recovery_result(program_id, (), "pending_execution_or_accounting_recovery")
         for slice_ in self.programs.due(program_id, now):
+            policy_issue = self._policy_issue(program, parent)
+            if policy_issue:
+                return self._recovery_result(program_id, tuple(executed), policy_issue)
             accounting_status = self.reconcile_protective_accounting(currency=request.currency)
             if accounting_status.status not in {"matched", "not_required"}:
                 return self._recovery_result(program_id, tuple(executed), accounting_status.reason)
@@ -424,7 +474,14 @@ class InstitutionalPaperCoordinator:
                 if request.edge_evidence is None:
                     edge_issue = "edge_evidence_required_at_slice"
                 else:
-                    edge = self.edge_gate.evaluate(request.edge_evidence)
+                    saved_policy = (bound_policy(program.risk_authority_payload)
+                                    if program.risk_authority_version == 1 else None)
+                    if saved_policy is None:
+                        reason = "execution_risk_policy_binding_missing"
+                        self.programs.mark_failed(program_id, slice_.sequence, reason)
+                        return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                            self.programs.get(program_id), tuple(executed), reason)
+                    edge = CalibratedEdgeGate(saved_policy).evaluate(request.edge_evidence)
                     edge_issue = ("edge_recheck_failed:" + ";".join(edge.reasons)
                                   if not edge.approved else
                                   _parent_edge_risk_issue(parent, request.edge_evidence, edge,
@@ -509,6 +566,12 @@ class InstitutionalPaperCoordinator:
                 self.programs.mark_failed(program_id, slice_.sequence, reason)
                 return InstitutionalExecutionResult(InstitutionalStage.FAILED,
                     self.programs.get(program_id), tuple(executed), reason)
+            self._assert_runtime_intent(self.programs.get(program_id), request, parent)
+            policy_issue = self._policy_issue(program, parent)
+            if policy_issue:
+                self.programs.mark_failed(program_id, slice_.sequence, policy_issue)
+                return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                    self.programs.get(program_id), tuple(executed), policy_issue)
             child = approved_child
             before = self._position(child)
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
@@ -522,6 +585,8 @@ class InstitutionalPaperCoordinator:
                 "event_type": "swarm_fill",
                 "institutional_program": program_id,
                 "institutional_slice": slice_.sequence,
+                "institutional_risk_authority_sha256": (program.runtime_context_sha256
+                    if program.risk_authority_version == 1 else None),
                 "order_intent_sha256": hashlib.sha256(canonical_order_intent(child).encode()).hexdigest(),
                 "instrument_identity": bound_identity(child),
             }
@@ -586,6 +651,10 @@ class InstitutionalPaperCoordinator:
         if receipt is None:
             return None
         payload = receipt.evidence
+        program = self.programs.get(program_id)
+        if program.risk_authority_version == 1 and payload.get(
+                "institutional_risk_authority_sha256") != program.runtime_context_sha256:
+            raise ValueError("accounting_recovery_risk_authority_mismatch")
         expected_intent = canonical_order_intent(child)
         if (canonical_order_intent(receipt.order) != expected_intent
                 or payload.get("institutional_program") != program_id
@@ -660,7 +729,7 @@ class InstitutionalPaperCoordinator:
             or program.parent_quantity != parent_order.quantity
             or parent_order.tenant_id != request.tenant_id
             or parent_order.symbol != program.symbol
-            or request_fingerprint(request) != program.runtime_context_sha256
+            or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)
             or program.parent_order_payload is None
             or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
@@ -672,7 +741,7 @@ class InstitutionalPaperCoordinator:
     def _assert_runtime_intent(program, request, parent) -> None:
         if (program.parent_order_payload is None
                 or canonical_order_intent(parent) != program.parent_order_payload
-                or request_fingerprint(request) != program.runtime_context_sha256):
+                or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)):
             raise ValueError("execution_program_runtime_context_mismatch")
 
     def reconcile_protective_accounting(self, *, currency: str) -> ProtectiveAccountingReport:

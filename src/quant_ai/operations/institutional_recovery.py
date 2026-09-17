@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from quant_ai.accounting.journal import CANONICAL_ACCOUNTS, Account, AccountType, TransactionKind
+from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.instruments.identity import instrument_from_identity
 from quant_ai.operations import oms_recovery
 from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
@@ -300,6 +301,15 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
                "program parent identity mismatch")
         _instant(program["created_at"])
         pid = program["program_id"]
+        program_columns = set(program.keys())
+        version = program["risk_authority_version"] if "risk_authority_version" in program_columns else 0
+        raw = program["risk_authority_payload"] if "risk_authority_payload" in program_columns else None
+        try:
+            validate_authority(version, raw, program_id=pid, tenant_id=tenant,
+                parent_payload=program["parent_order_payload"], runtime_digest=program["runtime_context_sha256"])
+        except (TypeError, ValueError) as error:
+            # Keep parent/decision attribution failures in the recovery API's domain.
+            raise ValueError(f"Institutional recovery receipt parent or decision authority invalid:{error}") from error
         slices = _rows(db, "SELECT * FROM execution_program_slices WHERE program_id=? ORDER BY sequence", (pid,))
         _check(0 < len(slices) <= 10_000, "program slice count invalid")
         _check(sum(_integer(s["quantity"], positive=True) for s in slices) == quantity, "program parent conservation mismatch")
@@ -331,6 +341,9 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
             claimed_clients.add(cid)
             payload = receipts.get((pid, sequence))
             if payload is not None:
+                if version == 1:
+                    _check(payload.get("institutional_risk_authority_sha256") == program["runtime_context_sha256"],
+                           "receipt risk authority mismatch")
                 oid = payload["order_id"]
                 _check(oid in entries and oid not in claimed_fills, "duplicate or absent ledger fill")
                 _check(state not in {"FAILED", "CANCELLED"}, "terminal slice contradicts committed fill")
