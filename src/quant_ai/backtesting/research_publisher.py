@@ -1,10 +1,12 @@
-"""Publish a fixed train/holdout price-rule study, never a claim about the traded AI.
+"""Offline train/holdout price-rule evidence, never a claim about the traded AI.
 
-Money and compounded bootstrap paths use Decimal. Only final dimensionless UI metrics
-become finite JSON numbers. No broker state, credentials, live orders or promotion.
+Money and bootstrap paths use Decimal. Only dimensionless UI metrics become floats.
+No broker state, credentials, live orders, risk-setting changes or automatic promotion.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import math
@@ -28,11 +30,8 @@ from quant_ai.backtesting.baselines import (
     _assert_daily_bars,
 )
 from quant_ai.backtesting.contest import NOT_THE_AI
-from quant_ai.backtesting.replay import (
-    TRADED_CONFIGURATION_DIFFERENCES,
-    dataset_instrument,
-    load_replay_dataset,
-)
+from quant_ai.backtesting.history import ADJUSTMENT_POLICY, INTERVAL, PRICE_SERIES
+from quant_ai.backtesting.replay import TRADED_CONFIGURATION_DIFFERENCES, _bar_from_mapping
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.marketdata.models import Candle
@@ -51,22 +50,22 @@ BOOTSTRAP_SEED = 1729
 MAX_REPORT_BYTES = 2_000_000
 SIBLING_PANELS = {
     "PRAMANA_RESEARCH_LAB_REPORT": (
-        "Not emitted: needs registered matched cases, candidate decisions, resolved "
-        "outcomes and measured API costs, not price-rule baselines."
+        "Not emitted: requires registered matched experiments, resolved outcomes and "
+        "measured provider costs, not a price-only momentum baseline."
     ),
     "PRAMANA_RESEARCH_DASHBOARD_SNAPSHOT": (
-        "Not emitted: needs sanitized comparison, simulation and company-event exports; "
-        "this single-instrument study supplies none."
+        "Not emitted: requires comparison, simulation and company-event exports that "
+        "this single-instrument study does not produce."
     ),
     "PRAMANA_PORTFOLIO_RESEARCH_REPORT": (
-        "Not emitted: needs a continuous multi-asset quote/order journal and reconciled "
-        "books; independent daily baselines are not that journal."
+        "Not emitted: requires continuous multi-asset simulation, attribution and "
+        "reconciled books; independent single-instrument curves are not that evidence."
     ),
 }
 
 
 class ResearchPublicationRefused(ValueError):
-    """Evidence cannot support publication. No new report is installed."""
+    """The evidence cannot support publication; retain any previous report."""
 
 
 def _require(condition: bool, reason: str) -> None:
@@ -83,7 +82,7 @@ def _sha(value: bytes) -> str:
 
 
 def bar_digest(bars: tuple[Candle, ...]) -> str:
-    """Same ordered OHLCV digest convention as cli._bar_digest/contest."""
+    """The same ordered OHLCV convention as cli._bar_digest and contest."""
     return _sha("|".join(
         f"{b.timestamp.isoformat()}:{b.open}:{b.high}:{b.low}:{b.close}:{b.volume}"
         for b in bars
@@ -108,77 +107,58 @@ def _period(bars: tuple[Candle, ...]) -> dict[str, Any]:
     }
 
 
-def _assert_split(
-    bars: tuple[Candle, ...], train: tuple[Candle, ...], holdout: tuple[Candle, ...]
-) -> None:
+def _assert_split(bars, train, holdout) -> None:
     _require(bool(train) and bool(holdout), "research_empty_split")
     _require(train + holdout == bars, "research_split_not_partition")
     venue = venue_for(bars[0].instrument.market)
     train_dates = {session_date(b.timestamp, venue) for b in train}
     holdout_dates = {session_date(b.timestamp, venue) for b in holdout}
-    _require(
-        not train_dates.intersection(holdout_dates) and max(train_dates) < min(holdout_dates),
-        "research_holdout_overlaps_training",
-    )
+    _require(not train_dates.intersection(holdout_dates)
+             and max(train_dates) < min(holdout_dates), "research_holdout_overlaps_training")
 
 
 def _assert_evidence_floor(run: BaselineRun) -> None:
-    _require(
-        len(run.returns) >= MINIMUM_RATIO_OBSERVATIONS,
-        f"research_observations_below_minimum:{MINIMUM_RATIO_OBSERVATIONS}",
-    )
-    _require(
-        len(run.round_trips) >= MINIMUM_ROUND_TRIPS,
-        f"research_round_trips_below_minimum:{MINIMUM_ROUND_TRIPS}",
-    )
+    _require(len(run.returns) >= MINIMUM_RATIO_OBSERVATIONS,
+             f"research_observations_below_minimum:{MINIMUM_RATIO_OBSERVATIONS}")
+    _require(len(run.round_trips) >= MINIMUM_ROUND_TRIPS,
+             f"research_round_trips_below_minimum:{MINIMUM_ROUND_TRIPS}")
 
 
 def _assert_run(run: BaselineRun, bars: tuple[Candle, ...]) -> None:
-    _require(
-        len(run.equity_curve) == len(bars) and len(run.returns) == len(bars) - 1,
-        "research_run_does_not_match_scored_bars",
-    )
-    _require(
-        run.equity_curve[0] == STARTING_CAPITAL
-        and all(v.is_finite() and v > 0 for v in run.equity_curve),
-        "research_invalid_equity_path",
-    )
-    expected = tuple(
-        (after - before) / before
-        for before, after in zip(run.equity_curve, run.equity_curve[1:])
-    )
+    _require(len(run.equity_curve) == len(bars) and len(run.returns) == len(bars) - 1,
+             "research_run_does_not_match_scored_bars")
+    _require(run.equity_curve[0] == STARTING_CAPITAL
+             and all(v.is_finite() and v > 0 for v in run.equity_curve),
+             "research_invalid_equity_path")
+    expected = tuple((b - a) / a for a, b in zip(run.equity_curve, run.equity_curve[1:]))
     _require(run.returns == expected, "research_return_path_mismatch")
 
 
 def path_stress(returns: tuple[Decimal, ...]) -> dict[str, Any]:
-    """Circular five-bar bootstrap; nearest-rank p95 of 1000 compounded drawdowns.
+    """Circular five-bar bootstrap: nearest-rank p95 of 1000 compounded drawdowns.
 
-    Resamples net account returns, not fills. Equality with observed drawdown can be real;
-    the independent bootstrap test detects an observed-drawdown shortcut, not equality.
+    Resamples net returns, not fills. A p95 equal to the observed drawdown can be real;
+    an independent resampling test detects substitution, not mere numerical equality.
     """
     _require(len(returns) >= MINIMUM_RATIO_OBSERVATIONS, "research_stress_too_short")
-    _require(
-        all(isinstance(r, Decimal) and r.is_finite() and r > -1 for r in returns),
-        "research_stress_invalid_returns",
-    )
+    _require(all(isinstance(r, Decimal) and r.is_finite() and r > -1 for r in returns),
+             "research_stress_invalid_returns")
     rng = random.Random(BOOTSTRAP_SEED)
-    drawdowns: list[Decimal] = []
+    drawdowns = []
     for _ in range(BOOTSTRAP_SAMPLES):
-        sampled: list[Decimal] = []
+        sampled = []
         while len(sampled) < len(returns):
             start = rng.randrange(len(returns))
-            sampled.extend(
-                returns[(start + offset) % len(returns)]
-                for offset in range(BOOTSTRAP_BLOCK_LENGTH)
-            )
+            sampled.extend(returns[(start + offset) % len(returns)]
+                           for offset in range(BOOTSTRAP_BLOCK_LENGTH))
         curve = [Decimal(1)]
-        for r in sampled[:len(returns)]:
-            curve.append(curve[-1] * (1 + r))
+        for value in sampled[:len(returns)]:
+            curve.append(curve[-1] * (1 + value))
         drawdowns.append(maximum_drawdown(tuple(curve)))
     rank = (95 * len(drawdowns) + 99) // 100
     p95 = sorted(drawdowns)[rank - 1]
     return {
-        "max_drawdown_p95": _number(p95),
+        "max_drawdown_p95": _number(p95), "max_drawdown_p95_decimal": str(p95),
         "method": "circular_moving_block_bootstrap_of_net_holdout_returns",
         "samples": BOOTSTRAP_SAMPLES, "block_length": BOOTSTRAP_BLOCK_LENGTH,
         "seed": BOOTSTRAP_SEED, "observations": len(returns),
@@ -190,52 +170,31 @@ def path_stress(returns: tuple[Decimal, ...]) -> dict[str, Any]:
 
 def _limitations(train, holdout, trials, run, floor) -> list[str]:
     return [
-        (
-            f"Sample: training {train[0].timestamp.isoformat()} to {train[-1].timestamp.isoformat()}; "
-            f"holdout {holdout[0].timestamp.isoformat()} to {holdout[-1].timestamp.isoformat()}. "
-            "One chronological split, not independent forward validation."
-        ),
-        (
-            "Single currently selected security: survivorship/selection bias is not corrected; "
-            "delisted names and a point-in-time investable universe are absent."
-        ),
-        NOT_THE_AI + (
-            " This report is a price-only momentum baseline, not even the deterministic "
-            "swarm consensus. It does not measure the live AI strategy."
-        ),
-        (
-            "Both holdout accounts restart flat with equal capital, no training P&L or bars "
-            "carried over. Rule warm-up consumes holdout bars; fills use next-bar opens."
-        ),
-        (
-            "Costs use the existing MarketFrictionModel and built-in fee/brokerage schedules "
-            "across all dates, not independently verified historical contract-note rates. "
-            "Spread and impact are modelled from closed bars, not observed historical bid/ask."
-        ),
-        (
-            "Raw quote prices only; dividend-adjusted close is not consumed. Cash dividends, "
-            "corporate-action cashflows and point-in-time split verification are not supplied; "
-            "this is not a total-shareholder-return comparison."
-        ),
-        (
-            f"The shared replay register records {trials} candidate trials as of the pinned "
-            "snapshot. Prior backtest/contest looks may have exposed these dates; untouched "
-            "holdout status and unregistered/deleted historical trials cannot be established. "
-            "No multiple-testing correction or statistical significance claim is made."
-        ),
-        (
-            "Path stress resamples net holdout returns in five-bar blocks. It is conditional "
-            "on this path, not a forecast or confidence bound; it cannot invent unseen crashes "
-            "or reproduce execution under a different price path."
-        ),
-        (
-            f"End positions remain marked, not liquidated: rule open={run.open_position_at_end}, "
-            f"buy-and-hold open={floor.open_position_at_end}. Any final exit friction is unpaid."
-        ),
-        (
-            "Bars and metadata are operator-supplied; hashes establish identity, not independent "
-            "market-data authenticity."
-        ),
+        (f"Training {train[0].timestamp.isoformat()} to {train[-1].timestamp.isoformat()}; "
+         f"holdout {holdout[0].timestamp.isoformat()} to {holdout[-1].timestamp.isoformat()}. "
+         "One chronological split, not independent forward validation."),
+        ("Survivorship and selection bias are not corrected: one operator-selected surviving "
+         "security, not a point-in-time investable universe including delisted names."),
+        NOT_THE_AI + (" This is price-only momentum, not even deterministic swarm consensus. "
+                      "Historical LLM replay may know outcomes from model training data."),
+        ("Both holdout accounts restart flat with equal capital and no training P&L or "
+         "warmup bars carried over; decisions use closed bars and fills use next-bar opens."),
+        ("Costs reuse the existing MarketFrictionModel and built-in cash fee/brokerage "
+         "schedules across all dates, not independently sourced date-specific contract-note "
+         "rates. Spread and impact use prior daily bars, not historical bid/ask quotes."),
+        ("The producer quote series may already include split adjustments. Dividend-adjusted "
+         "adjclose is refused. Cash dividends and point-in-time corporate-action accounting "
+         "are absent: this is not a total-shareholder-return comparison."),
+        (f"The retained shared replay register counts {trials} candidate trials. No statistical "
+         "multiple-testing correction is claimed. Recorded overlapping prior inspections "
+         "refuse; unrecorded inspection or wholesale register replacement cannot be detected."),
+        ("Path stress resamples net returns in five-bar blocks; it is conditional on this "
+         "sample, not a forecast, future tail-risk bound or hypothetical order re-execution."),
+        (f"Final holdings remain marked, not liquidated: rule open={run.open_position_at_end}; "
+         f"buy-and-hold open={floor.open_position_at_end}. Future exit costs are unpaid."),
+        ("Hashes establish supplied-file identity, not market-data authenticity or licensing. "
+         "Publisher locks do not coordinate legacy backtest/contest writers; exclude them "
+         "operationally while publishing."),
     ]
 
 
@@ -254,7 +213,7 @@ def _cost_assumptions(evaluator: BaselineEvaluator) -> dict[str, Any]:
 
 
 def validate_report(report: dict[str, Any]) -> None:
-    """research.ts's exact checks, plus required fields its cards consume."""
+    """Keep the existing UI reader contract; also enforce publisher evidence floors."""
     _require(report.get("schema") == SCHEMA, "research_ui_schema_invalid")
     for section, keys in {
         "holdout": ("net_return", "max_drawdown", "observations"),
@@ -264,10 +223,8 @@ def validate_report(report: dict[str, Any]) -> None:
         _require(isinstance(values, dict), "research_ui_section_missing")
         for key in keys:
             value = values.get(key)
-            _require(
-                type(value) in (int, float) and math.isfinite(value),
-                "research_ui_metric_invalid",
-            )
+            _require(type(value) in (int, float) and math.isfinite(value),
+                     "research_ui_metric_invalid")
     for key in ("strategy", "scope", "created_at", "data_sha256"):
         _require(isinstance(report.get(key), str) and bool(report[key].strip()),
                  "research_ui_label_missing")
@@ -275,35 +232,78 @@ def validate_report(report: dict[str, Any]) -> None:
     _require(stamp.tzinfo is not None and stamp.utcoffset() is not None,
              "research_timestamp_not_aware")
     limitations = report.get("limitations")
-    _require(
-        isinstance(limitations, list) and len(limitations) > 0
-        and all(isinstance(v, str) and bool(v.strip()) for v in limitations),
-        "research_limitations_empty",
-    )
-    _require(type(report.get("candidate_trials")) is int and report["candidate_trials"] > 0,
+    _require(isinstance(limitations, list) and len(limitations) > 0
+             and all(isinstance(v, str) and bool(v.strip()) for v in limitations),
+             "research_limitations_empty")
+    _require(type(report.get("candidate_trials")) is int and report["candidate_trials"] > 0
+             and report["candidate_trials"] == report["trial_register"]["candidate_trials"],
              "research_trial_count_invalid")
+    held = report["holdout"]
+    _require(type(held.get("observations")) is int
+             and held["observations"] >= MINIMUM_RATIO_OBSERVATIONS,
+             "research_observations_below_minimum")
+    _require(type(held.get("round_trips")) is int
+             and held["round_trips"] >= MINIMUM_ROUND_TRIPS,
+             "research_round_trips_below_minimum")
     _require(len(_canonical(report)) <= MAX_REPORT_BYTES, "research_report_too_large")
 
 
 def _atomic_write(path: Path, document: bytes) -> None:
-    """Same-directory fsynced replace; failures preserve an earlier valid report."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
-            stream.write(document)
+            written = stream.write(document)
+            _require(written == len(document), "research_partial_write")
             stream.flush()
             os.fsync(stream.fileno())
-            # Public research, no secrets; the dashboard's uid 10001 must be able to read.
-            os.fchmod(stream.fileno(), 0o644)
+        _require(Path(temporary).read_bytes() == document, "research_partial_write")
+        # mkstemp's private mode stays intact. Run as the dashboard's uid 10001 in Docker.
         os.replace(temporary, path)
     finally:
-        if os.path.exists(temporary):
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary)
 
 
+@contextlib.contextmanager
+def _exclusive_register(register: Path):
+    _require(register.is_file() and register.stat().st_size > 0,
+             "research_existing_trial_register_required")
+    descriptor = os.open(str(register) + ".publish.lock",
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ResearchPublicationRefused("research_publisher_already_running") from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _assert_unseen(register: Path, study: str, holdout, instrument: Instrument) -> None:
+    register_summary(register, study=study)
+    venue = venue_for(instrument.market)
+    start, end = (session_date(holdout[0].timestamp, venue),
+                  session_date(holdout[-1].timestamp, venue))
+    related = {study, study.replace("replay:", "baselines:", 1)}
+    for record in read_records(register):
+        payload = record.get("payload", {})
+        if record.get("event_type") != "research_trial" or payload.get("study") not in related:
+            continue
+        config = payload.get("configuration", {})
+        try:
+            first = datetime.fromisoformat(config["start"])
+            last = datetime.fromisoformat(config["end"])
+            valid = all(v.tzinfo is not None and v.utcoffset() is not None for v in (first, last))
+            _require(valid and first <= last, "research_prior_trial_window_invalid")
+        except (KeyError, TypeError, ValueError):
+            raise ResearchPublicationRefused("research_prior_trial_window_unknown_or_invalid") from None
+        overlaps = session_date(first, venue) <= end and session_date(last, venue) >= start
+        _require(not overlaps, "research_holdout_previously_observed")
+
+
 def _register_snapshot(register: Path, study: str) -> tuple[dict, list[dict], str]:
-    """Pin counts and the last chain record to the same unchanging file bytes."""
     original = register.read_bytes()
     summary = register_summary(register, study=study)
     records = read_records(register)
@@ -311,24 +311,28 @@ def _register_snapshot(register: Path, study: str) -> tuple[dict, list[dict], st
     return summary, records, _sha(original)
 
 
-def publish_research(
-    bars: tuple[Candle, ...], *, instrument: Instrument, register: Path,
-    output: Path, now: datetime | None = None, source_file_sha256: str | None = None,
-) -> dict[str, Any]:
-    """Register every attempted candidate before selection; publish only on success."""
+def publish_research(bars: tuple[Candle, ...], *, instrument: Instrument, register: Path,
+                     output: Path, now: datetime | None = None,
+                     source_file_sha256: str | None = None,
+                     source_description: str = "operator-supplied; authenticity unverified") -> dict:
+    with _exclusive_register(register):
+        return _publish_research(bars, instrument=instrument, register=register, output=output,
+                                 now=now, source_file_sha256=source_file_sha256,
+                                 source_description=source_description)
+
+
+def _publish_research(bars, *, instrument, register, output, now,
+                      source_file_sha256, source_description) -> dict:
     moment = now or datetime.now(timezone.utc)
     _require(os.environ.get("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "false",
              "research_requires_paper_only")
     _require(moment.tzinfo is not None and moment.utcoffset() is not None,
              "research_timestamp_not_aware")
-    _require(
-        instrument.asset_class in (AssetClass.EQUITY, AssetClass.ETF)
-        and ((instrument.market == Market.INDIA and instrument.exchange == "NSE"
-              and instrument.currency == "INR")
-             or (instrument.market == Market.USA and instrument.exchange in ("NASDAQ", "NYSE")
-                 and instrument.currency == "USD")),
-        "research_instrument_not_supported",
-    )
+    _require(instrument.asset_class in (AssetClass.EQUITY, AssetClass.ETF)
+             and ((instrument.market == Market.INDIA and instrument.exchange == "NSE"
+                   and instrument.currency == "INR")
+                  or (instrument.market == Market.USA and instrument.exchange in ("NASDAQ", "NYSE")
+                      and instrument.currency == "USD")), "research_instrument_not_supported")
     _assert_daily_bars(bars)
     _require(all(b.instrument == instrument for b in bars), "research_instrument_mismatch")
     _require(all(v.is_finite() for b in bars for v in (b.open, b.high, b.low, b.close, b.volume)),
@@ -342,25 +346,23 @@ def publish_research(
     _require(len(train) - 1 >= MINIMUM_RATIO_OBSERVATIONS, "research_training_too_short")
     _require(len(holdout) - 1 >= MINIMUM_RATIO_OBSERVATIONS, "research_holdout_too_short")
     _require(register.resolve() != output.resolve(), "research_output_overwrites_register")
-    _require(register.is_file() and register.stat().st_size > 0,
-             "research_existing_trial_register_required")
     study = f"replay:{instrument.symbol}:{instrument.market.value}"
     prior = register_summary(register, study=study)
     _require(prior["candidate_trials"] > 0, "research_existing_study_required")
+    _assert_unseen(register, study, holdout, instrument)
     record_trials(
         register, study=study, candidate_trials=len(LOOKBACKS),
         configuration={"command": "publish-research", "protocol": PROTOCOL,
+                       "start": bars[0].timestamp.isoformat(), "end": bars[-1].timestamp.isoformat(),
                        "lookbacks": list(LOOKBACKS), "train": _period(train),
                        "holdout": _period(holdout), "selection": "highest_training_net_return"},
         data_sha256=bar_digest(bars), now=moment,
     )
     trials, records, register_sha256 = _register_snapshot(register, study)
     evaluator = BaselineEvaluator(instrument=instrument, starting_capital=STARTING_CAPITAL)
-    scored: list[tuple[Decimal, int]] = []
-    training_results = []
+    scored, training_results = [], []
     for lookback in LOOKBACKS:
-        candidate = TimeSeriesMomentumBaseline(lookback=lookback)
-        training_run = evaluator.run(candidate, train)
+        training_run = evaluator.run(TimeSeriesMomentumBaseline(lookback=lookback), train)
         _assert_run(training_run, train)
         score = (training_run.equity_curve[-1] - STARTING_CAPITAL) / STARTING_CAPITAL
         training_results.append({"lookback": lookback, "net_return": str(score),
@@ -369,7 +371,6 @@ def publish_research(
         if len(training_run.round_trips) >= MINIMUM_ROUND_TRIPS:
             scored.append((score, lookback))
     _require(bool(scored), "research_no_training_candidate_meets_floor")
-    # Fixed stable tie-break; never inspect alternate candidates on the holdout.
     selected = max(scored, key=lambda pair: (pair[0], -pair[1]))[1]
     run = evaluator.run(TimeSeriesMomentumBaseline(lookback=selected), holdout)
     floor = evaluator.run(BuyAndHoldBaseline(), holdout)
@@ -382,20 +383,23 @@ def publish_research(
         "scope": f"{instrument.exchange}:{instrument.symbol} {instrument.market.value}; paper research",
         "created_at": moment.astimezone(timezone.utc).isoformat(),
         "data_sha256": bar_digest(bars), "source_file_sha256": source_file_sha256,
-        "candidate_trials": trials["candidate_trials"],
+        "source": source_description, "candidate_trials": trials["candidate_trials"],
         "trial_register": {"study": study, "runs": trials["runs"],
+                           "candidate_trials": trials["candidate_trials"],
                            "snapshot_sha256": register_sha256,
                            "through_record_sha256": records[-1]["sha256"]},
         "holdout": {
             "net_return": _number((run.equity_curve[-1] - STARTING_CAPITAL) / STARTING_CAPITAL),
             "max_drawdown": _number(maximum_drawdown(run.equity_curve)),
             "observations": len(run.returns), "round_trips": len(run.round_trips),
+            "final_equity_decimal": str(run.equity_curve[-1]),
             "cash_charges": str(run.cash_charges), "spread_drag": str(run.spread_drag),
             "slippage_drag": str(run.slippage_drag),
         },
         "buy_and_hold": {
             "net_return": _number((floor.equity_curve[-1] - STARTING_CAPITAL) / STARTING_CAPITAL),
             "observations": len(floor.returns), "cash_charges": str(floor.cash_charges),
+            "final_equity_decimal": str(floor.equity_curve[-1]),
         },
         "path_stress": path_stress(run.returns),
         "validation": {"protocol": PROTOCOL, "training": _period(train),
@@ -403,11 +407,11 @@ def publish_research(
                        "training_candidates": training_results,
                        "selection": "highest_training_net_return_then_smallest_lookback"},
         "cost_assumptions": _cost_assumptions(evaluator),
-        "limitations": _limitations(train, holdout, trials["candidate_trials"], run, floor),
+        "limitations": _limitations(train, holdout, trials["candidate_trials"], run, floor)
+                       + [f"Dataset source declaration: {source_description}."],
         "traded_configuration_differences": list(TRADED_CONFIGURATION_DIFFERENCES),
-        "sibling_panels": SIBLING_PANELS,
-        "automatic_promotion": False, "is_the_traded_ai": False,
-        "status": "historical_research_only",
+        "sibling_panels": SIBLING_PANELS, "automatic_promotion": False,
+        "is_the_traded_ai": False, "status": "historical_research_only",
     }
     validate_report(report)
     report["report_sha256"] = _sha(_canonical(report))
@@ -419,27 +423,40 @@ def publish_research(
     return report
 
 
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        _require(key not in result, "research_duplicate_json_key")
+        result[key] = value
+    return result
+
+
 def publish_from_args(args: Any) -> int:
-    """Strict declared identity: never substitute a symbol for an unlabelled CSV."""
+    """Load one immutable byte snapshot using the historical producer's actual contract."""
     try:
         _require(bool(args.data), "publish-research requires --data")
         source = Path(args.data).expanduser().resolve()
         _require(source.suffix.lower() == ".json", "research_declared_json_dataset_required")
         original = source.read_bytes()
-        payload = json.loads(original)
+        payload = json.loads(original, object_pairs_hook=_unique_pairs)
         provenance = payload.get("provenance", {})
-        _require(
-            provenance.get("price_series") == "raw_quote_unadjusted_close"
-            and provenance.get("adjusted_close_used") is False
-            and provenance.get("interval") == "1d",
-            "research_raw_daily_price_provenance_required",
-        )
-        instrument = dataset_instrument(source)
-        _require(instrument is not None, "research_declared_instrument_required")
+        _require(provenance.get("price_series") == PRICE_SERIES
+                 and provenance.get("adjustment_policy") == ADJUSTMENT_POLICY
+                 and provenance.get("adjusted_close_used") is False
+                 and provenance.get("interval") == INTERVAL,
+                 "research_raw_daily_price_provenance_required")
+        declared = provenance.get("instrument")
+        _require(isinstance(declared, dict) and all(
+            isinstance(declared.get(k), str) and bool(declared[k].strip())
+            for k in ("symbol", "market", "asset_class", "currency", "exchange")
+        ), "research_declared_instrument_required")
+        instrument = Instrument(declared["symbol"], Market(declared["market"]),
+                                AssetClass(declared["asset_class"]),
+                                declared["currency"], declared["exchange"])
         if args.market is not None:
             requested = Market.INDIA if args.market == "india" else Market.USA
             _require(requested == instrument.market, "research_market_contradicts_dataset")
-        all_bars = load_replay_dataset(source, instrument).bars
+        all_bars = tuple(_bar_from_mapping(item, instrument) for item in payload.get("bars", ()))
         _assert_daily_bars(all_bars)
         venue = venue_for(instrument.market)
         start = date.fromisoformat(args.start) if args.start else None
@@ -449,20 +466,18 @@ def publish_from_args(args: Any) -> int:
                      if (start is None or session_date(b.timestamp, venue) >= start)
                      and (end is None or session_date(b.timestamp, venue) <= end))
         _require(bool(bars), "research_no_bars_in_range")
-        _require(source.read_bytes() == original, "research_dataset_changed_during_load")
         configured = os.environ.get("PRAMANA_RESEARCH_REPORT", "").strip()
-        output = (Path(configured).expanduser().resolve() if configured
-                  else paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB").parent
-                  / "research-report.json")
+        output = (Path(configured).expanduser().resolve() if configured else
+                  paths.ledger_path("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB").parent / "research-report.json")
         register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
         _require(output.resolve() != source, "research_output_overwrites_dataset")
         _require(register.resolve() != source, "research_register_overwrites_dataset")
-        report = publish_research(
-            bars, instrument=instrument, register=register,
-            output=output, source_file_sha256=_sha(original),
-        )
-    except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
-        # Do not echo input contents, environment values, credentials or a traceback.
+        source_description = provenance.get("source")
+        _require(isinstance(source_description, str) and bool(source_description.strip()),
+                 "research_source_declaration_required")
+        report = publish_research(bars, instrument=instrument, register=register, output=output,
+                                  source_file_sha256=_sha(original), source_description=source_description)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, ArithmeticError) as error:
         reason = str(error) if isinstance(error, ResearchPublicationRefused) else type(error).__name__
         raise SystemExit(f"research publication refused: {reason}") from None
     print(json.dumps({"status": "published", "path": str(output),
