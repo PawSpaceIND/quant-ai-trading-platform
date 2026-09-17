@@ -77,3 +77,14 @@ with missing/unknown metadata still refused. No source credentials were accessed
 
 This work also adds the explicit 12-milestone delivery plan requested by the user.
 A module's passing tests do not close its missing lifecycle or deployment evidence.
+
+
+## Subsequent local broker-binding checkpoint
+
+The continuation in `SHARED_RISK_BROKER_BINDING.md` adds immutable broker-ledger
+journal identity/path selection, a final exact-claimed-child check and historical
+receipt/backup linkage. The account cannot discard reservations merely by selecting
+another journal or issuing an unlinked BUY through the current paper broker API.
+This supersedes the earlier absence of local ledger enforcement, not the remaining
+external-account authentication, complete rollback/cross-host fencing or runtime
+acceptance requirements. Position-linked capacity release is still unimplemented.

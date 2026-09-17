@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
+from uuid import uuid4
 
 from quant_ai.decision.edge import EdgeEvidence
 from quant_ai.domain.models import Side
@@ -127,6 +128,10 @@ def verify_shared_risk(db, tenant_id, *, allow_missing=None):
     if not selected(db, tenant_id):
         return {"status": "not_selected", "reservedLoss": "0", "activationAuthorized": False}
     row = db.execute("SELECT * FROM shared_risk_accounts WHERE tenant_id=?", (tenant_id,)).fetchone()
+    columns = set(row.keys())
+    journal_id = row["journal_id"] if "journal_id" in columns else None
+    _check(journal_id is None or (isinstance(journal_id, str)
+           and re.fullmatch(r"[0-9a-f]{32}", journal_id)), "journal_identity_invalid")
     policy = _json(row["payload"])
     _check(set(policy) == {"schema", "tenantId", "accountRef", "currency", "maxLossFraction", "revision", "ledgerKey"}, "policy_fields_invalid")
     expected = SharedRiskPolicy(policy["accountRef"], policy["currency"],
@@ -189,7 +194,7 @@ def verify_shared_risk(db, tenant_id, *, allow_missing=None):
     active = {pid: value for pid, (value, _digest, _body) in reservations.items() if pid not in releases}
     total = sum(active.values(), D(0))
     _amount(total)
-    return {"status": "consistent", "policy": policy, "policySha256": row["sha256"],
+    return {"status": "consistent", "policy": policy, "policySha256": row["sha256"], "journalId": journal_id,
         "reservedLoss": str(total), "activeReservations": len(active), "releasedReservations": len(releases),
         "activationAuthorized": False}
 
@@ -202,7 +207,7 @@ class SharedRiskReservations:
     def _schema(self):
         # Called inside the program transaction, not executescript (which can commit).
         for name, body in (
-            ("shared_risk_accounts", "tenant_id TEXT PRIMARY KEY,account_ref TEXT UNIQUE NOT NULL,payload TEXT NOT NULL,sha256 TEXT NOT NULL"),
+            ("shared_risk_accounts", "tenant_id TEXT PRIMARY KEY,account_ref TEXT UNIQUE NOT NULL,payload TEXT NOT NULL,sha256 TEXT NOT NULL,journal_id TEXT NOT NULL"),
             ("shared_risk_reservations", "program_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,payload TEXT NOT NULL,sha256 TEXT NOT NULL"),
             ("shared_risk_releases", "program_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,payload TEXT NOT NULL,sha256 TEXT NOT NULL")):
             self.db.execute(f"CREATE TABLE IF NOT EXISTS {name}({body})")
@@ -219,7 +224,10 @@ class SharedRiskReservations:
         if saved is None:
             _check(empty_ledger is True and self.db.execute("SELECT 1 FROM execution_programs WHERE tenant_id=? LIMIT 1", (tenant_id,)).fetchone() is None, "legacy_account_requires_migration")
             _check(self.db.execute("SELECT 1 FROM shared_risk_accounts WHERE account_ref=?", (policy.account_ref,)).fetchone() is None, "account_alias_refused")
-            self.db.execute("INSERT INTO shared_risk_accounts VALUES(?,?,?,?)", (tenant_id, policy.account_ref, raw, _sha(raw)))
+            columns = {r[1] for r in self.db.execute("PRAGMA table_info(shared_risk_accounts)")}
+            _check("journal_id" in columns, "legacy_journal_requires_migration")
+            self.db.execute("INSERT INTO shared_risk_accounts VALUES(?,?,?,?,?)",
+                            (tenant_id, policy.account_ref, raw, _sha(raw), uuid4().hex))
         else:
             _check(saved["payload"] == raw and saved["sha256"] == _sha(raw), "configuration_changed")
 

@@ -52,9 +52,11 @@ The shared-reservation change now provides opt-in same-journal atomic admission,
 current-equity capacity rechecks and never-claimed cancellation. Reservations remain
 charged after partial fills, uncertain dispatch, completed buys and position exits.
 That conservative last rule prevents invented capacity but is not the final
-position-linked release lifecycle. Used-risk release, broker-authoritative journal
-selection and cross-host/account fencing remain part of M01. No milestone is marked
-complete simply because this subcomponent passes tests.
+position-linked release lifecycle. The subsequent local broker-binding patch pins
+the selected journal identity/path in the paper ledger and rejects unlinked buys.
+Used-risk release, full authenticated-account authority and rollback/cross-host
+fencing remain part of M01. See `SHARED_RISK_BROKER_BINDING.md` for the local binding
+checks and precise limits. No milestone is marked complete by component tests.
 
 No real account policy was set. PR #136's pinned EdgePolicy is a prerequisite,
 not a replacement for shared account capacity. The private daemon remains unchanged.

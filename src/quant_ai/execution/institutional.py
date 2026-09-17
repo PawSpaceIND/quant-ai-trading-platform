@@ -49,6 +49,7 @@ from quant_ai.execution.shared_risk import (
     SharedRiskReservations,
     selected,
 )
+from quant_ai.execution.shared_risk_binding import pin_account, read_binding, verify_binding_pair
 from quant_ai.orders.intent import bound_identity, canonical_order_intent
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
@@ -418,8 +419,12 @@ class InstitutionalPaperCoordinator:
                         if isinstance(self.shared_risk_policy, SharedRiskPolicy) else self.shared_risk_policy)
                     if current_shared != approved_shared_policy:
                         raise SharedRiskError("shared_risk_configuration_changed")
+                    with self.broker._lock:
+                        broker_pin = read_binding(self.broker._connection, request.tenant_id)
+                        if broker_pin is not None:
+                            verify_binding_pair(self.broker._connection, self.programs.db, request.tenant_id)
                     configured = selected(self.programs.db, request.tenant_id)
-                    shared = configured or self.shared_risk_policy is not None
+                    shared = configured or self.shared_risk_policy is not None or broker_pin is not None
                     if shared:
                         if (request.currency not in {"INR", "USD"} or request.base_rate != 1
                                 or proposal.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}):
@@ -431,6 +436,8 @@ class InstitutionalPaperCoordinator:
                     if shared:
                         self.shared_risk.reserve(program, evidence=request.edge_evidence, equity=request.portfolio.equity,
                             currency=request.currency, at=request.observed_at)
+                        pin_account(self.broker, self.programs.db, request.tenant_id,
+                                    allow_create=not configured)
             except SharedRiskError as error:
                 return self._reject(InstitutionalStage.RISK, str(error))
         self._requests[program.program_id] = request
@@ -457,7 +464,11 @@ class InstitutionalPaperCoordinator:
 
     def _shared_risk_issue(self, program, request, equity) -> str | None:
         try:
-            if not selected(self.programs.db, request.tenant_id) and self.shared_risk_policy is None:
+            with self.broker._lock:
+                pin = read_binding(self.broker._connection, request.tenant_id)
+                if pin is not None:
+                    verify_binding_pair(self.broker._connection, self.programs.db, request.tenant_id)
+            if not selected(self.programs.db, request.tenant_id) and self.shared_risk_policy is None and pin is None:
                 return None
             if request.base_rate != 1:
                 return "shared_risk_single_currency_cash_required"
