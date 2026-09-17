@@ -281,10 +281,24 @@ class BookRiskFirewall:
         *,
         history_provider: HistoryProvider | None = None,
         sector_map: Mapping[str, str] | None = None,
+        required_symbols: Sequence[str] = (),
     ) -> None:
         self.policy = policy or BookRiskPolicy()
         self.history_provider = history_provider
         self.sector_map = normalize_sector_map(sector_map)
+        self.required_symbols = tuple(sorted(set(required_symbols)))
+
+    def configuration_problem(self, symbols: Sequence[str] = ()) -> str | None:
+        """Required pilot inputs may not silently disappear after startup."""
+        if not self.required_symbols:
+            return None
+        if not callable(self.history_provider):
+            return "required_book_history_missing"
+        missing = sorted(symbol for symbol in set(self.required_symbols) | set(symbols)
+                         if not self.sector_map.get(symbol.strip().upper()))
+        if missing:
+            return "required_sector_mapping_missing:" + ",".join(missing)
+        return None
 
     @property
     def armed(self) -> bool:
@@ -299,9 +313,12 @@ class BookRiskFirewall:
         Never raises: a caller on the cadence path gets a decision, and an
         unusable measurement is a refusal.
         """
-        if not self.armed:
-            return RiskDecision(True, "book_risk_not_armed")
         try:
+            problem = self.configuration_problem()
+            if problem:
+                return RiskDecision(False, "book_risk_measure_unavailable:" + problem)
+            if not self.armed:
+                return RiskDecision(True, "book_risk_not_armed")
             return self._evaluate(order, portfolio)
         except Exception as error:  # noqa: BLE001 - a measurement fault must not pass a trade
             return RiskDecision(
@@ -313,6 +330,9 @@ class BookRiskFirewall:
         if equity <= 0:
             return RiskDecision(False, "book_risk_measure_unavailable:invalid_equity")
         projected = self._projected_exposure(order, portfolio)
+        problem = self.configuration_problem(tuple(s for s, value in projected.items() if value > 0))
+        if problem:
+            return RiskDecision(False, "book_risk_measure_unavailable:" + problem)
         group = self._group_breach(projected, equity)
         if group is not None:
             return RiskDecision(False, f"sector_concentration_limit:{group}")

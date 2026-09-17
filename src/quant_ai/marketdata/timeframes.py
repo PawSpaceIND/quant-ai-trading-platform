@@ -264,6 +264,12 @@ class DailyHistoryProvider:
         self._cache[key] = (current.date(), bars)
         return bars
 
+    def cached(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
+        """No I/O: observation for this UTC day, or an explicitly empty cache."""
+        current = _utc(now)
+        cached = self._cache.get((instrument.symbol.upper(), instrument.market.value))
+        return cached[1] if cached is not None and cached[0] == current.date() else ()
+
     def _fetch_uncached(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
         start = now - timedelta(days=self.calendar_days)
         try:
