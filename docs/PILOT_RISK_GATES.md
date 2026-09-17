@@ -1,5 +1,7 @@
 # Item 2: required five-name pilot book-risk controls
 
+Follow-up container wiring evidence: `docs/PILOT_CONTAINER_MAP_MOUNT.md`.
+
 ## Status and authority
 
 Source changes for `feat/arm-risk-gates`, based on main
