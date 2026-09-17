@@ -20,6 +20,7 @@ from threading import RLock
 from typing import Self
 from uuid import uuid4
 
+from quant_ai.execution.accounting_binding import validate_binding
 from quant_ai.execution.planner import ExecutionPlan
 from quant_ai.execution.request_context import ExecutionContextError, validate_context
 from quant_ai.execution.risk_authority import validate_authority
@@ -75,6 +76,7 @@ class ExecutionProgram:
     context_version: int = 0
     context_payload: str | None = None
     context_sha256: str | None = None
+    accounting_scope_payload: str | None = None
 
     @property
     def executed_quantity(self) -> int:
@@ -144,6 +146,11 @@ class ExecutionProgramJournal:
             self.db.execute("""CREATE TRIGGER execution_program_context_immutable
                 BEFORE UPDATE OF context_version,context_payload,context_sha256 ON execution_programs
                 BEGIN SELECT RAISE(ABORT,'Saved execution context is immutable'); END""")
+            if "accounting_scope_payload" not in columns:
+                self.db.execute("ALTER TABLE execution_programs ADD COLUMN accounting_scope_payload TEXT")
+            self.db.execute("""CREATE TRIGGER IF NOT EXISTS execution_program_accounting_scope_immutable
+                BEFORE UPDATE OF accounting_scope_payload ON execution_programs
+                BEGIN SELECT RAISE(ABORT,'Accounting scope is immutable'); END""")
             if "parent_order_payload" not in columns:
                 self.db.execute("ALTER TABLE execution_programs ADD COLUMN parent_order_payload TEXT")
             self.db.execute(
@@ -259,6 +266,7 @@ class ExecutionProgramJournal:
         parent_order_payload: str | None = None,
         risk_authority_payload: str | None = None,
         context_payload: str | None = None,
+        accounting_scope_payload: str | None = None,
     ) -> ExecutionProgram:
         for value in (program_id, tenant_id, decision_id, symbol):
             if not _ID.fullmatch(value):
@@ -274,6 +282,7 @@ class ExecutionProgramJournal:
             parent = order_from_snapshot(parent_order_payload)
             if (parent.tenant_id, parent.symbol, parent.quantity) != (tenant_id, symbol, plan.parent_quantity):
                 raise ValueError("execution_program_parent_identity_mismatch")
+        validate_binding(accounting_scope_payload, tenant_id)
         authority_version = 0 if risk_authority_payload is None else 1
         validate_authority(authority_version, risk_authority_payload, program_id=program_id,
             tenant_id=tenant_id, parent_payload=parent_order_payload, runtime_digest=runtime_context_sha256)
@@ -306,6 +315,7 @@ class ExecutionProgramJournal:
                 or existing["context_version"] != context_version
                 or existing["context_payload"] != context_payload
                 or existing["context_sha256"] != context_sha256
+                or existing["accounting_scope_payload"] != accounting_scope_payload
             ):
                 raise ValueError("execution_program_decision_payload_mismatch")
             return self.get(program_id)
@@ -313,13 +323,14 @@ class ExecutionProgramJournal:
             self.db.execute(
                 """INSERT INTO execution_programs
                 (program_id,tenant_id,decision_id,symbol,state,plan_sha256,runtime_context_sha256,
-                 parent_quantity,created_at,parent_order_payload,risk_authority_version,risk_authority_payload,context_version,context_payload,context_sha256)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 parent_quantity,created_at,parent_order_payload,risk_authority_version,risk_authority_payload,context_version,context_payload,context_sha256,accounting_scope_payload)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     program_id, tenant_id, decision_id, symbol, ProgramState.PLANNED.value,
                     digest, runtime_context_sha256, plan.parent_quantity,
                     created_at.astimezone(timezone.utc).isoformat(), parent_order_payload,
                     authority_version, risk_authority_payload, context_version, context_payload, context_sha256,
+                    accounting_scope_payload,
                 ),
             )
             self.db.executemany(
@@ -502,6 +513,7 @@ class ExecutionProgramJournal:
         slices = tuple(self._decode_slice(item) for item in raw_slices)
         if sum(item.quantity for item in slices) != int(row["parent_quantity"]):
             raise ValueError("execution_program_quantity_projection_mismatch")
+        validate_binding(row["accounting_scope_payload"], row["tenant_id"])
         validate_authority(row["risk_authority_version"], row["risk_authority_payload"],
             program_id=row["program_id"], tenant_id=row["tenant_id"],
             parent_payload=row["parent_order_payload"], runtime_digest=row["runtime_context_sha256"])
@@ -518,6 +530,7 @@ class ExecutionProgramJournal:
             int(row["parent_quantity"]), datetime.fromisoformat(row["created_at"]), slices,
             row["parent_order_payload"], row["risk_authority_payload"], row["risk_authority_version"],
             row["context_version"], row["context_payload"], row["context_sha256"],
+            row["accounting_scope_payload"],
         )
 
     def load_context(self, program_id: str, *, tenant_id: str):
@@ -537,3 +550,12 @@ class ExecutionProgramJournal:
             if stored is None:
                 raise ExecutionContextError("execution_context_legacy_unavailable")
             return stored
+
+    def accounting_scopes(self, tenant_id: str) -> tuple[str, ...]:
+        """Only retained explicit bindings; older unbound rows are not upgraded."""
+        with self._lock:
+            rows = self.db.execute("""SELECT DISTINCT accounting_scope_payload FROM execution_programs
+                WHERE tenant_id=? AND accounting_scope_payload IS NOT NULL LIMIT 2""", (tenant_id,)).fetchall()
+            for row in rows:
+                validate_binding(row[0], tenant_id)
+            return tuple(row[0] for row in rows)

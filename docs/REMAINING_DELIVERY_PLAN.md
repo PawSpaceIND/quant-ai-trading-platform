@@ -110,3 +110,13 @@ See `INSTITUTIONAL_ACCOUNTING_SCOPE.md`. This closes the named misattribution pa
 not authenticated account ownership or a persistent signed accounting-file bind.
 M01 release, full M02 producer/source lineage, M03 runtime assembly and the remaining
 milestones stay open; no live setting or real account is changed by these tests.
+
+### Persisted accounting-store selection prerequisite
+
+New programmes retain the selected local accounting-store identity, tenant, base
+currency and path. A reconstructed coordinator verifies that retained selection;
+copy/restore verification checks identity even when paths intentionally differ.
+This extends the earlier process-local accounting guard across restart for explicitly
+bound programmes. Older unbound rows remain reported unverified. No position-risk
+capacity is released, no daemon is activated and no full milestone is marked complete.
+See `DURABLE_ACCOUNTING_SELECTION.md` for the local identity and rollback limits.

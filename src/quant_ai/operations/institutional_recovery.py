@@ -18,6 +18,7 @@ from pathlib import Path
 
 from quant_ai.accounting.journal import CANONICAL_ACCOUNTS, Account, AccountType, TransactionKind
 from quant_ai.domain.models import Side
+from quant_ai.execution.accounting_binding import verify_connection
 from quant_ai.execution.request_context import validate_context
 from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.execution.shared_risk import TABLES as SHARED_RISK_TABLES
@@ -292,6 +293,8 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
     matched, claimed_clients, claimed_fills, snapshot = set(), set(), set(), []
     counts = {"programs": 0, "slices": 0, "unresolvedSlices": 0, "failedOrCancelledPrograms": 0, "receipts": len(receipts)}
     counts.update({"verifiedStoredContexts": 0, "legacyMissingContexts": 0})
+    counts["verifiedAccountingBindings"] = 0
+    counts["legacyMissingAccountingBindings"] = 0
     for program in _rows(db, "SELECT * FROM execution_programs WHERE tenant_id=? ORDER BY program_id", (tenant,)):
         for field in ("program_id", "decision_id", "symbol"):
             _check(isinstance(program[field], str) and _ID.fullmatch(program[field]), "program identity invalid")
@@ -308,6 +311,11 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
         _instant(program["created_at"])
         pid = program["program_id"]
         program_columns = set(program.keys())
+        accounting_scope = program["accounting_scope_payload"] if "accounting_scope_payload" in program_columns else None
+        if verify_connection(accounting_scope, accounting_db, tenant, check_paths=False):
+            counts["verifiedAccountingBindings"] += 1
+        else:
+            counts["legacyMissingAccountingBindings"] += 1
         version = program["risk_authority_version"] if "risk_authority_version" in program_columns else 0
         raw = program["risk_authority_payload"] if "risk_authority_payload" in program_columns else None
         try:
