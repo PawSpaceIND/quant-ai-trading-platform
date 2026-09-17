@@ -165,6 +165,53 @@ class DaemonRunner:
         self._protection_stop.set()
         self.daemon.request_stop()
 
+    def _warm_required_book_history(self, now: datetime) -> None:
+        """Populate required book-risk history without making telemetry perform I/O.
+
+        Protection telemetry intentionally reads only the history provider's cache so its
+        one-second heartbeat can never block on a network request.  The normal market
+        analysis fills that cache during regular hours, but an off-hours process restart
+        skips the analysis pipeline and otherwise leaves required correlation/ES gates
+        reporting ``history_scope_incomplete`` until the next session.
+
+        Warm the exact provider owned by ``DailyCloseHistory`` here, before protection
+        starts and again before each cadence.  Daily providers already cache by UTC day,
+        so the cadence call is local after the first observation and naturally refreshes
+        after a day rollover.  A provider failure is evidence unavailability, not a runner
+        failure: the gates remain fail-closed and telemetry reports the missing history.
+        """
+        try:
+            runtime = self.daemon.scheduler.pipeline.runtime
+            book_risk = runtime.warden.book_risk
+            required = tuple(getattr(book_risk, "required_symbols", ()) or ())
+            history = getattr(book_risk, "history_provider", None)
+            if not required or not isinstance(history, DailyCloseHistory):
+                return
+            fetch = getattr(history.provider, "fetch", None)
+            if not callable(fetch):
+                self._logger.warning("required_book_history_warmup_unavailable")
+                return
+            for symbol in required:
+                instrument = history.instruments.get(symbol.strip().upper())
+                if instrument is None:
+                    self._logger.warning(
+                        "required_book_history_warmup_missing_instrument symbol=%s", symbol
+                    )
+                    continue
+                try:
+                    bars = fetch(instrument, now)
+                except Exception:  # one provider fault must not hide the rest of the scope
+                    self._logger.exception(
+                        "required_book_history_warmup_failed symbol=%s", symbol
+                    )
+                    continue
+                if not bars:
+                    self._logger.warning(
+                        "required_book_history_warmup_abstained symbol=%s", symbol
+                    )
+        except Exception:  # malformed optional wiring must not take the paper runner down
+            self._logger.exception("required_book_history_warmup_unavailable")
+
     def _protect(self) -> None:
         # A dedicated thread keeps protection responsive even when synchronous provider
         # I/O blocks the analysis event loop. Ledger operations share one RLock.
@@ -180,6 +227,9 @@ class DaemonRunner:
             self._protection_stop.wait(self.protection_interval)
 
     async def start(self) -> None:
+        # Populate fail-closed book controls before the protection heartbeat publishes its
+        # first runtime snapshot.  Provider I/O is synchronous, so keep it off the event loop.
+        await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
         protection = Thread(target=self._protect, name="pramana-protection", daemon=True)
         protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
@@ -224,6 +274,9 @@ class DaemonRunner:
                 return
             current = _as_utc(self.clock())
             try:
+                # Refresh once per UTC day through the provider's own cache.  This stays
+                # outside every broker lock and keeps off-hours restarts data-ready.
+                await asyncio.to_thread(self._warm_required_book_history, current)
                 await self.daemon.run_once(current)
                 await self._capture_xai_proofs(current)
             except asyncio.CancelledError:
