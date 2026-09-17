@@ -1,0 +1,60 @@
+{
+  "item": 2,
+  "parent": "85369172a1b03ed8dbd936652350118a1d4a879a",
+  "incorporated_owner_main": "58a3d72a6fafbd17df97bccb78943a30be06df48",
+  "prior_recorded_mac_result": "1878 passed, zero failures/errors/skips; recorded parent baseline not rerun here",
+  "initial_integration_run": "2 failed, 1919 passed, 2 warnings, 2 errors, 14 subtests passed in 501.54s (0:08:21)",
+  "initial_problems": [
+    {
+      "kind": "error",
+      "class": "tests.test_deploy_evidence_integrity",
+      "test": "test_malformed_inspection_refuses_without_echoing_payload[running false -1 healthy-after]",
+      "message": "failed on setup with \"subprocess.CalledProcessError: Command '['git', 'push', '-u', 'origin', 'main']' returned non-zero exit status 1.\""
+    },
+    {
+      "kind": "error",
+      "class": "tests.test_deploy_evidence_integrity",
+      "test": "test_malformed_inspection_refuses_without_echoing_payload[running false 9223372036854775808 healthy-before]",
+      "message": "failed on setup with \"OSError: could not create numbered dir with prefix test_malformed_inspection_refu in /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2262 after 10 tries\""
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_protective_state_telemetry",
+      "test": "test_a_clean_sweep_is_published_as_swept_and_not_as_silence",
+      "message": "AssertionError: assert ([{'symbol': '...19667+00:00'}] == []\n  \n  Left contains one more item: {'symbol': 'INFY', 'unpricedSince': '2026-09-17T10:25:31.619667+00:00'}\n  Use -v to get more diff)"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_protective_state_telemetry",
+      "test": "test_a_re_based_quote_names_the_symbol_whose_stop_is_suspended",
+      "message": "AssertionError: assert [] == ['INFY']\n  \n  Right contains one more item: 'INFY'\n  Use -v to get more diff"
+    }
+  ],
+  "definitive_run": "1925 passed, 2 warnings, 14 subtests passed in 391.89s (0:06:31)",
+  "ordinary_passed": 1925,
+  "ordinary_failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "subtests_passed": 14,
+  "preflight_acceptance_passed": 22,
+  "new_to_branch": {
+    "owner_main_cases": 45,
+    "reused_peer_fixture_cases": 2
+  },
+  "fixture_donor": "8bd646f97a8e145c7b2718c0e9d0c798c97131d8",
+  "fixture_file": "tests/test_protective_state_telemetry.py",
+  "delayed_fixture_before_failed": 2,
+  "delayed_fixture_after_passed": 2,
+  "existing_assertions_unchanged": true,
+  "cadence_mutation_cases_passed_as_part_of_full_suite": 19,
+  "portfolio_risk_mutations_run": 0,
+  "selected_manifest_files": 471,
+  "selected_manifest_unchanged": true,
+  "test_isolation": "Fresh dedicated basetemp and TMPDIR; credential settings removed from child environment. Initial setup errors are retained, not assigned an unproved root cause.",
+  "history_plan": "docs/PILOT_HISTORY_ACCEPTANCE_PLAN.md is non-executable design and acceptance criteria; adapter remains absent",
+  "provider_requests_performed_by_continuation": 0,
+  "real_orders": 0,
+  "owner_main_merges": 0,
+  "deployments": 0,
+  "published_head_ci": "not yet started"
+}

@@ -5,9 +5,10 @@ currently be acted on; ``riskGates`` says which opt-in entry controls the operat
 Both exist because an operator cannot otherwise tell a quiet engine from a blind one, and
 every assertion here is about keeping those two apart.
 
-The clock is the real one. The mark resolver judges tick freshness against
-``datetime.now``, not against the instant handed to ``protection_tick``, so a fixed
-timestamp would make every mark stale and every test a different test than it reads as.
+Pin the daemon's existing injectable clock to the fixture's quote instant. Otherwise
+quotes stamped at module collection become stale merely because earlier tests ran
+for more than the freshness window. The actual resolver and freshness limits remain
+unchanged, including the deliberately 200-second-old quote in the stale-data case.
 """
 
 import json
@@ -16,12 +17,19 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
-from test_pilot_closure import publish_tick, runner_for
+from test_pilot_closure import publish_tick
+from test_pilot_closure import runner_for as pilot_runner_for
 
 from quant_ai.domain.models import Market, OrderIntent, Side
 from quant_ai.governance.event_calendar import EventCalendar, ScheduledEvent
 
 NOW = datetime.now(timezone.utc)
+
+
+def runner_for(tmp_path):
+    runner = pilot_runner_for(tmp_path)
+    runner.daemon.clock = lambda: NOW
+    return runner
 
 
 def buy(runner):
@@ -202,3 +210,14 @@ def test_a_book_that_has_never_been_swept_is_not_published_as_clean(tmp_path):
     assert sweep["sweptAt"] is None, "an unswept engine must not claim a sweep"
     assert sweep["unprotected"] == [] and sweep["rebased"] == []
     assert sweep["checkedAt"] == NOW.isoformat(), "the publish still happened"
+
+
+@pytest.mark.parametrize("delay", [timedelta(minutes=5), timedelta(days=1)])
+def test_fixture_quotes_keep_their_declared_age_after_delayed_collection(tmp_path, monkeypatch, delay):
+    monkeypatch.setattr(f"{__name__}.NOW", datetime.now(timezone.utc) - delay)
+    for name in ("fresh", "stale", "rebased"):
+        (tmp_path / name).mkdir()
+    # The same production freshness checks must still distinguish these three cases.
+    test_a_clean_sweep_is_published_as_swept_and_not_as_silence(tmp_path / "fresh")
+    test_a_stop_that_cannot_be_priced_is_visible_before_the_halt_fires(tmp_path / "stale")
+    test_a_re_based_quote_names_the_symbol_whose_stop_is_suspended(tmp_path / "rebased")
