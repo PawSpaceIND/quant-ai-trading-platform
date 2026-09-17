@@ -47,12 +47,12 @@ if [ "$1" = "compose" ]; then
     *" config --services "*) printf '%s\\n' pramana-ghost dashboard market-monitor backup;;
     *" config --quiet "*) exit "${STUB_CONFIG_EXIT:-0}";;
     *" up -d --build "*) echo "stub: rebuilt"; exit "${STUB_UP_EXIT:-0}";;
-    *" ps --all --quiet "*) echo "cid-${*##* }";;
+    *" ps --all --quiet "*) echo "cid-${!#}";;
   esac
   exit 0
 fi
 if [ "$1" = "inspect" ]; then
-  seen="$STUB_STATE/${*##* }"
+  seen="$STUB_STATE/${!#}"
   if [ -e "$seen" ]; then
     echo "${STUB_STATUS:-running} ${STUB_RESTARTING:-false} ${STUB_RESTARTS_AFTER:-0} ${STUB_HEALTH:-healthy}"
   else

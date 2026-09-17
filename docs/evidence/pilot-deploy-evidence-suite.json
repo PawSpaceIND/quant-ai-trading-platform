@@ -1,0 +1,24 @@
+{
+  "base_commit": "12653875b0530eb2cbc13c3dddced8fb70bb5844",
+  "base_full_suite": "Previously verified exact-parent Mac full run: 1853 passed, zero failures. Not rerun in this continuation.",
+  "initial_new_test_reproduction": {
+    "cases": 21,
+    "failed": 20,
+    "passed": 1
+  },
+  "full_candidate": "1878 passed, 2 warnings, 14 subtests passed in 274.28s (0:04:34)",
+  "ordinary_passed": 1878,
+  "added_ordinary_cases": 25,
+  "subtests_passed": 14,
+  "junit_suite_count_including_subtests": 1892,
+  "errors": 0,
+  "skipped": 0,
+  "preflight_acceptance_passed": 22,
+  "selected_files_verified": 469,
+  "hashes_unchanged": true,
+  "deployment_mutations_caught": 10,
+  "portfolio_risk_mutations_executed": 0,
+  "existing_test_and_fixture_function_asts_unchanged": true,
+  "fixture_change": "Two synthetic Docker argv expressions corrected to ${!#}; existing test functions/assertions unchanged.",
+  "scope": "Deployment evidence only. No portfolio-risk policy, provider selection, production credential/configuration, order route or actual-host deployment change."
+}

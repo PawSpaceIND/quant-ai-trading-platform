@@ -153,25 +153,55 @@ compose up -d --build
 # --- Verify ------------------------------------------------------------------------------
 inspect_format='{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
 
+# An inspection is evidence only when the command succeeds AND its fields validate.
+# Keep this self-contained for the existing host runbook and Bash 3.2 fixture.
+read_container_state() {
+  local raw
+  raw="$(docker inspect --format "$inspect_format" "$1" 2>/dev/null)" \
+    || fail "could not inspect service '$2'; readiness is unknown"
+  local pattern='^(created|running|paused|restarting|removing|exited|dead) (true|false) (0|[1-9][0-9]*) (none|starting|healthy|unhealthy)$'
+  [[ "$raw" =~ $pattern ]] || fail "invalid inspection for service '$2'; readiness is unknown"
+  status="${BASH_REMATCH[1]}"
+  restarting="${BASH_REMATCH[2]}"
+  count="${BASH_REMATCH[3]}"
+  health="${BASH_REMATCH[4]}"
+  # Shell integer comparisons must never silently fail on overflow.
+  if [ "${#count}" -gt 19 ] || { [ "${#count}" -eq 19 ] && [[ "$count" > "9223372036854775807" ]]; }; then
+    fail "invalid restart count for service '$2'; readiness is unknown"
+  fi
+}
+
 # Use matching numeric indexes: the system Bash on macOS has no associative arrays.
 # Service names stay data, never array arithmetic; each container keeps its own baseline.
 containers=()
 services=()
-while read -r service; do
+service_output="$(compose config --services 2>/dev/null)" \
+  || fail "could not enumerate compose services; readiness is unknown"
+while IFS= read -r service; do
   [ -n "$service" ] || continue
+  case "$service" in
+    *[!a-zA-Z0-9_.-]*) fail "invalid compose service identifier" ;;
+  esac
+  for existing in "${services[@]+${services[@]}}"; do
+    [ "$existing" != "$service" ] || fail "duplicate compose service identifier"
+  done
   services+=("$service")
-done < <(compose config --services)
+done <<<"$service_output"
 [ "${#services[@]}" -gt 0 ] || fail "the compose file declares no services"
 
 for service in "${services[@]}"; do
-  container="$(compose ps --all --quiet "$service" | head -n 1)"
+  container="$(compose ps --all --quiet "$service" 2>/dev/null)" \
+    || fail "could not resolve container for service '$service'"
   [ -n "$container" ] || fail "service '$service' has no container after 'up -d --build'"
+  case "$container" in
+    *[!a-zA-Z0-9_.-]*) fail "service '$service' has ambiguous container identity" ;;
+  esac
   containers+=("$container")
 done
 
 restarts_before=()
 for index in "${!services[@]}"; do
-  read -r _ _ count _ <<<"$(docker inspect --format "$inspect_format" "${containers[$index]}")"
+  read_container_state "${containers[$index]}" "${services[$index]}"
   restarts_before[$index]="$count"
 done
 
@@ -183,8 +213,7 @@ if [ "$SETTLE_SECONDS" -gt 0 ]; then sleep "$SETTLE_SECONDS"; fi
 failures=0
 for index in "${!services[@]}"; do
   service="${services[$index]}"
-  read -r status restarting count health \
-    <<<"$(docker inspect --format "$inspect_format" "${containers[$index]}")"
+  read_container_state "${containers[$index]}" "$service"
   echo "deploy: $service status=$status restarts=$count health=$health"
   if [ "$status" != "running" ]; then
     echo "deploy: $service is '$status', not running" >&2
@@ -192,6 +221,10 @@ for index in "${!services[@]}"; do
   fi
   if [ "$restarting" = "true" ]; then
     echo "deploy: $service is mid-restart" >&2
+    failures=$((failures + 1))
+  fi
+  if [ "$count" -lt "${restarts_before[$index]}" ]; then
+    echo "deploy: $service restart count decreased; continuity is unknown" >&2
     failures=$((failures + 1))
   fi
   if [ "$count" -gt "${restarts_before[$index]}" ]; then
