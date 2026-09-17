@@ -69,8 +69,10 @@ def _rewrite(h, pid, transform):
     raw = json.loads(_raw(h, pid))
     transform(raw)
     h.programs.db.execute("DROP TRIGGER IF EXISTS execution_program_context_immutable")
-    h.programs.db.execute("UPDATE execution_programs SET context_payload=? WHERE program_id=?",
-        (json.dumps(raw, sort_keys=True, separators=(",", ":")), pid))
+    import hashlib
+    updated = json.dumps(raw, sort_keys=True, separators=(",", ":"))
+    h.programs.db.execute("UPDATE execution_programs SET context_payload=?,context_sha256=? WHERE program_id=?",
+        (updated, hashlib.sha256(updated.encode()).hexdigest(), pid))
     h.programs.db.commit()
 
 
@@ -191,7 +193,7 @@ def test_missing_or_downgraded_context_is_not_silently_treated_as_legacy(tmp_pat
         h.close()
 
 
-@pytest.mark.parametrize("column,expression", [("context_payload", "NULL"), ("context_version", "0")])
+@pytest.mark.parametrize("column,expression", [("context_payload", "NULL"), ("context_version", "0"), ("context_sha256", "NULL")])
 def test_persisted_context_cannot_be_updated(tmp_path, column, expression):
     import sqlite3
     h = Harness(tmp_path)
@@ -442,7 +444,8 @@ def test_rehashed_plan_still_must_match_saved_volume_input(tmp_path):
                           sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for name in ("execution_program_context_immutable", "execution_program_approved_identity_immutable"):
             h.programs.db.execute(f'DROP TRIGGER "{name}"')
-        h.programs.db.execute("UPDATE execution_programs SET context_payload=?,plan_sha256=?", (raw, digest))
+        h.programs.db.execute("UPDATE execution_programs SET context_payload=?,context_sha256=?,plan_sha256=?",
+                             (raw, hashlib.sha256(raw.encode()).hexdigest(), digest))
         h.programs.db.commit()
         with pytest.raises(ValueError, match="execution_context_plan_liquidity_mismatch"):
             h.programs.load_context(pid, tenant_id="tenant")
@@ -461,3 +464,41 @@ def test_context_corruption_is_not_hidden_by_backup_file_checksums(tmp_path):
     with pytest.raises(ValueError, match="execution_context_version_or_payload_invalid"):
         recovery_bundle.create(spec, tmp_path / "backup", writers_stopped=True)
     assert not (tmp_path / "backup").exists()
+
+
+def test_typed_metadata_change_cannot_hide_behind_legacy_request_hash(tmp_path):
+    import json
+
+    from quant_ai.execution.request_context import decode_context
+    h = Harness(tmp_path)
+    try:
+        request = make_request(h.broker, p=replace(proposal(), provenance={"observed_at": NOW}))
+        prepared = h.coordinator.prepare(request)
+        pid = prepared.program.program_id
+        value = json.loads(_raw(h, pid))
+        provenance = value["request"][2]["proposal"][2]["provenance"]
+        provenance[1][0][1][0] = "str"  # Same ISO text, different metadata type.
+        changed = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        assert request_fingerprint(decode_context(changed).request) == request_fingerprint(request)
+        h.programs.db.execute("DROP TRIGGER execution_program_context_immutable")
+        h.programs.db.execute("UPDATE execution_programs SET context_payload=?", (changed,))
+        h.programs.db.commit()
+        with pytest.raises(ValueError, match="execution_context_payload_digest_mismatch"):
+            h.programs.load_context(pid, tenant_id="tenant")
+    finally:
+        h.close()
+
+
+def test_caller_mutation_holds_until_explicit_saved_context_rebind(tmp_path):
+    h = Harness(tmp_path)
+    try:
+        request = make_request(h.broker)
+        prepared = h.coordinator.prepare(request)
+        request.current_strategy_weights["changed-after-approval"] = Decimal(".5")
+        with pytest.raises(ValueError, match="execution_program_runtime_context_mismatch"):
+            h.coordinator.execute_due(prepared.program.program_id, now=NOW)
+        assert h.broker.ledger_entries("tenant") == ()
+        h.coordinator.restore_runtime_context(prepared.program.program_id, tenant_id="tenant")
+        assert h.coordinator.execute_due(prepared.program.program_id, now=NOW).stage.value == "COMPLETE"
+    finally:
+        h.close()

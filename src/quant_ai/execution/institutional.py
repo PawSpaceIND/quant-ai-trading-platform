@@ -304,8 +304,10 @@ class InstitutionalPaperCoordinator:
         self.shared_risk = SharedRiskReservations(programs)
         self._requests: dict[str, InstitutionalTradeRequest] = {}
         self._orders: dict[str, OrderIntent] = {}
+        self._source_requests: dict[str, InstitutionalTradeRequest] = {}
 
     def prepare(self, request: InstitutionalTradeRequest) -> InstitutionalPreparation:
+        original_request = request
         initial_request_digest = request_fingerprint(request)
         proposal = request.proposal
         held = request.portfolio.symbol_quantity.get(proposal.symbol, 0)
@@ -453,6 +455,7 @@ class InstitutionalPaperCoordinator:
                                     allow_create=not configured, program_id=program.program_id)
             except SharedRiskError as error:
                 return self._reject(InstitutionalStage.RISK, str(error))
+        self._source_requests[program.program_id] = original_request
         self._requests[program.program_id] = request
         self._orders[program.program_id] = parent_order
         return InstitutionalPreparation(
@@ -840,17 +843,21 @@ class InstitutionalPaperCoordinator:
             or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
             raise ValueError("execution_program_runtime_context_mismatch")
+        original_request = request
         if program.context_version == 1:
             stored = self.programs.load_context(program_id, tenant_id=request.tenant_id)
             if request_fingerprint(stored.request) != request_fingerprint(request):
                 raise ValueError("execution_program_runtime_context_mismatch")
             request = stored.request
             parent_order = order_from_snapshot(program.parent_order_payload)
+        self._source_requests[program_id] = original_request
         self._requests[program_id] = request
         self._orders[program_id] = parent_order
 
-    @staticmethod
-    def _assert_runtime_intent(program, request, parent) -> None:
+    def _assert_runtime_intent(self, program, request, parent) -> None:
+        original = self._source_requests.get(program.program_id)
+        if original is not None and request_fingerprint(original) != request_fingerprint(request):
+            raise ValueError("execution_program_runtime_context_mismatch")
         if (program.parent_order_payload is None
                 or canonical_order_intent(parent) != program.parent_order_payload
                 or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)):

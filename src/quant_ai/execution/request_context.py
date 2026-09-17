@@ -243,11 +243,16 @@ def decode_context(raw):
 
 
 def validate_context(version, raw, *, program_id, tenant_id, parent_payload,
-                     authority_payload, runtime_digest, plan_digest, slices, decision_id, created_at):
+                     authority_payload, runtime_digest, plan_digest, slices, decision_id, created_at,
+                     payload_sha256=None):
     if type(version) is int and version == 0:
-        _check(raw is None, "legacy_payload_contradiction")
+        _check(raw is None and payload_sha256 is None, "legacy_payload_contradiction")
         return None
     _check(type(version) is int and version == 1 and raw is not None, "version_or_payload_invalid")
+    _check(type(raw) is str and len(raw.encode()) <= MAX_BYTES
+           and type(payload_sha256) is str
+           and payload_sha256 == hashlib.sha256(raw.encode()).hexdigest(),
+           "payload_digest_mismatch")
     stored = decode_context(raw)
     from quant_ai.execution.institutional import request_fingerprint
     from quant_ai.execution.program import ExecutionProgramJournal

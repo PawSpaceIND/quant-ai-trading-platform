@@ -74,6 +74,7 @@ class ExecutionProgram:
     risk_authority_version: int = 0
     context_version: int = 0
     context_payload: str | None = None
+    context_sha256: str | None = None
 
     @property
     def executed_quantity(self) -> int:
@@ -137,8 +138,11 @@ class ExecutionProgramJournal:
                 self.db.execute("ALTER TABLE execution_programs ADD COLUMN context_version INTEGER NOT NULL DEFAULT 0")
             if "context_payload" not in columns:
                 self.db.execute("ALTER TABLE execution_programs ADD COLUMN context_payload TEXT")
-            self.db.execute("""CREATE TRIGGER IF NOT EXISTS execution_program_context_immutable
-                BEFORE UPDATE OF context_version,context_payload ON execution_programs
+            if "context_sha256" not in columns:
+                self.db.execute("ALTER TABLE execution_programs ADD COLUMN context_sha256 TEXT")
+            self.db.execute("DROP TRIGGER IF EXISTS execution_program_context_immutable")
+            self.db.execute("""CREATE TRIGGER execution_program_context_immutable
+                BEFORE UPDATE OF context_version,context_payload,context_sha256 ON execution_programs
                 BEGIN SELECT RAISE(ABORT,'Saved execution context is immutable'); END""")
             if "parent_order_payload" not in columns:
                 self.db.execute("ALTER TABLE execution_programs ADD COLUMN parent_order_payload TEXT")
@@ -279,11 +283,12 @@ class ExecutionProgramJournal:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         context_version = 0 if context_payload is None else 1
+        context_sha256 = None if context_payload is None else hashlib.sha256(context_payload.encode()).hexdigest()
         validate_context(context_version, context_payload, program_id=program_id, tenant_id=tenant_id,
             parent_payload=parent_order_payload, authority_payload=risk_authority_payload,
             runtime_digest=runtime_context_sha256, plan_digest=digest,
             slices=[(s.sequence, s.at.astimezone(timezone.utc), s.quantity) for s in plan.slices],
-            decision_id=decision_id, created_at=created_at)
+            decision_id=decision_id, created_at=created_at, payload_sha256=context_sha256)
         existing = self.db.execute(
             "SELECT * FROM execution_programs WHERE tenant_id=? AND decision_id=?",
             (tenant_id, decision_id),
@@ -300,6 +305,7 @@ class ExecutionProgramJournal:
                 or existing["risk_authority_payload"] != risk_authority_payload
                 or existing["context_version"] != context_version
                 or existing["context_payload"] != context_payload
+                or existing["context_sha256"] != context_sha256
             ):
                 raise ValueError("execution_program_decision_payload_mismatch")
             return self.get(program_id)
@@ -307,13 +313,13 @@ class ExecutionProgramJournal:
             self.db.execute(
                 """INSERT INTO execution_programs
                 (program_id,tenant_id,decision_id,symbol,state,plan_sha256,runtime_context_sha256,
-                 parent_quantity,created_at,parent_order_payload,risk_authority_version,risk_authority_payload,context_version,context_payload)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 parent_quantity,created_at,parent_order_payload,risk_authority_version,risk_authority_payload,context_version,context_payload,context_sha256)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     program_id, tenant_id, decision_id, symbol, ProgramState.PLANNED.value,
                     digest, runtime_context_sha256, plan.parent_quantity,
                     created_at.astimezone(timezone.utc).isoformat(), parent_order_payload,
-                    authority_version, risk_authority_payload, context_version, context_payload,
+                    authority_version, risk_authority_payload, context_version, context_payload, context_sha256,
                 ),
             )
             self.db.executemany(
@@ -504,13 +510,14 @@ class ExecutionProgramJournal:
             parent_payload=row["parent_order_payload"], authority_payload=row["risk_authority_payload"],
             runtime_digest=row["runtime_context_sha256"], plan_digest=row["plan_sha256"],
             slices=[(s.sequence, s.scheduled_at, s.quantity) for s in slices],
-            decision_id=row["decision_id"], created_at=datetime.fromisoformat(row["created_at"]))
+            decision_id=row["decision_id"], created_at=datetime.fromisoformat(row["created_at"]),
+            payload_sha256=row["context_sha256"])
         return ExecutionProgram(
             row["program_id"], row["tenant_id"], row["decision_id"], row["symbol"],
             ProgramState(row["state"]), row["plan_sha256"], row["runtime_context_sha256"],
             int(row["parent_quantity"]), datetime.fromisoformat(row["created_at"]), slices,
             row["parent_order_payload"], row["risk_authority_payload"], row["risk_authority_version"],
-            row["context_version"], row["context_payload"],
+            row["context_version"], row["context_payload"], row["context_sha256"],
         )
 
     def load_context(self, program_id: str, *, tenant_id: str):
@@ -525,7 +532,8 @@ class ExecutionProgramJournal:
                 authority_payload=program.risk_authority_payload, runtime_digest=program.runtime_context_sha256,
                 plan_digest=program.plan_sha256,
                 slices=[(s.sequence, s.scheduled_at, s.quantity) for s in program.slices],
-                decision_id=program.decision_id, created_at=program.created_at)
+                decision_id=program.decision_id, created_at=program.created_at,
+                payload_sha256=program.context_sha256)
             if stored is None:
                 raise ExecutionContextError("execution_context_legacy_unavailable")
             return stored

@@ -30,7 +30,7 @@ programme creation; inspection cannot silently truncate the saved evidence.
 
 ## Commit, identity and reconstruction
 
-The journal adds context_version (default 0) and context_payload columns in its
+The journal adds context_version (default 0), context_payload and context_sha256 columns in its
 existing schema migration transaction. New context, approved parent, authority
 and slices commit together; context fields cannot be updated. Legacy rows remain
 version 0 with no fabricated snapshot. Version 1 without its payload refuses.
@@ -60,15 +60,15 @@ No actual account was migrated, backed up, restored or executed by this work.
 
 ## Evidence and boundaries
 
-45 new synthetic cases cover complete round trips, all four existing execution
+48 new synthetic cases cover complete round trips, all four existing execution
 algorithms, instrument/provenance and typed-map retention, caller isolation,
 restart after a TWAP slice, corruption, tenant checks, legacy records, policy drift,
 resource bounds, concurrent duplicate preparation, atomic failure and backup.
 Two real subprocess-death boundaries check before and after the parent/snapshot
-commit. Three isolated in-memory guard removals reproduce failures in request-hash
-binding, saved-liquidity verification and SQL immutability.
+commit. Four final isolated in-memory guard removals reproduce failures in typed-payload
+and request-hash binding, saved-liquidity verification and SQL immutability.
 
-The focused combined suite passes 404 cases, including both existing acceptance
+The focused combined suite passes 430 cases, including both existing acceptance
 files. The initial three cases specified previously absent persistence APIs.
 Intermediate failures exposed an earlier error-message check ordering and an old
 writer fixture still supplying new metadata. The original error order was kept,
@@ -85,3 +85,16 @@ protect against an actor rewriting all state. Historical snapshots are not curre
 market measurements. No automatic replay, risk-budget release or operator endpoint
 is added. M01 remains open; full M02 source/lineage acceptance and M03 production
 daemon assembly are not marked complete by this component's synthetic tests.
+
+The typed payload has its own immutable checksum in addition to the existing
+request and plan fingerprints. A regression showed the older request fingerprint
+normalizes a metadata datetime to the same text as a string. The separate payload
+checksum now detects that type change. Altering only an inspection checksum still
+cannot bypass independent approved-request/plan/liquidity checks.
+
+An initial complete run exposed the existing requirement to hold execution when
+caller-owned inputs change after approval. Defensive copies alone did not preserve
+that refusal. The coordinator now retains a separate caller-input witness: caller
+mutation cannot change stored data and still requires explicit rebind before use.
+The original regression assertion remains unchanged. Final certification follows
+both fixes; the earlier failed run and type-fidelity reproduction remain evidence.

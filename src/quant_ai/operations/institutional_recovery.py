@@ -383,7 +383,8 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
             authority_payload=raw, runtime_digest=program["runtime_context_sha256"],
             plan_digest=program["plan_sha256"],
             slices=[(s["sequence"], _instant(s["scheduled_at"]), s["quantity"]) for s in slices],
-            decision_id=program["decision_id"], created_at=_instant(program["created_at"]))
+            decision_id=program["decision_id"], created_at=_instant(program["created_at"]),
+            payload_sha256=program["context_sha256"] if "context_sha256" in program_columns else None)
         counts["verifiedStoredContexts" if stored is not None else "legacyMissingContexts"] += 1
         actual_state = program["state"]
         _check(actual_state in {"PLANNED", "ACTIVE", "COMPLETE", "FAILED", "CANCELLED"}, "program state invalid")
