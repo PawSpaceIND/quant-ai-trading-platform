@@ -11,12 +11,14 @@ import re
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from quant_ai.domain.models import AssetClass, Market, Side
 from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.execution.shared_risk import SharedRiskError, _json, verify_shared_risk
-from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 
 TABLE = "paper_shared_risk_bindings"
@@ -24,6 +26,7 @@ COLUMN = "shared_risk_binding_sha256"
 SCHEMA = "pramana.paper_shared_risk_binding.v1"
 SHA = re.compile(r"[0-9a-f]{64}")
 JID = re.compile(r"[0-9a-f]{32}")
+MAX_COMMITTED_ENTRIES = 100_000
 
 
 def _check(condition, reason):
@@ -100,7 +103,111 @@ def verify_binding_pair(ledger, journal, tenant, *, check_paths=True):
     if check_paths:
         _check(database_path(ledger) == pin["ledgerPath"]
                and database_path(journal) == pin["journalPath"], "journal_path_mismatch")
+    verify_committed_entry_coverage(ledger, journal, tenant, pin)
     return pin
+
+
+def _source_payload(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            _check(key not in result, "committed_entry_duplicate_field")
+            result[key] = value
+        return result
+    def nonfinite(_value):
+        raise SharedRiskError("shared_risk_broker_committed_entry_nonfinite_json")
+    _check(isinstance(raw, str) and len(raw.encode()) <= 1_000_000,
+           "committed_entry_receipt_missing")
+    return json.loads(raw, object_pairs_hook=unique, parse_constant=nonfinite)
+
+
+def verify_committed_entry_coverage(ledger, journal, tenant, pin):
+    """A matching UUID does not prove that a restored journal covers committed buys.
+
+    Compare existing broker-owned entry receipts with retained parent/slice claims.
+    DISPATCHING may already have a committed broker receipt, so recovery remains
+    possible without inventing an OMS or accounting completion. Nothing is posted,
+    freed or reconstructed here. Unexecuted-history rollback is a separate boundary.
+    """
+    try:
+        rows = ledger.execute("""SELECT l.*,e.payload AS source_payload FROM paper_ledger l
+            LEFT JOIN paper_decision_evidence e ON e.order_id=l.order_id AND e.tenant_id=l.tenant_id
+            WHERE l.tenant_id=? AND l.side='BUY' ORDER BY l.id""", (tenant,)).fetchmany(MAX_COMMITTED_ENTRIES + 1)
+        _check(len(rows) <= MAX_COMMITTED_ENTRIES, "committed_entry_inventory_limit")
+        seen_orders, seen_slices = set(), set()
+        for entry in rows:
+            payload = _source_payload(entry["source_payload"])
+            _check(isinstance(payload, dict)
+                   and payload.get("schema") == "pramana.swarm_fill.v1"
+                   and payload.get("event_type") == "swarm_fill"
+                   and payload.get("subject") == entry["symbol"], "committed_entry_receipt_invalid")
+            pid, sequence = payload.get("institutional_program"), payload.get("institutional_slice")
+            _check(isinstance(pid, str) and type(sequence) is int and 0 < sequence <= 10_000,
+                   "committed_entry_attribution_invalid")
+            oid = entry["order_id"]
+            _check(oid not in seen_orders and (pid, sequence) not in seen_slices,
+                   "committed_entry_duplicate_claim")
+            seen_orders.add(oid)
+            seen_slices.add((pid, sequence))
+            _check(payload.get("shared_risk_binding_sha256") == _sha(_raw(pin))
+                   and payload.get("order_id") == oid and payload.get("tenant_id") == tenant,
+                   "committed_entry_binding_mismatch")
+            program = journal.execute("SELECT * FROM execution_programs WHERE program_id=? AND tenant_id=?",
+                                      (pid, tenant)).fetchone()
+            slice_ = journal.execute("SELECT * FROM execution_program_slices WHERE program_id=? AND sequence=?",
+                                     (pid, sequence)).fetchone()
+            _check(program is not None and slice_ is not None, "committed_entry_program_missing")
+            _check(type(program["risk_authority_version"]) is int and program["risk_authority_version"] == 1,
+                   "committed_entry_authority_invalid")
+            validate_authority(program["risk_authority_version"], program["risk_authority_payload"],
+                program_id=pid, tenant_id=tenant, parent_payload=program["parent_order_payload"],
+                runtime_digest=program["runtime_context_sha256"])
+            parent = order_from_snapshot(program["parent_order_payload"])
+            _check(type(program["parent_quantity"]) is int
+                   and program["parent_quantity"] == parent.quantity
+                   and program["symbol"] == parent.symbol
+                   and program["state"] in {"ACTIVE", "COMPLETE", "FAILED"}
+                   and slice_["failure_reason"] is None, "committed_entry_parent_state_mismatch")
+            _check(type(slice_["quantity"]) is int and 0 < slice_["quantity"] <= parent.quantity,
+                   "committed_entry_quantity_invalid")
+            child = replace(parent, quantity=slice_["quantity"])
+            receipt = payload.get("paper_submission_receipt")
+            _check(isinstance(receipt, dict) and receipt.get("schema") == "pramana.paper_submission_receipt.v1"
+                   and receipt.get("orderIntent") == canonical_order_intent(child)
+                   and payload.get("institutional_risk_authority_sha256") == program["runtime_context_sha256"],
+                   "committed_entry_intent_mismatch")
+            _check(child.side is Side.BUY and type(entry["quantity"]) is int
+                   and (entry["symbol"], entry["market"], entry["asset_class"], entry["quantity"], entry["instrument_identity"])
+                   == (child.symbol, child.market.value, child.asset_class.value, child.quantity, bound_identity(child))
+                   and child.asset_class in {AssetClass.EQUITY, AssetClass.ETF}
+                   and entry["margin_change"] is None and entry["margin_provenance"] is None
+                   and entry["status"] == "FILLED", "committed_entry_ledger_mismatch")
+            _check(slice_["state"] in {"DISPATCHING", "FILLED_UNACCOUNTED", "EXECUTED"}
+                   and slice_["client_order_id"] == DurableOms.client_order_id(child, f"{program['decision_id']}:slice:{sequence}")
+                   and slice_["broker_order_id"] == (None if slice_["state"] == "DISPATCHING" else oid),
+                   "committed_entry_state_mismatch")
+            key = f"{pid}:{sequence}"
+            claim = ledger.execute("SELECT tenant_id FROM paper_idempotency WHERE key=?", (key,)).fetchone()
+            _check(payload.get("idempotency_key") == key and claim is not None and claim[0] == tenant,
+                   "committed_entry_submission_mismatch")
+            at, scheduled = datetime.fromisoformat(entry["created_at"]), datetime.fromisoformat(slice_["scheduled_at"])
+            created = datetime.fromisoformat(program["created_at"])
+            _check(at.utcoffset() is not None and scheduled.utcoffset() is not None
+                   and created.utcoffset() is not None and at >= scheduled and at >= created
+                   and datetime.fromisoformat(payload["filled_at"]) == at, "committed_entry_time_mismatch")
+            price, notional = Decimal(entry["fill_price"]), Decimal(entry["notional"])
+            fill = payload.get("fill")
+            _check(price.is_finite() and price > 0 and notional.is_finite() and notional == price * child.quantity
+                   and isinstance(fill, dict) and type(fill.get("quantity")) is int
+                   and fill["quantity"] == child.quantity
+                   and isinstance(fill.get("price"), str) and len(fill["price"]) <= 128
+                   and Decimal(fill["price"]) == price
+                   and fill.get("status") == "FILLED", "committed_entry_economics_mismatch")
+    except SharedRiskError:
+        raise
+    except (ValueError, TypeError, KeyError, IndexError, ArithmeticError, sqlite3.Error, RecursionError) as error:
+        raise SharedRiskError("shared_risk_broker_committed_entry_coverage_invalid") from error
+    return len(rows)
 
 
 def pin_account(broker, journal, tenant, *, allow_create):
@@ -204,7 +311,6 @@ def assert_bound_entry(ledger, order, evidence, idempotency_key, now):
                        f"{program['decision_id']}:slice:{sequence}")
                    and evidence.get("institutional_risk_authority_sha256") == program["runtime_context_sha256"],
                    "child_identity_mismatch")
-            from datetime import datetime
             at = datetime.fromisoformat(slice_["scheduled_at"])
             _check(now.utcoffset() is not None and at.utcoffset() is not None and now >= at,
                    "child_not_due")

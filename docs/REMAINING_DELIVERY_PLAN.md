@@ -60,3 +60,12 @@ checks and precise limits. No milestone is marked complete by component tests.
 
 No real account policy was set. PR #136's pinned EdgePolicy is a prerequisite,
 not a replacement for shared account capacity. The private daemon remains unchanged.
+
+### Committed-entry journal coverage continuation
+
+The selected broker/journal pairing now also verifies that all recorded entry fills
+remain represented by the matching retained parent and slice claims. A same-identity
+journal rollback cannot hide a BUY still present in the broker ledger. See
+`SHARED_RISK_COMMITTED_COVERAGE.md`. This is not detection of lost unexecuted history
+or simultaneous rollback of all stores. Position-linked capacity release and the
+remaining account/fencing boundaries stay open; M01 and the milestone count are unchanged.
