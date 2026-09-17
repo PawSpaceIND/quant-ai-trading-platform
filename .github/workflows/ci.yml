@@ -44,7 +44,7 @@ jobs:
           bash --version
           /bin/bash -n scripts/deploy_pilot_host.sh
           python -m pytest -q tests/test_deploy_pilot_host.py tests/test_deploy_portability.py --junitxml="$RUNNER_TEMP/deployment-portability.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: deployment-portability-${{ matrix.os }}
@@ -69,7 +69,7 @@ jobs:
       # Blocking: no skip, xfail, continue-on-error, or success-on-failure wrapper.
       - name: Institutional risk acceptance
         run: python -m pytest -q acceptance/test_institutional_edge_authority.py --junitxml="$RUNNER_TEMP/institutional-risk.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: institutional-risk-acceptance
@@ -93,7 +93,7 @@ jobs:
       # Open requirements remain real failures, not xfail/skip or a successful wrapper.
       - name: Preflight input and report acceptance
         run: python -m pytest -q acceptance/test_risk_preflight_input_boundary.py --junitxml="$RUNNER_TEMP/pilot-preflight-acceptance.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pilot-preflight-acceptance
@@ -135,7 +135,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: attribution-browser-verification
@@ -172,7 +172,7 @@ jobs:
         env:
           PRAMANA_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python scripts/verify_pilot_containers.py --output /tmp/pilot-container-verification.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pilot-container-verification
@@ -222,7 +222,7 @@ jobs:
           python3 scripts/scan_repository_secrets.py --scanner "$tmp/gitleaks" \
             --report-directory "$RUNNER_TEMP/pramana-secret-scan"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: secret-scan-location-summary
