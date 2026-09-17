@@ -161,6 +161,12 @@ class AutonomousTradingDaemon:
             if manifest['status'] in {'changed', 'unavailable'} and proposal.side != Side.SELL:
                 self.engage_kill_switch('runtime_strategy_changed_or_unavailable')
                 return 'pilot_strategy_manifest_unverified'
+        if proposal.side != Side.SELL:
+            from quant_ai.governance.runtime_identity import runtime_identity_entry_issue
+            issue = runtime_identity_entry_issue(self)
+            if issue is not None:
+                self.engage_kill_switch(issue)
+                return issue
         if proposal.side != Side.SELL and not self._reconcile_pilot():
             return "pilot_reconciliation_failed"
         if self.kill_switch.engaged and proposal.side != Side.SELL:

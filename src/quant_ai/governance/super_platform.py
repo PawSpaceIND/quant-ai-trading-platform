@@ -83,10 +83,13 @@ class CapabilityStatus:
     external_complete: bool
     missing_engineering: tuple[str, ...]
     missing_external: tuple[str, ...]
+    blocked_engineering_dependencies: tuple[str, ...] = ()
+    blocked_launch_dependencies: tuple[str, ...] = ()
 
     @property
     def launch_complete(self) -> bool:
-        return self.engineering_complete and self.external_complete
+        return (self.engineering_complete and self.external_complete
+                and not self.blocked_launch_dependencies)
 
 
 def _present(evidence: Mapping[str, object], key: str) -> bool:
@@ -97,27 +100,46 @@ def _present(evidence: Mapping[str, object], key: str) -> bool:
         return bool(value.strip())
     if isinstance(value, (tuple, list, dict, set, frozenset)):
         return bool(value)
-    return True
+    # A flag, number (including NaN), or arbitrary object is not an evidence reference.
+    return False
 
 
 def evaluate_super_platform(evidence: Mapping[str, object]) -> tuple[CapabilityStatus, ...]:
-    """Evaluate every registered capability; absent evidence can never become green."""
-    result = []
-    for capability in CAPABILITIES:
+    """Check references and transitive prerequisites; this does not authenticate artifacts."""
+    validate_register()
+    requirements = {item.capability_id: item for item in CAPABILITIES}
+    statuses: dict[str, CapabilityStatus] = {}
+
+    def evaluate(capability_id: str) -> CapabilityStatus:
+        if capability_id in statuses:
+            return statuses[capability_id]
+        capability = requirements[capability_id]
+        dependencies = tuple(evaluate(key) for key in capability.depends_on)
         missing_engineering = tuple(
             key for key in capability.engineering_evidence if not _present(evidence, key)
         )
         missing_external = tuple(
             key for key in capability.external_evidence if not _present(evidence, key)
         )
-        result.append(CapabilityStatus(
-            capability.capability_id,
-            not missing_engineering,
+        blocked_engineering = tuple(
+            item.capability_id for item in dependencies if not item.engineering_complete
+        )
+        blocked_launch = tuple(
+            item.capability_id for item in dependencies if not item.launch_complete
+        )
+        status = CapabilityStatus(
+            capability_id,
+            not missing_engineering and not blocked_engineering,
             not missing_external,
             missing_engineering,
             missing_external,
-        ))
-    return tuple(result)
+            blocked_engineering,
+            blocked_launch,
+        )
+        statuses[capability_id] = status
+        return status
+
+    return tuple(evaluate(item.capability_id) for item in CAPABILITIES)
 
 
 def closure_report(evidence: Mapping[str, object]) -> dict[str, object]:
@@ -129,6 +151,8 @@ def closure_report(evidence: Mapping[str, object]) -> dict[str, object]:
         "launchComplete": sum(item.launch_complete for item in statuses),
         "engineeringGaps": [item.capability_id for item in statuses if not item.engineering_complete],
         "externalGaps": [item.capability_id for item in statuses if not item.external_complete],
+        "launchGaps": [item.capability_id for item in statuses if not item.launch_complete],
+        "evidenceQualification": "reference_presence_and_dependencies_only",
         "rows": [
             {
                 "id": item.capability_id,
@@ -137,6 +161,8 @@ def closure_report(evidence: Mapping[str, object]) -> dict[str, object]:
                 "launchComplete": item.launch_complete,
                 "missingEngineering": list(item.missing_engineering),
                 "missingExternal": list(item.missing_external),
+                "blockedEngineeringDependencies": list(item.blocked_engineering_dependencies),
+                "blockedLaunchDependencies": list(item.blocked_launch_dependencies),
             }
             for item in statuses
         ],
@@ -147,7 +173,9 @@ def assert_engineering_closed(evidence: Mapping[str, object]) -> None:
     gaps = [item for item in evaluate_super_platform(evidence) if not item.engineering_complete]
     if gaps:
         detail = ";".join(
-            f"{item.capability_id}:{','.join(item.missing_engineering)}" for item in gaps
+            f"{item.capability_id}:{','.join(item.missing_engineering) or '-'}:"
+            f"dependencies={','.join(item.blocked_engineering_dependencies) or '-'}"
+            for item in gaps
         )
         raise ValueError(f"super_platform_engineering_incomplete:{detail}")
 
@@ -158,20 +186,45 @@ def assert_launch_closed(evidence: Mapping[str, object]) -> None:
     if gaps:
         detail = ";".join(
             f"{item.capability_id}:engineering={','.join(item.missing_engineering) or '-'}:"
-            f"external={','.join(item.missing_external) or '-'}"
+            f"external={','.join(item.missing_external) or '-'}:"
+            f"dependencies={','.join(item.blocked_launch_dependencies) or '-'}"
             for item in gaps
         )
         raise ValueError(f"super_platform_launch_incomplete:{detail}")
 
 
 def validate_register() -> None:
+    if not CAPABILITIES:
+        raise ValueError("super_platform_register_empty")
     ids = [item.capability_id for item in CAPABILITIES]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate_super_platform_capability")
     known = set(ids)
     for item in CAPABILITIES:
+        if not item.engineering_evidence or any(not key.strip() for key in item.engineering_evidence):
+            raise ValueError(f"super_platform_engineering_evidence_required:{item.capability_id}")
+        if len(item.depends_on) != len(set(item.depends_on)):
+            raise ValueError(f"duplicate_super_platform_dependency:{item.capability_id}")
         missing = set(item.depends_on) - known
         if missing:
             raise ValueError(
                 f"unknown_super_platform_dependency:{item.capability_id}:{','.join(sorted(missing))}"
             )
+
+    by_id = {item.capability_id: item for item in CAPABILITIES}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(capability_id: str) -> None:
+        if capability_id in visiting:
+            raise ValueError(f"super_platform_dependency_cycle:{capability_id}")
+        if capability_id in visited:
+            return
+        visiting.add(capability_id)
+        for dependency in by_id[capability_id].depends_on:
+            visit(dependency)
+        visiting.remove(capability_id)
+        visited.add(capability_id)
+
+    for capability_id in ids:
+        visit(capability_id)
