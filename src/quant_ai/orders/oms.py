@@ -31,6 +31,7 @@ from quant_ai.orders.intent import bound_identity, canonical_order_intent, order
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
+PAPER_RECOVERY_SCHEMA_VERSION = 2
 _SHA = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 TERMINAL = frozenset({OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED})
@@ -58,6 +59,25 @@ def _decimal(value: object, name: str, *, positive: bool = False) -> Decimal:
     if not result.is_finite() or (positive and result <= 0):
         raise ValueError(f"invalid_{name}")
     return result
+
+
+def _paper_recovery_proof(value):
+    required = {"schema", "plan_sha256", "receipt_sha256", "reviewer", "recovered_at"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    if value["schema"] != "pramana.paper_oms_recovery.v1":
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    for key in ("plan_sha256", "receipt_sha256"):
+        if not isinstance(value[key], str) or not _SHA.fullmatch(value[key]):
+            raise ValueError("oms_paper_recovery_proof_invalid")
+    reviewer = value["reviewer"]
+    if (not isinstance(reviewer, str) or not 0 < len(reviewer) <= 256
+            or reviewer != reviewer.strip() or any(not c.isprintable() for c in reviewer)):
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    moment = datetime.fromisoformat(value["recovered_at"])
+    if _instant(moment, "recovery_at") != value["recovered_at"]:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    return dict(value)
 
 
 @dataclass(frozen=True)
@@ -175,7 +195,7 @@ class DurableOms:
             row = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
             if row is None:
                 self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
-            elif row[0] != SCHEMA_VERSION:
+            elif row[0] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}:
                 raise ValueError("oms_schema_version_mismatch")
             for table in ("oms_events", "oms_fills", "oms_replacements", "oms_broker_evidence_bindings"):
                 for verb in ("UPDATE", "DELETE"):
@@ -577,6 +597,7 @@ class DurableOms:
         broker_order_id: str | None = None,
         now: datetime | None = None,
         source_identity: dict[str, str] | None = None,
+        paper_recovery: dict[str, str] | None = None,
     ) -> OmsOrder:
         self._validate_id(client_order_id, "client_order_id")
         self._validate_id(fill_id, "fill_id")
@@ -587,6 +608,11 @@ class DurableOms:
         fill_price = _decimal(price, "fill_price", positive=True)
         at = now or datetime.now(timezone.utc)
         source = None if source_identity is None else execution_identity(source_identity)
+        recovery = None if paper_recovery is None else _paper_recovery_proof(paper_recovery)
+        if recovery is not None and not self.db.in_transaction:
+            raise ValueError("oms_paper_recovery_outer_transaction_required")
+        if recovery is not None and (source is not None or fill_id.startswith("KITE")):
+            raise ValueError("oms_paper_recovery_external_fill_forbidden")
         if fill_id.startswith("KITE2:") and source is None:
             raise ValueError("external_fill_source_required")
         if source is not None and (external_fill_id(source) != fill_id
@@ -652,6 +678,7 @@ class DurableOms:
                 "cumulativeFilled": total, "averageFillPrice": str(average),
                 "state": target.value, "brokerOrderId": broker,
                 **({"sourceIdentity": source} if source is not None else {}),
+                **({"paperRecovery": recovery} if recovery is not None else {}),
             })
         return self.get(client_order_id)
 
@@ -803,6 +830,34 @@ class DurableOms:
                 state = target
                 broker = self._broker_identity(broker, payload.get("brokerOrderId"))
                 fill_id = payload["fillId"]
+                if "paperRecovery" in payload:
+                    version = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
+                    if version is None or version[0] != PAPER_RECOVERY_SCHEMA_VERSION:
+                        raise ValueError("oms_paper_recovery_schema_mismatch")
+                    proof = _paper_recovery_proof(payload["paperRecovery"])
+                    if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='oms_paper_recoveries'").fetchone():
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    audit = self.db.execute(
+                        "SELECT payload,sha256,tenant_id FROM oms_paper_recoveries WHERE client_order_id=?",
+                        (client_order_id,),
+                    ).fetchone()
+                    if audit is None:
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    record = json.loads(audit[0])
+                    if (_hash(record) != audit[1] or audit[2] != current.tenant_id
+                            or record.get("schema") != proof["schema"]
+                            or record.get("plan_sha256") != proof["plan_sha256"]
+                            or _hash(record.get("plan")) != proof["plan_sha256"]
+                            or record["plan"].get("client_order_id") != client_order_id
+                            or record["plan"].get("tenant_id") != current.tenant_id
+                            or record["plan"].get("paper_order_id") != fill_id
+                            or record["plan"].get("receipt_sha256") != proof["receipt_sha256"]
+                            or record.get("reviewer") != proof["reviewer"]
+                            or record.get("recovered_at") != proof["recovered_at"]
+                            or record.get("after_oms_head") != row["event_hash"]):
+                        raise ValueError("oms_paper_recovery_audit_mismatch")
+                    if "sourceIdentity" in payload or fill_id.startswith("KITE"):
+                        raise ValueError("oms_paper_recovery_external_fill_forbidden")
                 if fill_id.startswith("KITE2:") and "sourceIdentity" not in payload:
                     raise ValueError("oms_external_fill_source_missing")
                 if "sourceIdentity" in payload:

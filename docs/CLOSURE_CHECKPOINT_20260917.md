@@ -202,3 +202,34 @@ The separate institutional risk acceptance remains **15 failed / 2 passed**.
 Actual published-head Linux/macOS CI results belong in the PR certification record.
 No target-host deployment, main-branch merge, live activation or production freshness
 limit change was performed by this continuation.
+
+## Reviewed paper-OMS recovery and current-main integration
+
+Continues draft #126 from `8bd646f97a8e145c7b2718c0e9d0c798c97131d8`, retaining
+the previously interrupted recovery work and including current main
+`13bbdec81fe59332513260b746d51ec75bcf565d` (#130 research publisher).
+All incoming publisher files match main byte-for-byte. The workflow conflict
+retains the existing stronger two-phase scanner diagnostics and the blocking
+risk-acceptance and cross-platform deployment jobs; no failure is waived.
+
+`PaperOmsRecovery` inspects and mirrors only a provably committed bound NSE cash
+paper fill into OMS. It requires the exact reviewed plan hash and durable halt,
+validates immutable intent/receipt/release/configuration evidence, and atomically
+records the fill, append-only recovery audit and schema-compatibility version.
+It never resubmits, changes paper cash/positions, posts accounting or clears the
+halt. Missing receipts, conflicting states and unqualified evidence remain blocked.
+The Python API is not an authenticated console or unattended repair loop.
+
+The finished file adds 41 synthetic recovery cases. The focused recovery/runtime/
+OMS/broker-reconciliation set passes 95. A first resumed full run found a clock
+serialization race (2164 passed / 1 failed); deterministic regressions now enforce
+implicit time after locking while retaining explicit historical-time rejection.
+Final combined Mac suite: **2167 passed / 0 failed**, two warnings and 14 additional
+subtests (273.03 seconds). Risk acceptance remains **15 failed / 2 passed**.
+All 485 selected source/test/script/configuration files were unchanged. Three
+isolated in-memory guard removals failed their tests; source files were never mutated.
+Actual published-head GitHub results are recorded in the PR certification comment.
+
+No risk implementation or acceptance assertion was changed, and no real account
+recovery, merge into main, deployment, model promotion or live-money activation
+occurred. See `docs/PAPER_OMS_RECOVERY.md` for scope and remaining release gates.
