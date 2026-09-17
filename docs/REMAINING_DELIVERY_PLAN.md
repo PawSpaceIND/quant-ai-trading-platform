@@ -120,3 +120,15 @@ This extends the earlier process-local accounting guard across restart for expli
 bound programmes. Older unbound rows remain reported unverified. No position-risk
 capacity is released, no daemon is activated and no full milestone is marked complete.
 See `DURABLE_ACCOUNTING_SELECTION.md` for the local identity and rollback limits.
+
+### M03 immediate operating-path bridge (partial)
+
+An explicitly selected `InstitutionalRuntimeInputs` configuration now connects the
+existing synchronous/asynchronous swarm route and actual runner factory to the
+institutional coordinator, programme journal, shared-risk admission and accounting.
+It requires bound NSE cash, immediate execution and supplied institutional inputs;
+missing inputs cannot fall back to direct submission. Default deployment selection
+is unchanged. Trace provenance and final daemon operating checks are retained.
+Automatic scheduled execution/recovery, source qualification, M01 capacity release
+and target-host acceptance remain open. See `INSTITUTIONAL_SWARM_BRIDGE.md`; no whole
+milestone is marked complete by the synthetic bridge tests.

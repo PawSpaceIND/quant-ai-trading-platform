@@ -41,6 +41,9 @@ FIELDS = {
         "allow_position_scaling",
         "max_open_positions",
     ),
+    "quant_ai.agents.institutional_runtime.InstitutionalSwarmPaperTradingService": (
+        "allow_position_scaling", "max_open_positions", "institutional_configuration",
+    ),
     "quant_ai.agents.atlas.AtlasInvestmentAgent": (
         "policy",
         "founder_policy",
