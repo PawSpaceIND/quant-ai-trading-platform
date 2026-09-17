@@ -18,6 +18,39 @@ jobs:
       - run: ruff check src tests
       - run: pytest -q
 
+  deployment-portability:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      contents: read
+    env:
+      TRADING_LIVE_MONEY_ACTIVE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Test deployment script with system Bash and stubbed Docker
+        run: |
+          mkdir -p "$RUNNER_TEMP/system-shell"
+          ln -s /bin/bash "$RUNNER_TEMP/system-shell/bash"
+          export PATH="$RUNNER_TEMP/system-shell:$PATH"
+          bash --version
+          /bin/bash -n scripts/deploy_pilot_host.sh
+          python -m pytest -q tests/test_deploy_pilot_host.py tests/test_deploy_portability.py --junitxml="$RUNNER_TEMP/deployment-portability.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployment-portability-${{ matrix.os }}
+          path: ${{ runner.temp }}/deployment-portability.xml
+          if-no-files-found: error
+
   institutional-risk-acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 10

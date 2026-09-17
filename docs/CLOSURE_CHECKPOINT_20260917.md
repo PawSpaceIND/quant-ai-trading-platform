@@ -159,3 +159,27 @@ Risk acceptance remains 15 failed / 2 passed; its production code, assertions an
 job are unchanged. No running-daemon change, new source grant, real model training,
 model promotion, deployment, merge or live-money activation occurred. The full
 institutional runtime and external acceptance/forward-performance gates remain open.
+
+## Mac deployment portability closure
+
+Continues #126 from `a7fcf09275d5556fd0db74625f8ac58bce6b4e84`.
+Fresh full Mac baseline: 1909 passed / 13 failed. Candidate full normal suite:
+1954 passed / 0 failed, with 14 additional subtests and no skips. The 13 original
+failure identities all belonged to the deployment-script suite. Its 19 original
+cases now pass alongside 32 new cases (51 focused), with all original test
+functions/acceptance assertions preserved; only the Docker stub's portable final
+argument handling changed in the existing test file.
+
+The script replaces Bash-4-only arrays and GNU-specific sed stamping; validates
+service/container inspection results; and preserves private environment bytes,
+mode and ownership through a flushed temporary file and replacement. Controlled
+exceptions and abrupt subprocess exits occur only in disposable test hosts.
+New Ubuntu/macOS CI jobs explicitly use /bin/bash and stubbed Docker. Actual
+published-head job results are recorded in the PR certification comment.
+
+No source under src/, trading-risk acceptance assertion or risk CI job changed.
+The risk acceptance still reports 15 failed / 2 passed and remains blocking.
+No merge, deployment, real environment rewrite, daemon restart or live-money
+activation occurred. This closes the named Mac portability failures, not full
+rollout, rollback, hardware durability or trading/platform acceptance.
+See `docs/DEPLOYMENT_PORTABILITY_CLOSURE.md` for scope and limitations.
