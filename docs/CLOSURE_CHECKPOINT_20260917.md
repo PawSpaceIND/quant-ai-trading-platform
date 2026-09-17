@@ -28,3 +28,16 @@ No changes in this continuation were made to PR #112 or to main. No PR was merge
 
 The 33-capability register remains an evidence-reference/dependency checker, not an artifact
 authenticator. No placeholder, synthetic capture or nearby module is treated as external proof.
+
+## Subsequent committed-fill recovery checkpoint
+
+The existing integration now includes the separately documented
+`COORDINATOR_CRASH_RECOVERY.md` work. Twenty-seven new synthetic regressions cover
+committed paper fills lost before OMS/program recording, abrupt subprocess termination,
+exclusive dispatch claims, broker-owned receipts, historical cost-basis validation and
+partial-fee recovery. This does not enable the default daemon or real-money execution.
+
+No-receipt dispatch uncertainty stays RECOVERY_REQUIRED and blocks new coordinator
+dispatch for the tenant; it is not permission to retry. Legacy receipt migration,
+rollback support for the new state, independent-exit accounting integration and target-host
+acceptance remain explicit open requirements. Exact source and CI evidence are on PR #126.

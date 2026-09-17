@@ -28,7 +28,12 @@ from quant_ai.execution.planner import (
     ExecutionPlanner,
     VolumeBucket,
 )
-from quant_ai.execution.program import ExecutionProgram, ExecutionProgramJournal
+from quant_ai.execution.program import (
+    ExecutionProgram,
+    ExecutionProgramJournal,
+    ProgramState,
+    SliceState,
+)
 from quant_ai.orders.intent import bound_identity, canonical_order_intent
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
@@ -57,6 +62,7 @@ class InstitutionalStage(str, Enum):
     RISK = "RISK"
     EXECUTION_PLAN = "EXECUTION_PLAN"
     READY = "READY"
+    RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
 
@@ -298,9 +304,18 @@ class InstitutionalPaperCoordinator:
         executed: list[int] = []
         program = self.programs.get(program_id)
         self._assert_runtime_intent(program, request, parent)
+        if program.state in {ProgramState.FAILED, ProgramState.CANCELLED}:
+            return InstitutionalExecutionResult(InstitutionalStage.FAILED, program, (), "program_terminal")
+        if self.programs.recovery_required(request.tenant_id):
+            return self._recovery_result(program_id, (), "pending_execution_or_accounting_recovery")
         for slice_ in self.programs.due(program_id, now):
-            current_snapshot = self.snapshot_provider()
             child = replace(parent, quantity=slice_.quantity)
+            decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
+            client_id = self.oms.client_order_id(child, decision_id)
+            if not self.programs.claim_slice(program_id, slice_.sequence, client_order_id=client_id):
+                return self._recovery_result(program_id, tuple(executed), "execution_slice_already_claimed")
+            # Claim first, then obtain fresh risk inputs. A crash never makes this slice new again.
+            current_snapshot = self.snapshot_provider()
             child_proposal = replace(request.proposal, quantity=slice_.quantity)
             held = current_snapshot.symbol_quantity.get(child.symbol, 0)
             de_risking = child.side is Side.SELL and held > 0 and child.quantity <= held
@@ -371,11 +386,7 @@ class InstitutionalPaperCoordinator:
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
             oms_row = self.oms.create(child, decision_id=decision_id, now=now)
             if oms_row.state is not OrderState.CREATED:
-                self.programs.mark_failed(program_id, slice_.sequence, "child_order_not_new")
-                return InstitutionalExecutionResult(
-                    InstitutionalStage.FAILED, self.programs.get(program_id),
-                    tuple(executed), "child_order_not_new",
-                )
+                return self._recovery_result(program_id, tuple(executed), "child_order_requires_reconciliation")
             self.oms.approve_risk(oms_row.client_order_id, now=now)
             self.oms.submitted(oms_row.client_order_id, now=now)
             evidence = {
@@ -391,17 +402,19 @@ class InstitutionalPaperCoordinator:
                     child, evidence, f"{program_id}:{slice_.sequence}"
                 )
             except (PaperBrokerDatabaseLockedError, ValueError) as error:
-                reason = f"paper_broker_rejected:{error}"
-                self.oms.reject(oms_row.client_order_id, reason=reason, now=now)
-                self.programs.mark_failed(program_id, slice_.sequence, reason)
-                return InstitutionalExecutionResult(
-                    InstitutionalStage.FAILED, self.programs.get(program_id),
-                    tuple(executed), reason,
-                )
+                # An exception from the submit call is not proof that no commit occurred.
+                # Keep the durable claim: reconciliation must inspect the exact receipt.
+                return self._recovery_result(program_id, tuple(executed), f"paper_submission_requires_reconciliation:{error}")
+            receipt = self._receipt_for_child(program_id, slice_, child)
+            if receipt is None or (fill.order_id, fill.filled_quantity, fill.average_price) != (
+                receipt.entry.order_id, receipt.entry.quantity, receipt.entry.fill_price
+            ):
+                raise ValueError("paper_submission_receipt_result_mismatch")
+            before = self._receipt_position(receipt, child)
             self.oms.fill(
                 oms_row.client_order_id, fill_id=fill.order_id,
                 quantity=fill.filled_quantity, price=fill.average_price,
-                broker_order_id=fill.order_id, now=now,
+                broker_order_id=fill.order_id, now=receipt.entry.created_at,
             )
             # The paper fill and OMS are committed before the accounting database can be.
             # Persist this recovery state first so a crash cannot lead to resubmission.
@@ -435,6 +448,73 @@ class InstitutionalPaperCoordinator:
             tuple(executed),
             "complete" if program.state.value == "COMPLETE" else "awaiting_slices",
         )
+
+    def _recovery_result(self, program_id, executed, reason):
+        return InstitutionalExecutionResult(InstitutionalStage.RECOVERY_REQUIRED,
+            self.programs.get(program_id), executed, reason)
+
+    def _receipt_for_child(self, program_id, slice_, child):
+        receipt = self.broker.submission_receipt(f"{program_id}:{slice_.sequence}", child.tenant_id)
+        if receipt is None:
+            return None
+        payload = receipt.evidence
+        expected_intent = canonical_order_intent(child)
+        if (canonical_order_intent(receipt.order) != expected_intent
+                or payload.get("institutional_program") != program_id
+                or payload.get("institutional_slice") != slice_.sequence
+                or payload.get("order_intent_sha256") != hashlib.sha256(expected_intent.encode()).hexdigest()
+                or payload.get("instrument_identity") != bound_identity(child)):
+            raise ValueError("accounting_recovery_receipt_attribution_mismatch")
+        return receipt
+
+    @staticmethod
+    def _receipt_position(receipt, child):
+        if not receipt.prior_quantity:
+            return None
+        return BrokerPosition(child.tenant_id, child.symbol, child.market, child.asset_class,
+                              receipt.prior_quantity, receipt.prior_average,
+                              child.stop_price, child.take_profit_price)
+
+    def _recover_committed_dispatches(self, program_id, request, parent):
+        """Adopt only committed paper receipts, including the pre-OMS crash window."""
+        unresolved = False
+        for slice_ in self.programs.get(program_id).slices:
+            if slice_.state not in {SliceState.PENDING, SliceState.DISPATCHING}:
+                continue
+            child = replace(parent, quantity=slice_.quantity)
+            receipt = self._receipt_for_child(program_id, slice_, child)
+            expected_client = self.oms.client_order_id(child,
+                f"{request.proposal.decision_id}:slice:{slice_.sequence}")
+            if receipt is None:
+                if slice_.state is SliceState.DISPATCHING:
+                    unresolved = True
+                else:
+                    try:
+                        self.oms.get(expected_client)
+                    except KeyError:
+                        pass
+                    else:
+                        # An older writer may have reached the OMS without a program claim.
+                        unresolved = True
+                continue
+            if slice_.client_order_id not in {None, expected_client}:
+                raise ValueError("accounting_recovery_dispatch_identity_mismatch")
+            self.oms.verify(expected_client)
+            current = self.oms.get(expected_client)
+            if (self.oms.intent_snapshot(expected_client) != canonical_order_intent(child)
+                    or current.state not in {OrderState.SUBMITTED, OrderState.SUBMISSION_UNCERTAIN, OrderState.FILLED}
+                    or current.broker_order_id not in {None, receipt.entry.order_id}
+                    or current.filled_quantity not in {0, receipt.entry.quantity}):
+                raise ValueError("accounting_recovery_dispatch_oms_mismatch")
+            # FILLED replays must use the exact original fill; OMS idempotency verifies it.
+            self.oms.fill(expected_client, fill_id=receipt.entry.order_id,
+                          quantity=receipt.entry.quantity, price=receipt.entry.fill_price,
+                          broker_order_id=receipt.entry.order_id, now=receipt.entry.created_at)
+            self.oms.verify(expected_client)
+            self.programs.mark_filled_unaccounted(program_id, slice_.sequence,
+                client_order_id=expected_client, broker_order_id=receipt.entry.order_id,
+                pre_fill_average_price=None if receipt.prior_average is None else str(receipt.prior_average))
+        return unresolved
 
     def bind_runtime_context(
         self,
@@ -473,6 +553,7 @@ class InstitutionalPaperCoordinator:
         if request is None or parent is None:
             raise ValueError("execution_program_runtime_context_unavailable_after_restart")
         self._assert_runtime_intent(self.programs.get(program_id), request, parent)
+        unresolved = self._recover_committed_dispatches(program_id, request, parent)
         finalized: list[int] = []
         for slice_ in self.programs.unaccounted(program_id):
             if slice_.broker_order_id is None or slice_.client_order_id is None:
@@ -504,6 +585,10 @@ class InstitutionalPaperCoordinator:
                     or oms_order.filled_quantity != ledger.quantity
                     or oms_order.average_fill_price != ledger.fill_price):
                 raise ValueError("accounting_recovery_oms_fill_mismatch")
+            receipt = self._receipt_for_child(program_id, slice_, child)
+            if receipt is not None and (receipt.entry.order_id != ledger.order_id
+                    or slice_.pre_fill_average_price != (None if receipt.prior_average is None else str(receipt.prior_average))):
+                raise ValueError("accounting_recovery_cost_basis_receipt_mismatch")
             before = None
             if child.side is Side.SELL:
                 if slice_.pre_fill_average_price is None:
@@ -523,6 +608,10 @@ class InstitutionalPaperCoordinator:
             )
             finalized.append(slice_.sequence)
         program = self.programs.get(program_id)
+        if unresolved or self.programs.recovery_required(request.tenant_id):
+            return self._recovery_result(program_id, tuple(finalized), "submission_outcome_unresolved")
+        if program.state in {ProgramState.FAILED, ProgramState.CANCELLED}:
+            return InstitutionalExecutionResult(InstitutionalStage.FAILED, program, tuple(finalized), "program_terminal")
         return InstitutionalExecutionResult(
             InstitutionalStage.COMPLETE if program.state.value == "COMPLETE" else InstitutionalStage.READY,
             program, tuple(finalized),

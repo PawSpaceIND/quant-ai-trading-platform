@@ -10,11 +10,15 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from typing import Self
+from uuid import uuid4
 
 from quant_ai.execution.planner import ExecutionPlan
 from quant_ai.orders.intent import order_from_snapshot
@@ -32,6 +36,7 @@ class ProgramState(str, Enum):
 
 class SliceState(str, Enum):
     PENDING = "PENDING"
+    DISPATCHING = "DISPATCHING"
     FILLED_UNACCOUNTED = "FILLED_UNACCOUNTED"
     EXECUTED = "EXECUTED"
     FAILED = "FAILED"
@@ -73,8 +78,17 @@ class ExecutionProgram:
         return sum(item.quantity for item in self.slices if item.state is SliceState.PENDING)
 
 
+def _atomic(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self.transaction():
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
 class ExecutionProgramJournal:
     def __init__(self, path: str | Path) -> None:
+        self._lock = RLock()
         self.path = Path(path)
         if str(self.path) != ":memory:":
             if self.path.exists() and self.path.is_symlink():
@@ -125,6 +139,59 @@ class ExecutionProgramJournal:
                 BEGIN SELECT RAISE(ABORT,'Approved execution identity is immutable'); END"""
             )
 
+    @contextmanager
+    def transaction(self):
+        """One local writer, nested savepoints; never a cross-database transaction."""
+        with self._lock:
+            nested = self.db.in_transaction
+            name = "program_" + uuid4().hex
+            self.db.execute(f"SAVEPOINT {name}" if nested else "BEGIN IMMEDIATE")
+            try:
+                yield
+                self.db.execute(f"RELEASE SAVEPOINT {name}" if nested else "COMMIT")
+            except BaseException:
+                if self.db.in_transaction:
+                    if nested:
+                        self.db.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                        self.db.execute(f"RELEASE SAVEPOINT {name}")
+                    else:
+                        self.db.rollback()
+                raise
+
+    @_atomic
+    def claim_slice(self, program_id: str, sequence: int, *, client_order_id: str) -> bool:
+        """Durably fence one dispatch before touching the OMS or broker.
+
+        A crash leaves DISPATCHING. Recovery observes receipts, never resubmits it.
+        All coordinators for an account must share this journal.
+        """
+        if not isinstance(client_order_id, str) or not _ID.fullmatch(client_order_id):
+            raise ValueError("execution_slice_client_identity_invalid")
+        program = self.get(program_id)
+        current = self._slice(program_id, sequence)
+        if program.state in {ProgramState.FAILED, ProgramState.CANCELLED, ProgramState.COMPLETE}:
+            return False
+        if current.state is not SliceState.PENDING:
+            return False
+        if self.recovery_required(program.tenant_id):
+            return False
+        self.db.execute(
+            """UPDATE execution_program_slices SET state=?,client_order_id=?
+               WHERE program_id=? AND sequence=? AND state=?""",
+            (SliceState.DISPATCHING.value, client_order_id, program_id, sequence, SliceState.PENDING.value),
+        )
+        self.db.execute("UPDATE execution_programs SET state=? WHERE program_id=?",
+                        (ProgramState.ACTIVE.value, program_id))
+        return True
+
+    def recovery_required(self, tenant_id: str) -> bool:
+        with self._lock:
+            return self.db.execute(
+                """SELECT 1 FROM execution_program_slices s JOIN execution_programs p
+                   ON p.program_id=s.program_id WHERE p.tenant_id=? AND s.state IN (?,?) LIMIT 1""",
+                (tenant_id, SliceState.DISPATCHING.value, SliceState.FILLED_UNACCOUNTED.value),
+            ).fetchone() is not None
+
     def __enter__(self) -> Self:
         return self
 
@@ -153,6 +220,7 @@ class ExecutionProgramJournal:
             ],
         }
 
+    @_atomic
     def create(
         self,
         *,
@@ -199,7 +267,7 @@ class ExecutionProgramJournal:
             ):
                 raise ValueError("execution_program_decision_payload_mismatch")
             return self.get(program_id)
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 """INSERT INTO execution_programs
                 (program_id,tenant_id,decision_id,symbol,state,plan_sha256,runtime_context_sha256,
@@ -235,6 +303,7 @@ class ExecutionProgramJournal:
             and item.scheduled_at.astimezone(timezone.utc) <= instant
         )
 
+    @_atomic
     def mark_filled_unaccounted(
         self,
         program_id: str,
@@ -254,10 +323,16 @@ class ExecutionProgramJournal:
                 raise ValueError("filled_unaccounted_slice_identity_changed")
             return self.get(program_id)
         if current.state is SliceState.EXECUTED:
+            if (current.client_order_id != client_order_id
+                    or current.broker_order_id != broker_order_id
+                    or current.pre_fill_average_price != pre_fill_average_price):
+                raise ValueError("executed_slice_identity_changed")
             return self.get(program_id)
-        if current.state is not SliceState.PENDING:
+        if current.state not in {SliceState.PENDING, SliceState.DISPATCHING}:
             raise ValueError("execution_slice_not_pending")
-        with self.db:
+        if current.client_order_id not in {None, client_order_id}:
+            raise ValueError("execution_slice_claim_identity_changed")
+        with self.transaction():
             self.db.execute(
                 """UPDATE execution_program_slices SET state=?,client_order_id=?,broker_order_id=?,
                    pre_fill_average_price=? WHERE program_id=? AND sequence=?""",
@@ -272,6 +347,7 @@ class ExecutionProgramJournal:
             )
         return self.get(program_id)
 
+    @_atomic
     def mark_executed(
         self,
         program_id: str,
@@ -295,7 +371,7 @@ class ExecutionProgramJournal:
             or current.broker_order_id != broker_order_id
         ):
             raise ValueError("filled_unaccounted_slice_identity_changed")
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 """UPDATE execution_program_slices SET state=?,client_order_id=?,broker_order_id=?
                    WHERE program_id=? AND sequence=?""",
@@ -313,13 +389,14 @@ class ExecutionProgramJournal:
             if item.state is SliceState.FILLED_UNACCOUNTED
         )
 
+    @_atomic
     def mark_failed(self, program_id: str, sequence: int, reason: str) -> ExecutionProgram:
         if not reason.strip():
             raise ValueError("execution_slice_failure_reason_required")
         current = self._slice(program_id, sequence)
-        if current.state is not SliceState.PENDING:
+        if current.state not in {SliceState.PENDING, SliceState.DISPATCHING}:
             raise ValueError("execution_slice_not_pending")
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 """UPDATE execution_program_slices SET state=?,failure_reason=?
                    WHERE program_id=? AND sequence=?""",
@@ -339,11 +416,11 @@ class ExecutionProgramJournal:
                 (program_id,),
             ).fetchall()
         ]
-        state = (
-            ProgramState.COMPLETE
-            if states and all(item is SliceState.EXECUTED for item in states)
-            else ProgramState.ACTIVE
-        )
+        previous = self.db.execute("SELECT state FROM execution_programs WHERE program_id=?", (program_id,)).fetchone()[0]
+        state = (ProgramState.FAILED if SliceState.FAILED in states or previous == ProgramState.FAILED.value
+                 else ProgramState.CANCELLED if SliceState.CANCELLED in states or previous == ProgramState.CANCELLED.value
+                 else ProgramState.COMPLETE if states and all(item is SliceState.EXECUTED for item in states)
+                 else ProgramState.ACTIVE)
         self.db.execute(
             "UPDATE execution_programs SET state=? WHERE program_id=?", (state.value, program_id)
         )
