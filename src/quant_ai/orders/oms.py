@@ -108,9 +108,33 @@ class OmsOrder:
 class DurableOms:
     """SQLite OMS projection plus append-only event/fill history."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
+        if type(read_only) is not bool:
+            raise TypeError("oms_read_only_must_be_boolean")
+        self._read_only = read_only
         self._lock = RLock()
         self.path = Path(path)
+        if read_only:
+            if (self.path.is_symlink() or not self.path.is_file()
+                    or self.path.stat().st_nlink != 1):
+                raise ValueError("oms_read_only_regular_existing_file_required")
+            self.db = sqlite3.connect(
+                self.path.resolve().as_uri() + "?mode=ro", uri=True,
+                timeout=2, check_same_thread=False,
+            )
+            self.db.row_factory = sqlite3.Row
+            try:
+                self.db.execute("PRAGMA query_only=ON")
+                self.db.execute("PRAGMA trusted_schema=OFF")
+                self.db.execute("PRAGMA busy_timeout=2000")
+                rows = self.db.execute("SELECT id,version FROM oms_meta").fetchall()
+                if (len(rows) != 1 or rows[0][0] != 1
+                        or rows[0][1] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}):
+                    raise ValueError("oms_schema_version_mismatch")
+            except BaseException:
+                self.db.close()
+                raise
+            return  # No schema creation, journal-mode change, or migration on inspection.
         if self.path != Path(":memory:") and self.path.exists() and self.path.is_symlink():
             raise ValueError("oms_symlink_unsupported")
         if str(self.path) != ":memory:" and not self.path.exists():
@@ -211,7 +235,8 @@ class DurableOms:
         with self._lock:
             nested = self.db.in_transaction
             savepoint = "oms_" + uuid4().hex
-            self.db.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
+            self.db.execute(f"SAVEPOINT {savepoint}" if nested else
+                            "BEGIN" if self._read_only else "BEGIN IMMEDIATE")
             try:
                 yield
                 self.db.execute(f"RELEASE SAVEPOINT {savepoint}" if nested else "COMMIT")

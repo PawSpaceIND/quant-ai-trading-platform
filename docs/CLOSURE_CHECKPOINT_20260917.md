@@ -260,3 +260,38 @@ recovery/migration, segment/settlement fidelity and real operational/forward tra
 evidence remain open. This closes operator visibility, not recovery authorization
 or launch readiness. No real account recovery, deployment or live activation.
 See docs/PAPER_OMS_INSPECTION.md for limits and semantics.
+
+## Bound-paper OMS recovery-bundle coverage
+
+Continues #126 from `d71370e7d5b429f890f34d33e9c10b0e1b2f016f`.
+Explicit stopped-writer bundles now require the separately configured OMS for a
+bound account. Schema 3 includes the original path pin, captured OMS, event replay
+and cash-fill correspondence. Incomplete older bound bundles refuse restoration.
+Pending orders and unmatched fills are preserved as discrepancies, not repaired.
+A read-only OMS mode avoids schema initialization or journal migration during
+inspection. Raw fractional projections, orphaned replacement/recovery records,
+corrupted history, wrong storage selection and incomplete v2 audits refuse.
+
+The new synthetic file contains 38 cases; the surrounding recovery/runtime/OMS/
+coordinator suite passes 179. Tests retain pending state, committed WAL frames,
+recovered schema-v2 evidence, private files and existing halts. No backup or restore
+was run against a real account. Exact full-suite and CI results are recorded in the
+PR certification comment; the initial 2203-pass run predates two additional orphan
+record cases and is not the final 38-case candidate certification.
+
+The four trading-risk implementations, existing acceptance assertions and their
+failing CI job are unchanged. No running daemon, source grants or live authority
+were changed. Automated single-ledger backups still omit the complete multi-store
+state; this change covers explicit OMS-inclusive bundles, not unattended disaster
+recovery, path rebinding, accounting/program journals or off-host acceptance.
+See `docs/OMS_BACKUP_CLOSURE.md` for exact scope and remaining requirements.
+
+Final local normal suite for the completed 38-case patch: **2205 passed / 0 failed**,
+two warnings, 14 additional subtests, 295.02 seconds. The separate institutional
+acceptance remains **15 failed / 2 passed**, with no skipped cases. All 637 selected
+non-Markdown tracked/new files matched their hashes throughout final certification.
+Bound-OMS omission, event-replay removal and raw-integer guard removal each caused
+the corresponding regression to fail in isolated interpreter mutation checks.
+A wrapper-only replay mutation did not remove the underlying intent replay; that
+surviving check is retained in local evidence rather than represented as a kill.
+Actual published-head CI results are reported separately in the PR discussion.
