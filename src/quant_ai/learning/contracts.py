@@ -11,13 +11,31 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _aware(value: datetime, name: str) -> None:
+    if not isinstance(value, datetime):
+        raise TypeError(f"{name}_must_be_datetime")
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name}_must_be_timezone_aware")
 
 
 def _digest(value: str, name: str) -> None:
-    if not _SHA256.fullmatch(value):
+    if not isinstance(value, str) or not _SHA256.fullmatch(value):
         raise ValueError(f"{name}_must_be_sha256")
+
+
+def _text(value: str, name: str) -> None:
+    # Metadata is rendered into prompts and manifests, so physical/control-line
+    # boundaries must not be supplied by a source or confused with a policy field.
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or any(not char.isprintable() for char in value)):
+        raise ValueError(f"{name}_must_be_nonempty_single_line_text")
+
+
+def _enum_scope(values, kind, name):
+    if not isinstance(values, (tuple, list, set, frozenset)) or not values:
+        raise ValueError(f"{name}_required")
+    if any(not isinstance(value, kind) for value in values):
+        raise TypeError(f"{name}_must_use_declared_enum")
+    return frozenset(values)
 
 
 class KnowledgeCategory(str, Enum):
@@ -60,12 +78,20 @@ class SourceGrant:
     max_age_seconds: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.source_id.strip() or not self.provider.strip():
-            raise ValueError("knowledge_source_identity_required")
-        if not self.categories or not self.planes:
-            raise ValueError("knowledge_source_scope_required")
-        if self.max_age_seconds is not None and self.max_age_seconds <= 0:
-            raise ValueError("knowledge_source_max_age_must_be_positive")
+        _text(self.source_id, "knowledge_source_id")
+        _text(self.provider, "knowledge_source_provider")
+        object.__setattr__(self, "categories", _enum_scope(
+            self.categories, KnowledgeCategory, "knowledge_source_categories"))
+        object.__setattr__(self, "planes", _enum_scope(
+            self.planes, AccessPlane, "knowledge_source_planes"))
+        if type(self.point_in_time) is not bool:
+            raise TypeError("knowledge_source_point_in_time_must_be_boolean")
+        if not isinstance(self.rights_status, RightsStatus):
+            raise TypeError("knowledge_source_rights_must_use_declared_enum")
+        if self.max_age_seconds is not None and (
+            type(self.max_age_seconds) is not int or self.max_age_seconds <= 0
+        ):
+            raise ValueError("knowledge_source_max_age_must_be_positive_integer")
 
 
 @dataclass(frozen=True)
@@ -79,8 +105,11 @@ class KnowledgeItem:
     reference: str
 
     def __post_init__(self) -> None:
-        if not self.item_id.strip() or not self.source_id.strip() or not self.reference.strip():
-            raise ValueError("knowledge_item_identity_required")
+        _text(self.item_id, "knowledge_item_id")
+        _text(self.source_id, "knowledge_item_source")
+        _text(self.reference, "knowledge_item_reference")
+        if not isinstance(self.category, KnowledgeCategory):
+            raise TypeError("knowledge_item_category_must_use_declared_enum")
         _aware(self.observed_at, "observed_at")
         _aware(self.available_at, "available_at")
         if self.available_at < self.observed_at:
@@ -101,21 +130,37 @@ class TrainingDatasetManifest:
     adjustment_policy_id: str
 
     def __post_init__(self) -> None:
-        if not self.dataset_id.strip() or self.row_count < 1:
-            raise ValueError("training_dataset_identity_and_rows_required")
+        _text(self.dataset_id, "training_dataset_id")
+        if type(self.row_count) is not int or self.row_count < 1:
+            raise ValueError("training_dataset_rows_must_be_positive_integer")
         _aware(self.cutoff, "training_cutoff")
-        if not self.source_ids or len(set(self.source_ids)) != len(self.source_ids):
+        if not isinstance(self.source_ids, (tuple, list)) or not self.source_ids:
+            raise ValueError("training_dataset_ordered_sources_required")
+        for source in self.source_ids:
+            _text(source, "training_dataset_source")
+        if len(set(self.source_ids)) != len(self.source_ids):
             raise ValueError("training_dataset_unique_sources_required")
-        if any(not item.strip() for item in self.source_ids):
-            raise ValueError("training_dataset_source_identity_required")
+        object.__setattr__(self, "source_ids", tuple(self.source_ids))
         for value, name in (
             (self.source_snapshot_sha256, "source_snapshot"),
             (self.feature_schema_sha256, "feature_schema"),
             (self.label_schema_sha256, "label_schema"),
         ):
             _digest(value, name)
-        if not self.cost_policy_id.strip() or not self.adjustment_policy_id.strip():
-            raise ValueError("training_dataset_cost_and_adjustment_policy_required")
+        _text(self.cost_policy_id, "training_dataset_cost_policy")
+        _text(self.adjustment_policy_id, "training_dataset_adjustment_policy")
+
+
+def validate_training_run_inputs(*, run_id, candidate_id, model_family, dataset_id,
+                                 trained_at, seed, code_sha256, configuration_sha256) -> None:
+    """Preflight before any caller-supplied trainer can execute or incur work."""
+    for value in (run_id, candidate_id, model_family, dataset_id):
+        _text(value, "training_run_identity")
+    _aware(trained_at, "trained_at")
+    if type(seed) is not int:
+        raise TypeError("training_seed_must_be_integer")
+    _digest(code_sha256, "code")
+    _digest(configuration_sha256, "configuration")
 
 
 @dataclass(frozen=True)
@@ -129,21 +174,19 @@ class TrainingRunManifest:
     code_sha256: str
     configuration_sha256: str
     artifact_sha256: str
+    # Older manifests did not bind the full dataset contract. None remains unknown;
+    # it must never be backfilled by guessing a snapshot from a reused dataset name.
+    dataset_manifest_sha256: str | None = None
 
     def __post_init__(self) -> None:
-        if any(not value.strip() for value in (
-            self.run_id, self.candidate_id, self.model_family, self.dataset_id
-        )):
-            raise ValueError("training_run_identity_required")
-        _aware(self.trained_at, "trained_at")
-        if isinstance(self.seed, bool) or not isinstance(self.seed, int):
-            raise TypeError("training_seed_must_be_integer")
-        for value, name in (
-            (self.code_sha256, "code"),
-            (self.configuration_sha256, "configuration"),
-            (self.artifact_sha256, "artifact"),
-        ):
-            _digest(value, name)
+        validate_training_run_inputs(
+            run_id=self.run_id, candidate_id=self.candidate_id, model_family=self.model_family,
+            dataset_id=self.dataset_id, trained_at=self.trained_at, seed=self.seed,
+            code_sha256=self.code_sha256, configuration_sha256=self.configuration_sha256,
+        )
+        _digest(self.artifact_sha256, "artifact")
+        if self.dataset_manifest_sha256 is not None:
+            _digest(self.dataset_manifest_sha256, "dataset_manifest")
 
 
 @dataclass(frozen=True)

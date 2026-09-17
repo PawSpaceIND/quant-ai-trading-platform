@@ -107,6 +107,9 @@ class ExecutionPlanner:
     ) -> ExecutionPlan:
         if type(order.quantity) is not int or order.quantity <= 0:
             raise ValueError("execution_parent_quantity_must_be_positive_integer")
+        instrument = getattr(order, "instrument", None)
+        if instrument is not None and instrument.lot_size is not None and instrument.lot_size != constraints.lot_size:
+            raise ValueError("execution_contract_lot_mismatch")
         if order.quantity % constraints.lot_size:
             raise ValueError("execution_parent_quantity_not_whole_lots")
         if not source.strip():

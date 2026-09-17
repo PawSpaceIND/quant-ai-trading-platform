@@ -105,9 +105,9 @@ test("private API and Atlas preserve validated risk and exclude raw history from
   const paper=JSON.parse(fs.readFileSync(new URL("../../../tests/fixtures/paper-contribution.json",import.meta.url),"utf8"));
   const db=new DatabaseSync(process.env.PRAMANA_LEDGER_PATH);
   db.exec(`CREATE TABLE paper_accounts(tenant_id TEXT PRIMARY KEY,starting_capital TEXT,cash_balance TEXT,updated_at TEXT);
-    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT,margin_change TEXT,margin_provenance TEXT);
+    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT,margin_change TEXT,margin_provenance TEXT,instrument_identity TEXT);
     CREATE TABLE paper_cost_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,code TEXT,amount TEXT,cash_debit INTEGER,created_at TEXT);
-    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT);
+    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT,instrument_identity TEXT);
     CREATE TABLE paper_live_valuations(tenant_id TEXT,timestamp TEXT,ledger_id INTEGER,payload TEXT);`);
   db.prepare("INSERT INTO paper_accounts VALUES ('default',?,?,?)").run(paper.account.starting_capital,paper.account.cash_balance,shared.input.asOf);
   for(const [table,records] of [["paper_ledger",paper.fills],["paper_cost_ledger",paper.costs],["paper_positions",paper.positions]] as const){

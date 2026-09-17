@@ -33,8 +33,7 @@ def protection_coverage(db: sqlite3.Connection, tenant: str, now: datetime | Non
             "SELECT COALESCE(MAX(id),0) FROM paper_ledger WHERE tenant_id=?", (tenant,)
         ).fetchone()[0]
         rows = db.execute(
-            "SELECT symbol,market,asset_class,quantity,average_price,stop_price,take_profit_price "
-            "FROM paper_positions WHERE tenant_id=? ORDER BY symbol,market,asset_class", (tenant,)
+            "SELECT * FROM paper_positions WHERE tenant_id=? ORDER BY symbol,market,asset_class", (tenant,)
         ).fetchall()
     finally:
         db.execute("RELEASE SAVEPOINT protection_coverage")

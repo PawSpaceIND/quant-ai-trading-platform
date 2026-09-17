@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -15,7 +17,7 @@ from uuid import uuid4
 
 from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
-from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
+from quant_ai.domain.models import AssetClass, Instrument, Market, OrderIntent, Side
 from quant_ai.execution.derivative_margin import (
     MARGINED_FUTURES_ASSET_CLASSES,
     DerivativeMarginSource,
@@ -29,6 +31,13 @@ from quant_ai.execution.ledger_integrity import (
 )
 from quant_ai.execution.live_friction import assumed_friction_context
 from quant_ai.execution.protection_state import positive_level, protection_coverage
+from quant_ai.instruments.contract import assert_contract_tradable, assert_order_fits_contract
+from quant_ai.instruments.identity import (
+    canonical_instrument_identity,
+    instrument_from_identity,
+    stored_identity,
+)
+from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +48,17 @@ class PaperBrokerDatabaseLockedError(RuntimeError):
 
 def _optional_decimal(value: str | None) -> Decimal | None:
     return None if value is None else Decimal(value)
+
+
+def _instrument_identity_for_order(order: OrderIntent) -> str | None:
+    instrument = getattr(order, "instrument", None)
+    if instrument is None:
+        return None
+    if (order.symbol, order.market, order.asset_class) != (
+        instrument.symbol, instrument.market, instrument.asset_class
+    ):
+        raise ValueError("instrument_bound_order_identity_mismatch")
+    return canonical_instrument_identity(instrument)
 
 
 @dataclass(frozen=True)
@@ -68,6 +88,16 @@ class PaperLedgerEntry:
     take_profit_price: Decimal | None = None
     margin_change: Decimal | None = None
     margin_provenance: str | None = None
+    instrument_identity: str | None = None
+
+
+@dataclass(frozen=True)
+class PaperSubmissionReceipt:
+    entry: PaperLedgerEntry
+    order: OrderIntent
+    prior_quantity: int
+    prior_average: Decimal | None
+    evidence: dict
 
 
 class PaperBrokerService(BrokerAdapter):
@@ -148,6 +178,7 @@ class PaperBrokerService(BrokerAdapter):
                     average_price TEXT NOT NULL,
                     stop_price TEXT,
                     take_profit_price TEXT,
+                    instrument_identity TEXT,
                     PRIMARY KEY (tenant_id, symbol, market, asset_class)
                 );
                 CREATE TABLE IF NOT EXISTS paper_ledger (
@@ -166,7 +197,8 @@ class PaperBrokerService(BrokerAdapter):
                     stop_price TEXT,
                     take_profit_price TEXT,
                     margin_change TEXT,
-                    margin_provenance TEXT
+                    margin_provenance TEXT,
+                    instrument_identity TEXT
                 );
                 CREATE TABLE IF NOT EXISTS paper_derivative_margin (
                     tenant_id TEXT NOT NULL,
@@ -189,6 +221,16 @@ class PaperBrokerService(BrokerAdapter):
                 CREATE TABLE IF NOT EXISTS paper_protection_evidence (
                     order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_protective_fill_outbox (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                    receipt_sha256 TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS protective_outbox_update_blocked
+                BEFORE UPDATE ON paper_protective_fill_outbox
+                BEGIN SELECT RAISE(ABORT,'Protective outbox is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS protective_outbox_delete_blocked
+                BEFORE DELETE ON paper_protective_fill_outbox
+                BEGIN SELECT RAISE(ABORT,'Protective outbox is append-only'); END;
                 CREATE TABLE IF NOT EXISTS paper_decision_evidence (
                     order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
                 );
@@ -213,10 +255,12 @@ class PaperBrokerService(BrokerAdapter):
         ("paper_accounts", "peak_equity", "TEXT"),
         ("paper_positions", "stop_price", "TEXT"),
         ("paper_positions", "take_profit_price", "TEXT"),
+        ("paper_positions", "instrument_identity", "TEXT"),
         ("paper_ledger", "stop_price", "TEXT"),
         ("paper_ledger", "take_profit_price", "TEXT"),
         ("paper_ledger", "margin_change", "TEXT"),
         ("paper_ledger", "margin_provenance", "TEXT"),
+        ("paper_ledger", "instrument_identity", "TEXT"),
     )
 
     def _migrate_columns(self) -> None:
@@ -300,15 +344,30 @@ class PaperBrokerService(BrokerAdapter):
         instruments = tuple(instruments)
         validate_pilot_instruments(instruments)
         symbols = {item.symbol: item.asset_class.value for item in instruments}
+        identities = {
+            item.symbol: json.loads(canonical_instrument_identity(item))
+            for item in instruments
+        }
         with self._lock, self._connection:
             self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
                 tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
-                symbols TEXT NOT NULL)""")
+                symbols TEXT NOT NULL, instrument_identities TEXT)""")
+            scope_columns = {
+                row["name"] for row in self._connection.execute("PRAGMA table_info(pilot_scope)")
+            }
+            if "instrument_identities" not in scope_columns:
+                self._connection.execute(
+                    "ALTER TABLE pilot_scope ADD COLUMN instrument_identities TEXT"
+                )
             positions = self._connection.execute(
-                "SELECT symbol,market,asset_class FROM paper_positions WHERE tenant_id=?", (tenant_id,)
+                "SELECT symbol,market,asset_class,instrument_identity FROM paper_positions WHERE tenant_id=?", (tenant_id,)
             ).fetchall()
             if any(p["market"] != Market.INDIA.value or symbols.get(p["symbol"]) != p["asset_class"] for p in positions):
                 raise ValueError("pilot_existing_positions_out_of_scope")
+            for position in positions:
+                raw = position["instrument_identity"]
+                if raw is not None and json.loads(raw) != identities[position["symbol"]]:
+                    raise ValueError("pilot_existing_position_contract_mismatch")
             previous = self._connection.execute(
                 "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
             ).fetchone()
@@ -318,8 +377,15 @@ class PaperBrokerService(BrokerAdapter):
             markets = self._connection.execute("SELECT DISTINCT market FROM paper_ledger WHERE tenant_id=?", (tenant_id,))
             if any(row["market"] != Market.INDIA.value for row in markets):
                 raise ValueError("pilot_legacy_currency_ambiguous")
-            self._connection.execute("INSERT OR REPLACE INTO pilot_scope VALUES (?, 'INR', 'INDIA', ?)",
-                                     (tenant_id, json.dumps(symbols, sort_keys=True)))
+            self._connection.execute(
+                """INSERT OR REPLACE INTO pilot_scope
+                (tenant_id,currency,market,symbols,instrument_identities)
+                VALUES (?, 'INR', 'INDIA', ?, ?)""",
+                (
+                    tenant_id, json.dumps(symbols, sort_keys=True),
+                    json.dumps(identities, sort_keys=True, separators=(",", ":")),
+                ),
+            )
 
     def _assert_pilot_order(self, order: OrderIntent) -> bool:
         exists = self._connection.execute(
@@ -330,10 +396,24 @@ class PaperBrokerService(BrokerAdapter):
         scope = self._connection.execute("SELECT * FROM pilot_scope WHERE tenant_id=?",
                                          (order.tenant_id,)).fetchone()
         symbols = json.loads(scope["symbols"]) if scope else {}
-        if scope and (order.market.value != scope["market"]
-                      or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
-                      or order.symbol not in symbols
-                      or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)):
+        identities = (
+            json.loads(scope["instrument_identities"])
+            if scope and "instrument_identities" in dict(scope)
+            and scope["instrument_identities"]
+            else {}
+        )
+        order_identity = _instrument_identity_for_order(order)
+        configured_identity = identities.get(order.symbol) if isinstance(identities, dict) else None
+        if scope and (
+            order.market.value != scope["market"]
+            or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
+            or order.symbol not in symbols
+            or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)
+            or (
+                order_identity is not None
+                and (configured_identity is None or json.loads(order_identity) != configured_identity)
+            )
+        ):
             raise ValueError("pilot_order_out_of_scope")
         if scope and order.side == Side.BUY:
             if not isinstance(symbols, dict):
@@ -393,14 +473,23 @@ class PaperBrokerService(BrokerAdapter):
         whole_quantity(order.quantity, "positive quantity and reference_price required")
         if positive_level(order.reference_price) is None:
             raise ValueError("positive quantity and reference_price required")
+        now = self._execution_time or datetime.now(timezone.utc)
+        instrument = getattr(order, "instrument", None)
+        if instrument is not None:
+            _instrument_identity_for_order(order)
+            assert_contract_tradable(instrument, order.side, now)
+            assert_order_fits_contract(instrument, order.quantity, order.reference_price)
         context = self._context_for(order)
         friction = self.friction_model.evaluate(order, context)
         fill_price = friction.execution_price
         if positive_level(fill_price) is None:
             raise ValueError("positive finite fill_price required")
+        if instrument is not None and instrument.is_dated_contract:
+            # Never invent a tick-rounded execution here; the pricing layer must supply
+            # a price the contract could actually print.
+            assert_order_fits_contract(instrument, order.quantity, fill_price)
         notional = fill_price * order.quantity
         order_id = f"PAPER-{uuid4().hex[:16].upper()}"
-        now = self._execution_time or datetime.now(timezone.utc)
         for attempt in range(self.lock_retries + 1):
             try:
                 return self._execute_once(
@@ -439,6 +528,8 @@ class PaperBrokerService(BrokerAdapter):
             # Acquire the write transaction before reading scope or risk state. The
             # final checks and fill cannot race another connection's configuration/halt.
             self._ensure_account(tenant_id)
+            from quant_ai.governance.runtime_identity import assert_runtime_order_identity
+            assert_runtime_order_identity(self, order)
             pilot_order = self._assert_pilot_order(order)
             if idempotency_key is not None:
                 inserted = self._connection.execute(
@@ -452,9 +543,10 @@ class PaperBrokerService(BrokerAdapter):
             ).fetchone()
             finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True)
             cash = finite_amount(account["cash_balance"], "invalid_account_cash")
+            order_identity = _instrument_identity_for_order(order)
             position = self._connection.execute(
-                """SELECT quantity, average_price, stop_price, take_profit_price
-                FROM paper_positions
+                """SELECT quantity, average_price, stop_price, take_profit_price,
+                instrument_identity FROM paper_positions
                 WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
                 (tenant_id, order.symbol, order.market.value, order.asset_class.value),
             ).fetchone()
@@ -462,6 +554,13 @@ class PaperBrokerService(BrokerAdapter):
             current_avg = finite_amount(position["average_price"], "invalid_position_average", positive=True) if position else Decimal(0)
             held_stop = position["stop_price"] if position else None
             held_take_profit = position["take_profit_price"] if position else None
+            held_identity = position["instrument_identity"] if position else None
+            if position is not None and held_identity != order_identity:
+                if held_identity is None:
+                    raise ValueError("position_instrument_identity_missing")
+                if order_identity is None:
+                    raise ValueError("bound_position_requires_instrument_identity")
+                raise ValueError("position_instrument_identity_mismatch")
             # A BUY carries the protective levels forward onto the position; a SELL that only
             # trims the position must not erase the stop that still guards the remainder.
             if order.side == Side.BUY:
@@ -556,13 +655,14 @@ class PaperBrokerService(BrokerAdapter):
                 self._connection.execute(
                     """INSERT INTO paper_positions
                     (tenant_id, symbol, market, asset_class, quantity, average_price,
-                     stop_price, take_profit_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     stop_price, take_profit_price, instrument_identity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(tenant_id, symbol, market, asset_class)
                     DO UPDATE SET quantity = excluded.quantity,
                                   average_price = excluded.average_price,
                                   stop_price = excluded.stop_price,
-                                  take_profit_price = excluded.take_profit_price""",
+                                  take_profit_price = excluded.take_profit_price,
+                                  instrument_identity = excluded.instrument_identity""",
                     (
                         tenant_id,
                         order.symbol,
@@ -572,6 +672,7 @@ class PaperBrokerService(BrokerAdapter):
                         str(new_avg),
                         new_stop,
                         new_take_profit,
+                        order_identity,
                     ),
                 )
             else:
@@ -605,8 +706,8 @@ class PaperBrokerService(BrokerAdapter):
                 """INSERT INTO paper_ledger
                 (order_id, tenant_id, symbol, market, asset_class, side, quantity,
                  fill_price, notional, status, created_at, stop_price, take_profit_price,
-                 margin_change, margin_provenance)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?, ?, ?, ?, ?)""",
+                 margin_change, margin_provenance, instrument_identity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?, ?, ?, ?, ?, ?)""",
                 (
                     order_id,
                     tenant_id,
@@ -624,6 +725,7 @@ class PaperBrokerService(BrokerAdapter):
                     else None,
                     str(margin_change) if margin_change is not None else None,
                     margin_provenance,
+                    order_identity,
                 ),
             )
             cost_rows = [
@@ -648,16 +750,159 @@ class PaperBrokerService(BrokerAdapter):
                         "cash_fees": str(statutory_fees), "status": "FILLED",
                         # What priced this fill: observed market inputs, or an assumption.
                         "friction": self._friction_proof(friction, context)}}
+                if order_identity is not None:
+                    payload["fill"]["instrumentIdentity"] = json.loads(order_identity)
                 if idempotency_key is not None:
                     payload["idempotency_key"] = idempotency_key
+                if idempotency_key is not None or evidence.get("schema") == "pramana.protective_exit.v1":
+                    # Reserved broker-owned facts: never trust caller-supplied cost basis.
+                    # Independent exits record the same receipt, but never call accounting.
+                    payload["paper_submission_receipt"] = {
+                        "schema": "pramana.paper_submission_receipt.v1",
+                        "orderIntent": canonical_order_intent(order),
+                        "priorQuantity": current_qty,
+                        "priorAverage": str(current_avg) if current_qty else None,
+                        "priorInstrumentIdentity": held_identity,
+                    }
                 # Names are fixed here, never taken from the evidence or an API parameter.
                 table = "paper_decision_evidence" if evidence.get("schema") == "pramana.swarm_fill.v1" else "paper_protection_evidence"
+                serialized = json.dumps(payload, allow_nan=False, sort_keys=True)
                 self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?)",
-                    (order_id, tenant_id, json.dumps(payload, allow_nan=False, sort_keys=True)))
+                    (order_id, tenant_id, serialized))
+                if table == "paper_protection_evidence":
+                    self._connection.execute("INSERT INTO paper_protective_fill_outbox VALUES (?,?,?)",
+                        (order_id, tenant_id, hashlib.sha256(serialized.encode()).hexdigest()))
                 if cooldown_until is not None:
                     self._connection.execute("INSERT OR REPLACE INTO paper_exit_cooldowns VALUES (?,?,?,?,?)",
                         (tenant_id, order.symbol, order.market.value, order.asset_class.value, cooldown_until.isoformat()))
         return ExecutionResult(order_id, "FILLED", order.quantity, fill_price)
+
+    def submission_receipt(self, idempotency_key: str, tenant_id: str) -> PaperSubmissionReceipt | None:
+        """Read a committed paper execution by its exact durable submission key.
+
+        Absence is not permission to retry. Malformed/legacy evidence is never guessed.
+        The joined SELECT observes receipt, claim and ledger from one SQLite snapshot.
+        """
+        if not idempotency_key or not tenant_id:
+            raise ValueError("paper_receipt_identity_required")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT l.*, e.payload AS receipt_payload, c.tenant_id AS claim_tenant
+                FROM paper_decision_evidence e
+                LEFT JOIN paper_ledger l ON l.order_id=e.order_id AND l.tenant_id=e.tenant_id
+                LEFT JOIN paper_idempotency c ON c.key=?
+                WHERE e.tenant_id=? AND json_extract(e.payload,'$.idempotency_key')=?""",
+                (idempotency_key, tenant_id, idempotency_key),
+            ).fetchall()
+            if not rows:
+                if self._connection.execute("SELECT 1 FROM paper_idempotency WHERE key=?", (idempotency_key,)).fetchone():
+                    raise ValueError("paper_receipt_claim_without_evidence")
+                return None
+            if len(rows) != 1:
+                raise ValueError("paper_receipt_ambiguous")
+            row = rows[0]
+            if row["order_id"] is None or row["claim_tenant"] != tenant_id:
+                raise ValueError("paper_receipt_ledger_or_claim_missing")
+            return self._validated_fill_receipt(row, tenant_id)
+
+    @contextmanager
+    def accounting_read_snapshot(self):
+        """Consistent local ledger/evidence reads; never hold this while writing accounting."""
+        with self._lock:
+            name = "accounting_read_" + uuid4().hex
+            self._connection.execute(f"SAVEPOINT {name}")
+            try:
+                yield
+            finally:
+                self._connection.execute(f"RELEASE SAVEPOINT {name}")
+
+    def protected_fill_ids(self, tenant_id: str) -> tuple[str, ...]:
+        with self.accounting_read_snapshot():
+            evidence = {str(row[0]) for row in self._connection.execute(
+                "SELECT order_id FROM paper_protection_evidence WHERE tenant_id=?", (tenant_id,),
+            ).fetchall()}
+            recorded = tuple(str(row[0]) for row in self._connection.execute(
+                "SELECT order_id FROM paper_protective_fill_outbox WHERE tenant_id=? ORDER BY rowid",
+                (tenant_id,),
+            ).fetchall())
+            if evidence != set(recorded):
+                raise ValueError("protective_accounting_outbox_evidence_mismatch")
+            return recorded
+
+    def protected_fill_receipt(self, order_id: str, tenant_id: str) -> PaperSubmissionReceipt:
+        """Read exact committed exit evidence; no reconstruction of legacy approval."""
+        with self.accounting_read_snapshot():
+            row = self._connection.execute(
+                """SELECT l.*, e.payload AS receipt_payload, o.receipt_sha256
+                FROM paper_protection_evidence e
+                LEFT JOIN paper_ledger l ON l.order_id=e.order_id AND l.tenant_id=e.tenant_id
+                LEFT JOIN paper_protective_fill_outbox o ON o.order_id=e.order_id AND o.tenant_id=e.tenant_id
+                WHERE e.order_id=? AND e.tenant_id=?""", (order_id, tenant_id),
+            ).fetchone()
+            if row is None or row["order_id"] is None:
+                raise ValueError("protective_receipt_ledger_or_evidence_missing")
+            if row["receipt_sha256"] != hashlib.sha256(row["receipt_payload"].encode()).hexdigest():
+                raise ValueError("protective_receipt_outbox_hash_mismatch")
+            receipt = self._validated_fill_receipt(row, tenant_id)
+            if (receipt.order.side is not Side.SELL
+                    or receipt.evidence.get("schema") != "pramana.protective_exit.v1"
+                    or receipt.evidence.get("event_type") != "protective_exit"):
+                raise ValueError("protective_receipt_authority_invalid")
+            return receipt
+
+    def _validated_fill_receipt(self, row, tenant_id: str) -> PaperSubmissionReceipt:
+        payload = json.loads(row["receipt_payload"])
+        receipt = payload.get("paper_submission_receipt")
+        if not isinstance(receipt, dict) or receipt.get("schema") != "pramana.paper_submission_receipt.v1":
+            raise ValueError("paper_receipt_unavailable_for_legacy_fill")
+        order = order_from_snapshot(receipt["orderIntent"])
+        entry = self._decode_ledger_entry(row)
+        if (order.tenant_id, order.symbol, order.market, order.asset_class, order.side, order.quantity) != (
+            entry.tenant_id, entry.symbol, entry.market, entry.asset_class, entry.side, entry.quantity
+        ) or _instrument_identity_for_order(order) != entry.instrument_identity:
+            raise ValueError("paper_receipt_order_mismatch")
+        if (entry.status != "FILLED" or entry.notional != entry.fill_price * entry.quantity
+                or payload.get("order_id") != entry.order_id or payload.get("tenant_id") != tenant_id
+                or payload.get("subject") != entry.symbol
+                or datetime.fromisoformat(payload["filled_at"]) != entry.created_at
+                or payload["fill"]["quantity"] != entry.quantity
+                or finite_amount(payload["fill"]["price"], "paper_receipt_price_invalid", positive=True) != entry.fill_price):
+            raise ValueError("paper_receipt_fill_mismatch")
+        qty, average = receipt.get("priorQuantity"), receipt.get("priorAverage")
+        if type(qty) is not int or not 0 <= qty <= 2**53 - 1:
+            raise ValueError("paper_receipt_prior_quantity_invalid")
+        basis = None if average is None else finite_amount(average, "paper_receipt_prior_average_invalid", positive=True)
+        if (qty == 0) != (basis is None) or qty and receipt.get("priorInstrumentIdentity") != entry.instrument_identity:
+            raise ValueError("paper_receipt_prior_position_invalid")
+        if order.side is Side.SELL and qty < order.quantity:
+            raise ValueError("paper_receipt_prior_position_insufficient")
+        # Independently replay this position's earlier fills. Receipt JSON alone is
+        # not proof of historical cost basis, particularly after a full liquidation.
+        previous = self._connection.execute(
+            """SELECT * FROM paper_ledger WHERE tenant_id=? AND symbol=?
+               AND market=? AND asset_class=? AND id<? ORDER BY id""",
+            (tenant_id, entry.symbol, entry.market.value, entry.asset_class.value, row["id"]),
+        ).fetchall()
+        held, average, identity = 0, Decimal(0), None
+        for prior_row in previous:
+            prior = self._decode_ledger_entry(prior_row)
+            if prior.status != "FILLED":
+                raise ValueError("paper_receipt_prior_ledger_mismatch")
+            if held and prior.instrument_identity != identity:
+                raise ValueError("paper_receipt_prior_ledger_mismatch")
+            if prior.side is Side.BUY:
+                average = (average * held + prior.notional) / (held + prior.quantity)
+                held += prior.quantity
+                identity = prior.instrument_identity
+            else:
+                if prior.quantity > held:
+                    raise ValueError("paper_receipt_prior_ledger_mismatch")
+                held -= prior.quantity
+                if not held:
+                    average, identity = Decimal(0), None
+        if qty != held or basis != (average if held else None) or receipt.get("priorInstrumentIdentity") != identity:
+            raise ValueError("paper_receipt_prior_ledger_mismatch")
+        return PaperSubmissionReceipt(entry, order, qty, basis, payload)
 
     def cancel(self, order_id: str, tenant_id: str = "default") -> bool:
         with self._lock, self._connection:
@@ -690,7 +935,7 @@ class PaperBrokerService(BrokerAdapter):
         with self._lock:
             return self._connection.execute(
                 """SELECT tenant_id, symbol, market, asset_class, quantity, average_price,
-                stop_price, take_profit_price
+                stop_price, take_profit_price, instrument_identity
                 FROM paper_positions WHERE tenant_id = ? ORDER BY symbol""",
                 (tenant_id,),
             ).fetchall()
@@ -711,6 +956,47 @@ class PaperBrokerService(BrokerAdapter):
                 positive_level(row["stop_price"]),
                 positive_level(row["take_profit_price"]),
         )
+
+    def bound_instrument_for_position(
+        self, symbol: str, market: Market, asset_class: AssetClass,
+        tenant_id: str = "default",
+    ) -> Instrument | None:
+        """Immutable instrument snapshot attached to this position, when one exists."""
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT symbol,market,asset_class,instrument_identity FROM paper_positions
+                WHERE tenant_id=? AND symbol=? AND market=? AND asset_class=?""",
+                (tenant_id, symbol, market.value, asset_class.value),
+            ).fetchone()
+        if row is None:
+            raise KeyError((tenant_id, market.value, asset_class.value, symbol))
+        raw = row["instrument_identity"]
+        return self._decode_bound_identity(row, raw)
+
+    @staticmethod
+    def _decode_bound_identity(row, raw: str | None) -> Instrument | None:
+        if raw is None:
+            return None
+        instrument = instrument_from_identity(raw)
+        if (instrument.symbol, instrument.market.value, instrument.asset_class.value) != (
+            row["symbol"], row["market"], row["asset_class"]
+        ):
+            raise PaperLedgerDataError("stored_instrument_identity_mismatch")
+        return instrument
+
+    def bound_instrument_for_fill(
+        self, order_id: str, tenant_id: str = "default"
+    ) -> Instrument | None:
+        """Immutable instrument snapshot committed beside one fill, if bound."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT symbol,market,asset_class,instrument_identity FROM paper_ledger WHERE order_id=? AND tenant_id=?",
+                (order_id, tenant_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError((tenant_id, order_id))
+        raw = row["instrument_identity"]
+        return self._decode_bound_identity(row, raw)
 
     def get_starting_capital(self, tenant_id: str = "default") -> Decimal:
         """Initialize/read capital without projecting possibly damaged positions."""
@@ -857,12 +1143,15 @@ class PaperBrokerService(BrokerAdapter):
             rows = self._connection.execute(
                 """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity,
                 fill_price, notional, status, created_at, stop_price, take_profit_price,
-                margin_change, margin_provenance
+                margin_change, margin_provenance, instrument_identity
                 FROM paper_ledger WHERE tenant_id = ? ORDER BY id""",
                 (tenant_id,),
             ).fetchall()
-        return tuple(
-            PaperLedgerEntry(
+        return tuple(self._decode_ledger_entry(row) for row in rows)
+
+    @staticmethod
+    def _decode_ledger_entry(row) -> PaperLedgerEntry:
+        return PaperLedgerEntry(
                 row["order_id"],
                 row["tenant_id"],
                 row["symbol"],
@@ -878,9 +1167,8 @@ class PaperBrokerService(BrokerAdapter):
                 _optional_decimal(row["take_profit_price"]),
                 _optional_decimal(row["margin_change"]),
                 row["margin_provenance"],
+                stored_identity(row),
             )
-            for row in rows
-        )
 
     def cost_entries(self, tenant_id: str = "default") -> tuple[PaperCostEntry, ...]:
         with self._lock:

@@ -5,6 +5,7 @@ import math
 from decimal import Decimal, InvalidOperation
 
 from quant_ai.domain.models import AssetClass, Market
+from quant_ai.instruments.identity import stored_identity
 
 
 class PaperLedgerDataError(ValueError):
@@ -50,4 +51,8 @@ def position_geometry_issues(row) -> list[str]:
         finite_amount(row["average_price"], "invalid_position_average", positive=True)
     except PaperLedgerDataError as error:
         issues.append(str(error))
+    try:
+        stored_identity(row)
+    except (TypeError, ValueError):
+        issues.append("invalid_position_instrument_identity")
     return issues

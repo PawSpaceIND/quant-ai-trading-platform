@@ -23,6 +23,7 @@ import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
 import type {BrokerSelection} from "@/lib/broker-lifecycle";
 import {BrokerObservation} from "./broker-observation";
+import {PaperOmsPanel} from "./paper-oms";
 import {RunComparison} from "./run-comparison";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
@@ -645,6 +646,7 @@ export function PilotWorkspace() {
                   <>
                     {!hosted && <ExternalAccountPanel state={data.externalAccount} onAsk={ask} />}
                     {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={(prompt,selection)=>ask(prompt,undefined,selection)} />}
+                    {!hosted && <PaperOmsPanel />}
                     <TradeFeed trades={trades} />
                     <CostPanel friction={friction} />
                     <section className="panel">

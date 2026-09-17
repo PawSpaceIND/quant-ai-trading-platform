@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from quant_ai.agents.swarm import TradeProposal
-from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
+from quant_ai.domain.models import (
+    AssetClass,
+    InstrumentBoundOrderIntent,
+    OrderIntent,
+    PortfolioSnapshot,
+    Side,
+)
+from quant_ai.instruments.contract import assert_contract_tradable, assert_order_fits_contract
 from quant_ai.notifications.trading import TradingAlertCode, TradingNotificationDispatcher
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.risk.overnight import OvernightExposureFirewall, OvernightRiskPolicy
@@ -116,6 +123,14 @@ class RiskWarden:
             proposal.stop_price,
             proposal.take_profit_price,
         )
+        instrument = getattr(proposal, "instrument", None)
+        if instrument is not None:
+            try:
+                order = InstrumentBoundOrderIntent(**vars(order), instrument=instrument)
+                assert_contract_tradable(order.instrument, order.side, now or datetime.now(timezone.utc))
+                assert_order_fits_contract(order.instrument, order.quantity, order.reference_price)
+            except (TypeError, ValueError, ArithmeticError) as error:
+                return self._reject(f"proposal_contract_invalid:{error}", proposal, tenant_id)
         baseline = RiskPolicy()
         policy = RiskPolicy(
             max_daily_loss=min(plan.max_daily_loss_fraction, baseline.max_daily_loss),

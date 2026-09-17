@@ -58,6 +58,11 @@ def _trade_instant(trade: Mapping[str, object]) -> datetime:
 
 
 def _compatible(current: OmsOrder, broker_order: Mapping[str, object]) -> bool:
+    if current.instrument_identity is not None:
+        # This check uses the decision-time snapshot, never today's global registry.
+        contract = json.loads(current.instrument_identity)
+        if contract["exchange"] != broker_order.get("exchange") or contract["currency"] != "INR":
+            return False
     return (
         current.market == "INDIA"
         and current.asset_class in {"EQUITY", "ETF"}

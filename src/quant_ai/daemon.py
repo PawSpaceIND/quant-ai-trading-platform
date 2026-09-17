@@ -36,6 +36,10 @@ from quant_ai.execution.session import (
 )
 from quant_ai.governance.directives import FounderDirectives, country_for
 from quant_ai.governance.event_calendar import EventCalendar, event_calendar_from_env
+from quant_ai.governance.runtime_identity import (
+    configure_runtime_identity,
+    validate_identity_storage,
+)
 from quant_ai.intelligence.external.fred import FredMacroProvider
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter, symbol_aliases_from_env
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
@@ -68,6 +72,7 @@ from quant_ai.marketdata.ticker_stream import (
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.orchestration.cadence import CadenceMarketReader
+from quant_ai.orders.oms import DurableOms
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.book_history import DailyCloseHistory
 from quant_ai.risk.overnight import overnight_risk_from_env
@@ -319,6 +324,8 @@ def build_ghost_runner(
     halt_file: str | Path | None = None,
     directives: FounderDirectives | None = None,
     pilot_mode: bool = False,
+    order_identity_mode: str = "legacy_cash",
+    oms_database: str | Path | None = None,
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
@@ -329,7 +336,14 @@ def build_ghost_runner(
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
+    order_identity_mode = validate_identity_storage(order_identity_mode,
+        pilot_mode=pilot_mode, database=database, oms_database=oms_database)
     directives = directives or FounderDirectives()
+    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
+    instruments = directives.instruments_or(instrument)
+    if order_identity_mode == "bound_v1":
+        from quant_ai.governance.pilot import validate_pilot_instruments
+        validate_pilot_instruments(instruments)
     broker = PaperBrokerService(
         database,
         starting_capital=directives.starting_capital,
@@ -337,12 +351,20 @@ def build_ghost_runner(
         # the published schedule for the account actually being shadowed.
         friction_model=MarketFrictionModel(brokerage_schedule=BrokerageSchedule.from_env()),
     )
+    oms = None
+    try:
+        if order_identity_mode == "bound_v1":
+            oms = DurableOms(oms_database)
+        configure_runtime_identity(broker, instruments, tenant_id, order_identity_mode, oms_database, oms=oms)
+    except BaseException:
+        if oms is not None:
+            oms.close()
+        broker.close()
+        raise
     buffer = TickBuffer()
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
     feed = LiveTickMarketDataFeed(buffer)
-    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
-    instruments = directives.instruments_or(instrument)
     # Cross-position controls. The group limit arms from the operator's mapping alone;
     # the correlation and expected-shortfall limits need a return history and are armed
     # only when the operator passes one, because once armed an unusable measurement
@@ -381,6 +403,7 @@ def build_ghost_runner(
         # engine could never learn anything that outlived one session.
         attribution_journal_tenant=tenant_id,
     )
+    runtime.oms = oms
     if require_book_risk_gates:
         problem = runtime.warden.book_risk.configuration_problem()
         if problem:
@@ -391,6 +414,7 @@ def build_ghost_runner(
         fundamentals_provider or SandboxFundamentalDataProvider(),
         macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
+        bind_order_instruments=order_identity_mode == "bound_v1",
         tick_reader=CadenceMarketReader(buffer),
         history=history_provider,
         lessons_provider=_lessons_provider(database, post_mortem_directory),
@@ -671,6 +695,12 @@ def _env_notifications() -> TradingNotificationDispatcher:
 def build_ghost_runner_from_env() -> DaemonRunner:
     """Build the headless ghost runner from deployment environment variables."""
     _assert_ghost_mode()
+    # Parse and validate before provider/model construction or any on-disk initialization.
+    order_identity_mode = os.getenv("PRAMANA_ORDER_IDENTITY_MODE", "legacy_cash")
+    oms_database = os.getenv("PRAMANA_OMS_DB") or None
+    pilot_mode = _env_flag("PRAMANA_PILOT_MODE", True)
+    validate_identity_storage(order_identity_mode, pilot_mode=pilot_mode,
+        database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
     ib_module = import_module("ib_async")
     ib = ib_module.IB()
     contracts = tuple(
@@ -692,7 +722,9 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     budget = budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
-        pilot_mode=_env_flag("PRAMANA_PILOT_MODE", True),
+        pilot_mode=pilot_mode,
+        order_identity_mode=order_identity_mode,
+        oms_database=oms_database,
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,

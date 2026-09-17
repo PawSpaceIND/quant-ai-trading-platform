@@ -10,8 +10,8 @@
 #
 #   --force   Deploy during NSE regular hours anyway. See the session gate below.
 #
-# Secrets: .env on this host holds live broker and model credentials. Nothing here reads
-# a value out of it, and the only compose invocation that could print one (`config`) is
+# Secrets: .env on this host holds live broker and model credentials. Stamping does not
+# interpret or print its values, and the only compose invocation that could print one (`config`) is
 # run with --quiet. There is deliberately no `set -x`: a trace of this script would put
 # the contents of every command line, including compose's rendered environment, into the
 # operator's scrollback and into any terminal recording.
@@ -21,7 +21,7 @@ COMPOSE_FILE="deploy/docker-compose.yml"
 ENV_FILE=".env"
 # Seconds to let the stack settle before re-reading restart counters. A crash loop needs
 # a window to show a second restart in; 30s covers the engine's start-up and the UI's.
-SETTLE_SECONDS="${PRAMANA_DEPLOY_SETTLE_SECONDS:-30}"
+SETTLE_SECONDS="${PRAMANA_DEPLOY_SETTLE_SECONDS-30}"
 
 force=0
 for argument in "$@"; do
@@ -33,6 +33,12 @@ for argument in "$@"; do
 done
 
 fail() { echo "deploy: $*" >&2; exit 1; }
+
+# Validate before Git or Docker can mutate anything. Canonical decimal avoids octal
+# interpretation and overflow in older Bash arithmetic.
+[[ "$SETTLE_SECONDS" =~ ^(0|[1-9][0-9]{0,3})$ ]] \
+  && [ "$SETTLE_SECONDS" -le 3600 ] \
+  || fail "settle seconds must be an integer from 0 to 3600"
 
 # --- Run from the repository root, or not at all -----------------------------------
 # Every path below is relative, and `docker compose --build` resolves its build context
@@ -122,22 +128,71 @@ else
 fi
 
 # --- Stamp the revision into .env ------------------------------------------------------
-# Rewritten in place so the file keeps its mode and ownership; .env is 0600 on the host and
-# a rewrite through a temporary file is one chmod away from publishing every credential in
-# it. The revision is a validated 40-character hex string, so it carries no sed delimiter.
-if grep -q '^PRAMANA_RELEASE_REVISION=' "$ENV_FILE"; then
-  # BSD sed requires a separate empty backup suffix; GNU sed does not.
-  # Neither invocation creates a backup containing the environment's credentials.
-  if [ "$(uname -s)" = "Darwin" ]; then
-    sed -i '' "s|^PRAMANA_RELEASE_REVISION=.*|PRAMANA_RELEASE_REVISION=${revision}|" "$ENV_FILE"
-  else
-    sed -i "s|^PRAMANA_RELEASE_REVISION=.*|PRAMANA_RELEASE_REVISION=${revision}|" "$ENV_FILE"
-  fi
-else
-  printf 'PRAMANA_RELEASE_REVISION=%s\n' "$revision" >>"$ENV_FILE"
+# Python is already required by the session gate. Avoid GNU/BSD sed -i differences.
+# A private same-directory temporary file preserves ownership/mode and atomically
+# replaces .env only after its bytes are flushed. No credential is printed or parsed.
+# This does not make the complete Git/build/deploy sequence an atomic transaction.
+if ! python3 - "$ENV_FILE" "$revision" <<'STAMP'
+import os
+import stat
+import sys
+import tempfile
+
+path, revision = sys.argv[1:]
+temporary = None
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        before = os.fstat(source.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600 or before.st_size > 1048576):
+            raise ValueError("unsafe environment file")
+        original = source.read()
+        if b"\x00" in original:
+            raise ValueError("invalid environment bytes")
+        key = b"PRAMANA_RELEASE_REVISION="
+        stamp = key + revision.encode("ascii")
+        lines, seen = [], False
+        for line in original.splitlines(keepends=True):
+            if line.startswith(key):
+                if not seen:
+                    ending = b"\r\n" if line.endswith(b"\r\n") else b"\n"
+                    lines.append(stamp + ending)
+                    seen = True
+            else:
+                lines.append(line)
+        updated = b"".join(lines)
+        if not seen:
+            if updated and not updated.endswith(b"\n"):
+                updated += b"\n"
+            updated += stamp + b"\n"
+        out, temporary = tempfile.mkstemp(prefix=".env.release-", dir=".")
+        with os.fdopen(out, "wb") as target:
+            owner = os.fstat(target.fileno())
+            if (owner.st_uid, owner.st_gid) != (before.st_uid, before.st_gid):
+                os.fchown(target.fileno(), before.st_uid, before.st_gid)
+            os.fchmod(target.fileno(), stat.S_IMODE(before.st_mode))
+            target.write(updated)
+            target.flush()
+            os.fsync(target.fileno())
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+                    info.st_mode, info.st_uid, info.st_gid, info.st_nlink)
+        if (identity(os.stat(path, follow_symlinks=False)) != identity(before)
+                or identity(os.fstat(source.fileno())) != identity(before)):
+            raise ValueError("environment changed during stamping")
+        os.replace(temporary, path)
+        temporary = None
+except (OSError, ValueError):
+    # Never echo .env lines or an exception containing credential-bearing input.
+    raise SystemExit("deploy: could not safely stamp private .env; no containers started") from None
+finally:
+    if temporary is not None:
+        os.unlink(temporary)
+STAMP
+then
+  fail "release revision stamp failed"
 fi
-grep -q "^PRAMANA_RELEASE_REVISION=${revision}$" "$ENV_FILE" \
-  || fail "failed to stamp PRAMANA_RELEASE_REVISION into $ENV_FILE"
 
 # --- Build and start -------------------------------------------------------------------
 # With the Cloudflare overlay in use (docs/CLOUDFLARE_PRIVATE_PILOT.md) add
@@ -148,6 +203,20 @@ compose() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 # --quiet: `config` without it writes the fully rendered configuration, credentials and
 # all, to stdout. This validates interpolation and required variables and prints nothing.
 compose config --quiet || fail "the rendered compose configuration is invalid; nothing was deployed"
+services=()
+service_output="$(compose config --services 2>/dev/null)" \
+  || fail "could not enumerate compose services; readiness is unknown"
+while IFS= read -r service; do
+  [ -n "$service" ] || continue
+  [[ "$service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid compose service identifier"
+  for existing in "${services[@]+${services[@]}}"; do
+    [ "$existing" != "$service" ] || fail "duplicate compose service identifier"
+  done
+  services+=("$service")
+done <<<"$service_output"
+[ "${#services[@]}" -gt 0 ] || fail "the compose file declares no services"
+
+
 compose up -d --build
 
 # --- Verify ------------------------------------------------------------------------------
@@ -158,44 +227,29 @@ inspect_format='{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{if .
 read_container_state() {
   local raw
   raw="$(docker inspect --format "$inspect_format" "$1" 2>/dev/null)" \
-    || fail "could not inspect service '$2'; readiness is unknown"
+    || fail "could not inspect service '$2'; container inspection failed; readiness is unknown"
   local pattern='^(created|running|paused|restarting|removing|exited|dead) (true|false) (0|[1-9][0-9]*) (none|starting|healthy|unhealthy)$'
-  [[ "$raw" =~ $pattern ]] || fail "invalid inspection for service '$2'; readiness is unknown"
+  [[ "$raw" =~ $pattern ]] || fail "invalid inspection for service '$2'; invalid container inspection; readiness is unknown"
   status="${BASH_REMATCH[1]}"
   restarting="${BASH_REMATCH[2]}"
   count="${BASH_REMATCH[3]}"
   health="${BASH_REMATCH[4]}"
   # Shell integer comparisons must never silently fail on overflow.
   if [ "${#count}" -gt 19 ] || { [ "${#count}" -eq 19 ] && [[ "$count" > "9223372036854775807" ]]; }; then
-    fail "invalid restart count for service '$2'; readiness is unknown"
+    fail "invalid restart count for service '$2'; invalid container inspection restart count; readiness is unknown"
   fi
 }
 
 # Use matching numeric indexes: the system Bash on macOS has no associative arrays.
 # Service names stay data, never array arithmetic; each container keeps its own baseline.
 containers=()
-services=()
-service_output="$(compose config --services 2>/dev/null)" \
-  || fail "could not enumerate compose services; readiness is unknown"
-while IFS= read -r service; do
-  [ -n "$service" ] || continue
-  case "$service" in
-    *[!a-zA-Z0-9_.-]*) fail "invalid compose service identifier" ;;
-  esac
-  for existing in "${services[@]+${services[@]}}"; do
-    [ "$existing" != "$service" ] || fail "duplicate compose service identifier"
-  done
-  services+=("$service")
-done <<<"$service_output"
-[ "${#services[@]}" -gt 0 ] || fail "the compose file declares no services"
 
 for service in "${services[@]}"; do
   container="$(compose ps --all --quiet "$service" 2>/dev/null)" \
     || fail "could not resolve container for service '$service'"
   [ -n "$container" ] || fail "service '$service' has no container after 'up -d --build'"
-  case "$container" in
-    *[!a-zA-Z0-9_.-]*) fail "service '$service' has ambiguous container identity" ;;
-  esac
+  [[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] \
+    || fail "service '$service' has ambiguous container identity; expected exactly one container"
   containers+=("$container")
 done
 
@@ -224,7 +278,7 @@ for index in "${!services[@]}"; do
     failures=$((failures + 1))
   fi
   if [ "$count" -lt "${restarts_before[$index]}" ]; then
-    echo "deploy: $service restart count decreased; continuity is unknown" >&2
+    echo "deploy: $service restart count decreased; continuity is unknown (restart counter decreased)" >&2
     failures=$((failures + 1))
   fi
   if [ "$count" -gt "${restarts_before[$index]}" ]; then
