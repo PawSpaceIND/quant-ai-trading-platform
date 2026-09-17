@@ -1,0 +1,50 @@
+name: NSE watchlist development sources
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nse-watchlist-source-evidence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  public-source-snapshot:
+    if: github.head_ref == 'feat/widen-nse-watchlist' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Preserve exact tracked source and public-source responses
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/nse-watchlist-sources"
+          mkdir -m 700 "$out"
+          git rev-parse HEAD > "$out/revision.txt"
+          git archive --format=tar HEAD > "$out/source.tar"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "$out/retrieved-at.txt"
+          nse=0
+          kite=0
+          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+            --retry 0 --connect-timeout 10 --max-time 30 --max-filesize 200000 \
+            'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv' \
+            --output "$out/nifty50.csv" || nse=$?
+          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+            --retry 0 --connect-timeout 10 --max-time 30 --max-filesize 10000000 \
+            'https://api.kite.trade/instruments/NSE' \
+            --output "$out/kite-nse.csv" || kite=$?
+          printf 'nse_curl_exit=%s\nkite_curl_exit=%s\n' "$nse" "$kite" > "$out/retrieval-status.txt"
+          (cd "$out" && sha256sum source.tar revision.txt retrieved-at.txt retrieval-status.txt > checksums.txt)
+          test "$nse" -eq 0 && test "$kite" -eq 0
+      - name: Retain source evidence, including explicit retrieval failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-watchlist-source-evidence
+          path: ${{ runner.temp }}/nse-watchlist-sources/
+          retention-days: 7
+          if-no-files-found: error
