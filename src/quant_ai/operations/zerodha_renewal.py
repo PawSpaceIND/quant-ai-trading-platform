@@ -11,7 +11,6 @@ import fcntl
 import json
 import os
 import re
-import shlex
 import stat
 import sys
 import tempfile
@@ -36,7 +35,7 @@ from quant_ai.operations.zerodha_session import INDIA_TZ, SessionRecord, is_expi
 ISSUED_AT = "PRAMANA_ZERODHA_TOKEN_ISSUED_AT"
 USER_ID = "PRAMANA_ZERODHA_USER_ID"
 MANAGED = ("ZERODHA_ACCESS_TOKEN", ISSUED_AT, USER_ID)
-_ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
+_ASSIGNMENT = re.compile(r"^(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*[=:](.*)$")
 _SAFE_TOKEN = re.compile(r"[A-Za-z0-9._-]+")
 
 
@@ -148,24 +147,71 @@ def check_runtime_token(
         raise
 
 
+def _quoted_end(value: str) -> int:
+    """Locate a same-line closing quote without interpreting the enclosed value."""
+    index = 1
+    while index < len(value):
+        if value[index] == "\\":
+            index += 2
+        elif value[index] == value[0]:
+            return index
+        else:
+            index += 1
+    raise RenewalError("zerodha_env_scalar_invalid_multiline_unsupported")
+
+
+def _env_lines(text: str) -> list[tuple[str, re.Match[str] | None]]:
+    """Keep original bytes/lines, but refuse syntax whose field boundaries are ambiguous.
+
+    Both documented Compose delimiters are recognized. Multiline values are valid
+    Compose syntax, but deliberately unsupported by this atomic scalar updater.
+    Refuse the whole file before login/publication rather than edit inside a value.
+    """
+    if any((ord(char) < 32 and char not in "\t\r\n")
+           or 0x7F <= ord(char) <= 0x9F or char in "\u2028\u2029" for char in text):
+        raise RenewalError("zerodha_env_control_unsupported")
+    result: list[tuple[str, re.Match[str] | None]] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip(" \t\r\n")
+        match = None
+        if stripped and not stripped.startswith("#"):
+            match = _ASSIGNMENT.fullmatch(stripped)
+            if match is None:
+                raise RenewalError("zerodha_env_syntax_unsupported")
+            value = match[2].lstrip(" \t")
+            if value.startswith(("'", '"')):
+                end = _quoted_end(value)
+                suffix = value[end + 1:].lstrip(" \t")
+                if suffix and not suffix.startswith("#"):
+                    raise RenewalError("zerodha_env_scalar_invalid")
+        result.append((line, match))
+    return result
+
+
+def _scalar(value: str) -> str:
+    """Parse only literal, one-line managed values; never apply shell transformations."""
+    stripped = value.strip(" \t")
+    if stripped.startswith(("'", '"')):
+        scalar = stripped[1:_quoted_end(stripped)]
+    else:
+        # Compose treats # as a comment only after whitespace, unlike shlex.
+        scalar = re.split(r"[ \t]+#", value, maxsplit=1)[0].strip(" \t")
+    if any(char.isspace() or char in "\\$'\"" for char in scalar):
+        raise RenewalError("zerodha_env_scalar_invalid")
+    return scalar
+
+
 def _fields(text: str) -> dict[str, str]:
-    """Read only scalar credentials/control fields; never evaluate shell or dotenv code."""
+    """Read only scalar credentials/control fields from validated top-level lines."""
     wanted = {*MANAGED, "ZERODHA_API_KEY", "TRADING_LIVE_MONEY_ACTIVE"}
     found: dict[str, str] = {}
-    for line in text.splitlines():
-        match = _ASSIGNMENT.fullmatch(line.strip())
-        if not match or match[1] not in wanted:
+    for _, match in _env_lines(text):
+        if match is None or match[1] not in wanted:
             continue
         name = match[1]
         if name in found:
             raise RenewalError("zerodha_env_duplicate_managed_field")
-        try:
-            values = shlex.split(match[2], comments=True)
-        except ValueError:
-            raise RenewalError("zerodha_env_scalar_invalid") from None
-        if len(values) > 1 or (values and "$" in values[0]):
-            raise RenewalError("zerodha_env_scalar_invalid")
-        found[name] = values[0] if values else ""
+        found[name] = _scalar(match[2])
     return found
 
 
@@ -235,8 +281,7 @@ def publish_to_env(
         validate_token({**existing, **updates}, now=at, client_factory=client_factory)
         seen: set[str] = set()
         lines: list[str] = []
-        for line in text.splitlines(keepends=True):
-            match = _ASSIGNMENT.fullmatch(line.strip())
+        for line, match in _env_lines(text):
             if match and match[1] in updates:
                 name = match[1]
                 lines.append(f"{name}={updates[name]}\n")
