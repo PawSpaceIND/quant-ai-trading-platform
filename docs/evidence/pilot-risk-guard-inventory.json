@@ -1,0 +1,369 @@
+{
+  "scope": "Isolated portfolio-risk verification only; no deployment or provider access",
+  "mutations": [
+    {
+      "id": "required_boot_refusal",
+      "path": "src/quant_ai/daemon.py",
+      "old": "    if require_book_risk_gates:\n        problem = runtime.warden.book_risk.configuration_problem()",
+      "new": "    if False:\n        problem = runtime.warden.book_risk.configuration_problem()",
+      "test": "tests/test_pilot_required_risk_gates.py::test_missing_required_configuration_refuses_startup"
+    },
+    {
+      "id": "required_env_wiring",
+      "path": "src/quant_ai/daemon.py",
+      "old": "require_book_risk_gates=_env_required_book_risk(),",
+      "new": "require_book_risk_gates=False,",
+      "test": "tests/test_pilot_required_risk_gates.py::test_environment_builder_enforces_actual_pilot_inputs"
+    },
+    {
+      "id": "required_env_strict_boolean",
+      "path": "src/quant_ai/daemon.py",
+      "old": "    if value not in {\"true\", \"false\"}:",
+      "new": "    if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_malformed_required_flag_cannot_silently_disable_pilot"
+    },
+    {
+      "id": "required_scope_from_watchlist",
+      "path": "src/quant_ai/daemon.py",
+      "old": "if require_book_risk_gates else ()),",
+      "new": "if False else ()),",
+      "test": "tests/test_pilot_required_risk_gates.py::test_environment_builder_enforces_actual_pilot_inputs"
+    },
+    {
+      "id": "required_scope_runtime_wiring",
+      "path": "src/quant_ai/agents/traded_runtime.py",
+      "old": "required_symbols=book_risk_required_symbols,",
+      "new": "required_symbols=(),",
+      "test": "tests/test_pilot_required_risk_gates.py::test_environment_builder_enforces_actual_pilot_inputs"
+    },
+    {
+      "id": "required_history_freshness_wiring",
+      "path": "src/quant_ai/daemon.py",
+      "old": "max_age=timedelta(days=7) if require_book_risk_gates else None",
+      "new": "max_age=None",
+      "test": "tests/test_pilot_required_risk_gates.py::test_environment_builder_enforces_actual_pilot_inputs"
+    },
+    {
+      "id": "firewall_retains_required_scope",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "self.required_symbols = tuple(sorted(set(required_symbols)))",
+      "new": "self.required_symbols = ()",
+      "test": "tests/test_pilot_required_risk_gates.py::test_missing_required_configuration_refuses_startup"
+    },
+    {
+      "id": "required_history_callable",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if not callable(self.history_provider):",
+      "new": "if self.history_provider is None:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_noncallable_history_refuses_configuration_and_reports_unarmed"
+    },
+    {
+      "id": "required_history_presence",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if not callable(self.history_provider):",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_missing_required_configuration_refuses_startup[history]"
+    },
+    {
+      "id": "full_configured_sector_scope",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "set(self.required_symbols) | set(symbols)",
+      "new": "set(symbols)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_missing_required_configuration_refuses_startup[one_symbol]"
+    },
+    {
+      "id": "projected_holding_sector_scope",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "set(self.required_symbols) | set(symbols)",
+      "new": "set(self.required_symbols)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_unmapped_held_position_is_not_dropped_from_required_group_checks"
+    },
+    {
+      "id": "required_before_optional_shortcut",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "            problem = self.configuration_problem()\n            if problem:",
+      "new": "            problem = self.configuration_problem()\n            if False:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_losing_both_required_inputs_never_reverts_to_optional_approval"
+    },
+    {
+      "id": "projected_scope_refusal",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "        if problem:\n            return RiskDecision(False, \"book_risk_measure_unavailable:\" + problem)",
+      "new": "        if False:\n            return RiskDecision(False, \"book_risk_measure_unavailable:\" + problem)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_unmapped_held_position_is_not_dropped_from_required_group_checks"
+    },
+    {
+      "id": "sector_concentration_refusal",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if totals[group] > limit:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_concentrated_correlated_and_tail_books_are_really_refused"
+    },
+    {
+      "id": "correlation_adjusted_gross_refusal",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if adjusted > self.policy.max_correlation_adjusted_gross:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_concentrated_correlated_and_tail_books_are_really_refused"
+    },
+    {
+      "id": "book_expected_shortfall_refusal",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if shortfall > self.policy.max_book_expected_shortfall:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_concentrated_correlated_and_tail_books_are_really_refused"
+    },
+    {
+      "id": "warden_honors_book_refusal",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "        if not book.approved:",
+      "new": "        if False:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_warden_does_not_ignore_required_book_refusal"
+    },
+    {
+      "id": "covered_exits_remain_available",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "if decision.reason == \"approved_risk_reducing\" or pure_de_risking_sell:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_post_boot_input_loss_is_unarmed_and_refuses_entry_not_an_exit"
+    },
+    {
+      "id": "sector_map_object_type",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if not isinstance(mapping, Mapping):",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_bad_sector_mappings_never_become_armed_strings"
+    },
+    {
+      "id": "sector_map_string_keys",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if not isinstance(symbol, str) or not isinstance(group, str):",
+      "new": "if not isinstance(group, str):",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_sector_map_keys_must_be_strings"
+    },
+    {
+      "id": "sector_map_string_groups",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if not isinstance(symbol, str) or not isinstance(group, str):",
+      "new": "if not isinstance(symbol, str):",
+      "test": "tests/test_pilot_required_risk_gates.py::test_bad_sector_mappings_never_become_armed_strings"
+    },
+    {
+      "id": "normalized_sector_duplicates",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if key in normalized:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_bad_sector_mappings_never_become_armed_strings"
+    },
+    {
+      "id": "duplicate_json_key_refusal",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "        if key in result:",
+      "new": "        if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_env_mapping_rejects_ambiguous_or_nonstring_records"
+    },
+    {
+      "id": "inline_map_duplicate_parser",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "json.loads(inline, object_pairs_hook=_unique_pairs)",
+      "new": "json.loads(inline)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_env_mapping_rejects_ambiguous_or_nonstring_records"
+    },
+    {
+      "id": "file_map_duplicate_parser",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "json.loads(Path(location).expanduser().read_text(encoding=\"utf-8\"),\n                       object_pairs_hook=_unique_pairs)",
+      "new": "json.loads(Path(location).expanduser().read_text(encoding=\"utf-8\"))",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_file_sector_map_enforces_the_same_validation_as_inline"
+    },
+    {
+      "id": "positive_freshness_budget",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if max_age is not None and max_age <= timedelta(0):",
+      "new": "if False:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_history_freshness_budget_must_be_positive"
+    },
+    {
+      "id": "aware_history_clock",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if now.utcoffset() is None:",
+      "new": "if False:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_history_clock_refuses_naive_even_without_any_records"
+    },
+    {
+      "id": "aware_bar_timestamp",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if bar.timestamp.utcoffset() is None or bar.timestamp > now:",
+      "new": "if bar.timestamp > now:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_invalid_daily_evidence_refuses_instead_of_manufacturing_records[naive]"
+    },
+    {
+      "id": "future_bar_timestamp",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if bar.timestamp.utcoffset() is None or bar.timestamp > now:",
+      "new": "if bar.timestamp.utcoffset() is None:",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_future_bar_after_same_days_close_is_not_accepted_as_closed_history"
+    },
+    {
+      "id": "exact_instrument_identity",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if bar.instrument != instrument:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_invalid_daily_evidence_refuses_instead_of_manufacturing_records[wrong_instrument]"
+    },
+    {
+      "id": "completed_session_only",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if session_close_at(bar.timestamp, venue) > now:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_invalid_daily_evidence_refuses_instead_of_manufacturing_records[unclosed]"
+    },
+    {
+      "id": "unique_daily_session",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if _session_key(bar.timestamp, zone) in rows:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_invalid_daily_evidence_refuses_instead_of_manufacturing_records[duplicate]"
+    },
+    {
+      "id": "history_age_refusal",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if now - latest > self.max_age:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_invalid_daily_evidence_refuses_instead_of_manufacturing_records[stale]"
+    },
+    {
+      "id": "failed_fetch_clears_observation",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "            self._observed.pop(key, None)\n",
+      "new": "",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_failed_fetch_clears_previous_same_day_readiness"
+    },
+    {
+      "id": "cached_provider_day_boundary",
+      "path": "src/quant_ai/marketdata/timeframes.py",
+      "old": "return cached[1] if cached is not None and cached[0] == current.date() else ()",
+      "new": "return cached[1] if cached is not None else ()",
+      "test": "tests/test_pilot_required_risk_gates.py::test_cold_or_expired_cache_is_not_green_and_telemetry_never_fetches"
+    },
+    {
+      "id": "telemetry_never_fetches_history",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "bars = cached(instrument, now)",
+      "new": "bars = self.provider.fetch(instrument, now)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_cold_or_expired_cache_is_not_green_and_telemetry_never_fetches"
+    },
+    {
+      "id": "fallback_observation_day_boundary",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "observed and observed[0].date() == now.date()",
+      "new": "observed",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_fallback_observations_cannot_outlive_their_cache_boundary[prior-day]"
+    },
+    {
+      "id": "fallback_observation_no_future",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "and observed[0] <= now else ())",
+      "new": "else ())",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_fallback_observations_cannot_outlive_their_cache_boundary[future-observation]"
+    },
+    {
+      "id": "readiness_complete_scope",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "if set(series) != set(symbols) or not symbols:",
+      "new": "if False:",
+      "test": "tests/test_pilot_required_risk_gates.py::test_provider_object_is_not_proof_of_sufficient_records"
+    },
+    {
+      "id": "return_intervals_not_price_count",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "intervals = len(next(iter(aligned.values()), ())) - 1",
+      "new": "intervals = len(next(iter(aligned.values()), ()))",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_subtail_history_reports_exact_intervals_without_claiming_readiness"
+    },
+    {
+      "id": "readiness_tail_sample_floor",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "result[\"dataReady\"] = not reason and intervals >= MIN_TAIL_INTERVALS",
+      "new": "result[\"dataReady\"] = not reason",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_subtail_history_reports_exact_intervals_without_claiming_readiness"
+    },
+    {
+      "id": "cache_oserror_preserves_telemetry",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "ArithmeticError, OSError, RuntimeError",
+      "new": "ArithmeticError, RuntimeError",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_cached_read_failure_keeps_heartbeat_and_marks_history_unready[OSError]"
+    },
+    {
+      "id": "cache_runtimeerror_preserves_telemetry",
+      "path": "src/quant_ai/risk/book_history.py",
+      "old": "ArithmeticError, OSError, RuntimeError",
+      "new": "ArithmeticError, OSError",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_cached_read_failure_keeps_heartbeat_and_marks_history_unready[RuntimeError]"
+    },
+    {
+      "id": "telemetry_callable_history_arming",
+      "path": "src/quant_ai/execution/telemetry.py",
+      "old": "history_armed = callable(provider)",
+      "new": "history_armed = provider is not None",
+      "test": "tests/test_pilot_risk_guard_boundaries.py::test_noncallable_history_refuses_configuration_and_reports_unarmed"
+    },
+    {
+      "id": "telemetry_required_sector_coverage",
+      "path": "src/quant_ai/execution/telemetry.py",
+      "old": "bool(sector_map) and (not required or covered == len(symbols))",
+      "new": "bool(sector_map)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_post_boot_input_loss_is_unarmed_and_refuses_entry_not_an_exit[one_symbol]"
+    },
+    {
+      "id": "telemetry_required_flag",
+      "path": "src/quant_ai/execution/telemetry.py",
+      "old": "required = bool(getattr(book_risk, \"required_symbols\", ()))",
+      "new": "required = False",
+      "test": "tests/test_pilot_required_risk_gates.py::test_committed_example_arms_runtime_and_retains_five_name_scope"
+    },
+    {
+      "id": "telemetry_actual_history_readiness",
+      "path": "src/quant_ai/execution/telemetry.py",
+      "old": "history_state = provider.readiness(symbols, now)",
+      "new": "pass",
+      "test": "tests/test_pilot_required_risk_gates.py::test_committed_example_arms_runtime_and_retains_five_name_scope"
+    },
+    {
+      "id": "runtime_manifest_includes_risk_inputs",
+      "path": "src/quant_ai/governance/runtime_manifest.py",
+      "old": "        \"book_risk_inputs\",\n",
+      "new": "",
+      "test": "tests/test_pilot_required_risk_gates.py::test_manifest_distinguishes_scope_group_and_freshness_changes"
+    },
+    {
+      "id": "runtime_identity_binds_sector_map",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "\"sectorMap\": dict(self.book_risk.sector_map)",
+      "new": "\"sectorMap\": {}",
+      "test": "tests/test_pilot_required_risk_gates.py::test_manifest_distinguishes_scope_group_and_freshness_changes"
+    },
+    {
+      "id": "runtime_identity_binds_required_scope",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "\"requiredSymbols\": self.book_risk.required_symbols",
+      "new": "\"requiredSymbols\": ()",
+      "test": "tests/test_pilot_required_risk_gates.py::test_manifest_distinguishes_scope_group_and_freshness_changes"
+    },
+    {
+      "id": "runtime_identity_binds_freshness",
+      "path": "src/quant_ai/risk/warden.py",
+      "old": "\"historyMaxAge\": getattr(history, \"max_age\", None)",
+      "new": "\"historyMaxAge\": None",
+      "test": "tests/test_pilot_required_risk_gates.py::test_manifest_distinguishes_scope_group_and_freshness_changes"
+    }
+  ],
+  "status": "NOT EXECUTED: isolated guard-removal runner creation/execution was tool-blocked",
+  "counts": {
+    "planned": 51,
+    "executed": 0,
+    "certified": 0
+  },
+  "source_base": "0e4fd70b44cd73a36518a557800a330611079350"
+}

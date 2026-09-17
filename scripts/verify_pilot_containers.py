@@ -38,6 +38,18 @@ def wait_for(check, label, seconds=40):
     raise RuntimeError(f"Timed out waiting for {label}: {last}")
 
 
+def read_only_environment_file_mount(service, setting):
+    """Carry one declared, read-only Compose file into the isolated smoke container."""
+    target = service["environment"][setting]
+    matches = [mount for mount in service["volumes"] if mount.get("target") == target]
+    if len(matches) != 1 or matches[0].get("type") != "bind" or matches[0].get("read_only") is not True:
+        raise ValueError("required_fixture_file_mount_invalid")
+    source = Path(matches[0]["source"])
+    if not source.is_absolute() or not source.is_file():
+        raise ValueError("required_fixture_file_source_missing")
+    return ["--mount", f"type=bind,src={source},dst={target},readonly"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -108,6 +120,8 @@ def main():
         assert services["market-monitor"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == services["pramana-ghost"]["environment"]["PRAMANA_HOLIDAYS_JSON"] == compose_env["PRAMANA_HOLIDAYS_JSON"]
         directives_mount = next(v for v in services["pramana-ghost"]["volumes"] if v["target"] == "/app/directives.json")
         assert directives_mount["source"] == str(directives_file) and directives_mount["read_only"]
+        sector_file_mount = read_only_environment_file_mount(
+            services["pramana-ghost"], "PRAMANA_SECTOR_MAP_FILE")
         # Operational blindness is a deployment fault: alerts must be durable, logs bounded,
         # memory capped and backups scheduled, in the rendered configuration itself.
         assert services["pramana-ghost"]["environment"]["PRAMANA_ALERT_LOG"] == "/data/alerts.jsonl"
@@ -181,7 +195,7 @@ def main():
 
         run("docker", "run", "-d", "--name", engine, *shared, *environment("pramana-ghost"),
             "--mount", f"type=bind,src={directives_mount['source']},dst={directives_mount['target']},readonly",
-            "--entrypoint", "python", image_engine,
+            *sector_file_mount, "--entrypoint", "python", image_engine,
             "/qa/container_runtime_fixture.py", "--state", "/data")
         created_containers.append(engine)
         health_command = ["docker", "exec", engine, "python", "/app/scripts/pilot_ops.py", "health",

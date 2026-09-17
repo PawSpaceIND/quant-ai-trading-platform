@@ -1,0 +1,90 @@
+{
+  "base_commit": "12653875b0530eb2cbc13c3dddced8fb70bb5844",
+  "scope": "Deployment verifier only; synthetic Docker and disposable Git host. Not portfolio-risk certification.",
+  "cases": [
+    {
+      "guard": "inspect_exit_status",
+      "test": "tests/test_deploy_evidence_integrity.py::test_failed_inspection_cannot_pass_even_with_valid_stdout[before]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "inspection_field_validation",
+      "test": "tests/test_deploy_evidence_integrity.py::test_malformed_inspection_refuses_without_echoing_payload[running false not-a-number healthy-before]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "restart_integer_range",
+      "test": "tests/test_deploy_evidence_integrity.py::test_malformed_inspection_refuses_without_echoing_payload[running false 9223372036854775808 healthy-after]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "service_inventory_exit",
+      "test": "tests/test_deploy_evidence_integrity.py::test_failed_service_inventory_cannot_certify_partial_output",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "container_lookup_exit",
+      "test": "tests/test_deploy_evidence_integrity.py::test_failed_container_lookup_cannot_use_its_stdout",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "service_identifier_validation",
+      "test": "tests/test_deploy_evidence_integrity.py::test_duplicate_or_malformed_service_list_is_refused[bad name PRIVATE_DIAGNOSTIC_MUST_NOT_APPEAR]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "unique_service_names",
+      "test": "tests/test_deploy_evidence_integrity.py::test_duplicate_or_malformed_service_list_is_refused[dashboard]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "complete_container_list",
+      "test": "tests/test_deploy_evidence_integrity.py::test_multiple_containers_cannot_certify_only_the_first",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "container_identity_validation",
+      "test": "tests/test_deploy_evidence_integrity.py::test_multiple_containers_cannot_certify_only_the_first",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "restart_counter_continuity",
+      "test": "tests/test_deploy_evidence_integrity.py::test_restart_counter_decrease_does_not_certify_continuity",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    }
+  ],
+  "script_sha256": "bef585351241ea103e3a95b44044da3127e4cf85ff5c276913e9e92d03a976e5",
+  "test_sha256": "6014e0978dc4195f9e19bf8de8ae89f9edd68a87762379d8574ef182d4f34410",
+  "working_script_unchanged": true,
+  "actual_deployments": 0
+}

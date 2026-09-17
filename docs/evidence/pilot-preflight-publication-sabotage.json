@@ -1,0 +1,216 @@
+{
+  "scope": "Preflight CLI input and report guards only; not production portfolio-risk certification",
+  "base_commit": "00fa3b34cbcf2a36bb365f5cb0bbca02ba687166",
+  "isolated_source_copies": true,
+  "mutations": [
+    {
+      "guard": "regular_input",
+      "test": "tests/test_pilot_preflight_publication.py::test_special_input_is_refused_without_reading_a_fifo",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "bounded_read",
+      "test": "tests/test_pilot_preflight_publication.py::test_input_reader_accepts_exactly_the_budget_and_rejects_one_more",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "input_size_limit",
+      "test": "tests/test_pilot_preflight_publication.py::test_input_reader_accepts_exactly_the_budget_and_rejects_one_more",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "duplicate_keys",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_duplicate_directive_keys_refuse_before_history",
+      "exit": 1,
+      "failures": 3,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "non_json_numbers",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_non_json_numbers_refuse_before_history",
+      "exit": 1,
+      "failures": 3,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "object_shape",
+      "test": "tests/test_pilot_preflight_publication.py::test_object_validation_has_a_consistent_contract",
+      "exit": 1,
+      "failures": 4,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "decimal_precision",
+      "test": "tests/test_pilot_preflight_publication.py::test_directive_decimal_is_not_rounded_through_binary_float",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "output_precheck",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_unusable_output_refuses_before_history",
+      "exit": 1,
+      "failures": 3,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "staging_before_provider",
+      "test": "tests/test_pilot_preflight_publication.py::test_staging_failure_happens_before_provider_construction",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "private_report_mode",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_published_report_has_private_permissions",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "input_recheck_for_stdout",
+      "test": "tests/test_pilot_preflight_publication.py::test_stdout_only_report_also_rechecks_both_input_files",
+      "exit": 1,
+      "failures": 2,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "input_recheck_before_link",
+      "test": "tests/test_pilot_preflight_publication.py::test_inputs_changed_during_report_flush_refuse_publication",
+      "exit": 1,
+      "failures": 2,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "directives_hash",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_reports_bind_exact_input_bytes_without_copying_them",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "sector_hash",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_reports_bind_exact_input_bytes_without_copying_them",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "short_write_refusal",
+      "test": "tests/test_pilot_preflight_publication.py::test_incomplete_report_cannot_reach_final_filename[short]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "file_fsync",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_write_failure_never_publishes_a_partial_report",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "report_readback",
+      "test": "tests/test_pilot_preflight_publication.py::test_incomplete_report_cannot_reach_final_filename[incomplete_but_claimed_complete]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "no_replace_publication",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_a_concurrent_report_is_not_replaced",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "directory_fsync",
+      "test": "tests/test_pilot_preflight_publication.py::test_directory_flush_failure_is_nonzero_with_only_a_complete_report",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "cleanup_on_failure",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_write_failure_never_publishes_a_partial_report",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "strict_report_json",
+      "test": "tests/test_pilot_preflight_publication.py::test_nonfinite_report_cannot_be_printed_or_published",
+      "exit": 1,
+      "failures": 3,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "failure_before_stdout",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_write_failure_never_publishes_a_partial_report",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "unready_nonzero",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_unready_result_remains_nonzero_with_bound_inputs",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "online_consent",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_no_online_authority_means_no_provider_or_output",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    }
+  ],
+  "source_unchanged": true,
+  "source_sha256": "86a29aacaf7f6e43d564024681ef26bac7fb43b06aad8e8594444f69eb1bc072",
+  "acceptance_sha256": "1bcbc96f8715021776340f7252fa4d4ef79d8e29be28c61b199ad8bc33675c19",
+  "additional_test_edit": "Two extra verification tests were tool-blocked and not applied or retried.",
+  "initial_campaign": {
+    "caught": 23,
+    "total": 24,
+    "surviving_case": {
+      "guard": "input_size_limit",
+      "test": "acceptance/test_risk_preflight_input_boundary.py::test_oversized_inputs_refuse_before_history",
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "caught": false
+    },
+    "resolution": "The oversized CLI fixture also failed JSON parsing after truncation. The already-added direct byte-budget test independently detects removal of the size check. No test assertion or production source changed for the retest."
+  }
+}
