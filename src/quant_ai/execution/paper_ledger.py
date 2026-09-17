@@ -528,6 +528,8 @@ class PaperBrokerService(BrokerAdapter):
             # Acquire the write transaction before reading scope or risk state. The
             # final checks and fill cannot race another connection's configuration/halt.
             self._ensure_account(tenant_id)
+            from quant_ai.governance.runtime_identity import assert_runtime_order_identity
+            assert_runtime_order_identity(self, order)
             pilot_order = self._assert_pilot_order(order)
             if idempotency_key is not None:
                 inserted = self._connection.execute(

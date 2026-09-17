@@ -262,16 +262,20 @@ class SwarmPaperTradingService:
             self.oms.submitted(oms_client_id, now=request.observed_at)
         try:
             fill = self.broker.submit_with_evidence(risk.order, fill_evidence, key.value)
-        except PaperBrokerDatabaseLockedError:
+        except (PaperBrokerDatabaseLockedError, ValueError) as error:
             if self.oms is not None and oms_client_id is not None:
-                self.oms.reject(oms_client_id, reason="paper_broker_database_locked")
-            return refuse("paper_broker_database_locked")
-        except ValueError as error:
-            # C3: a broker-side rejection (insufficient cash/position) is a governed outcome,
-            # not a daemon-killing exception.
+                # A wrapper can raise after the paper broker committed. Never relabel an
+                # uncertain outcome as rejection or permit a new submission after restart.
+                reason = "paper_execution_recovery_required"
+                self.oms.submission_uncertain(oms_client_id, reason=type(error).__name__,
+                                              now=request.observed_at)
+                lifecycle.transition(OrderState.SUBMISSION_UNCERTAIN)
+                pending = WardenDecision(False, reason, None)
+                trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, pending)
+                return SwarmExecutionResult(proposal, pending, None, stress, trace, lifecycle.state)
+            if isinstance(error, PaperBrokerDatabaseLockedError):
+                return refuse("paper_broker_database_locked")
             reason = "duplicate_order" if str(error) == "duplicate_order" else f"broker_rejected:{error}"
-            if self.oms is not None and oms_client_id is not None:
-                self.oms.reject(oms_client_id, reason=reason)
             return refuse(reason)
         if self.oms is not None and oms_client_id is not None:
             self.oms.fill(

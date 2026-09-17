@@ -33,7 +33,7 @@ FIELDS = {
         "plan",
     ),
     "quant_ai.execution.scheduler.AutonomousCadenceScheduler": ("cadence",),
-    "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": (),
+    "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": ("bind_order_instruments",),
     "quant_ai.agents.swarm.AtlasCIOAgent": (),
     "quant_ai.analytics.attribution.AgentAttributionEngine": (),
     "quant_ai.execution.session.MarketCalendar": ("holidays", "special_sessions"),
@@ -351,8 +351,24 @@ class RuntimeManifest:
                     self._dependencies[package] = version(package)
                 except PackageNotFoundError:
                     self._dependencies[package] = None
+        from quant_ai.governance.runtime_identity import path_digest, runtime_identity_configuration
+        from quant_ai.instruments.identity import canonical_instrument_identity
+        from quant_ai.orders.oms import DurableOms
+        identity = runtime_identity_configuration(r.broker, d.tenant_id)
+        oms = r.oms
+        oms_identity = {"durable": isinstance(oms, DurableOms),
+                        "path_sha256": path_digest(oms.path) if isinstance(oms, DurableOms) else None}
+        if identity is not None:
+            if (p.bind_order_instruments is not True or not oms_identity["durable"]
+                    or oms_identity["path_sha256"] != identity["oms_path_sha256"]
+                    or {i.symbol: canonical_instrument_identity(i) for i in d.instruments} != identity["instruments"]):
+                issues.append("runtime_identity_wiring_mismatch")
+        elif p.bind_order_instruments:
+            issues.append("runtime_identity_configuration_missing")
         manifest = {
             "schema": "pramana.runtime_strategy.v1",
+            "order_identity": identity or {"mode": "legacy_cash"},
+            "order_management": oms_identity,
             "tenant_id": d.tenant_id,
             "release_revision": self.revision,
             "execution_mode": "paper",

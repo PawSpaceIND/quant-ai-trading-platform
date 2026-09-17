@@ -22,6 +22,9 @@ services:
     environment:
       <<: *shared
       PRAMANA_PILOT_MODE: "true"
+      # Explicit rollout; unset stays legacy. Empty/unknown modes refuse in the builder.
+      PRAMANA_ORDER_IDENTITY_MODE: ${PRAMANA_ORDER_IDENTITY_MODE-legacy_cash}
+      PRAMANA_OMS_DB: ${PRAMANA_OMS_DB:-}
       PRAMANA_RELEASE_REVISION: ${PRAMANA_RELEASE_REVISION:-}
       PRAMANA_GHOST_LOG: /data/pramana-ghost.log
       PRAMANA_FOUNDER_DIRECTIVES_FILE: /app/directives.json

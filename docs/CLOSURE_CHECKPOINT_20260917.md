@@ -58,3 +58,16 @@ missing-evidence obligation guard made the relevant tests fail; restored code pa
 Exact published SHA and Linux CI are recorded in the PR certification comment.
 Default-daemon rollout, reviewed migration/rollback, other capability and external gates
 remain open; this does not grant live execution or establish a profitable strategy.
+
+## Runtime contract-mode and manifest continuation
+
+The existing ghost-daemon builder and its environment entry point can explicitly select
+bound_v1 and a separate durable OMS. The Compose pass-through retains the legacy default.
+The mode/scope/storage pin survives restart, is reflected in runtime manifests, and refuses
+legacy relabelling, changed storage and unbound new risk. Bound entries require matched
+release evidence and reconciled OMS history. Independent covered exits remain available.
+Post-commit submission exceptions with durable OMS are uncertain, not fabricated rejections.
+See RUNTIME_ORDER_IDENTITY.md and the exact-head CI comment for 38 added regression cases.
+This does not switch the running daemon or assemble the institutional coordinator as its
+main execution path. That assembly, accounting-wide restart/operations, reviewed migration,
+qualified external evidence and the previously listed release gates remain open.
