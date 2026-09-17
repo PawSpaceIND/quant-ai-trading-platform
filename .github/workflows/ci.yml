@@ -18,6 +18,30 @@ jobs:
       - run: ruff check src tests
       - run: pytest -q
 
+  pilot-preflight-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      TRADING_LIVE_MONEY_ACTIVE: "false"
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      # Open requirements remain real failures, not xfail/skip or a successful wrapper.
+      - name: Preflight input and report acceptance
+        run: python -m pytest -q acceptance/test_risk_preflight_input_boundary.py --junitxml="$RUNNER_TEMP/pilot-preflight-acceptance.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pilot-preflight-acceptance
+          path: ${{ runner.temp }}/pilot-preflight-acceptance.xml
+          if-no-files-found: error
+
   ui:
     runs-on: ubuntu-latest
     defaults:

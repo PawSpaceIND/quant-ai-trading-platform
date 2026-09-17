@@ -1,0 +1,186 @@
+{
+  "scope": "Container smoke assertions and CI acceptance selection only; not the outstanding production risk guard-removal campaign",
+  "base": "0c6c130e5e7e4c37c16d4bd7ff69274c4d98d195",
+  "mutations": [
+    {
+      "guard": "schema",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[wrong_schema]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "gate_inventory",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[too_few]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "boolean_arming",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[non_boolean]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "setting_identity",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[invalid_setting]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "exact_armed_set",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[unarmed_sector]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "sector_records",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[wrong_records]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "sector_groups",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[wrong_groups]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "unchanged_limit",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[raised_limit]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "history_inventory",
+      "file": "tests/container_risk_gate_assertions.mjs",
+      "test": "tests/test_container_risk_gate_assertions.py::test_offline_dashboard_fixture_assertion_is_exact[missing_history]",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "smoke_call_wiring",
+      "file": "tests/container_dashboard_smoke.mjs",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_container_dashboard_calls_the_shared_risk_assertions",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "acceptance_job_selected",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "failing_exit_preserved",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "report_on_failure",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_retains_report_even_on_failure",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "artifact_uploaded_after_failure",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_retains_report_even_on_failure",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "missing_acceptance_artifact_blocks",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_retains_report_even_on_failure",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "acceptance_job_not_skippable",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "acceptance_step_not_skippable",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "acceptance_job_failure_not_ignored",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "acceptance_step_failure_not_ignored",
+      "file": ".github/workflows/ci.yml",
+      "test": "tests/test_pilot_acceptance_workflow.py::test_preflight_acceptance_is_explicit_and_failure_is_not_masked",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    }
+  ],
+  "disposable_copies": true,
+  "working_sources_unchanged": true,
+  "source_sha256": {
+    "tests/container_risk_gate_assertions.mjs": "5663c92e86d0284206f1387fd3bfdbc92b5161a22f66581e8e93a6111839055a",
+    ".github/workflows/ci.yml": "485508915f997ccdff378b510bd80e96aa4b8a8d5502721a236b1ffb9bb12685",
+    "tests/container_dashboard_smoke.mjs": "8436dab40c4fba6e659ed8c9eb3b6f14f7b04a11feed2ca28e6be67f901dfcf7",
+    "tests/test_container_risk_gate_assertions.py": "449519249af1a10f0fc61d5aeade544866ae52f3c531cd100b76e5eaf16f61ec",
+    "tests/test_pilot_acceptance_workflow.py": "970de6532e39bf3a57c525b90790c6b2e1f972d7e0ebb3d5593c2fd89ab43a2f"
+  }
+}
