@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from quant_ai.marketdata.tick_integrity import tick_value_issue, utc_time
 from quant_ai.marketdata.ticker_stream import LiveTick, TickBuffer
+
+LOGGER = logging.getLogger("quant_ai.cadence")
 
 
 @dataclass(frozen=True)
@@ -21,7 +24,7 @@ class DecisionCadence:
 
 
 class CadenceMarketReader:
-    """Reads the newest websocket tick immediately before agent consensus."""
+    """Reads the newest eligible websocket tick at the requested analysis cutoff."""
 
     def __init__(self, buffer: TickBuffer, max_tick_age: timedelta = timedelta(minutes=2)) -> None:
         if max_tick_age <= timedelta(0):
@@ -38,15 +41,46 @@ class CadenceMarketReader:
         current = utc_time(now or datetime.now(timezone.utc))
         try:
             observed = utc_time(tick.observed_at)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             return None, "Invalid Market Data"
-        if tick_value_issue(tick):
+        if tick_value_issue(tick) or tick.symbol != symbol:
             return None, "Invalid Market Data"
-        if observed > current:
-            return None, "Future Market Data"
-        if current - observed > self.max_tick_age:
-            return None, "Stale Market Data"
-        return tick, None
+        newest_at = observed
+        deferred = observed > current
+        if deferred:
+            # Preserve the fixed evidence cutoff across provider/LLM awaits. Never
+            # compare a post-cutoff tick by advancing the clock to make it pass.
+            select = getattr(self.buffer, "latest_at_or_before", None)
+            try:
+                tick = select(symbol, current) if callable(select) else None
+            except (TypeError, ValueError, AttributeError):
+                return None, "Invalid Market Data"
+        if tick is None:
+            issue = "Future Market Data"
+            observed = None
+        else:
+            try:
+                observed = utc_time(tick.observed_at)
+            except (TypeError, ValueError, AttributeError):
+                return None, "Invalid Market Data"
+            # A custom/replaced selector is not trusted to enforce the boundary.
+            if tick_value_issue(tick) or tick.symbol != symbol:
+                issue = "Invalid Market Data"
+            elif observed > current:
+                issue = "Future Market Data"
+            elif current - observed > self.max_tick_age:
+                issue = "Stale Market Data"
+            else:
+                issue = None
+        if deferred:
+            LOGGER.info(
+                "cadence_tick_cutoff symbol=%r cutoff=%s newest_at=%s selected_at=%s "
+                "wall_checked_at=%s result=%s",
+                symbol[:80], current.isoformat(), newest_at.isoformat(),
+                observed.isoformat() if observed is not None else "unavailable",
+                datetime.now(timezone.utc).isoformat(), issue or "eligible",
+            )
+        return (None, issue) if issue else (tick, None)
 
     def latest_for_consensus(self, symbol: str, now: datetime | None = None) -> LiveTick | None:
         tick, _ = self.market_data_status(symbol, now)
