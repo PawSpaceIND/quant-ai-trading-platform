@@ -18,6 +18,8 @@ from pathlib import Path
 
 from quant_ai.accounting.journal import CANONICAL_ACCOUNTS, Account, AccountType, TransactionKind
 from quant_ai.execution.risk_authority import validate_authority
+from quant_ai.execution.shared_risk import TABLES as SHARED_RISK_TABLES
+from quant_ai.execution.shared_risk import verify_shared_risk
 from quant_ai.instruments.identity import instrument_from_identity
 from quant_ai.operations import oms_recovery
 from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
@@ -96,7 +98,7 @@ def _database(path: Path, required=None):
         db.execute("BEGIN")
         if required is not None:
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            _check(tables == required, "schema inventory mismatch")
+            _check(tables == required or (required == PROGRAM_TABLES and tables == required | SHARED_RISK_TABLES), "schema inventory mismatch")
             _check([tuple(r) for r in db.execute("PRAGMA integrity_check")] == [("ok",)], "integrity failed")
             _check(db.execute("PRAGMA foreign_key_check").fetchone() is None, "foreign-key discrepancy")
         yield db
@@ -387,6 +389,7 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
         snapshot.append({"program": dict(program), "slices": [dict(s) for s in slices]})
     _check(matched == set(receipts), "orphan institutional receipt")
     counts.update({"snapshotSha256": _sha(snapshot), "receiptInventorySha256": _sha({str(k): _sha(v) for k, v in receipts.items()})})
+    counts["sharedRisk"] = verify_shared_risk(db, tenant)
     return counts
 
 

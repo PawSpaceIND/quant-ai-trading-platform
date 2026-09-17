@@ -1,0 +1,60 @@
+# Remaining delivery plan after PR #126
+
+Planning snapshot from PR #136 at `c42db823a0583a501faf0ff0345f514d00107e71`,
+with main at `5bacb52337351c41fe782ac848edf1ae33647614`.
+The 12 milestones below group the known remaining work; they are not 12 commits,
+12 chat turns or a guarantee that testing cannot reveal further defects.
+The original 33-capability register and its external evidence remain authoritative.
+This plan does not replace them or mark any launch evidence complete.
+
+Scope: milestones 1-10 target a private, integrated NSE cash-equity/ETF paper release.
+Milestones 11-12 retain the requested broader multi-asset objective. They are not
+quietly dropped to make the private pilot appear to finish the whole platform.
+Live-money authorization and a public SaaS launch remain separate releases.
+
+## Milestones and acceptance
+
+| ID | Work package | Finished only when |
+|---|---|---|
+| M01 | Shared account risk and execution authority | Persisted policy and shared reservations cannot be overspent by concurrent programs; partial fills, uncertain submissions, cancellation and reconciled position closure preserve correct capacity; authoritative account/journal binding is enforced. |
+| M02 | Complete decision/request/plan persistence | Exact inputs, sources, availability times, feature/model versions and full execution plan survive restart; replay reconstructs them without invented evidence or duplicate orders. |
+| M03 | Full institutional daemon and accounting | Actual startup/tick loop runs AI proposal → allocation → portfolio risk → planner → OMS → paper broker → accounting, including recovery and independent exits; no separate test-only route substitutes for this. |
+| M04 | AI candidate-to-model deployment chain | Authenticated review binds the exact dataset, trained artifact, evaluation and release; intended knowledge sources are qualified; shadow/rollback and drift controls work without self-granted risk authority. |
+| M05 | Actual market data and broker qualification | Real session/profile, instrument master, timestamps, usable history/adjustments, costs and account/order reconciliation match the intended supported account and market; synthetic evidence is not substituted. |
+| M06 | Authenticated operations and migration | Authorized review/confirm/recover/cancel/halt workflows have durable audits, exact identities, safe legacy migration and rollback; uncertain orders are never guessed absent. |
+| M07 | Coordinated backup and off-host restore | Scheduled complete-state capture, consistent generation, secure transfer and a real restore/reconciliation drill preserve all necessary stores and existing halts. |
+| M08 | Target-host deployment and operations | Adequate storage, exact release, working token renewal, health/clock checks, independent alert receipts, restart/rollback and sustained host operation are verified. |
+| M09 | Integrated human and security acceptance | Desktop/mobile journeys cover login, watchlist, AI, entry/rejection, slices, exits, accounting, reports and recovery; negative authorization/tenant tests and independent security review are complete. |
+| M10 | Demonstrated strategy/calibration evidence | Exact candidate passes declared holdout/walk-forward/stress/forward-paper gates after costs; qualified samples, drawdown and calibration meet the frozen policy. Profitability is measured, never guaranteed. |
+| M11 | MCX futures completion | Pilot admission, exact margin/fee sources, authentic contract-note reconciliation, short/expiry/roll/delivery and daily-settlement handling are implemented and qualified for the chosen contracts. |
+| M12 | Remaining segments and currencies | Options fee/spread-margin/assignment fidelity and other requested venue/instrument segments, contract routing, currency translation and settlement each have explicit implementation and genuine source/broker evidence. |
+
+## Dependency and effort boundaries
+
+M01 → M02 → M03 is the immediate engineering critical path. M04 can progress beside
+M02/M03; M05 real-source qualification should start as soon as source/account access
+is available. M06/M07 must be ready before M08 recovery acceptance. M09 certifies
+the integrated release, not isolated modules. M10 requires qualified observations;
+it cannot be completed by rerunning synthetic tests or increasing their count.
+M11/M12 depend on contract/data/accounting/risk foundations and are separate segment
+programmes, not a single small patch. Existing implemented modules should be reused.
+
+Sources: `docs/SUPER_PLATFORM_CLOSURE.md`, `governance/super_platform.py`,
+`docs/PILOT_CLOSURE.md`, `docs/ENGINEERING_CHECKPOINT_126.md` and PR #136.
+This grouping is a delivery plan derived from those scopes, not a new scored audit.
+No dated finish estimate is supported while external access, host acceptance and
+forward effectiveness remain unverified. The recorded pilot contract mentions
+100 trades / 30 days thresholds; reaching them alone does not establish an edge.
+
+## Current continuation — M01 partially implemented
+
+The shared-reservation change now provides opt-in same-journal atomic admission,
+current-equity capacity rechecks and never-claimed cancellation. Reservations remain
+charged after partial fills, uncertain dispatch, completed buys and position exits.
+That conservative last rule prevents invented capacity but is not the final
+position-linked release lifecycle. Used-risk release, broker-authoritative journal
+selection and cross-host/account fencing remain part of M01. No milestone is marked
+complete simply because this subcomponent passes tests.
+
+No real account policy was set. PR #136's pinned EdgePolicy is a prerequisite,
+not a replacement for shared account capacity. The private daemon remains unchanged.

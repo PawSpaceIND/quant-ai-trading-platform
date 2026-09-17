@@ -13,13 +13,14 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 
 from quant_ai.accounting.protective import ProtectiveAccountingReport, ProtectiveExitAccounting
 from quant_ai.accounting.trading import TradingAccounting
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.decision.edge import CalibratedEdgeGate, EdgeDecision, EdgeEvidence
-from quant_ai.domain.models import OrderIntent, PortfolioSnapshot, Side
+from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
 from quant_ai.execution.derivative_margin import MARGINED_FUTURES_ASSET_CLASSES
 from quant_ai.execution.paper_ledger import PaperBrokerDatabaseLockedError, PaperBrokerService
 from quant_ai.execution.planner import (
@@ -41,6 +42,12 @@ from quant_ai.execution.risk_authority import (
     build_authority,
     parse_authority,
     policy_values,
+)
+from quant_ai.execution.shared_risk import (
+    SharedRiskError,
+    SharedRiskPolicy,
+    SharedRiskReservations,
+    selected,
 )
 from quant_ai.orders.intent import bound_identity, canonical_order_intent
 from quant_ai.orders.oms import DurableOms
@@ -277,6 +284,7 @@ class InstitutionalPaperCoordinator:
         edge_gate: CalibratedEdgeGate | None = None,
         optimizer: StrategyPortfolioOptimizer | None = None,
         execution_planner: ExecutionPlanner | None = None,
+        shared_risk_policy: SharedRiskPolicy | None = None,
     ) -> None:
         self.broker = broker
         self.oms = oms
@@ -290,6 +298,8 @@ class InstitutionalPaperCoordinator:
         self.edge_gate = edge_gate or CalibratedEdgeGate()
         self.optimizer = optimizer or StrategyPortfolioOptimizer()
         self.execution_planner = execution_planner or ExecutionPlanner()
+        self.shared_risk_policy = shared_risk_policy
+        self.shared_risk = SharedRiskReservations(programs)
         self._requests: dict[str, InstitutionalTradeRequest] = {}
         self._orders: dict[str, OrderIntent] = {}
 
@@ -302,7 +312,15 @@ class InstitutionalPaperCoordinator:
         approved_policy = None
         edge: EdgeDecision | None = None
         allocation: PortfolioOptimizationResult | None = None
+        approved_shared_policy = None
         if not de_risking:
+            try:
+                if self.shared_risk_policy is not None:
+                    if not isinstance(self.shared_risk_policy, SharedRiskPolicy):
+                        raise SharedRiskError("shared_risk_configuration_required")
+                    approved_shared_policy = replace(self.shared_risk_policy)
+            except (TypeError, ValueError, ArithmeticError):
+                return self._reject(InstitutionalStage.RISK, "shared_risk_configuration_invalid")
             if request.edge_evidence is None:
                 return self._reject(InstitutionalStage.EDGE, "edge_evidence_required")
             try:
@@ -386,17 +404,35 @@ class InstitutionalPaperCoordinator:
         authority = build_authority(program_id=program_id, tenant_id=request.tenant_id,
             request_sha256=request_fingerprint(request), parent_payload=parent_payload,
             policy=approved_policy)
-        program = self.programs.create(
-            program_id=program_id,
-            tenant_id=request.tenant_id,
-            decision_id=proposal.decision_id,
-            symbol=proposal.symbol,
-            plan=plan,
-            runtime_context_sha256=authority_digest(authority),
-            created_at=request.observed_at,
-            parent_order_payload=parent_payload,
-            risk_authority_payload=authority,
-        )
+        program_args = {"program_id": program_id, "tenant_id": request.tenant_id,
+            "decision_id": proposal.decision_id, "symbol": proposal.symbol, "plan": plan,
+            "runtime_context_sha256": authority_digest(authority), "created_at": request.observed_at,
+            "parent_order_payload": parent_payload, "risk_authority_payload": authority}
+        if de_risking:
+            program = self.programs.create(**program_args)
+        else:
+            try:
+                # Capacity and the parent/slices commit together in this one journal.
+                with self.programs.transaction():
+                    current_shared = (replace(self.shared_risk_policy)
+                        if isinstance(self.shared_risk_policy, SharedRiskPolicy) else self.shared_risk_policy)
+                    if current_shared != approved_shared_policy:
+                        raise SharedRiskError("shared_risk_configuration_changed")
+                    configured = selected(self.programs.db, request.tenant_id)
+                    shared = configured or self.shared_risk_policy is not None
+                    if shared:
+                        if (request.currency not in {"INR", "USD"} or request.base_rate != 1
+                                or proposal.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}):
+                            raise SharedRiskError("shared_risk_single_currency_cash_required")
+                        self.shared_risk.bind(self.shared_risk_policy, tenant_id=request.tenant_id,
+                            ledger_key=self._shared_ledger_key(request.tenant_id),
+                            empty_ledger=not self.broker.ledger_entries(request.tenant_id))
+                    program = self.programs.create(**program_args)
+                    if shared:
+                        self.shared_risk.reserve(program, evidence=request.edge_evidence, equity=request.portfolio.equity,
+                            currency=request.currency, at=request.observed_at)
+            except SharedRiskError as error:
+                return self._reject(InstitutionalStage.RISK, str(error))
         self._requests[program.program_id] = request
         self._orders[program.program_id] = parent_order
         return InstitutionalPreparation(
@@ -409,6 +445,28 @@ class InstitutionalPaperCoordinator:
             execution_plan=plan,
             approved_order=self._orders[program.program_id],
         )
+
+    def _shared_ledger_key(self, tenant_id: str) -> str:
+        with self.broker._lock:
+            files = self.broker._connection.execute("PRAGMA database_list").fetchall()
+        filename = next((row[2] for row in files if row[1] == "main"), "")
+        if not filename or str(self.programs.path) == ":memory:":
+            raise SharedRiskError("shared_risk_durable_storage_required")
+        return hashlib.sha256(json.dumps([str(Path(filename).resolve()),
+            str(self.programs.path.resolve()), tenant_id]).encode()).hexdigest()
+
+    def _shared_risk_issue(self, program, request, equity) -> str | None:
+        try:
+            if not selected(self.programs.db, request.tenant_id) and self.shared_risk_policy is None:
+                return None
+            if request.base_rate != 1:
+                return "shared_risk_single_currency_cash_required"
+            self.shared_risk.check(program, policy=self.shared_risk_policy,
+                ledger_key=self._shared_ledger_key(request.tenant_id), currency=request.currency, equity=equity,
+                evidence=request.edge_evidence)
+        except (TypeError, ValueError, ArithmeticError, AttributeError) as error:
+            return str(error) if isinstance(error, SharedRiskError) else "shared_risk_measure_unavailable"
+        return None
 
     def _policy_issue(self, program, parent) -> str | None:
         # Covered sales retain normal Warden checks without acquiring entry-only authority.
@@ -471,6 +529,11 @@ class InstitutionalPaperCoordinator:
             held = current_snapshot.symbol_quantity.get(child.symbol, 0)
             de_risking = child.side is Side.SELL and held > 0 and child.quantity <= held
             if not de_risking:
+                shared_issue = self._shared_risk_issue(program, request, current_snapshot.equity)
+                if shared_issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, shared_issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), shared_issue)
                 if request.edge_evidence is None:
                     edge_issue = "edge_evidence_required_at_slice"
                 else:
@@ -573,6 +636,12 @@ class InstitutionalPaperCoordinator:
                 return InstitutionalExecutionResult(InstitutionalStage.FAILED,
                     self.programs.get(program_id), tuple(executed), policy_issue)
             child = approved_child
+            if not de_risking:
+                shared_issue = self._shared_risk_issue(program, request, current_snapshot.equity)
+                if shared_issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, shared_issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), shared_issue)
             before = self._position(child)
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
             oms_row = self.oms.create(child, decision_id=decision_id, now=now)
