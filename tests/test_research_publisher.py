@@ -258,6 +258,6 @@ console.log(actual.report_sha256);
 '''
     result = subprocess.run([node, "--input-type=module", "-e", javascript,
                              str(ROOT / "apps/pramana-ui/lib/research.ts"), str(path)],
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert report["report_sha256"] in result.stdout
