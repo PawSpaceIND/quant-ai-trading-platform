@@ -1,0 +1,159 @@
+{
+  "scope": "Offline lifecycle and required-history warmup guards; no AWS/provider request",
+  "mutations": [
+    {
+      "id": "required_only",
+      "path": "src/quant_ai/daemon.py",
+      "old": "if not required or not isinstance(history, DailyCloseHistory):",
+      "new": "if not isinstance(history, DailyCloseHistory):",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_does_not_enable_optional_history"
+    },
+    {
+      "id": "known_adapter_only",
+      "path": "src/quant_ai/daemon.py",
+      "old": "if not required or not isinstance(history, DailyCloseHistory):",
+      "new": "if not required:",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_ignores_unrecognized_history_adapter"
+    },
+    {
+      "id": "callable_fetch",
+      "path": "src/quant_ai/daemon.py",
+      "old": "if not callable(fetch):",
+      "new": "if False:",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_noncallable_fetch_reports_specific_refusal"
+    },
+    {
+      "id": "required_provider_identity",
+      "path": "src/quant_ai/daemon.py",
+      "old": "history = getattr(book_risk, \"history_provider\", None)",
+      "new": "history = self.daemon.scheduler.pipeline.history",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_required_source_is_not_replaced_by_regime_source"
+    },
+    {
+      "id": "missing_instrument",
+      "path": "src/quant_ai/daemon.py",
+      "old": "                if instrument is None:\n                    self._logger.warning(\n                        \"required_book_history_warmup_missing_instrument symbol=%s\", symbol\n                    )\n                    continue",
+      "new": "                if False:\n                    self._logger.warning(\n                        \"required_book_history_warmup_missing_instrument symbol=%s\", symbol\n                    )\n                    continue",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_missing_identity_is_not_fetched_or_marked_ready"
+    },
+    {
+      "id": "symbol_stop_guard",
+      "path": "src/quant_ai/daemon.py",
+      "old": "            for symbol in required:\n                if self._stop_requested:\n                    return",
+      "new": "            for symbol in required:\n                if False:\n                    return",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stop_during_warmup_prevents_later_symbol_fetches"
+    },
+    {
+      "id": "provider_exception_redaction",
+      "path": "src/quant_ai/daemon.py",
+      "old": "self._logger.warning(\n                        \"required_book_history_warmup_failed symbol=%s\", symbol",
+      "new": "self._logger.exception(\n                        \"required_book_history_warmup_failed symbol=%s\", symbol",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_never_logs_external_exception_details[provider]"
+    },
+    {
+      "id": "wiring_exception_redaction",
+      "path": "src/quant_ai/daemon.py",
+      "old": "except Exception:  # noqa: BLE001 - malformed optional wiring must not take runner down\n            self._logger.warning(\"required_book_history_warmup_unavailable\")",
+      "new": "except Exception:  # synthetic mutation\n            self._logger.exception(\"required_book_history_warmup_unavailable\")",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_never_logs_external_exception_details[wiring]"
+    },
+    {
+      "id": "remaining_scope_after_failure",
+      "path": "src/quant_ai/daemon.py",
+      "old": "                        \"required_book_history_warmup_failed symbol=%s\", symbol\n                    )\n                    continue",
+      "new": "                        \"required_book_history_warmup_failed symbol=%s\", symbol\n                    )\n                    return",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_one_failed_symbol_does_not_hide_the_remaining_scope"
+    },
+    {
+      "id": "abstention_diagnostic",
+      "path": "src/quant_ai/daemon.py",
+      "old": "                if not bars:\n                    self._logger.warning(",
+      "new": "                if False:\n                    self._logger.warning(",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_abstention_is_not_invented_readiness"
+    },
+    {
+      "id": "existing_daily_cache",
+      "path": "src/quant_ai/daemon.py",
+      "old": "bars = fetch(instrument, now)",
+      "new": "bars = history.provider._fetch_uncached(instrument, now)",
+      "test": "tests/test_pilot_required_risk_gates.py::test_required_history_warmup_reuses_daily_cache_and_refreshes_next_day"
+    },
+    {
+      "id": "startup_stop_before_warmup",
+      "path": "src/quant_ai/daemon.py",
+      "old": "            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))",
+      "new": "            if True:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_already_stopped_runner_skips_initial_warmup"
+    },
+    {
+      "id": "startup_warmup_wiring",
+      "path": "src/quant_ai/daemon.py",
+      "old": "            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))",
+      "new": "            if not self._stop_requested:\n                pass",
+      "test": "tests/test_pilot_required_risk_gates.py::test_off_hours_runner_start_warms_required_history_before_telemetry"
+    },
+    {
+      "id": "startup_off_event_loop",
+      "path": "src/quant_ai/daemon.py",
+      "old": "await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))",
+      "new": "self._warm_required_book_history(_as_utc(self.clock()))",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_history_wait_keeps_event_loop_and_broker_lock_available[True]"
+    },
+    {
+      "id": "cadence_off_event_loop",
+      "path": "src/quant_ai/daemon.py",
+      "old": "await asyncio.to_thread(self._warm_required_book_history, current)",
+      "new": "self._warm_required_book_history(current)",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_history_wait_keeps_event_loop_and_broker_lock_available[False]"
+    },
+    {
+      "id": "cadence_warmup_wiring",
+      "path": "src/quant_ai/daemon.py",
+      "old": "await asyncio.to_thread(self._warm_required_book_history, current)",
+      "new": "pass",
+      "test": "tests/test_pilot_required_risk_gates.py::test_aligned_cadence_refreshes_required_history_before_run"
+    },
+    {
+      "id": "startup_stop_after_warmup",
+      "path": "src/quant_ai/daemon.py",
+      "old": "            if self._stop_requested:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())",
+      "new": "            if False:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stopped_startup_does_not_launch_cadence"
+    },
+    {
+      "id": "cadence_stop_after_warmup",
+      "path": "src/quant_ai/daemon.py",
+      "old": "await asyncio.to_thread(self._warm_required_book_history, current)\n                if self._stop_requested:\n                    return",
+      "new": "await asyncio.to_thread(self._warm_required_book_history, current)\n                if False:\n                    return",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cadence_uses_post_warmup_clock_and_honors_stop[True]"
+    },
+    {
+      "id": "post_warmup_execution_clock",
+      "path": "src/quant_ai/daemon.py",
+      "old": "                current = _as_utc(self.clock())\n                await self.daemon.run_once(current)",
+      "new": "                # deliberately reuse pre-network clock\n                await self.daemon.run_once(current)",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cadence_uses_post_warmup_clock_and_honors_stop[False]"
+    },
+    {
+      "id": "protection_before_initial_io",
+      "path": "src/quant_ai/daemon.py",
+      "old": "    async def start(self) -> None:\n        # Protection and market streams must become live before any optional provider I/O.\n        # History warm-up runs off the event loop while telemetry remains fail-closed until\n        # real cached evidence exists.\n        protection = Thread(target=self._protect, name=\"pramana-protection\", daemon=True)\n        protection.start()\n        supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]\n        cadence_task: asyncio.Task[None] | None = None\n        try:\n            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))\n            if self._stop_requested:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())\n            await cadence_task\n        finally:\n            self._stop_requested = True\n            self._protection_stop.set()\n            protection.join(timeout=10)\n            for task in supervisors:\n                task.cancel()\n            await asyncio.gather(*supervisors, return_exceptions=True)\n            await self._stop_streams()\n\n",
+      "new": "    async def start(self) -> None:\n        # Protection and market streams must become live before any optional provider I/O.\n        # History warm-up runs off the event loop while telemetry remains fail-closed until\n        # real cached evidence exists.\n        protection = Thread(target=self._protect, name=\"pramana-protection\", daemon=True)\n        supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]\n        cadence_task: asyncio.Task[None] | None = None\n        try:\n            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))\n            protection.start()\n            if self._stop_requested:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())\n            await cadence_task\n        finally:\n            self._stop_requested = True\n            self._protection_stop.set()\n            protection.join(timeout=10)\n            for task in supervisors:\n                task.cancel()\n            await asyncio.gather(*supervisors, return_exceptions=True)\n            await self._stop_streams()\n\n",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_protection_starts_while_initial_history_request_is_stalled"
+    },
+    {
+      "id": "streams_before_initial_io",
+      "path": "src/quant_ai/daemon.py",
+      "old": "    async def start(self) -> None:\n        # Protection and market streams must become live before any optional provider I/O.\n        # History warm-up runs off the event loop while telemetry remains fail-closed until\n        # real cached evidence exists.\n        protection = Thread(target=self._protect, name=\"pramana-protection\", daemon=True)\n        protection.start()\n        supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]\n        cadence_task: asyncio.Task[None] | None = None\n        try:\n            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))\n            if self._stop_requested:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())\n            await cadence_task\n        finally:\n            self._stop_requested = True\n            self._protection_stop.set()\n            protection.join(timeout=10)\n            for task in supervisors:\n                task.cancel()\n            await asyncio.gather(*supervisors, return_exceptions=True)\n            await self._stop_streams()\n\n",
+      "new": "    async def start(self) -> None:\n        # Protection and market streams must become live before any optional provider I/O.\n        # History warm-up runs off the event loop while telemetry remains fail-closed until\n        # real cached evidence exists.\n        protection = Thread(target=self._protect, name=\"pramana-protection\", daemon=True)\n        protection.start()\n        supervisors = []\n        cadence_task: asyncio.Task[None] | None = None\n        try:\n            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))\n            supervisors.extend(asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams)\n            if self._stop_requested:\n                return\n            cadence_task = asyncio.create_task(self._run_aligned_cadence())\n            await cadence_task\n        finally:\n            self._stop_requested = True\n            self._protection_stop.set()\n            protection.join(timeout=10)\n            for task in supervisors:\n                task.cancel()\n            await asyncio.gather(*supervisors, return_exceptions=True)\n            await self._stop_streams()\n\n",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stream_supervisor_runs_before_initial_history_completes"
+    },
+    {
+      "id": "startup_warmup_inside_cleanup",
+      "path": "src/quant_ai/daemon.py",
+      "old": "        try:\n            if not self._stop_requested:\n                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))",
+      "new": "        if not self._stop_requested:\n            await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))\n        try:\n            pass",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cancelled_startup_cleans_up_and_stops_later_requests"
+    }
+  ]
+}
