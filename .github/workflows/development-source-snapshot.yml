@@ -1,0 +1,27 @@
+name: Development source snapshot
+on:
+  push:
+    branches: [ci/source-snapshot-47e2d5c-20260918]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 47e2d5c28370a7bdab75c08ff4aca2c0935ffdf3
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: |
+          test "$(git rev-parse HEAD)" = 47e2d5c28370a7bdab75c08ff4aca2c0935ffdf3
+          mkdir -p "$RUNNER_TEMP/source-snapshot"
+          git archive --format=zip HEAD > "$RUNNER_TEMP/source-snapshot/source.zip"
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/source-snapshot/identity.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-source-47e2d5c
+          path: ${{ runner.temp }}/source-snapshot/
+          retention-days: 1
+          if-no-files-found: error
