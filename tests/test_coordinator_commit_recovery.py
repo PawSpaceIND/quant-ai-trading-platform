@@ -323,7 +323,11 @@ def test_recovery_fence_does_not_disable_independent_protective_exit(tmp_path, m
     try:
         prep = h.coordinator.prepare(make_request(h.broker))
         h.coordinator.execute_due(prep.program.program_id, now=NOW)
-        another = h.coordinator.prepare(make_request(h.broker, p=proposal(decision_id="uncertain")))
+        next_request = make_request(h.broker, p=proposal(decision_id="uncertain"))
+        # Include the first committed holding as well as the next purchase.
+        next_request = replace(next_request, projected_factor_positions=h.factor_provider(
+            next_request.proposal, next_request.portfolio))
+        another = h.coordinator.prepare(next_request)
         def crash(*args, **kwargs):
             raise SimulatedCrash()
         with monkeypatch.context() as patch:

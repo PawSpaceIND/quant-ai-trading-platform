@@ -89,9 +89,11 @@ class CalibratedEdgeGate:
         cost = evidence.expected_cost_return
         break_even = (loss + cost) / (win + loss)
         expectancy = conservative * win - (Decimal(1) - conservative) * loss - cost
-        payoff_ratio = win / loss
-        raw_kelly = conservative - (Decimal(1) - conservative) / payoff_ratio
-        raw_kelly = max(Decimal(0), raw_kelly)
+        # Costs reduce a winning payoff and increase a losing payoff. This is
+        # a loss-budget fraction, not a fraction of cash to invest at full notional.
+        net_win, net_loss = win - cost, loss + cost
+        raw_kelly = (max(Decimal(0), conservative - (Decimal(1) - conservative)
+                         * net_loss / net_win) if net_win > 0 else Decimal(0))
         recommended = min(
             self.policy.max_risk_fraction,
             raw_kelly * self.policy.kelly_fraction,

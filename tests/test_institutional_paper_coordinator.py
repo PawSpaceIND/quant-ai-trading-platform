@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -337,10 +338,15 @@ def test_due_slice_stops_when_factor_concentration_deteriorates(tmp_path):
     h = Harness(tmp_path)
     try:
         request = make_request(h.broker, p=proposal(decision_id="factor-drift"))
+        request = replace(request, factor_policy=replace(request.factor_policy,
+            factor_caps={"MARKET": D(".005"), "TECH": D(".005")}))
         prep = h.coordinator.prepare(request)
         assert prep.approved and prep.program is not None
-        h.coordinator.factor_position_provider = (
-            lambda _order, _snapshot: factor_positions(value="70000", quantity=700)
+        # The same real ten-share projection now has higher factor loadings.
+        # Fabricating 700 shares would be a projection defect, not factor stress.
+        h.coordinator.factor_position_provider = lambda order, snapshot: (
+            replace(h.factor_provider(order, snapshot)[0],
+                    factor_loadings={"MARKET": D(1), "TECH": D(1)}),
         )
         result = h.coordinator.execute_due(prep.program.program_id, now=NOW)
         assert result.stage is InstitutionalStage.FAILED
