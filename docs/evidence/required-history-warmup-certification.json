@@ -1,0 +1,546 @@
+{
+  "baseline_linux": {
+    "full_log_read": true,
+    "job": 105301736525,
+    "passed": 2941,
+    "run": 35250609545,
+    "seconds": 631.54,
+    "subtests": 14,
+    "warnings": 1
+  },
+  "existing_adapter_mutations_passed": 57,
+  "existing_exit_cases_passed": 7,
+  "existing_risk_mutations_passed": 51,
+  "external_scope": {
+    "aws_commands": 0,
+    "deployment": false,
+    "live_money_enabled": false,
+    "production_credentials_read_or_changed": false,
+    "real_provider_requests": 0
+  },
+  "final_mac": {
+    "combined_passed": 3021,
+    "errors": 0,
+    "failures": 0,
+    "institutional_acceptance_passed": 17,
+    "ordinary_passed": 2982,
+    "pilot_acceptance_passed": 22,
+    "seconds": 532.36,
+    "skipped": 0,
+    "subtests_passed": 14,
+    "warnings": 2
+  },
+  "lifecycle_behavior_cases": 19,
+  "limitations": [
+    "Actual AWS in-process historical-cache readiness remains unverified until owner rollout.",
+    "One already-running synchronous request may complete after stop/cancellation; no subsequent symbol request is started.",
+    "Timing tests use finite synthetic blocking requests; no exhaustive OS scheduling guarantee.",
+    "An interim mixed status-inspection call was tool-blocked and was not retried; completed JUnit and this publication evidence are separately collected.",
+    "No independent alert-delivery or full-host restoration acceptance is claimed."
+  ],
+  "main": "cd824a0449de9d05519d402b407bf3d62873742b",
+  "mutations": [
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "callable_fetch",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_noncallable_fetch_reports_specific_refusal"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "symbol_stop_guard",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stop_during_warmup_prevents_later_symbol_fetches"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "missing_instrument",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_missing_identity_is_not_fetched_or_marked_ready"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "required_provider_identity",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_required_source_is_not_replaced_by_regime_source"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "startup_stop_before_warmup",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_already_stopped_runner_skips_initial_warmup"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "startup_stop_after_warmup",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stopped_startup_does_not_launch_cadence"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "streams_before_initial_io",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_stream_supervisor_runs_before_initial_history_completes"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "post_warmup_execution_clock",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cadence_uses_post_warmup_clock_and_honors_stop[False]"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "protection_before_initial_io",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_protection_starts_while_initial_history_request_is_stalled"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "startup_warmup_inside_cleanup",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cancelled_startup_cleans_up_and_stops_later_requests"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "cadence_stop_after_warmup",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_cadence_uses_post_warmup_clock_and_honors_stop[True]"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "existing_daily_cache",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_pilot_required_risk_gates.py::test_required_history_warmup_reuses_daily_cache_and_refreshes_next_day"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "provider_exception_redaction",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_never_logs_external_exception_details[provider]"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "known_adapter_only",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_ignores_unrecognized_history_adapter"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "remaining_scope_after_failure",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_one_failed_symbol_does_not_hide_the_remaining_scope"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "abstention_diagnostic",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_abstention_is_not_invented_readiness"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "required_only",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_does_not_enable_optional_history"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "wiring_exception_redaction",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_warmup_never_logs_external_exception_details[wiring]"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "cadence_warmup_wiring",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_pilot_required_risk_gates.py::test_aligned_cadence_refreshes_required_history_before_run"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "startup_warmup_wiring",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_pilot_required_risk_gates.py::test_off_hours_runner_start_warms_required_history_before_telemetry"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "startup_off_event_loop",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_history_wait_keeps_event_loop_and_broker_lock_available[True]"
+    },
+    {
+      "certified": true,
+      "checkout_unchanged": true,
+      "control": {
+        "errors": 0,
+        "exit": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 1
+      },
+      "copy_restored": true,
+      "id": "cadence_off_event_loop",
+      "mutant": {
+        "errors": 0,
+        "exit": 1,
+        "failures": 1,
+        "skipped": 0,
+        "tests": 1
+      },
+      "path": "src/quant_ai/daemon.py",
+      "test": "tests/test_required_history_warmup_lifecycle.py::test_history_wait_keeps_event_loop_and_broker_lock_available[False]"
+    }
+  ],
+  "new_mutation_cases": 22,
+  "new_tests_against_initial_head": 41,
+  "new_tests_against_parent": 34,
+  "parent": "2e12e43a8e65e591794964ed4d2e1e4b37e4d61d",
+  "peer_regression_functions_preserved": true,
+  "production_source_identical_to_parent": true,
+  "recorded_original_lifecycle_failures": {
+    "errors": 0,
+    "failed": 7,
+    "not_rerun_on_original_source_this_turn": true,
+    "skipped": 0
+  },
+  "reviewed_initial_head": "fdacd0a253fcc0c0ac36b22e467d57f37badd54e",
+  "schema": "pramana.warmup_lifecycle_verification.v1",
+  "source_hashes_match_at_full_completion": true,
+  "source_manifest_files": 521,
+  "source_manifest_sha256": "2e79f185d8929517560b75730fa5acef12e3a3dd162680ec682e3dc25d662dd9",
+  "source_manifest_storage": "digest_only_to_avoid_secret-scanner_false_positives_from_sensitive_filenames"
+}
