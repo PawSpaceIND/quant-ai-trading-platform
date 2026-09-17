@@ -142,6 +142,7 @@ def test_sabotage_is_caught_by_a_passing_regression(tmp_path, name, nodeid):
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", nodeid, f"--junitxml={evidence}"],
             cwd=isolated, env=environment, capture_output=True, text=True, timeout=120,
+            check=False,
         )
         (tmp_path / f"{label}.log").write_text(result.stdout + result.stderr)
         assert evidence.exists(), result.stdout + result.stderr
