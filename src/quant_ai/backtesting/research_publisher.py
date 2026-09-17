@@ -303,11 +303,14 @@ def _assert_unseen(register: Path, study: str, holdout, instrument: Instrument) 
         _require(not overlaps, "research_holdout_previously_observed")
 
 
-def _register_snapshot(register: Path, study: str) -> tuple[dict, list[dict], str]:
+def _register_snapshot(register: Path, study: str, *,
+                       expected_content: bytes | None = None) -> tuple[dict, list[dict], str]:
     original = register.read_bytes()
     summary = register_summary(register, study=study)
     records = read_records(register)
-    _require(register.read_bytes() == original, "research_trial_register_changed_during_read")
+    _require(register.read_bytes() == original
+             and (expected_content is None or original == expected_content),
+             "research_trial_register_changed_during_read")
     return summary, records, _sha(original)
 
 
@@ -347,10 +350,13 @@ def _publish_research(bars, *, instrument, register, output, now,
     _require(len(holdout) - 1 >= MINIMUM_RATIO_OBSERVATIONS, "research_holdout_too_short")
     _require(register.resolve() != output.resolve(), "research_output_overwrites_register")
     study = f"replay:{instrument.symbol}:{instrument.market.value}"
+    # Pin before inspecting history. A legacy writer can append a valid overlapping
+    # trial after _assert_unseen, even while this publisher holds its advisory lock.
+    prior_content = register.read_bytes()
     prior = register_summary(register, study=study)
     _require(prior["candidate_trials"] > 0, "research_existing_study_required")
     _assert_unseen(register, study, holdout, instrument)
-    record_trials(
+    reservation = record_trials(
         register, study=study, candidate_trials=len(LOOKBACKS),
         configuration={"command": "publish-research", "protocol": PROTOCOL,
                        "start": bars[0].timestamp.isoformat(), "end": bars[-1].timestamp.isoformat(),
@@ -358,7 +364,11 @@ def _publish_research(bars, *, instrument, register, output, now,
                        "holdout": _period(holdout), "selection": "highest_training_net_return"},
         data_sha256=bar_digest(bars), now=moment,
     )
-    trials, records, register_sha256 = _register_snapshot(register, study)
+    # evidence_log appends one canonical JSON record and newline. Trust only that
+    # exact extension of the screened bytes, not an arbitrary post-write snapshot.
+    trials, records, register_sha256 = _register_snapshot(
+        register, study, expected_content=prior_content + _canonical(reservation) + b"\n",
+    )
     evaluator = BaselineEvaluator(instrument=instrument, starting_capital=STARTING_CAPITAL)
     scored, training_results = [], []
     for lookback in LOOKBACKS:
