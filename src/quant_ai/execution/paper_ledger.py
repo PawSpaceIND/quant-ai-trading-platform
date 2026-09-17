@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -219,6 +221,16 @@ class PaperBrokerService(BrokerAdapter):
                 CREATE TABLE IF NOT EXISTS paper_protection_evidence (
                     order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS paper_protective_fill_outbox (
+                    order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                    receipt_sha256 TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS protective_outbox_update_blocked
+                BEFORE UPDATE ON paper_protective_fill_outbox
+                BEGIN SELECT RAISE(ABORT,'Protective outbox is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS protective_outbox_delete_blocked
+                BEFORE DELETE ON paper_protective_fill_outbox
+                BEGIN SELECT RAISE(ABORT,'Protective outbox is append-only'); END;
                 CREATE TABLE IF NOT EXISTS paper_decision_evidence (
                     order_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, payload TEXT NOT NULL
                 );
@@ -740,7 +752,9 @@ class PaperBrokerService(BrokerAdapter):
                     payload["fill"]["instrumentIdentity"] = json.loads(order_identity)
                 if idempotency_key is not None:
                     payload["idempotency_key"] = idempotency_key
+                if idempotency_key is not None or evidence.get("schema") == "pramana.protective_exit.v1":
                     # Reserved broker-owned facts: never trust caller-supplied cost basis.
+                    # Independent exits record the same receipt, but never call accounting.
                     payload["paper_submission_receipt"] = {
                         "schema": "pramana.paper_submission_receipt.v1",
                         "orderIntent": canonical_order_intent(order),
@@ -750,8 +764,12 @@ class PaperBrokerService(BrokerAdapter):
                     }
                 # Names are fixed here, never taken from the evidence or an API parameter.
                 table = "paper_decision_evidence" if evidence.get("schema") == "pramana.swarm_fill.v1" else "paper_protection_evidence"
+                serialized = json.dumps(payload, allow_nan=False, sort_keys=True)
                 self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?)",
-                    (order_id, tenant_id, json.dumps(payload, allow_nan=False, sort_keys=True)))
+                    (order_id, tenant_id, serialized))
+                if table == "paper_protection_evidence":
+                    self._connection.execute("INSERT INTO paper_protective_fill_outbox VALUES (?,?,?)",
+                        (order_id, tenant_id, hashlib.sha256(serialized.encode()).hexdigest()))
                 if cooldown_until is not None:
                     self._connection.execute("INSERT OR REPLACE INTO paper_exit_cooldowns VALUES (?,?,?,?,?)",
                         (tenant_id, order.symbol, order.market.value, order.asset_class.value, cooldown_until.isoformat()))
@@ -783,58 +801,106 @@ class PaperBrokerService(BrokerAdapter):
             row = rows[0]
             if row["order_id"] is None or row["claim_tenant"] != tenant_id:
                 raise ValueError("paper_receipt_ledger_or_claim_missing")
-            payload = json.loads(row["receipt_payload"])
-            receipt = payload.get("paper_submission_receipt")
-            if not isinstance(receipt, dict) or receipt.get("schema") != "pramana.paper_submission_receipt.v1":
-                raise ValueError("paper_receipt_unavailable_for_legacy_fill")
-            order = order_from_snapshot(receipt["orderIntent"])
-            entry = self._decode_ledger_entry(row)
-            if (order.tenant_id, order.symbol, order.market, order.asset_class, order.side, order.quantity) != (
-                entry.tenant_id, entry.symbol, entry.market, entry.asset_class, entry.side, entry.quantity
-            ) or _instrument_identity_for_order(order) != entry.instrument_identity:
-                raise ValueError("paper_receipt_order_mismatch")
-            if (entry.status != "FILLED" or entry.notional != entry.fill_price * entry.quantity
-                    or payload.get("order_id") != entry.order_id or payload.get("tenant_id") != tenant_id
-                    or payload.get("subject") != entry.symbol
-                    or datetime.fromisoformat(payload["filled_at"]) != entry.created_at
-                    or payload["fill"]["quantity"] != entry.quantity
-                    or finite_amount(payload["fill"]["price"], "paper_receipt_price_invalid", positive=True) != entry.fill_price):
-                raise ValueError("paper_receipt_fill_mismatch")
-            qty, average = receipt.get("priorQuantity"), receipt.get("priorAverage")
-            if type(qty) is not int or not 0 <= qty <= 2**53 - 1:
-                raise ValueError("paper_receipt_prior_quantity_invalid")
-            basis = None if average is None else finite_amount(average, "paper_receipt_prior_average_invalid", positive=True)
-            if (qty == 0) != (basis is None) or qty and receipt.get("priorInstrumentIdentity") != entry.instrument_identity:
-                raise ValueError("paper_receipt_prior_position_invalid")
-            if order.side is Side.SELL and qty < order.quantity:
-                raise ValueError("paper_receipt_prior_position_insufficient")
-            # Independently replay this position's earlier fills. Receipt JSON alone is
-            # not proof of historical cost basis, particularly after a full liquidation.
-            previous = self._connection.execute(
-                """SELECT * FROM paper_ledger WHERE tenant_id=? AND symbol=?
-                   AND market=? AND asset_class=? AND id<? ORDER BY id""",
-                (tenant_id, entry.symbol, entry.market.value, entry.asset_class.value, row["id"]),
-            ).fetchall()
-            held, average, identity = 0, Decimal(0), None
-            for prior_row in previous:
-                prior = self._decode_ledger_entry(prior_row)
-                if prior.status != "FILLED":
-                    raise ValueError("paper_receipt_prior_ledger_mismatch")
-                if held and prior.instrument_identity != identity:
-                    raise ValueError("paper_receipt_prior_ledger_mismatch")
-                if prior.side is Side.BUY:
-                    average = (average * held + prior.notional) / (held + prior.quantity)
-                    held += prior.quantity
-                    identity = prior.instrument_identity
-                else:
-                    if prior.quantity > held:
-                        raise ValueError("paper_receipt_prior_ledger_mismatch")
-                    held -= prior.quantity
-                    if not held:
-                        average, identity = Decimal(0), None
-            if qty != held or basis != (average if held else None) or receipt.get("priorInstrumentIdentity") != identity:
+            return self._validated_fill_receipt(row, tenant_id)
+
+    @contextmanager
+    def accounting_read_snapshot(self):
+        """Consistent local ledger/evidence reads; never hold this while writing accounting."""
+        with self._lock:
+            name = "accounting_read_" + uuid4().hex
+            self._connection.execute(f"SAVEPOINT {name}")
+            try:
+                yield
+            finally:
+                self._connection.execute(f"RELEASE SAVEPOINT {name}")
+
+    def protected_fill_ids(self, tenant_id: str) -> tuple[str, ...]:
+        with self.accounting_read_snapshot():
+            evidence = {str(row[0]) for row in self._connection.execute(
+                "SELECT order_id FROM paper_protection_evidence WHERE tenant_id=?", (tenant_id,),
+            ).fetchall()}
+            recorded = tuple(str(row[0]) for row in self._connection.execute(
+                "SELECT order_id FROM paper_protective_fill_outbox WHERE tenant_id=? ORDER BY rowid",
+                (tenant_id,),
+            ).fetchall())
+            if evidence != set(recorded):
+                raise ValueError("protective_accounting_outbox_evidence_mismatch")
+            return recorded
+
+    def protected_fill_receipt(self, order_id: str, tenant_id: str) -> PaperSubmissionReceipt:
+        """Read exact committed exit evidence; no reconstruction of legacy approval."""
+        with self.accounting_read_snapshot():
+            row = self._connection.execute(
+                """SELECT l.*, e.payload AS receipt_payload, o.receipt_sha256
+                FROM paper_protection_evidence e
+                LEFT JOIN paper_ledger l ON l.order_id=e.order_id AND l.tenant_id=e.tenant_id
+                LEFT JOIN paper_protective_fill_outbox o ON o.order_id=e.order_id AND o.tenant_id=e.tenant_id
+                WHERE e.order_id=? AND e.tenant_id=?""", (order_id, tenant_id),
+            ).fetchone()
+            if row is None or row["order_id"] is None:
+                raise ValueError("protective_receipt_ledger_or_evidence_missing")
+            if row["receipt_sha256"] != hashlib.sha256(row["receipt_payload"].encode()).hexdigest():
+                raise ValueError("protective_receipt_outbox_hash_mismatch")
+            receipt = self._validated_fill_receipt(row, tenant_id)
+            if (receipt.order.side is not Side.SELL
+                    or receipt.evidence.get("schema") != "pramana.protective_exit.v1"
+                    or receipt.evidence.get("event_type") != "protective_exit"):
+                raise ValueError("protective_receipt_authority_invalid")
+            return receipt
+
+    def _validated_fill_receipt(self, row, tenant_id: str) -> PaperSubmissionReceipt:
+        payload = json.loads(row["receipt_payload"])
+        receipt = payload.get("paper_submission_receipt")
+        if not isinstance(receipt, dict) or receipt.get("schema") != "pramana.paper_submission_receipt.v1":
+            raise ValueError("paper_receipt_unavailable_for_legacy_fill")
+        order = order_from_snapshot(receipt["orderIntent"])
+        entry = self._decode_ledger_entry(row)
+        if (order.tenant_id, order.symbol, order.market, order.asset_class, order.side, order.quantity) != (
+            entry.tenant_id, entry.symbol, entry.market, entry.asset_class, entry.side, entry.quantity
+        ) or _instrument_identity_for_order(order) != entry.instrument_identity:
+            raise ValueError("paper_receipt_order_mismatch")
+        if (entry.status != "FILLED" or entry.notional != entry.fill_price * entry.quantity
+                or payload.get("order_id") != entry.order_id or payload.get("tenant_id") != tenant_id
+                or payload.get("subject") != entry.symbol
+                or datetime.fromisoformat(payload["filled_at"]) != entry.created_at
+                or payload["fill"]["quantity"] != entry.quantity
+                or finite_amount(payload["fill"]["price"], "paper_receipt_price_invalid", positive=True) != entry.fill_price):
+            raise ValueError("paper_receipt_fill_mismatch")
+        qty, average = receipt.get("priorQuantity"), receipt.get("priorAverage")
+        if type(qty) is not int or not 0 <= qty <= 2**53 - 1:
+            raise ValueError("paper_receipt_prior_quantity_invalid")
+        basis = None if average is None else finite_amount(average, "paper_receipt_prior_average_invalid", positive=True)
+        if (qty == 0) != (basis is None) or qty and receipt.get("priorInstrumentIdentity") != entry.instrument_identity:
+            raise ValueError("paper_receipt_prior_position_invalid")
+        if order.side is Side.SELL and qty < order.quantity:
+            raise ValueError("paper_receipt_prior_position_insufficient")
+        # Independently replay this position's earlier fills. Receipt JSON alone is
+        # not proof of historical cost basis, particularly after a full liquidation.
+        previous = self._connection.execute(
+            """SELECT * FROM paper_ledger WHERE tenant_id=? AND symbol=?
+               AND market=? AND asset_class=? AND id<? ORDER BY id""",
+            (tenant_id, entry.symbol, entry.market.value, entry.asset_class.value, row["id"]),
+        ).fetchall()
+        held, average, identity = 0, Decimal(0), None
+        for prior_row in previous:
+            prior = self._decode_ledger_entry(prior_row)
+            if prior.status != "FILLED":
                 raise ValueError("paper_receipt_prior_ledger_mismatch")
-            return PaperSubmissionReceipt(entry, order, qty, basis, payload)
+            if held and prior.instrument_identity != identity:
+                raise ValueError("paper_receipt_prior_ledger_mismatch")
+            if prior.side is Side.BUY:
+                average = (average * held + prior.notional) / (held + prior.quantity)
+                held += prior.quantity
+                identity = prior.instrument_identity
+            else:
+                if prior.quantity > held:
+                    raise ValueError("paper_receipt_prior_ledger_mismatch")
+                held -= prior.quantity
+                if not held:
+                    average, identity = Decimal(0), None
+        if qty != held or basis != (average if held else None) or receipt.get("priorInstrumentIdentity") != identity:
+            raise ValueError("paper_receipt_prior_ledger_mismatch")
+        return PaperSubmissionReceipt(entry, order, qty, basis, payload)
 
     def cancel(self, order_id: str, tenant_id: str = "default") -> bool:
         with self._lock, self._connection:

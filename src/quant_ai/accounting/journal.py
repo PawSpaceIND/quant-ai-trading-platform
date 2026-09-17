@@ -13,12 +13,15 @@ import os
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
+from threading import RLock
 from typing import Self
+from uuid import uuid4
 
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
 _CURRENCY = re.compile(r"[A-Z]{3}")
@@ -120,6 +123,7 @@ class TradingJournal:
     def __init__(self, path: str | Path, *, base_currency: str) -> None:
         if not _CURRENCY.fullmatch(base_currency):
             raise ValueError("invalid_base_currency")
+        self._lock = RLock()
         self.base_currency = base_currency
         self.path = Path(path)
         if str(self.path) != ":memory:":
@@ -143,6 +147,25 @@ class TradingJournal:
 
     def close(self) -> None:
         self.db.close()
+
+    @contextmanager
+    def atomic(self):
+        """Serialize postings and preserve outer rollback across nested domain writes."""
+        with self._lock:
+            nested = self.db.in_transaction
+            name = "journal_" + uuid4().hex
+            self.db.execute(f"SAVEPOINT {name}" if nested else "BEGIN IMMEDIATE")
+            try:
+                yield
+                self.db.execute(f"RELEASE SAVEPOINT {name}" if nested else "COMMIT")
+            except BaseException:
+                if self.db.in_transaction:
+                    if nested:
+                        self.db.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                        self.db.execute(f"RELEASE SAVEPOINT {name}")
+                    else:
+                        self.db.rollback()
+                raise
 
     def _schema(self) -> None:
         with self.db:
@@ -196,7 +219,7 @@ class TradingJournal:
                     )
 
     def register_account(self, account: Account) -> None:
-        with self.db:
+        with self.atomic():
             row = self.db.execute(
                 "SELECT account_type FROM trading_accounts WHERE code=?", (account.code,)
             ).fetchone()
@@ -251,7 +274,7 @@ class TradingJournal:
         digest = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        with self.db:
+        with self.atomic():
             existing = self.db.execute(
                 "SELECT payload_sha256 FROM trading_transactions WHERE transaction_id=?",
                 (transaction_id,),

@@ -41,3 +41,20 @@ No-receipt dispatch uncertainty stays RECOVERY_REQUIRED and blocks new coordinat
 dispatch for the tenant; it is not permission to retry. Legacy receipt migration,
 rollback support for the new state, independent-exit accounting integration and target-host
 acceptance remain explicit open requirements. Exact source and CI evidence are on PR #126.
+
+
+## Subsequent independent-exit accounting closure
+
+The scoped coordinator path now mirrors committed protective exits into the existing
+same-currency accounting journal, outside the emergency execution path. Durable
+append-only exit obligations detect missing evidence; verified prior entries and exact
+recorded cost/fees are required. New coordinator slices wait on unresolved accounting.
+See `PROTECTIVE_EXIT_ACCOUNTING.md` for the deliberate single-currency/legacy boundaries.
+
+Local evidence: 25 synthetic regressions, 126 focused passes, fresh baseline 1667/13 and
+candidate 1692/13 with identical failure identities. All 412 candidate Python files were
+unchanged during the full run. Removing mirroring, outer fee-posting atomicity or the
+missing-evidence obligation guard made the relevant tests fail; restored code passed.
+Exact published SHA and Linux CI are recorded in the PR certification comment.
+Default-daemon rollout, reviewed migration/rollback, other capability and external gates
+remain open; this does not grant live execution or establish a profitable strategy.

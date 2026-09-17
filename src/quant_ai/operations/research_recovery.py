@@ -27,7 +27,7 @@ TABLES = {
     "portfolio_journal": {"simulation_config", "simulation_events"},
     "company_events": {"event_revisions", "feed_captures", "symbol_mappings"},
 }
-REPLAY_OPTIONAL = {"risk_daily_equity", "risk_control_state", "paper_replay_valuations", "paper_derivative_margin"}
+REPLAY_OPTIONAL = {"paper_protective_fill_outbox", "risk_daily_equity", "risk_control_state", "paper_replay_valuations", "paper_derivative_margin"}
 STORAGE = {**dict.fromkeys(TABLES, "sqlite"), "file": "file", "directory": "directory"}
 
 

@@ -14,6 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
+from quant_ai.accounting.protective import ProtectiveAccountingReport, ProtectiveExitAccounting
 from quant_ai.accounting.trading import TradingAccounting
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.brokers.adapter import BrokerPosition
@@ -309,6 +310,9 @@ class InstitutionalPaperCoordinator:
         if self.programs.recovery_required(request.tenant_id):
             return self._recovery_result(program_id, (), "pending_execution_or_accounting_recovery")
         for slice_ in self.programs.due(program_id, now):
+            accounting_status = self.reconcile_protective_accounting(currency=request.currency)
+            if accounting_status.status not in {"matched", "not_required"}:
+                return self._recovery_result(program_id, tuple(executed), accounting_status.reason)
             child = replace(parent, quantity=slice_.quantity)
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
             client_id = self.oms.client_order_id(child, decision_id)
@@ -547,6 +551,13 @@ class InstitutionalPaperCoordinator:
                 or request_fingerprint(request) != program.runtime_context_sha256):
             raise ValueError("execution_program_runtime_context_mismatch")
 
+    def reconcile_protective_accounting(self, *, currency: str) -> ProtectiveAccountingReport:
+        """Mirror committed exits outside the independent protection/execution path."""
+        try:
+            return ProtectiveExitAccounting(self.broker, self.accounting, currency=currency).reconcile()
+        except (TypeError, ValueError) as error:
+            return ProtectiveAccountingReport("unavailable", (), str(error))
+
     def reconcile_accounting(self, program_id: str) -> InstitutionalExecutionResult:
         request = self._requests.get(program_id)
         parent = self._orders.get(program_id)
@@ -607,6 +618,9 @@ class InstitutionalPaperCoordinator:
                 broker_order_id=slice_.broker_order_id,
             )
             finalized.append(slice_.sequence)
+        accounting_status = self.reconcile_protective_accounting(currency=request.currency)
+        if accounting_status.status not in {"matched", "not_required"}:
+            return self._recovery_result(program_id, tuple(finalized), accounting_status.reason)
         program = self.programs.get(program_id)
         if unresolved or self.programs.recovery_required(request.tenant_id):
             return self._recovery_result(program_id, tuple(finalized), "submission_outcome_unresolved")
