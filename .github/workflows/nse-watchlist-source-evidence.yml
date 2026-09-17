@@ -18,10 +18,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - name: Preserve exact tracked source and public-source responses
+      - name: Preserve exact tracked source and publisher response
         shell: bash
         run: |
           set -euo pipefail
@@ -31,22 +28,13 @@ jobs:
           git archive --format=tar HEAD > "$out/source.tar"
           date -u +%Y-%m-%dT%H:%M:%SZ > "$out/retrieved-at.txt"
           nse=0
-          kite=0
           curl --http1.1 --fail --silent --show-error --proto '=https' --max-redirs 0 \
             --retry 0 --connect-timeout 10 --max-time 30 --max-filesize 200000 \
-            'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv' \
+            'https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv' \
             --output "$out/nifty50.csv" || nse=$?
-          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
-            --retry 0 --connect-timeout 10 --max-time 30 --max-filesize 10000000 \
-            'https://api.kite.trade/instruments/NSE' \
-            --output "$out/kite-nse.csv" || kite=$?
-          printf 'nse_curl_exit=%s\nkite_curl_exit=%s\n' "$nse" "$kite" > "$out/retrieval-status.txt"
+          printf 'nifty_indices_curl_exit=%s\n' "$nse" > "$out/retrieval-status.txt"
           (cd "$out" && sha256sum source.tar revision.txt retrieved-at.txt retrieval-status.txt > checksums.txt)
-          test "$nse" -eq 0 && test "$kite" -eq 0
-      - name: Download public dependencies for isolated offline Python verification
-        if: always()
-        run: |
-          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/nse-watchlist-sources/wheels" anthropic eval-type-backport ruff
+          test "$nse" -eq 0
       - name: Retain source evidence, including explicit retrieval failures
         if: always()
         uses: actions/upload-artifact@v4
