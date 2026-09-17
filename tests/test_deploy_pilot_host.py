@@ -41,18 +41,20 @@ NSE_HOLIDAY = "2026-09-14"
 FAKE_SECRET = "zerodha-access-token-NEVER-PRINT-THIS"
 
 DOCKER_STUB = """#!/usr/bin/env bash
+last=""
+for argument in "$@"; do last="$argument"; done
 printf '%s\\n' "$*" >>"$STUB_LOG"
 if [ "$1" = "compose" ]; then
   case " $* " in
     *" config --services "*) printf '%s\\n' pramana-ghost dashboard market-monitor backup;;
     *" config --quiet "*) exit "${STUB_CONFIG_EXIT:-0}";;
     *" up -d --build "*) echo "stub: rebuilt"; exit "${STUB_UP_EXIT:-0}";;
-    *" ps --all --quiet "*) echo "cid-${*##* }";;
+    *" ps --all --quiet "*) echo "cid-${last}";;
   esac
   exit 0
 fi
 if [ "$1" = "inspect" ]; then
-  seen="$STUB_STATE/${*##* }"
+  seen="$STUB_STATE/${last}"
   if [ -e "$seen" ]; then
     echo "${STUB_STATUS:-running} ${STUB_RESTARTING:-false} ${STUB_RESTARTS_AFTER:-0} ${STUB_HEALTH:-healthy}"
   else

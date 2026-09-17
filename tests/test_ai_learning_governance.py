@@ -6,6 +6,7 @@ import pytest
 from quant_ai.learning.candidates import (
     CandidateStage,
     assess_candidate,
+    candidate_assessment_sha256,
     candidate_stages,
     transition_candidate,
 )
@@ -111,7 +112,11 @@ def test_candidate_registry_is_hash_chained_and_requires_review_for_paper_approv
     with pytest.raises(ValueError, match="requires_named_reviewer"):
         transition_candidate(path, candidate_id="candidate-1", target=CandidateStage.PAPER_APPROVED,
                              evidence_sha256=H, now=NOW + timedelta(seconds=2))
+    # The positive case supplies the same synthetic passing inputs assessed above;
+    # a named reviewer and arbitrary digest alone no longer qualify an approval.
+    candidate_evaluation, strategy_evidence = evaluation(), strategy()
     transition_candidate(path, candidate_id="candidate-1", target=CandidateStage.PAPER_APPROVED,
-                         evidence_sha256=H, reviewer="founder-review",
-                         now=NOW + timedelta(seconds=2))
+                         evidence_sha256=candidate_assessment_sha256(candidate_evaluation, strategy_evidence),
+                         evaluation=candidate_evaluation, strategy_evidence=strategy_evidence,
+                         reviewer="founder-review", now=NOW + timedelta(seconds=2))
     assert candidate_stages(path)["candidate-1"] is CandidateStage.PAPER_APPROVED

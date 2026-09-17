@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import MappingProxyType
 
 from quant_ai.learning.contracts import (
     AccessPlane,
@@ -44,11 +45,26 @@ class KnowledgeAccessController:
         *,
         required_decision_categories: tuple[KnowledgeCategory, ...] = (),
     ) -> None:
+        grants = tuple(grants)
+        if any(not isinstance(grant, SourceGrant) for grant in grants):
+            raise TypeError("knowledge_source_grant_required")
+        if (not isinstance(required_decision_categories, (tuple, list))
+                or any(not isinstance(category, KnowledgeCategory)
+                       for category in required_decision_categories)):
+            raise TypeError("knowledge_required_categories_must_use_declared_enum")
         by_id = {grant.source_id: grant for grant in grants}
         if len(by_id) != len(grants):
             raise ValueError("duplicate_knowledge_source")
-        self.grants = by_id
-        self.required_decision_categories = tuple(dict.fromkeys(required_decision_categories))
+        self._grants = MappingProxyType(by_id)
+        self._required_decision_categories = tuple(dict.fromkeys(required_decision_categories))
+
+    @property
+    def grants(self):
+        return self._grants
+
+    @property
+    def required_decision_categories(self) -> tuple[KnowledgeCategory, ...]:
+        return self._required_decision_categories
 
     def select(
         self,
@@ -57,6 +73,12 @@ class KnowledgeAccessController:
         plane: AccessPlane,
         as_of: datetime,
     ) -> KnowledgeSelection:
+        # str-enums compare equal to raw strings, while `is` checks do not. Refuse
+        # raw planes before membership checks can accidentally skip decision gates.
+        if not isinstance(plane, AccessPlane):
+            raise TypeError("knowledge_plane_must_use_declared_enum")
+        if not isinstance(as_of, datetime):
+            raise TypeError("knowledge_as_of_must_be_datetime")
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("knowledge_as_of_must_be_timezone_aware")
         now = as_of.astimezone(timezone.utc)
@@ -64,6 +86,8 @@ class KnowledgeAccessController:
         rejected: list[KnowledgeRejection] = []
         seen_ids: set[str] = set()
         for item in items:
+            if not isinstance(item, KnowledgeItem):
+                raise TypeError("knowledge_item_contract_required")
             if item.item_id in seen_ids:
                 raise ValueError(f"duplicate_knowledge_item:{item.item_id}")
             seen_ids.add(item.item_id)
@@ -94,9 +118,9 @@ class KnowledgeAccessController:
         if item.available_at.astimezone(timezone.utc) > as_of:
             return "future_evidence"
         if plane in {AccessPlane.TRAINING, AccessPlane.DECISION}:
-            if not grant.point_in_time:
+            if grant.point_in_time is not True:
                 return "source_not_point_in_time"
-            if grant.rights_status is RightsStatus.UNVERIFIED:
+            if grant.rights_status not in {RightsStatus.INTERNAL, RightsStatus.VERIFIED}:
                 return "source_rights_unverified"
         if plane is AccessPlane.DECISION and grant.max_age_seconds is not None:
             age = (as_of - item.observed_at.astimezone(timezone.utc)).total_seconds()

@@ -21,14 +21,17 @@ from typing import Self
 from uuid import uuid4
 
 from quant_ai.domain.models import OrderIntent
+from quant_ai.instruments.identity import stored_identity
 from quant_ai.orders.execution_identity import (
     assert_fill_source,
     execution_identity,
     external_fill_id,
 )
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.state import OrderLifecycle, OrderState
 
 SCHEMA_VERSION = 1
+PAPER_RECOVERY_SCHEMA_VERSION = 2
 _SHA = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 TERMINAL = frozenset({OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED})
@@ -58,6 +61,25 @@ def _decimal(value: object, name: str, *, positive: bool = False) -> Decimal:
     return result
 
 
+def _paper_recovery_proof(value):
+    required = {"schema", "plan_sha256", "receipt_sha256", "reviewer", "recovered_at"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    if value["schema"] != "pramana.paper_oms_recovery.v1":
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    for key in ("plan_sha256", "receipt_sha256"):
+        if not isinstance(value[key], str) or not _SHA.fullmatch(value[key]):
+            raise ValueError("oms_paper_recovery_proof_invalid")
+    reviewer = value["reviewer"]
+    if (not isinstance(reviewer, str) or not 0 < len(reviewer) <= 256
+            or reviewer != reviewer.strip() or any(not c.isprintable() for c in reviewer)):
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    moment = datetime.fromisoformat(value["recovered_at"])
+    if _instant(moment, "recovery_at") != value["recovered_at"]:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    return dict(value)
+
+
 @dataclass(frozen=True)
 class OmsOrder:
     client_order_id: str
@@ -76,6 +98,7 @@ class OmsOrder:
     created_at: datetime
     updated_at: datetime
     last_event_sequence: int
+    instrument_identity: str | None = None
 
     @property
     def pending_quantity(self) -> int:
@@ -85,9 +108,33 @@ class OmsOrder:
 class DurableOms:
     """SQLite OMS projection plus append-only event/fill history."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
+        if type(read_only) is not bool:
+            raise TypeError("oms_read_only_must_be_boolean")
+        self._read_only = read_only
         self._lock = RLock()
         self.path = Path(path)
+        if read_only:
+            if (self.path.is_symlink() or not self.path.is_file()
+                    or self.path.stat().st_nlink != 1):
+                raise ValueError("oms_read_only_regular_existing_file_required")
+            self.db = sqlite3.connect(
+                self.path.resolve().as_uri() + "?mode=ro", uri=True,
+                timeout=2, check_same_thread=False,
+            )
+            self.db.row_factory = sqlite3.Row
+            try:
+                self.db.execute("PRAGMA query_only=ON")
+                self.db.execute("PRAGMA trusted_schema=OFF")
+                self.db.execute("PRAGMA busy_timeout=2000")
+                rows = self.db.execute("SELECT id,version FROM oms_meta").fetchall()
+                if (len(rows) != 1 or rows[0][0] != 1
+                        or rows[0][1] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}):
+                    raise ValueError("oms_schema_version_mismatch")
+            except BaseException:
+                self.db.close()
+                raise
+            return  # No schema creation, journal-mode change, or migration on inspection.
         if self.path != Path(":memory:") and self.path.exists() and self.path.is_symlink():
             raise ValueError("oms_symlink_unsupported")
         if str(self.path) != ":memory:" and not self.path.exists():
@@ -166,10 +213,13 @@ class DurableOms:
                     at TEXT NOT NULL
                 );
             """)
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(oms_orders)")}
+            if "instrument_identity" not in columns:
+                self.db.execute("ALTER TABLE oms_orders ADD COLUMN instrument_identity TEXT")
             row = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
             if row is None:
                 self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
-            elif row[0] != SCHEMA_VERSION:
+            elif row[0] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}:
                 raise ValueError("oms_schema_version_mismatch")
             for table in ("oms_events", "oms_fills", "oms_replacements", "oms_broker_evidence_bindings"):
                 for verb in ("UPDATE", "DELETE"):
@@ -185,7 +235,8 @@ class DurableOms:
         with self._lock:
             nested = self.db.in_transaction
             savepoint = "oms_" + uuid4().hex
-            self.db.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
+            self.db.execute(f"SAVEPOINT {savepoint}" if nested else
+                            "BEGIN" if self._read_only else "BEGIN IMMEDIATE")
             try:
                 yield
                 self.db.execute(f"RELEASE SAVEPOINT {savepoint}" if nested else "COMMIT")
@@ -213,6 +264,9 @@ class DurableOms:
             "referencePrice": str(order.reference_price),
             "decisionId": decision_id,
         }
+        identity = bound_identity(order)
+        if identity is not None:
+            raw["instrumentIdentity"] = identity
         return "OMS-" + _hash(raw)[:40]
 
     def create(
@@ -236,24 +290,30 @@ class DurableOms:
                 self._assert_same_intent(decoded, order)
                 return decoded
             self.db.execute(
-                """INSERT INTO oms_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (client_id, order.tenant_id, order.strategy_id, OrderState.CREATED.value,
                  order.symbol, order.market.value, order.asset_class.value, order.side.value,
-                 order.quantity, str(order.reference_price), 0, None, None, stamp, stamp, 0),
+                 order.quantity, str(order.reference_price), 0, None, None, stamp, stamp, 0,
+                 bound_identity(order)),
             )
             self._append_event_locked(client_id, "CREATED", at, {
                 "decisionId": decision_id,
+                "approvedIntent": canonical_order_intent(order),
                 "order": {
                     "tenantId": order.tenant_id, "strategyId": order.strategy_id,
                     "market": order.market.value, "assetClass": order.asset_class.value,
                     "symbol": order.symbol, "side": order.side.value,
                     "quantity": order.quantity, "referencePrice": str(order.reference_price),
+                    **({"instrumentIdentity": bound_identity(order)} if bound_identity(order) is not None else {}),
                 },
             })
         return self.get(client_id)
 
-    @staticmethod
-    def _assert_same_intent(current: OmsOrder, order: OrderIntent) -> None:
+    def _assert_same_intent(self, current: OmsOrder, order: OrderIntent) -> None:
         if (
             current.tenant_id != order.tenant_id
             or current.strategy_id != order.strategy_id
@@ -263,8 +323,28 @@ class DurableOms:
             or current.side != order.side.value
             or current.requested_quantity != order.quantity
             or current.reference_price != order.reference_price
+            or current.instrument_identity != bound_identity(order)
         ):
             raise ValueError("client_order_id_intent_mismatch")
+        original = self.intent_snapshot(current.client_order_id)
+        if original is not None and original != canonical_order_intent(order):
+            raise ValueError("client_order_id_intent_mismatch")
+
+    def intent_snapshot(self, client_order_id: str) -> str | None:
+        """Return the verified full snapshot, or unknown for a legacy creation event."""
+        with self.transaction():
+            self._verify_locked(client_order_id)
+            row = self.db.execute(
+                "SELECT payload FROM oms_events WHERE client_order_id=? AND sequence=1",
+                (client_order_id,),
+            ).fetchone()
+            return json.loads(row[0]).get("approvedIntent")
+
+    def get_intent(self, client_order_id: str) -> OrderIntent:
+        raw = self.intent_snapshot(client_order_id)
+        if raw is None:
+            raise ValueError("oms_legacy_full_intent_unavailable")
+        return order_from_snapshot(raw)
 
     def transition(
         self,
@@ -463,6 +543,7 @@ class DurableOms:
                 or original.market != replacement.market.value
                 or original.asset_class != replacement.asset_class.value
                 or original.side != replacement.side.value
+                or original.instrument_identity != bound_identity(replacement)
             ):
                 raise ValueError("replacement_economic_identity_changed")
             if replacement.quantity > original.pending_quantity:
@@ -473,17 +554,23 @@ class DurableOms:
             if collision is not None:
                 raise ValueError("replacement_order_preexists_without_lineage")
             self.db.execute(
-                "INSERT INTO oms_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     replacement_id, replacement.tenant_id, replacement.strategy_id,
                     OrderState.CREATED.value, replacement.symbol, replacement.market.value,
                     replacement.asset_class.value, replacement.side.value, replacement.quantity,
                     str(replacement.reference_price), 0, None, None, stamp, stamp, 0,
+                    bound_identity(replacement),
                 ),
             )
             self._append_event_locked(replacement_id, "CREATED", at, {
                 "decisionId": decision_id,
                 "replacesClientOrderId": original_client_order_id,
+                "approvedIntent": canonical_order_intent(replacement),
                 "order": {
                     "tenantId": replacement.tenant_id,
                     "strategyId": replacement.strategy_id,
@@ -493,6 +580,8 @@ class DurableOms:
                     "side": replacement.side.value,
                     "quantity": replacement.quantity,
                     "referencePrice": str(replacement.reference_price),
+                    **({"instrumentIdentity": bound_identity(replacement)}
+                       if bound_identity(replacement) is not None else {}),
                 },
             })
             self.db.execute(
@@ -533,6 +622,7 @@ class DurableOms:
         broker_order_id: str | None = None,
         now: datetime | None = None,
         source_identity: dict[str, str] | None = None,
+        paper_recovery: dict[str, str] | None = None,
     ) -> OmsOrder:
         self._validate_id(client_order_id, "client_order_id")
         self._validate_id(fill_id, "fill_id")
@@ -543,6 +633,11 @@ class DurableOms:
         fill_price = _decimal(price, "fill_price", positive=True)
         at = now or datetime.now(timezone.utc)
         source = None if source_identity is None else execution_identity(source_identity)
+        recovery = None if paper_recovery is None else _paper_recovery_proof(paper_recovery)
+        if recovery is not None and not self.db.in_transaction:
+            raise ValueError("oms_paper_recovery_outer_transaction_required")
+        if recovery is not None and (source is not None or fill_id.startswith("KITE")):
+            raise ValueError("oms_paper_recovery_external_fill_forbidden")
         if fill_id.startswith("KITE2:") and source is None:
             raise ValueError("external_fill_source_required")
         if source is not None and (external_fill_id(source) != fill_id
@@ -608,6 +703,7 @@ class DurableOms:
                 "cumulativeFilled": total, "averageFillPrice": str(average),
                 "state": target.value, "brokerOrderId": broker,
                 **({"sourceIdentity": source} if source is not None else {}),
+                **({"paperRecovery": recovery} if recovery is not None else {}),
             })
         return self.get(client_order_id)
 
@@ -729,8 +825,16 @@ class DurableOms:
                     "quantity": current.requested_quantity,
                     "referencePrice": str(current.reference_price),
                 }
+                if current.instrument_identity is not None:
+                    identity["instrumentIdentity"] = current.instrument_identity
                 if expected != 1 or payload.get("order") != identity:
                     raise ValueError("oms_identity_projection_mismatch")
+                if "approvedIntent" in payload:
+                    complete = json.loads(canonical_order_intent(order_from_snapshot(payload["approvedIntent"])))
+                    if any(complete.get(key) != value for key, value in identity.items()):
+                        raise ValueError("oms_full_intent_projection_mismatch")
+                    if complete["instrumentIdentity"] != current.instrument_identity:
+                        raise ValueError("oms_full_intent_contract_mismatch")
                 if datetime.fromisoformat(row["at"]) != current.created_at:
                     raise ValueError("oms_created_at_projection_mismatch")
             elif kind == "FILL":
@@ -751,6 +855,34 @@ class DurableOms:
                 state = target
                 broker = self._broker_identity(broker, payload.get("brokerOrderId"))
                 fill_id = payload["fillId"]
+                if "paperRecovery" in payload:
+                    version = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
+                    if version is None or version[0] != PAPER_RECOVERY_SCHEMA_VERSION:
+                        raise ValueError("oms_paper_recovery_schema_mismatch")
+                    proof = _paper_recovery_proof(payload["paperRecovery"])
+                    if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='oms_paper_recoveries'").fetchone():
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    audit = self.db.execute(
+                        "SELECT payload,sha256,tenant_id FROM oms_paper_recoveries WHERE client_order_id=?",
+                        (client_order_id,),
+                    ).fetchone()
+                    if audit is None:
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    record = json.loads(audit[0])
+                    if (_hash(record) != audit[1] or audit[2] != current.tenant_id
+                            or record.get("schema") != proof["schema"]
+                            or record.get("plan_sha256") != proof["plan_sha256"]
+                            or _hash(record.get("plan")) != proof["plan_sha256"]
+                            or record["plan"].get("client_order_id") != client_order_id
+                            or record["plan"].get("tenant_id") != current.tenant_id
+                            or record["plan"].get("paper_order_id") != fill_id
+                            or record["plan"].get("receipt_sha256") != proof["receipt_sha256"]
+                            or record.get("reviewer") != proof["reviewer"]
+                            or record.get("recovered_at") != proof["recovered_at"]
+                            or record.get("after_oms_head") != row["event_hash"]):
+                        raise ValueError("oms_paper_recovery_audit_mismatch")
+                    if "sourceIdentity" in payload or fill_id.startswith("KITE"):
+                        raise ValueError("oms_paper_recovery_external_fill_forbidden")
                 if fill_id.startswith("KITE2:") and "sourceIdentity" not in payload:
                     raise ValueError("oms_external_fill_source_missing")
                 if "sourceIdentity" in payload:
@@ -834,4 +966,5 @@ class DurableOms:
             None if average is None else _decimal(average, "average_fill_price", positive=True),
             row["broker_order_id"], datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]), int(row["last_event_sequence"]),
+            stored_identity(row),
         )

@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_ai.execution.reconciliation import reconcile_paper
-from quant_ai.operations import research_recovery
+from quant_ai.governance.runtime_identity import path_digest
+from quant_ai.operations import ai_recovery, institutional_recovery, oms_recovery, research_recovery
 
 KINDS = {"ledger": "sqlite", "console": "sqlite", "proofs": "directory", "reviews": "directory",
          "directives": "file", "halt": "optional", "research": "optional"}
@@ -33,7 +34,7 @@ def regular(path: Path) -> None:
 
 
 def sources(spec: dict) -> dict[str, Path]:
-    if set(spec) - {"tenant", "revision", "sources", "research_state"}:
+    if set(spec) - {"tenant", "revision", "sources", "research_state", "oms", "institutional_state", "ai_state"}:
         raise ValueError("Unknown recovery specification fields")
     if set(spec.get("sources", {})) != set(KINDS):
         raise ValueError("Specify ledger, console, proofs, reviews, directives, halt and research paths")
@@ -44,6 +45,28 @@ def sources(spec: dict) -> dict[str, Path]:
 
 def source_plan(spec: dict) -> tuple[dict[str, Path], dict[str, str], dict]:
     paths, kinds, research = sources(spec), dict(KINDS), {}
+    if "oms" in spec:
+        raw = spec["oms"]
+        if not isinstance(raw, str) or not raw.strip() or raw == ":memory:":
+            raise ValueError("Recovery OMS requires an explicit durable path")
+        paths["oms"] = Path(raw).absolute()
+        kinds["oms"] = "sqlite"
+        if (paths["oms"].is_symlink() or not paths["oms"].is_file()
+                or paths["oms"].stat().st_nlink != 1):
+            raise ValueError("Recovery OMS requires an unaliased existing regular file")
+    if "institutional_state" in spec:
+        selected_state = spec["institutional_state"]
+        if not isinstance(selected_state, dict) or set(selected_state) != institutional_recovery.ROLES:
+            raise ValueError("Institutional recovery requires both accounting and programs")
+        if "oms" not in paths:
+            raise ValueError("Institutional recovery requires the selected OMS")
+        for role, raw in selected_state.items():
+            if not isinstance(raw, str) or not raw.strip() or raw == ":memory:":
+                raise ValueError("Institutional recovery explicit durable path required")
+            path = Path(raw).absolute()
+            if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+                raise ValueError("Institutional recovery unaliased existing file required")
+            paths[role], kinds[role] = path, "sqlite"
     selected = spec.get("research_state", {})
     if not isinstance(selected, dict) or len(selected) > 64:
         raise ValueError("Select at most 64 named research sources")
@@ -58,6 +81,10 @@ def source_plan(spec: dict) -> tuple[dict[str, Path], dict[str, str], dict]:
         paths[role] = Path(entry["path"]).absolute()
         kinds[role] = research_recovery.STORAGE[entry["kind"]]
         research[name] = {"kind": entry["kind"], "path": role}
+    if "ai_state" in spec:
+        ai_paths, _ = ai_recovery.selection(spec["ai_state"], spec["tenant"])
+        paths.update(ai_paths)
+        kinds.update(dict.fromkeys(ai_paths, "file"))
     resolved = [p.resolve() for p in paths.values()]
     for i, path in enumerate(resolved):
         if any(path == other or path.is_relative_to(other) or other.is_relative_to(path)
@@ -111,18 +138,30 @@ def sqlite_backup(source: Path, target: Path) -> None:
 
 
 def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
-    if not writers_stopped:
+    if writers_stopped is not True:
         raise ValueError("Stop all writers before creating a cross-file bundle")
     paths, kinds, research = source_plan(spec)
+    binding = oms_recovery.configuration(paths["ledger"], spec["tenant"])
+    if binding is not None and "oms" not in paths:
+        raise ValueError("Recovery OMS required for bound account")
+    if "oms" in paths and (binding is None or path_digest(paths["oms"]) != binding["oms_path_sha256"]):
+        raise ValueError("Recovery OMS source does not match the bound account")
+    if institutional_recovery.required(paths["ledger"], spec["tenant"]) and "institutional_state" not in spec:
+        raise ValueError("Institutional recovery state required for recorded execution programs")
     destination = destination.absolute()
     for source in paths.values():
         if destination.resolve() == source.resolve() or destination.resolve().is_relative_to(source.resolve()):
             raise ValueError("Bundle must be outside source paths")
+    ai_declared = (ai_recovery.selection(spec["ai_state"], spec["tenant"])[1]
+                   if "ai_state" in spec else None)
     before = inventory(paths, kinds)
     destination.mkdir(mode=0o700, parents=False, exist_ok=False)
     try:
         if research:
             (destination / "research-state").mkdir(mode=0o700)
+        if ai_declared is not None:
+            for role in ai_recovery.validate_declaration(ai_declared, spec["tenant"]):
+                (destination / role).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         for role, source in paths.items():
             if before.get(role) == "absent":
                 continue
@@ -138,6 +177,28 @@ def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
             raise ValueError("Source changed during capture; stop writers and retry")
         for entry in research.values():
             entry["verification"] = research_recovery.inspect(destination / entry["path"], entry["kind"])
+        order_state = None
+        if binding is not None:
+            order_state = {
+                "path": "oms", "sourcePathSha256": binding["oms_path_sha256"],
+                "verification": oms_recovery.inspect(destination / "ledger", destination / "oms",
+                                                     spec["tenant"], binding["oms_path_sha256"]),
+            }
+        institutional_state = None
+        if "institutional_state" in spec:
+            institutional_state = {
+                "accountingPath": "accounting", "programsPath": "programs",
+                "verification": institutional_recovery.inspect(
+                    destination / "ledger", destination / "oms", destination / "accounting",
+                    destination / "programs", spec["tenant"]),
+            }
+        elif institutional_recovery.required(destination / "ledger", spec["tenant"]):
+            raise ValueError("Institutional recovery state required for recorded execution programs")
+        created_at = datetime.now(timezone.utc).isoformat()
+        ai_state = None
+        if ai_declared is not None:
+            ai_state = {"selection": ai_declared, "verification": ai_recovery.inspect(
+                destination, ai_declared, tenant=spec["tenant"], as_of=created_at)}
         files = {}
         directories = []
         for item in sorted(destination.rglob("*")):
@@ -149,14 +210,20 @@ def create(spec: dict, destination: Path, *, writers_stopped: bool) -> dict:
                 regular(item)
                 item.chmod(0o600)
                 files[relative] = {"sha256": digest(item), "size": item.stat().st_size}
-        manifest = {"schema": 2, "tenant": spec["tenant"], "revision": spec["revision"],
-                    "createdAt": datetime.now(timezone.utc).isoformat(), "files": files,
+        manifest = {"schema": 5 if ai_state is not None else 4 if institutional_state is not None else 3 if order_state is not None else 2, "tenant": spec["tenant"], "revision": spec["revision"],
+                    "createdAt": created_at, "files": files,
                     "directories": directories,
                     "researchState": research,
                     "absent": [role for role in KINDS if before.get(role) == "absent"],
                     "sourceFingerprint": hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest(),
                     "consistency": "operator-declared stopped writers; unchanged capture fingerprints",
                     "secrets": "No secret-store discovery; selected sources must be reviewed to exclude credentials"}
+        if ai_state is not None:
+            manifest["aiState"] = ai_state
+        if order_state is not None:
+            manifest["orderState"] = order_state
+        if institutional_state is not None:
+            manifest["institutionalState"] = institutional_state
         (destination / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
         (destination / "manifest.json").chmod(0o600)
         return {**manifest, "manifestSha256": digest(destination / "manifest.json")}
@@ -178,10 +245,10 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256 or "") or digest(bundle / "manifest.json") != manifest_sha256:
         raise ValueError("Trusted manifest checksum mismatch")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    if manifest.get("schema") not in (1, 2) or not isinstance(manifest.get("files"), dict):
+    if type(manifest.get("schema")) is not int or manifest["schema"] not in (1, 2, 3, 4, 5) or not isinstance(manifest.get("files"), dict):
         raise ValueError("Unsupported bundle schema")
     files, directories = manifest["files"], manifest.get("directories", [])
-    research = manifest.get("researchState") if manifest["schema"] == 2 else {}
+    research = manifest.get("researchState") if manifest["schema"] in (2, 3, 4, 5) else {}
     if not isinstance(research, dict) or len(research) > 64:
         raise ValueError("Invalid research recovery inventory")
     for name, entry in research.items():
@@ -194,6 +261,35 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
         expected_kind = research_recovery.STORAGE[entry["kind"]]
         if entry["path"] not in (directories if expected_kind == "directory" else files):
             raise ValueError("Required research recovery state missing")
+    order_state = manifest.get("orderState")
+    if manifest["schema"] in (3, 4) or manifest["schema"] == 5 and (order_state is not None or "oms" in files):
+        if (not isinstance(order_state, dict)
+                or set(order_state) != {"path", "sourcePathSha256", "verification"}
+                or order_state["path"] != "oms" or "oms" not in files
+                or not isinstance(order_state["verification"], dict)
+                or not isinstance(order_state["sourcePathSha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", order_state["sourcePathSha256"])):
+            raise ValueError("Recovery OMS inventory invalid")
+    elif order_state is not None or "oms" in files:
+        raise ValueError("Recovery OMS requires bundle schema 3")
+    institutional_state = manifest.get("institutionalState")
+    if manifest["schema"] == 4 or manifest["schema"] == 5 and (
+            institutional_state is not None or institutional_recovery.ROLES & files.keys()):
+        if (not isinstance(institutional_state, dict)
+                or set(institutional_state) != {"accountingPath", "programsPath", "verification"}
+                or institutional_state["accountingPath"] != "accounting"
+                or institutional_state["programsPath"] != "programs"
+                or not institutional_recovery.ROLES <= files.keys()
+                or not isinstance(institutional_state["verification"], dict)):
+            raise ValueError("Institutional recovery inventory invalid")
+    elif institutional_state is not None or institutional_recovery.ROLES & files.keys():
+        raise ValueError("Institutional recovery requires bundle schema 4")
+    ai_state = manifest.get("aiState")
+    if manifest["schema"] == 5:
+        ai_recovery.validate_capture(ai_state, manifest["tenant"], files)
+    elif ai_state is not None or any(name == ai_recovery.ROOT or name.startswith(ai_recovery.ROOT + "/")
+                                     for name in set(files) | set(directories)):
+        raise ValueError("AI recovery requires bundle schema 5")
     expected = set(files) | set(directories) | {"manifest.json"}
     actual = {p.relative_to(bundle).as_posix() for p in bundle.rglob("*")}
     if actual != expected:
@@ -210,6 +306,13 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
             raise ValueError("Bundle directory mismatch")
     if not {"ledger", "console", "directives"} <= files.keys() or not {"proofs", "reviews"} <= set(directories):
         raise ValueError("Required recovery state missing")
+    bound_configuration = oms_recovery.configuration(bundle / "ledger", manifest["tenant"])
+    if bound_configuration is not None and order_state is None:
+        raise ValueError("Recovery OMS required for bound account; legacy bundle is incomplete")
+    if order_state is not None and bound_configuration is None:
+        raise ValueError("Recovery OMS bound account is missing")
+    if institutional_recovery.required(bundle / "ledger", manifest["tenant"]) and institutional_state is None:
+        raise ValueError("Institutional recovery state required; legacy bundle is incomplete")
     destination.mkdir(mode=0o700, parents=False, exist_ok=False)
     try:
         for name in sorted(directories, key=lambda n: len(Path(n).parts)):
@@ -220,6 +323,27 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
             target.chmod(0o600)
             if digest(target) != info["sha256"]:
                 raise ValueError("Restored checksum mismatch")
+        order_result = {"status": "not_configured", "liveExecutionAuthorized": False}
+        if order_state is not None:
+            order_result = oms_recovery.inspect(destination / "ledger", destination / "oms",
+                manifest["tenant"], order_state["sourcePathSha256"])
+            if order_result != order_state["verification"]:
+                raise ValueError("Recovery OMS verification mismatch; use the captured release")
+        institutional_result = {"status": "not_selected", "activationAuthorized": False}
+        if institutional_state is not None:
+            institutional_result = institutional_recovery.inspect(
+                destination / "ledger", destination / "oms", destination / "accounting",
+                destination / "programs", manifest["tenant"])
+            if institutional_result != institutional_state["verification"]:
+                raise ValueError("Institutional recovery verification mismatch; use the captured release")
+        ai_result = {"status": "not_selected", "activationAuthorized": False,
+                     "liveExecutionAuthorized": False}
+        if ai_state is not None:
+            ai_result = ai_recovery.inspect(destination, ai_state["selection"],
+                tenant=manifest["tenant"], as_of=manifest["createdAt"])
+            if json.dumps(ai_result, sort_keys=True, separators=(",", ":"), allow_nan=False) != json.dumps(
+                    ai_state["verification"], sort_keys=True, separators=(",", ":"), allow_nan=False):
+                raise ValueError("AI recovery verification mismatch; use the captured release")
         research_results = {}
         for name, entry in research.items():
             checked = research_recovery.inspect(destination / entry["path"], entry["kind"])
@@ -243,7 +367,8 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
                 proof = json.loads(row["payload"])
                 if (proof.get("schema") != schema or proof.get("event_type") != event_type
                         or proof.get("tenant_id") != manifest["tenant"] or proof.get("order_id") != row["order_id"]
-                        or (event_type == "swarm_fill" and not isinstance(proof.get("input_matrix"), list))):
+                        or (event_type == "swarm_fill" and not isinstance(proof.get("input_matrix"), list)
+                            and not (institutional_state is not None and "institutional_program" in proof))):
                     raise ValueError("Invalid ledger evidence")
                 proof_ids.add(row["order_id"])
             except (ValueError, TypeError, AttributeError):
@@ -263,11 +388,14 @@ def restore(bundle: Path, destination: Path, *, manifest_sha256: str) -> dict:
                 raise ValueError("Restored console integrity failed")
             counts = {table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                       for table in ("preferences", "conversations", "audit")}
-        result = {"status": "restored" if reconciliation["status"] == "matched" and not missing_proofs and not invalid_proofs else "discrepancy",
+        result = {"status": "restored" if reconciliation["status"] == "matched" and not missing_proofs and not invalid_proofs and order_result["status"] != "discrepancy" and institutional_result["status"] != "discrepancy" else "discrepancy",
                   "tenant": manifest["tenant"], "revision": manifest["revision"],
                   "manifestSha256": manifest_sha256,
                   "durationSeconds": round(time.monotonic() - start, 3), "fileCount": len(files),
                   "consoleCounts": counts, "reconciliation": reconciliation,
+                  "orderRecovery": order_result,
+                  "institutionalRecovery": institutional_result,
+                  "aiRecovery": ai_result,
                   "researchRecovery": {
                       "status": "selected_state_verified" if research else "not_selected",
                       "sources": research_results,

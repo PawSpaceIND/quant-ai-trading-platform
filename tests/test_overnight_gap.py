@@ -99,7 +99,7 @@ def engine_over(marks, broker, monitor=None) -> ProtectiveExitEngine:
 
 
 class StubBroker:
-    """The two calls the exit engine makes, without a ledger behind them."""
+    """Cash-only exit-engine broker contract, without a ledger behind it."""
 
     def __init__(self, positions) -> None:
         self.positions = list(positions)
@@ -107,6 +107,10 @@ class StubBroker:
 
     def get_protection_positions(self, tenant_id):
         return tuple(self.positions)
+
+    def bound_instrument_for_position(self, symbol, market, asset_class, tenant_id):
+        # These fixtures predate identity binding and model legacy cash holdings only.
+        return None
 
     def sell_protected(self, order, proof, cooldown_until):
         self.sold.append(order)

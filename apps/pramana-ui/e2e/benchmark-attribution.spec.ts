@@ -45,7 +45,7 @@ test("selected external account remains historical and private",async({page})=>{
  await page.getByRole("navigation",{name:"Main navigation"}).getByRole("button",{name:/Activity/}).click();
  await expect(page.getByRole("heading",{name:"Selected account funds & net positions"})).toBeVisible();
  await expect(page.getByText("Historical selected-account snapshot",{exact:false})).toBeVisible();
- await expect(page.getByRole("rowheader",{name:"INFY"})).toBeVisible();
+ await expect(page.getByRole("rowheader",{name:"INFY",exact:true})).toBeVisible();
  const downloadPromise=page.waitForEvent("download");
  await page.getByRole("link",{name:"Download selected account JSON"}).click();
  expect((await downloadPromise).suggestedFilename()).toBe("pramana-external-account.json");

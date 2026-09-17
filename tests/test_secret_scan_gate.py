@@ -226,3 +226,13 @@ def test_malformed_metadata_is_not_published_as_a_success(tmp_path, field, value
     assert result["status"] == "failed"
     assert result["phases"][0]["status"] == "error"
     assert result["phases"][0]["findings"] == []
+
+
+def test_ci_runs_risk_acceptance_without_success_override():
+    text = (ROOT / ".github/workflows/ci.yml").read_text()
+    job = text.split("  institutional-risk-acceptance:\n", 1)[1].split("\n  ui:", 1)[0]
+    assert "acceptance/test_institutional_edge_authority.py" in job
+    assert "PYTHONPATH: src:tests" in job
+    assert 'TRADING_LIVE_MONEY_ACTIVE: "false"' in job
+    assert "continue-on-error:" not in job and "|| true" not in job
+    assert "--junitxml" in job and "actions/upload-artifact" in job
