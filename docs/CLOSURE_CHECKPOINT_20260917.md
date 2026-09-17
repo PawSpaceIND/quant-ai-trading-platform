@@ -295,3 +295,42 @@ the corresponding regression to fail in isolated interpreter mutation checks.
 A wrapper-only replay mutation did not remove the underlying intent replay; that
 surviving check is retained in local evidence rather than represented as a kill.
 Actual published-head CI results are reported separately in the PR discussion.
+
+## Institutional accounting and execution-program backup coverage
+
+Continues #126 from `a89900352afa6ff5014c47a6add5a24f833dbf86`, with main
+`13bbdec81fe59332513260b746d51ec75bcf565d` unchanged at initial verification.
+Explicit stopped-writer bundles now accept a complete accounting/program pair and
+require that pair for recorded institutional receipts. Schema 4 preserves their
+state alongside the bound ledger/OMS; an incomplete legacy capture is rejected.
+The verifier uses read-only SQLite, independently checks recorded cash postings,
+and binds saved parent/slice state to receipts and OMS records. It cannot recreate
+unretained full liquidity/risk inputs: both planEvidenceVerified and
+runtimeContextVerified remain false, as does activationAuthorized.
+
+Local full normal suite: **2269 passed / 0 failed**, two warnings, 14 additional
+subtests, 201.51 seconds. The new regression file contains **64 cases**; the focused
+recovery/accounting/OMS/coordinator set passes **238**. No cases were skipped.
+Separate unchanged risk acceptance: **15 failed / 2 passed**, 2.90 seconds.
+All **639 selected non-Markdown files** retained their hashes during certification.
+Four guard-removal experiments in disposable interpreter memory produced failing
+regressions; no certified source file was changed by those experiments.
+
+The initial three new tests reproduced omission/missing capture APIs. Three later
+negative cases exposed contradictory DISPATCHING metadata before its validation
+was added. Exact restored arithmetic includes 99,000 cash and 1,000 securities
+from 100,000 capital and a 1,000 purchase; no real account or rate was used.
+
+This patch changes only offline operations/recovery code, one new test file and
+documentation. Trading execution, risk implementations, prior acceptance assertions,
+CI selection, UI and live settings are unchanged. The earlier tool-blocked risk
+repair is not retried or routed through this work. No source discovery, real
+backup/restore, account migration, model action or running-daemon restart occurred.
+
+Automatic coordinated backups, AI-registry and settlement-store coverage,
+full runtime-context persistence, authenticated review/migration, off-host restore,
+full institutional-daemon assembly and the existing four risk failures remain open.
+Published-head Linux/UI/browser/security results are recorded separately in the
+PR certification comment. A copied consistent local snapshot is not a trading
+permission, real-market acceptance result or profitable-edge demonstration.
+See `docs/INSTITUTIONAL_STATE_BACKUP.md` for exact scope and nonclaims.
