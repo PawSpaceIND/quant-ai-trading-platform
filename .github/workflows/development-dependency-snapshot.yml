@@ -15,7 +15,7 @@ jobs:
       - name: Download test dependencies without credentials
         run: |
           mkdir -p "$RUNNER_TEMP/test-wheels"
-          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/test-wheels" 'anthropic>=0.39,<2' 'ruff>=0.6' 'eval-type-backport>=0.2,<1' 'pytest>=8' 'pyyaml>=6,<7'
+          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/test-wheels" 'anthropic>=0.39,<2' 'ruff>=0.6' 'eval-type-backport>=0.2,<1' 'pytest>=8' 'pyyaml>=6,<7' 'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'httpx>=0.27,<1' 'requests>=2.32,<3' 'setuptools>=69'
           cd "$RUNNER_TEMP/test-wheels"
           sha256sum *.whl > SHA256SUMS
       - uses: actions/upload-artifact@v4
