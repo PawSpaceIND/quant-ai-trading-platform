@@ -72,10 +72,12 @@ def test_duplicate_keys_refuse():
 def test_second_publisher_cannot_take_the_same_register_lock(tmp_path):
     bars = series()
     register = seeded_register(tmp_path, bars)
-    with pub._exclusive_register(register):
-        with pytest.raises(pub.ResearchPublicationRefused, match="already_running"):
-            pub.publish_research(bars, instrument=INSTRUMENT, register=register,
-                                 output=tmp_path / "report.json", now=NOW)
+    with (
+        pub._exclusive_register(register),
+        pytest.raises(pub.ResearchPublicationRefused, match="already_running"),
+    ):
+        pub.publish_research(bars, instrument=INSTRUMENT, register=register,
+                             output=tmp_path / "report.json", now=NOW)
 
 
 @pytest.mark.parametrize("case", ["adjusted", "identity", "interval", "market", "output"])
