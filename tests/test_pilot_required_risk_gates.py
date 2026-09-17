@@ -1,6 +1,7 @@
 """Five-name pilot acceptance with synthetic bars; never calls a broker or paid model."""
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 from dataclasses import replace
@@ -87,9 +88,9 @@ def runner(tmp_path, provider, sectors=SECTORS, required=True):
         book_risk_history=provider, require_book_risk_gates=required, pilot_mode=True)
 
 
-def gates(runner):
-    runner.daemon.clock = lambda: NOW
-    runner.daemon.protection_tick(NOW)
+def gates(runner, now=NOW):
+    runner.daemon.clock = lambda: now
+    runner.daemon.protection_tick(now)
     payload = json.loads(runner.daemon.tracker.broker._connection.execute(
         "SELECT payload FROM pilot_runtime WHERE tenant_id='pilot'").fetchone()[0])
     return {row["id"]: row for row in payload["riskGates"]["gates"] if row["id"] in GATES}
@@ -164,6 +165,76 @@ def test_cold_or_expired_cache_is_not_green_and_telemetry_never_fetches(tmp_path
     for instrument in DIRECTIVES.watchlist: provider.fetch(instrument, NOW - timedelta(days=1))
     assert not gates(actual)["book_expected_shortfall"]["dataReady"]
     assert len(provider.feed.calls) == 5
+
+
+def test_off_hours_runner_start_warms_required_history_before_telemetry(tmp_path, monkeypatch):
+    provider = daily()
+    actual = runner(tmp_path, provider)
+    off_hours = NOW.replace(hour=18)
+    actual.clock = lambda: off_hours
+    actual.daemon.clock = lambda: off_hours
+    actual.streams = ()
+
+    # Let start() execute its real warm-up while making the long-lived supervisors finite.
+    monkeypatch.setattr(actual, "_protect", lambda: None)
+
+    async def completed_cadence():
+        return None
+
+    monkeypatch.setattr(actual, "_run_aligned_cadence", completed_cadence)
+    asyncio.run(actual.start())
+
+    assert provider.feed.calls == sorted(SYMBOLS)
+    published = gates(actual, off_hours)
+    assert all(row["armed"] is True and row["required"] is True for row in published.values())
+    for key in GATES - {"sector_concentration"}:
+        assert published[key]["dataReady"] is True
+        assert published[key]["records"] == 600
+        assert published[key]["alignedIntervals"] == 119
+    assert provider.feed.calls == sorted(SYMBOLS), "telemetry performed provider I/O"
+
+
+def test_required_history_warmup_reuses_daily_cache_and_refreshes_next_day(tmp_path):
+    provider = daily()
+    actual = runner(tmp_path, provider)
+
+    actual._warm_required_book_history(NOW)
+    assert provider.feed.calls == sorted(SYMBOLS)
+
+    actual._warm_required_book_history(NOW + timedelta(minutes=10))
+    assert provider.feed.calls == sorted(SYMBOLS)
+
+    actual._warm_required_book_history(NOW + timedelta(days=1))
+    assert provider.feed.calls == sorted(SYMBOLS) * 2
+
+
+def test_aligned_cadence_refreshes_required_history_before_run(tmp_path, monkeypatch):
+    provider = daily()
+    actual = runner(tmp_path, provider)
+    actual.clock = lambda: NOW
+
+    async def immediate_sleep(_seconds):
+        return None
+
+    async def one_run(_now):
+        actual._stop_requested = True
+
+    async def no_proofs(_now):
+        return None
+
+    actual.sleeper = immediate_sleep
+    monkeypatch.setattr(actual.daemon, "run_once", one_run)
+    monkeypatch.setattr(actual, "_capture_xai_proofs", no_proofs)
+
+    asyncio.run(actual._run_aligned_cadence())
+
+    assert provider.feed.calls == sorted(SYMBOLS)
+    published = gates(actual)
+    for key in GATES - {"sector_concentration"}:
+        assert published[key]["dataReady"] is True
+        assert published[key]["records"] == 600
+        assert published[key]["alignedIntervals"] == 119
+    assert provider.feed.calls == sorted(SYMBOLS), "telemetry performed provider I/O"
 
 
 @pytest.mark.parametrize("bad", ["stale", "future", "naive", "wrong_instrument", "duplicate", "unclosed"])
