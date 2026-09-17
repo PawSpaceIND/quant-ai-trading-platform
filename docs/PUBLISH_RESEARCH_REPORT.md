@@ -26,6 +26,26 @@ that overlap holdout dates refuse. Dates are venue-local, including IST for Indi
 A publisher lock serializes publishers, not legacy backtest/contest commands:
 exclude other research writers operationally. Detected register drift refuses.
 
+### Trial reservation and concurrent writers
+
+The publisher pins the register bytes BEFORE checking prior studies and holdout
+exposure. After reserving its candidates, it requires the register to be exactly
+those original bytes plus its own returned canonical evidence record and newline.
+A valid competing append just before or just after that reservation refuses with
+`research_trial_register_changed_during_read`, before training or holdout runs.
+The existing stable-read and final pre-publication drift checks remain active.
+This closes a gap where a post-reservation snapshot could previously adopt a
+concurrent writer's newly inspected holdout as though it had already been screened.
+
+A refusal preserves the previous report and does not roll back either writer's
+trial records. Reserved but unscored candidates stay counted conservatively.
+A changed register must be reviewed, not reset to make the command pass.
+
+This is detection at explicit boundaries, NOT a transaction or a shared lock with
+legacy writers. An uncooperative write after the final check cannot be excluded
+by this publisher alone. Continue to exclude other writers for the entire run;
+wholesale replacement and unrecorded external inspection are not attested here.
+
 ## Historical data and an honest research plan
 
 The handoff says the Lightsail host has no historical dataset or prior register.
@@ -66,7 +86,7 @@ date BEFORE the fixed split. They must be part of the frozen plan, not tuned to
 holdout results. The default output is `research-report.json` beside the resolved
 paper ledger, exactly the existing dashboard convention. Publication refusals
 exit nonzero and leave the previous report unchanged; attempted trials may still
-be recorded. A consumed holdout cannot be retried until it looks favorable.
+be recorded. This publisher will not reuse a previously consumed holdout.
 
 ## Owner-only host operation, after review and deployment
 
@@ -135,18 +155,28 @@ retain ownership; the primary panel does not establish parity with them.
 ## Verification and external acceptance
 
 Run `ruff check src tests` and the complete `pytest -q` suite. The requested Mac
-binary `/usr/local/bin/ruff` was previously reported absent; the current Mac
-terminal check was blocked, so no fresh Mac result is claimed. GitHub's existing
-Python 3.12/Linux CI is the available complete-suite authority for this candidate.
-Earlier temporary-workspace test counts are not certification of this head.
+binary `/usr/local/bin/ruff` was previously reported absent; no fresh Mac result
+is claimed. GitHub's Python 3.12/Linux CI supplies the complete-suite evidence
+recorded in the PR. Earlier temporary-workspace counts are not certification
+of a later head.
 
-`tests/test_research_publisher_sabotage.py` contains 18 controlled mutations.
-Each first requires its exact named regression to pass on unchanged source, then
-requires that regression to fail after mutation, with zero collection errors.
-Only an isolated copy is edited; it is restored, and the actual checkout's source
-hash must remain unchanged. The PR records the map and observed CI result.
-These 18 cases are a defined mutation set, not a claim of exhaustive mutation
-coverage over every expression and every future guard.
+Three mutation campaigns are part of the full suite:
+
+- `tests/test_research_publisher_sabotage.py`: 18 outcome mutations, including
+  fake holdout, reset trial counts, wrong schema and observed drawdown as p95.
+- `tests/test_research_publisher_guard_inventory.py`: 57 mutations covering all
+  52 explicit `_require` sites, three rejection handlers and two delegated
+  daily-input validation boundaries. New or removed sites require inventory updates.
+- `tests/test_research_publisher_reservation.py`: two additional mutations remove
+  only the expected-append condition, leaving the old drift guards active. Each
+  actual valid-chain race must then fail its named rejection test with DID NOT RAISE.
+  A separate single-writer control proves ordinary publication still works.
+
+Each mutation requires a passing control and a specific failing regression on an
+isolated modified copy, with no collection errors. The reservation and inventory
+campaigns also reject skips. Copies are restored and production-source bytes or
+hashes checked. The PR records observed results for its actual tested checkout;
+these campaigns are not exhaustive coverage of every possible fault or interleaving.
 
 Still external: the complete historical trial register, authentic eligible data,
 predeclared untouched holdout, independent cost/data review, target-host volume
