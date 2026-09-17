@@ -1,0 +1,75 @@
+{
+  "schema": "pramana.zerodha.post126.integration.v1",
+  "renewal_parent": "76119b613ac8a297de763a7828796a851569c52e",
+  "main_parent": "a20a0d833b83a094c372c54058c38bdc3c1d1afb",
+  "conflicts": [
+    "src/quant_ai/daemon.py",
+    "tests/test_secret_scan_gate.py"
+  ],
+  "focused_before": {
+    "passed": 230,
+    "failed": 2,
+    "reason": "Existing environment-factory fixture lacked the newly required synthetic profile endpoint"
+  },
+  "focused_after": {
+    "tests": 242,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "new_ordinary_cases": 10,
+  "full_candidate": {
+    "ordinary_passed": 2551,
+    "subtests_passed": 14,
+    "warnings": 2,
+    "junit": {
+      "tests": 2565,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "startup_guard_experiments": [
+    {
+      "guard": "identity_validation",
+      "target": "tests/test_renewal_identity_integration.py::test_identity_refusal_precedes_notifications_and_token_profile",
+      "junit": {
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "caught": true,
+      "mode": "isolated interpreter monkeypatch; source files not altered"
+    },
+    {
+      "guard": "token_validation",
+      "target": "tests/test_renewal_identity_integration.py::test_token_refusal_precedes_runner_assembly_in_each_identity_mode",
+      "junit": {
+        "tests": 6,
+        "failures": 6,
+        "errors": 0,
+        "skipped": 0
+      },
+      "caught": true,
+      "mode": "isolated interpreter monkeypatch; source files not altered"
+    }
+  ],
+  "runtime_fixture_assertions_preserved": true,
+  "security_test_function_union_preserved": true,
+  "ci_matches_main": true,
+  "scanner_helper_matches_main": true,
+  "source_hashes_checked": 659,
+  "source_hashes_match_after_run": true,
+  "primary_checkout_dirty_files_preserved": 7,
+  "helper_stdlib_help_exit": 0,
+  "network_guard_self_test_passed": true,
+  "no_new_risk_campaign": true,
+  "provider_requests": 0,
+  "production_deployments": 0,
+  "limitations": [
+    "Synthetic integration, not host login/token/alert acceptance.",
+    "Exact-head Linux CI and fresh baseline comparison are recorded separately on the PR.",
+    "No change to the guarded paper-only mode, identity policy or protected risk implementation."
+  ]
+}

@@ -1,8 +1,10 @@
 """Security gate behavior with a controlled CLI fixture; no provider credentials."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +16,16 @@ SPEC = importlib.util.spec_from_file_location("pramana_secret_scan", ROOT / "scr
 assert SPEC is not None and SPEC.loader is not None
 scan = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scan)
+
+
+@pytest.fixture(autouse=True)
+def restore_process_umask():
+    previous = os.umask(0o077)
+    os.umask(previous)
+    try:
+        yield
+    finally:
+        os.umask(previous)
 
 
 def finding():
@@ -115,16 +127,6 @@ def test_only_one_exact_verified_fingerprint_is_exempted():
     assert not (ROOT / ".gitleaks.toml").exists()
 
 
-def test_ci_runs_risk_acceptance_without_success_override():
-    text = (ROOT / ".github/workflows/ci.yml").read_text()
-    job = text.split("  institutional-risk-acceptance:\n", 1)[1].split("\n  ui:", 1)[0]
-    assert "acceptance/test_institutional_edge_authority.py" in job
-    assert "PYTHONPATH: src:tests" in job
-    assert 'TRADING_LIVE_MONEY_ACTIVE: "false"' in job
-    assert "continue-on-error:" not in job and "|| true" not in job
-    assert "--junitxml" in job and "actions/upload-artifact" in job
-
-
 def test_ci_keeps_verified_download_and_full_scans_before_dependency_install():
     text = (ROOT / ".github/workflows/ci.yml").read_text().split("  security:\n", 1)[1]
     assert "fetch-depth: 0" in text and 'GITLEAKS_VERSION: "8.30.1"' in text
@@ -140,3 +142,97 @@ def test_cli_cannot_succeed_without_a_working_scanner(tmp_path):
             "--scanner", str(tmp_path / "absent"), "--report-directory", str(tmp_path / "reports")],
             cwd=ROOT, capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode != 0 and json.loads(result.stdout)["status"] == "failed"
+
+
+def test_reformatted_evidence_reconstructs_the_entire_original_document():
+    report = json.loads((ROOT / "docs/evidence/zerodha-token-renewal-sabotage.json").read_text())
+    expected = report.pop("legacy_document_sha256")
+    records = report.pop("restored_files")
+    assert len(records) == 5
+    assert all(set(row) == {"path", "sha256"} for row in records)
+    assert len({row["path"] for row in records}) == len(records)
+    report["restored_sha256"] = {row["path"]: row["sha256"] for row in records}
+    assert hashlib.sha256((json.dumps(report, indent=2) + "\n").encode()).hexdigest() == expected
+    assert len(report["mutations"]) == 32 and report["restored"] is True
+    assert all(row["caught"] and row["collection_errors"] == 0 for row in report["mutations"])
+
+
+@pytest.mark.parametrize("phase", ["git", "dir"])
+@pytest.mark.parametrize("bad", [
+    {"status": "clean", "findings": []},
+    {"status": "error", "findings": []},
+    {"status": "findings", "findings": [{"File": "other.py", "RuleID": "generic-api-key"}]},
+])
+def test_actual_scanner_self_test_cannot_accept_a_missing_same_path_detection(tmp_path, monkeypatch, phase, bad):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitleaksignore").write_bytes((ROOT / ".gitleaksignore").read_bytes())
+    def controlled(_scanner, _root, _report, mode):
+        if mode == phase:
+            return bad
+        return {"status": "findings", "findings": [{
+            "File": "docs/evidence/zerodha-token-renewal-sabotage.json", "RuleID": "generic-api-key"}]}
+    monkeypatch.setattr(scan, "_scan", controlled)
+    with pytest.raises(ValueError, match="sentinel_not_detected"):
+        scan.verify_scanner_detection(tmp_path / "scanner", repo)
+
+
+def test_cli_self_test_failure_cannot_reach_repository_scan(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["scan", "--scanner", str(tmp_path / "scanner"),
+                                     "--report-directory", str(tmp_path / "reports")])
+    def deny(*_args):
+        raise ValueError("private diagnostic must stay private")
+    def forbidden(*_args):
+        pytest.fail("Repository scan followed a failed self-test")
+    monkeypatch.setattr(scan, "verify_scanner_detection", deny)
+    monkeypatch.setattr(scan, "scan_repository", forbidden)
+    assert scan.main() == 2
+    output = capsys.readouterr()
+    assert "private diagnostic" not in output.out + output.err
+    assert json.loads(output.out)["status"] == "failed"
+
+
+@pytest.mark.parametrize("status,exit_code", [("clean", 0), ("failed", 1)])
+def test_cli_exit_status_tracks_both_scan_result(tmp_path, monkeypatch, capsys, status, exit_code):
+    monkeypatch.setattr(sys, "argv", ["scan", "--scanner", str(tmp_path / "scanner"),
+                                     "--report-directory", str(tmp_path / "reports")])
+    steps = []
+    monkeypatch.setattr(scan, "verify_scanner_detection", lambda *_args: steps.append("self_test"))
+    def completed(*_args):
+        steps.append("repository")
+        return {"status": status}
+    monkeypatch.setattr(scan, "scan_repository", completed)
+    assert scan.main() == exit_code
+    assert steps == ["self_test", "repository"]
+    assert json.loads(capsys.readouterr().out)["status"] == status
+
+
+def test_summary_symlink_cannot_overwrite_an_unrelated_file(tmp_path):
+    cli, repo, output, _calls = cli_fixture(tmp_path, {"git": {}, "dir": {}})
+    output.mkdir()
+    unrelated = tmp_path / "keep.txt"
+    unrelated.write_text("preserve")
+    (output / "secret-scan-summary.json").symlink_to(unrelated)
+    with pytest.raises(ValueError, match="symlink"):
+        scan.scan_repository(cli, repo, output)
+    assert unrelated.read_text() == "preserve"
+
+
+@pytest.mark.parametrize("field,value", [("StartLine", -1), ("EndLine", "3"), ("RuleID", "x" * 1025)])
+def test_malformed_metadata_is_not_published_as_a_success(tmp_path, field, value):
+    cli, repo, output, _calls = cli_fixture(tmp_path, {
+        "git": {"code": 1, "rows": [{**finding(), field: value}]}, "dir": {}})
+    result = scan.scan_repository(cli, repo, output)
+    assert result["status"] == "failed"
+    assert result["phases"][0]["status"] == "error"
+    assert result["phases"][0]["findings"] == []
+
+
+def test_ci_runs_risk_acceptance_without_success_override():
+    text = (ROOT / ".github/workflows/ci.yml").read_text()
+    job = text.split("  institutional-risk-acceptance:\n", 1)[1].split("\n  ui:", 1)[0]
+    assert "acceptance/test_institutional_edge_authority.py" in job
+    assert "PYTHONPATH: src:tests" in job
+    assert 'TRADING_LIVE_MONEY_ACTIVE: "false"' in job
+    assert "continue-on-error:" not in job and "|| true" not in job
+    assert "--junitxml" in job and "actions/upload-artifact" in job

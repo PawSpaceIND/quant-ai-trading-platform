@@ -35,7 +35,7 @@ COMPOSE = yaml.safe_load(COMPOSE_FILE.read_text())
 SERVICES = COMPOSE["services"]
 
 # The services that hold a socket or a loop open and can therefore wedge while alive.
-SERVED_BY_A_HEALTHCHECK = {"pramana-ghost", "dashboard", "market-monitor"}
+SERVED_BY_A_HEALTHCHECK = {"pramana-ghost", "dashboard", "market-monitor", "token-watch"}
 SNAPSHOT_PATH = "/data/market-monitor.json"
 
 
@@ -188,3 +188,17 @@ def seconds(value: str) -> int:
     match = re.fullmatch(r"(\d+)([sm])", value)
     assert match, value
     return int(match.group(1)) * (60 if match.group(2) == "m" else 1)
+
+
+def test_token_watch_probe_rejects_missing_and_stale_heartbeat(tmp_path):
+    kind, command = probe("token-watch")
+    assert kind == "CMD-SHELL"
+    path = tmp_path / "zerodha-watch.json"
+    actual = command.replace("/data/zerodha-watch.json", str(path))
+    def check():
+        return subprocess.run(["sh", "-c", actual], capture_output=True, check=False).returncode
+    assert check() != 0
+    path.write_text("{}")
+    assert check() == 0
+    os.utime(path, (time.time() - 240, time.time() - 240))
+    assert check() != 0

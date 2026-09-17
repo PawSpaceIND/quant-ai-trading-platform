@@ -132,11 +132,10 @@ def login(
         session = kite.generate_session(token, api_secret=api_secret)
         kite.set_access_token(session["access_token"])
         profile = kite.profile()
-    except Exception as error:  # every SDK failure becomes one actionable, scrubbed line
-        detail = _scrub(f"{type(error).__name__}: {error}", api_secret, token)
+    except Exception:  # noqa: BLE001 - SDK errors can include the new access token.
         raise LoginError(
-            f"Kite rejected the login ({detail}); request tokens are single-use, start again"
-        ) from error
+            "Kite rejected the login; request tokens are single-use, start again"
+        ) from None
     issued_at = (now or _utc_now)()
     try:
         record = SessionRecord.from_kite_session(session, issued_at=issued_at)

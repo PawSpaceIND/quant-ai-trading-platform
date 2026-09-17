@@ -1,0 +1,20 @@
+{
+  "base_commit": "916ff1681cacf1395476dfdbf41378eddd5a6bb0",
+  "synthetic_only": true,
+  "real_docker_or_provider_calls": false,
+  "before_repair": {"failed": 9, "passed": 1},
+  "focused_after_repair": {"passed": 119},
+  "new_cases_after_restore": {"passed": 11},
+  "fresh_mac_full_baseline": {"passed": 1585, "failed": 13, "warnings": 2, "subtests_passed": 14},
+  "candidate_mac_full_result": "unknown: device stopped responding after run started",
+  "mutations": [
+    {"guard": "compose_file_authority", "test": "tests/test_zerodha_renewal_compose_boundary.py::test_shell_credentials_cannot_shadow_published_environment", "exit": 1, "failures": 8, "collection_errors": 0, "caught": true},
+    {"guard": "caller_relative_path", "test": "tests/test_zerodha_renewal_compose_boundary.py::test_relative_env_keeps_callers_location_when_docker_cwd_changes", "exit": 1, "failures": 1, "collection_errors": 0, "caught": true},
+    {"guard": "parent_environment_unchanged", "test": "tests/test_zerodha_renewal_compose_boundary.py::test_shell_credentials_cannot_shadow_published_environment", "exit": 1, "failures": 8, "collection_errors": 0, "caught": true},
+    {"guard": "unrelated_environment_preserved", "test": "tests/test_zerodha_renewal_compose_boundary.py::test_shell_credentials_cannot_shadow_published_environment", "exit": 1, "failures": 8, "collection_errors": 0, "caught": true}
+  ],
+  "restored": true,
+  "published_source_git_blob": "d3b2f8ee12bd1ac540cee84cedca0e77102f29da",
+  "published_test_git_blob": "3eddfb61355fdd8628b6b2f2e789332e7feb298d",
+  "prior_security_finding": "unresolved; no scanner modification or exception"
+}
