@@ -94,6 +94,6 @@ part of this checkpoint. The original unpublished working copy remains untouched
 The first complete run passed 2,694 tests and failed two historical-replay recovery
 cases because the candidate created its optional binding table in every paper
 ledger. The binding table is now created only inside successful explicit shared
-setup; the ordinary replay schema remains unchanged. Two additional regressions
+setup; the ordinary replay table inventory remains unchanged. Two additional regressions
 cover unselected and rejected setup, and the original replay assertions remain
 unchanged. The prior run is retained as intermediate evidence, not waived.
