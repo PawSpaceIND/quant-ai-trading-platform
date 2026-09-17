@@ -48,13 +48,23 @@ def check_refresh_allowed(root: Path, *, now: datetime, force: bool = False) -> 
 
 
 def refresh_services(root: Path, env_file: Path, *, force: bool = False) -> None:
+    from quant_ai.operations.zerodha_renewal import MANAGED
+
     check_refresh_allowed(root, now=datetime.now(timezone.utc), force=force)
+    # Resolve against the caller before Docker switches to the deployment checkout.
+    # Do not resolve symlinks: the publisher's private-file checks remain authoritative.
+    env_file = Path(env_file).absolute()
+    # Compose shell variables outrank --env-file. Never reuse an exported old session
+    # or API key after validating and publishing the selected file. Preserve all
+    # unrelated shell settings, and leave the parent's environment untouched.
+    file_owned = {*MANAGED, "ZERODHA_API_KEY"}
+    child_env = {key: value for key, value in os.environ.items() if key not in file_owned}
     # Exact allowlist: no build, pull, dashboard replacement, or unrelated service change.
     subprocess.run(
         ["docker", "compose", "--env-file", str(env_file), "-f",
          str(root / "deploy/docker-compose.yml"), "up", "-d", "--no-build",
          "--no-deps", "--force-recreate", "pramana-ghost", "market-monitor", "token-watch"],
-        cwd=root, check=True, capture_output=True,
+        cwd=root, env=child_env, check=True, capture_output=True,
     )
 
 
