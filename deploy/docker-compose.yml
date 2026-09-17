@@ -58,6 +58,11 @@ services:
       PRAMANA_AI_DAILY_TOKEN_LIMIT: ${PRAMANA_AI_DAILY_TOKEN_LIMIT:-2000000}
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
+      # Mandatory entry gates; provider absence must never mean permission to trade.
+      PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"
+      PRAMANA_BOOK_RISK_HISTORY: ${PRAMANA_BOOK_RISK_HISTORY:-daily}
+      PRAMANA_SECTOR_MAP_JSON: ${PRAMANA_SECTOR_MAP_JSON:-}
+      PRAMANA_SECTOR_MAP_FILE: /app/pilot-sector-map.json
       PRAMANA_DECISION_QUALITY_REPORT: /data/decision-quality.json
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
@@ -69,6 +74,12 @@ services:
       PRAMANA_TELEGRAM_CHAT_ID: ${PRAMANA_TELEGRAM_CHAT_ID:-}
     volumes:
       - pramana-data:/data
+      - type: bind
+        source: ${PRAMANA_SECTOR_MAP_HOST_FILE:-./pilot-sector-map.example.json}
+        target: /app/pilot-sector-map.json
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ${PRAMANA_DIRECTIVES_HOST_FILE:-./founder-directives.example.json}
         target: /app/directives.json

@@ -1,0 +1,84 @@
+{
+  "scope": "Offline container smoke and CI acceptance visibility; not production risk-gate closure",
+  "published_parent": "b9535c76415c66875690cc7f2e0aa630c44d253b",
+  "synced_baseline_commit": "0c6c130e5e7e4c37c16d4bd7ff69274c4d98d195",
+  "integrated_owner_main": "13bbdec81fe59332513260b746d51ec75bcf565d",
+  "pre_sync_baseline": {
+    "summary": "13 failed, 1584 passed, 2 warnings, 14 subtests passed in 53.38s",
+    "failures": [
+      "tests/test_deploy_pilot_host.py::test_a_container_that_keeps_restarting_fails_the_deploy",
+      "tests/test_deploy_pilot_host.py::test_a_healthy_deploy_reports_every_service_and_the_revision",
+      "tests/test_deploy_pilot_host.py::test_a_second_deploy_replaces_the_stamp_instead_of_appending_another",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]",
+      "tests/test_deploy_pilot_host.py::test_force_accepts_the_cost_out_loud_and_deploys_anyway",
+      "tests/test_deploy_pilot_host.py::test_nothing_the_deploy_prints_carries_a_value_out_of_env",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  },
+  "retained_synced_baseline": {
+    "summary": "13 failed, 1754 passed, 2 warnings, 14 subtests passed in 194.99s (0:03:14)",
+    "failures": [
+      "tests/test_deploy_pilot_host.py::test_a_container_that_keeps_restarting_fails_the_deploy",
+      "tests/test_deploy_pilot_host.py::test_a_healthy_deploy_reports_every_service_and_the_revision",
+      "tests/test_deploy_pilot_host.py::test_a_second_deploy_replaces_the_stamp_instead_of_appending_another",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]",
+      "tests/test_deploy_pilot_host.py::test_force_accepts_the_cost_out_loud_and_deploys_anyway",
+      "tests/test_deploy_pilot_host.py::test_nothing_the_deploy_prints_carries_a_value_out_of_env",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  },
+  "candidate": {
+    "summary": "13 failed, 1770 passed, 2 warnings, 14 subtests passed in 179.30s (0:02:59)",
+    "failures": [
+      "tests/test_deploy_pilot_host.py::test_a_container_that_keeps_restarting_fails_the_deploy",
+      "tests/test_deploy_pilot_host.py::test_a_healthy_deploy_reports_every_service_and_the_revision",
+      "tests/test_deploy_pilot_host.py::test_a_second_deploy_replaces_the_stamp_instead_of_appending_another",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]",
+      "tests/test_deploy_pilot_host.py::test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]",
+      "tests/test_deploy_pilot_host.py::test_force_accepts_the_cost_out_loud_and_deploys_anyway",
+      "tests/test_deploy_pilot_host.py::test_nothing_the_deploy_prints_carries_a_value_out_of_env",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]",
+      "tests/test_deploy_pilot_host.py::test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  },
+  "added_ordinary_cases": 16,
+  "focused_passes": 64,
+  "explicit_preflight_acceptance": {
+    "failed": 20,
+    "passed": 2,
+    "errors": 0,
+    "implementation_unchanged": true
+  },
+  "manifest_files": 465,
+  "manifest_unchanged": true,
+  "runtime_preflight_and_operator_configuration_unchanged_from_synced_base": true,
+  "existing_six_ci_jobs_unchanged": true,
+  "new_job": "pilot-preflight-acceptance",
+  "local_actual_docker_run": false,
+  "real_history_requested": false,
+  "deployment_performed": false,
+  "published_head_ci": "Must be verified after publication; local tests are not container acceptance",
+  "source_hashes": {
+    "tests/container_risk_gate_assertions.mjs": "5663c92e86d0284206f1387fd3bfdbc92b5161a22f66581e8e93a6111839055a",
+    ".github/workflows/ci.yml": "485508915f997ccdff378b510bd80e96aa4b8a8d5502721a236b1ffb9bb12685",
+    "tests/container_dashboard_smoke.mjs": "8436dab40c4fba6e659ed8c9eb3b6f14f7b04a11feed2ca28e6be67f901dfcf7",
+    "tests/test_container_risk_gate_assertions.py": "449519249af1a10f0fc61d5aeade544866ae52f3c531cd100b76e5eaf16f61ec",
+    "tests/test_pilot_acceptance_workflow.py": "970de6532e39bf3a57c525b90790c6b2e1f972d7e0ebb3d5593c2fd89ab43a2f"
+  }
+}

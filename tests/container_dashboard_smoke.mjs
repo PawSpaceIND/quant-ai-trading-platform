@@ -1,6 +1,7 @@
 // Runs inside the isolated dashboard container against its real npm-start server.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { assertContainerFixtureRiskGates } from "./container_risk_gate_assertions.mjs";
 
 const origin = process.env.SMOKE_ORIGIN || "http://localhost:3000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(origin).hostname));
@@ -109,17 +110,9 @@ assert.ok(Array.isArray(sweep.unprotected) && Array.isArray(sweep.rebased));
 assert.equal(typeof sweep.gapMonitor.armed, "boolean");
 assert.ok(Array.isArray(sweep.gapMonitor.unresolved));
 assert.ok(workspace.checks.find(c => c.id === "protection_sweep"));
-// Arming is the fact the panel leads with, so every gate must publish it as a boolean
-// alongside the setting that turns it on. None of these is armed in this deployment, and
-// the payload has to say that rather than omit the gate.
+// This offline fixture loads the sector map, but supplies no book-risk history.
 const gates = workspace.runtime.riskGates;
-assert.equal(gates.schema, "pramana.risk_gates.v1");
-assert.ok(gates.gates.length >= 7);
-for (const item of gates.gates) {
-  assert.equal(typeof item.armed, "boolean", item.id);
-  assert.match(item.setting, /^PRAMANA_/);
-}
-assert.deepEqual(gates.gates.filter(item => item.armed).map(item => item.id), []);
+assertContainerFixtureRiskGates(gates);
 // Journaled refusals come from the decision journal in this same ledger. An engine that
 // has journaled nothing must report the absence, never an empty list of refusals.
 assert.ok(["available", "unavailable"].includes(workspace.gateRefusals.status));

@@ -1,0 +1,91 @@
+{
+  "base_commit": "0e4fd70b44cd73a36518a557800a330611079350",
+  "baseline": "13 failed, 1790 passed, 2 warnings, 14 subtests passed in 244.21s (0:04:04)",
+  "candidate": "13 failed, 1812 passed, 2 warnings, 14 subtests passed in 179.77s (0:02:59)",
+  "unchanged_failure_identities": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "new_passing_cases": [
+    "test_required_history_must_be_callable[None]",
+    "test_required_history_must_be_callable[source1]",
+    "test_required_mapping_coverage_is_checked_directly[all]",
+    "test_required_mapping_coverage_is_checked_directly[TCS]",
+    "test_freshness_budget_must_be_positive[delta0]",
+    "test_freshness_budget_must_be_positive[delta1]",
+    "test_history_rows_refuse_a_naive_clock_even_for_empty_input",
+    "test_timestamp_guard_has_its_own_refusal_before_session_validation[naive]",
+    "test_timestamp_guard_has_its_own_refusal_before_session_validation[future]",
+    "test_failed_refetch_clears_previous_successful_observation",
+    "test_observation_fallback_refuses_another_day_or_future_read[observed_at0]",
+    "test_observation_fallback_refuses_another_day_or_future_read[observed_at1]",
+    "test_duplicate_sector_keys_are_refused_in_both_environment_sources[inline]",
+    "test_duplicate_sector_keys_are_refused_in_both_environment_sources[file]",
+    "test_grouping_type_checks_have_specific_refusals[mapping0-sector_map_must_be_object]",
+    "test_grouping_type_checks_have_specific_refusals[mapping1-sector_map_requires_string_pairs]",
+    "test_grouping_type_checks_have_specific_refusals[mapping2-sector_map_requires_string_pairs]",
+    "test_incomplete_sector_map_is_not_reported_armed_in_required_runtime",
+    "test_noncallable_provider_is_not_reported_armed",
+    "test_missing_required_inputs_refuse_before_analysis_pipeline[history]",
+    "test_missing_required_inputs_refuse_before_analysis_pipeline[map]",
+    "test_required_mode_never_returns_optional_approval_after_all_inputs_disappear"
+  ],
+  "focused_passed": 117,
+  "selected_files": 466,
+  "manifest_unchanged": true,
+  "production_source_unchanged": true,
+  "guard_removal_certification": "NOT COMPLETED: execution tool blocked the mutation-script write; no successful guard-removal campaign is claimed.",
+  "connection_timeouts": "An earlier mutation command timed out. A later read established its script did not exist, no runner was active, and no mutation result existed before the explicit tool block.",
+  "no_provider_or_broker_calls": true,
+  "no_merge_deployment_or_live_money_change": true
+}

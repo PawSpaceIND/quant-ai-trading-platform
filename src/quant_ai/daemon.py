@@ -330,6 +330,7 @@ def build_ghost_runner(
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
+    require_book_risk_gates: bool = False,
     post_mortem_directory: str | Path | None = None,
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
@@ -370,7 +371,9 @@ def build_ghost_runner(
     # only when the operator passes one, because once armed an unusable measurement
     # blocks every entry by design. See ``quant_ai.risk.policy.BookRiskFirewall``.
     book_history = (
-        DailyCloseHistory(book_risk_history, instruments) if book_risk_history is not None else None
+        DailyCloseHistory(book_risk_history, instruments,
+                          max_age=timedelta(days=7) if require_book_risk_gates else None)
+        if book_risk_history is not None else None
     )
     # Built here rather than beside the scheduler because the overnight limits are the
     # same calendar read from the entry side: what the warden must know about the close is
@@ -391,6 +394,8 @@ def build_ghost_runner(
         llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
         book_risk_history=book_history,
+        book_risk_required_symbols=(tuple(item.symbol for item in instruments)
+                                    if require_book_risk_gates else ()),
         # The operator's own calendar, holiday overrides included, so the close the
         # overnight limits measure against is the one the scheduler runs to.
         overnight_risk=overnight_risk_from_env(calendar),
@@ -400,6 +405,10 @@ def build_ghost_runner(
         attribution_journal_tenant=tenant_id,
     )
     runtime.oms = oms
+    if require_book_risk_gates:
+        problem = runtime.warden.book_risk.configuration_problem()
+        if problem:
+            raise ValueError("pilot_risk_gates_unarmed:" + problem)
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
         news_provider or SandboxNewsSentimentProvider(),
@@ -619,15 +628,22 @@ def _lessons_provider(
 
 
 def _env_daily_history_provider() -> DailyHistoryProvider | None:
-    """Closed daily bars for regime context; ``none`` leaves the regime to intraday bars."""
-    source = os.getenv("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower()
-    if source in {"", "yahoo"}:
-        # Own client so a Yahoo rate-limit opens this circuit only. Construction performs
-        # no I/O; the first cadence tick fetches, at most once per instrument per UTC day.
-        return DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
-    if source == "none":
-        return None
-    raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
+    """Shared explicit selection; constructing a history reader performs no I/O."""
+    from quant_ai.marketdata.history_selection import daily_history_from_env
+    from quant_ai.marketdata.kite_history import KiteHistoryError
+    try:
+        return daily_history_from_env(yahoo_factory=DailyHistoryProvider)
+    except KiteHistoryError as error:
+        if str(error) == "unsupported_daily_history_provider":
+            raise RuntimeError("unsupported PRAMANA_DAILY_HISTORY_PROVIDER") from None
+        raise
+
+
+def _env_required_book_risk() -> bool:
+    value = os.getenv("PRAMANA_REQUIRE_BOOK_RISK_GATES", "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise ValueError("invalid_required_book_risk_setting")
+    return value == "true"
 
 
 def _env_book_risk_history_provider(
@@ -717,6 +733,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         macro_provider=macro,
         history_provider=daily_history,
         book_risk_history=_env_book_risk_history_provider(daily_history),
+        require_book_risk_gates=_env_required_book_risk(),
         holidays=_env_holidays(),
         notifications=dispatcher,
         halt_file=paths.halt_file(),
