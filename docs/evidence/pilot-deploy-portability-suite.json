@@ -1,0 +1,84 @@
+{
+  "base_commit": "7ac330fc59cf85f7aeaa593d4df10318e217dcee",
+  "baseline": "13 failed, 1829 passed, 2 warnings, 14 subtests passed in 204.02s (0:03:24)",
+  "candidate": "1853 passed, 2 warnings, 14 subtests passed in 254.55s (0:04:14)",
+  "ordinary_tests_passed": 1853,
+  "resolved_baseline_failures": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "additional_ordinary_tests": 11,
+  "existing_test_cases_retained": true,
+  "errors": 0,
+  "skips": 0,
+  "original_deployment_suite": {
+    "before_passed": 6,
+    "before_failed": 13,
+    "after_passed": 19,
+    "after_failed": 0
+  },
+  "combined_deployment_suite_passed": 30,
+  "script_and_test_manifest_files": 468,
+  "all_hashes_unchanged": true,
+  "platform": {
+    "bash": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)",
+    "sed": "/usr/bin/sed"
+  },
+  "portability_regressions_caught": 5,
+  "new_live_deployments": 0,
+  "real_broker_requests": 0,
+  "private_credential_reads": 0,
+  "initial_lint_issue": "Fixture re-export alias was corrected without changing assertions; the definitive full suite uses the lint-clean source.",
+  "portfolio_risk_guard_certification": "unchanged and incomplete; no previously blocked mutation runner retried",
+  "exact_head_ci": "not yet run at local certification"
+}

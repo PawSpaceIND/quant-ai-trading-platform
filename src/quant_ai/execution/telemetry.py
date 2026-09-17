@@ -227,7 +227,16 @@ class PilotTelemetry:
         overnight = getattr(warden, "overnight_risk", None)
         overnight_policy = getattr(overnight, "policy", None)
         sector_map = dict(getattr(book_risk, "sector_map", None) or {})
-        history_armed = getattr(book_risk, "history_provider", None) is not None
+        provider = getattr(book_risk, "history_provider", None)
+        history_armed = callable(provider)
+        symbols = tuple(item.symbol for item in getattr(daemon, "instruments", ()))
+        covered = sum(bool(sector_map.get(symbol.upper())) for symbol in symbols)
+        required = bool(getattr(book_risk, "required_symbols", ()))
+        history_state = {"dataReady": None, "records": None, "reason": "not_observed"}
+        # Protect the independent heartbeat: no provider call and no exception can halt it.
+        from quant_ai.risk.book_history import DailyCloseHistory
+        if isinstance(provider, DailyCloseHistory):
+            history_state = provider.readiness(symbols, now)
         corporate = getattr(engine, "corporate_calendar", None)
         try:
             declared = len(corporate) if corporate is not None else 0
@@ -237,14 +246,16 @@ class PilotTelemetry:
         window = getattr(overnight_policy, "closing_window", None)
         gates = [
             {"id": "sector_concentration", "setting": "PRAMANA_SECTOR_MAP_JSON",
-             "armed": bool(sector_map), "records": len(sector_map),
+             "armed": bool(sector_map) and (not required or covered == len(symbols)),
+              "records": len(sector_map), "coveredSymbols": covered,
+              "required": required, "dataReady": bool(symbols) and covered == len(symbols),
              "groups": len(set(sector_map.values())),
              "limit": self._finite(getattr(book_policy, "max_sector_exposure", None))},
             {"id": "correlation_adjusted_gross", "setting": "PRAMANA_BOOK_RISK_HISTORY",
-             "armed": history_armed,
+             "armed": history_armed, "required": required, **history_state,
              "limit": self._finite(getattr(book_policy, "max_correlation_adjusted_gross", None))},
             {"id": "book_expected_shortfall", "setting": "PRAMANA_BOOK_RISK_HISTORY",
-             "armed": history_armed,
+             "armed": history_armed, "required": required, **history_state,
              "limit": self._finite(getattr(book_policy, "max_book_expected_shortfall", None))},
             {"id": "overnight_exposure", "setting": "PRAMANA_OVERNIGHT_GROSS_CAP",
              "armed": bool(getattr(overnight, "armed", False)),

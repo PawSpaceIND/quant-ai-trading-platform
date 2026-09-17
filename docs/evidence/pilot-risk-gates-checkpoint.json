@@ -1,0 +1,136 @@
+{
+  "tested_base": "1c78ad47c0fb26c32271804df41a782877cc09bf",
+  "later_main_observed": "9bf0c29a042502303f0afdee8229ebbd9382a84f",
+  "later_main_overlap_with_changed_files": [],
+  "baseline": "13 failed, 1536 passed, 2 warnings, 14 subtests passed in 48.96s",
+  "candidate": "13 failed, 1575 passed, 2 warnings, 14 subtests passed in 57.55s",
+  "focused_passed": 100,
+  "new_cases": 39,
+  "unchanged_failure_identities": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "source_manifest_files": 453,
+  "source_manifest_unchanged": true,
+  "guard_removal_certification": "not completed; further risk-test editing was tool-blocked",
+  "fault_injection_tests": "executed within the 39 new cases; not a replacement for guard-removal certification",
+  "public_data_attempts": [
+    {
+      "result": {
+        "allArmed": true,
+        "checkedAt": "2026-09-17T05:58:16.111153+00:00",
+        "dataReady": false,
+        "history": {
+          "alignedIntervals": 0,
+          "coveredSymbols": 0,
+          "dataReady": false,
+          "reason": "history_scope_incomplete",
+          "records": 0,
+          "source": "yahoo-daily-history"
+        },
+        "hostAcceptance": false,
+        "lastSessions": {},
+        "paperOnly": true,
+        "reason": "history_scope_incomplete",
+        "schema": "pramana.pilot_risk_preflight.v1",
+        "sectorGroups": 3,
+        "sectorRecords": 5,
+        "sourceRowsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "symbols": [
+          "INFY",
+          "TCS",
+          "RELIANCE",
+          "GOLDBEES",
+          "SILVERBEES"
+        ]
+      },
+      "transport": "default Python trust store",
+      "observed_failure": "CERTIFICATE_VERIFY_FAILED; subsequent provider circuit open"
+    },
+    {
+      "result": {
+        "allArmed": true,
+        "checkedAt": "2026-09-17T05:59:28.151245+00:00",
+        "dataReady": false,
+        "history": {
+          "alignedIntervals": 0,
+          "coveredSymbols": 0,
+          "dataReady": false,
+          "reason": "history_scope_incomplete",
+          "records": 0,
+          "source": "yahoo-daily-history"
+        },
+        "hostAcceptance": false,
+        "lastSessions": {},
+        "paperOnly": true,
+        "reason": "history_scope_incomplete",
+        "schema": "pramana.pilot_risk_preflight.v1",
+        "sectorGroups": 3,
+        "sectorRecords": 5,
+        "sourceRowsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "symbols": [
+          "INFY",
+          "TCS",
+          "RELIANCE",
+          "GOLDBEES",
+          "SILVERBEES"
+        ]
+      },
+      "transport": "existing certifi CA bundle, verification and hostname checks enabled",
+      "observed_failure": "provider_rate_limited; subsequent provider circuit open"
+    }
+  ],
+  "real_host_deployed": false,
+  "real_host_gates_verified": false,
+  "watchlist_widened": false
+}
