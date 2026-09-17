@@ -149,6 +149,7 @@ class PortfolioSnapshot:
     daily_total_pnl: Decimal = Decimal(0)
     # Aggregate marked exposure by country, derived from current open positions.
     country_exposure: dict[str, Decimal] = field(default_factory=dict)
+    available_margin: Decimal | None = None
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
 
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
 from quant_ai.execution.derivative_fees import DerivativeContractNote, DerivativeFeeSchedule
+from quant_ai.execution.derivative_margin import (
+    ContractMarginRequirement,
+    DerivativeMarginSource,
+)
 from quant_ai.execution.friction import FeeSchedule, FrictionContext, MarketFrictionModel
 from quant_ai.execution.paper_ledger import PaperBrokerService
 
@@ -175,14 +179,32 @@ def test_env_schedule_stays_unverified_until_contract_note_matches() -> None:
 
 def test_fill_proof_carries_rate_source_date_and_reconciled_note(tmp_path) -> None:
     schedule = _verified_schedule()
+    # Part 3 makes sourced margin mandatory for every futures fill. This test is about
+    # fee-proof provenance, so provide an explicit synthetic margin snapshot rather than
+    # bypassing that guard or borrowing a production percentage.
+    margin_source = DerivativeMarginSource((
+        ContractMarginRequirement(
+            symbol="GOLD",
+            market=Market.INDIA,
+            asset_class=AssetClass.METAL,
+            lot_size=10,
+            span_per_lot=D("500"),
+            exposure_per_lot=D("100"),
+            source="synthetic margin evidence for fee-proof regression",
+            observed_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
+        ),
+    ), max_age_seconds=86400)
     broker = PaperBrokerService(
         tmp_path / "mcx-fee-proof.db",
         starting_capital=D("10000"),
         friction_model=MarketFrictionModel(
             fee_schedule=FeeSchedule.zero(), derivative_fee_schedule=schedule
         ),
+        margin_source=margin_source,
     )
-    broker.set_friction_context(_context())
+    broker.set_friction_context(
+        _context(), execution_time=datetime(2026, 9, 16, 12, tzinfo=timezone.utc)
+    )
     broker.submit_with_evidence(
         _order("GOLD", Side.BUY),
         {"schema": "pramana.swarm_fill.v1", "event_type": "swarm_fill"},

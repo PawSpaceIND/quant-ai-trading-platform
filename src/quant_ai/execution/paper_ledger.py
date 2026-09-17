@@ -16,6 +16,10 @@ from uuid import uuid4
 from quant_ai.brokers.adapter import BrokerAdapter, BrokerMargin, BrokerPosition
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
+from quant_ai.execution.derivative_margin import (
+    MARGINED_FUTURES_ASSET_CLASSES,
+    DerivativeMarginSource,
+)
 from quant_ai.execution.friction import FrictionContext, FrictionResult, MarketFrictionModel
 from quant_ai.execution.ledger_integrity import (
     PaperLedgerDataError,
@@ -62,6 +66,8 @@ class PaperLedgerEntry:
     created_at: datetime
     stop_price: Decimal | None = None
     take_profit_price: Decimal | None = None
+    margin_change: Decimal | None = None
+    margin_provenance: str | None = None
 
 
 class PaperBrokerService(BrokerAdapter):
@@ -75,6 +81,7 @@ class PaperBrokerService(BrokerAdapter):
         slippage_bps: Decimal | None = None,
         friction_model: MarketFrictionModel | None = None,
         friction_context_provider: Callable[[OrderIntent], FrictionContext | None] | None = None,
+        margin_source: DerivativeMarginSource | None = None,
         lock_retries: int = 3,
         lock_backoff_seconds: float = 0.05,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -101,6 +108,12 @@ class PaperBrokerService(BrokerAdapter):
         # The live source of observed friction inputs. Unset means no market was observed,
         # and an unobserved market is priced from the conservative assumption.
         self._friction_context_provider = friction_context_provider
+        # Broker-sourced exact contract margin. None is a valid fail-closed state: new
+        # futures risk is refused, while an existing position can still exit from its
+        # already-recorded reserved margin.
+        self.margin_source = (
+            margin_source if margin_source is not None else DerivativeMarginSource.from_env()
+        )
         self._execution_time: datetime | None = None
         self.lock_retries = lock_retries
         self.lock_backoff_seconds = lock_backoff_seconds
@@ -151,7 +164,18 @@ class PaperBrokerService(BrokerAdapter):
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     stop_price TEXT,
-                    take_profit_price TEXT
+                    take_profit_price TEXT,
+                    margin_change TEXT,
+                    margin_provenance TEXT
+                );
+                CREATE TABLE IF NOT EXISTS paper_derivative_margin (
+                    tenant_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    asset_class TEXT NOT NULL,
+                    reserved_margin TEXT NOT NULL,
+                    source_provenance TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, symbol, market, asset_class)
                 );
                 CREATE TABLE IF NOT EXISTS paper_cost_ledger (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,6 +215,8 @@ class PaperBrokerService(BrokerAdapter):
         ("paper_positions", "take_profit_price", "TEXT"),
         ("paper_ledger", "stop_price", "TEXT"),
         ("paper_ledger", "take_profit_price", "TEXT"),
+        ("paper_ledger", "margin_change", "TEXT"),
+        ("paper_ledger", "margin_provenance", "TEXT"),
     )
 
     def _migrate_columns(self) -> None:
@@ -457,18 +483,67 @@ class PaperBrokerService(BrokerAdapter):
                     raise ValueError("pilot_target_must_be_above_entry")
                 if held_stop is not None and stop < positive_level(held_stop):
                     raise ValueError("pilot_cannot_loosen_held_stop")
+            is_future = order.asset_class in MARGINED_FUTURES_ASSET_CLASSES
+            margin_row = (
+                self._connection.execute(
+                    """SELECT reserved_margin, source_provenance
+                    FROM paper_derivative_margin
+                    WHERE tenant_id=? AND symbol=? AND market=? AND asset_class=?""",
+                    (tenant_id, order.symbol, order.market.value, order.asset_class.value),
+                ).fetchone()
+                if is_future
+                else None
+            )
+            current_reserved = (
+                finite_amount(
+                    margin_row["reserved_margin"],
+                    "invalid_reserved_derivative_margin",
+                    nonnegative=True,
+                )
+                if margin_row is not None
+                else Decimal(0)
+            )
+            margin_change: Decimal | None = None
+            margin_provenance: str | None = None
+            new_reserved = current_reserved
             if order.side == Side.BUY:
-                if notional + statutory_fees > cash:
-                    raise ValueError("insufficient_paper_cash")
                 new_qty = current_qty + order.quantity
                 new_avg = ((current_avg * current_qty) + notional) / new_qty
-                new_cash = cash - notional - statutory_fees
+                if is_future:
+                    if self.margin_source is None:
+                        raise ValueError(
+                            f"derivative_margin_requirement_unavailable:{order.symbol}"
+                        )
+                    requirement = self.margin_source.requirement_for(order, now=now)
+                    margin_change = requirement.margin_for_quantity(order.quantity)
+                    margin_provenance = json.dumps(
+                        self.margin_source.provenance_for(requirement),
+                        sort_keys=True, allow_nan=False
+                    )
+                    if margin_change + statutory_fees > cash:
+                        raise ValueError("insufficient_derivative_margin")
+                    new_reserved = current_reserved + margin_change
+                    new_cash = cash - margin_change - statutory_fees
+                else:
+                    if notional + statutory_fees > cash:
+                        raise ValueError("insufficient_paper_cash")
+                    new_cash = cash - notional - statutory_fees
             else:
                 if order.quantity > current_qty:
                     raise ValueError("insufficient_paper_position")
                 new_qty = current_qty - order.quantity
                 new_avg = current_avg if new_qty else Decimal(0)
-                new_cash = cash + notional - statutory_fees
+                if is_future:
+                    if margin_row is None or current_reserved <= 0:
+                        raise ValueError("derivative_reserved_margin_missing")
+                    release = current_reserved * Decimal(order.quantity) / Decimal(current_qty)
+                    margin_change = -release
+                    new_reserved = current_reserved - release
+                    realized_pnl = (fill_price - current_avg) * order.quantity
+                    new_cash = cash + release + realized_pnl - statutory_fees
+                    margin_provenance = margin_row["source_provenance"]
+                else:
+                    new_cash = cash + notional - statutory_fees
             finite_amount(new_cash, "invalid_resulting_cash")
             if new_qty:
                 whole_quantity(new_qty, "invalid_resulting_quantity")
@@ -505,11 +580,33 @@ class PaperBrokerService(BrokerAdapter):
                     WHERE tenant_id = ? AND symbol = ? AND market = ? AND asset_class = ?""",
                     (tenant_id, order.symbol, order.market.value, order.asset_class.value),
                 )
+            if is_future:
+                if new_qty:
+                    if margin_provenance is None or new_reserved <= 0:
+                        raise ValueError("invalid_derivative_margin_state")
+                    self._connection.execute(
+                        """INSERT INTO paper_derivative_margin
+                        (tenant_id,symbol,market,asset_class,reserved_margin,source_provenance)
+                        VALUES (?,?,?,?,?,?)
+                        ON CONFLICT(tenant_id,symbol,market,asset_class) DO UPDATE SET
+                            reserved_margin=excluded.reserved_margin,
+                            source_provenance=excluded.source_provenance""",
+                        (tenant_id, order.symbol, order.market.value, order.asset_class.value,
+                         str(new_reserved), margin_provenance),
+                    )
+                else:
+                    self._connection.execute(
+                        """DELETE FROM paper_derivative_margin
+                        WHERE tenant_id=? AND symbol=? AND market=? AND asset_class=?""",
+                        (tenant_id, order.symbol, order.market.value, order.asset_class.value),
+                    )
+
             self._connection.execute(
                 """INSERT INTO paper_ledger
                 (order_id, tenant_id, symbol, market, asset_class, side, quantity,
-                 fill_price, notional, status, created_at, stop_price, take_profit_price)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?, ?, ?)""",
+                 fill_price, notional, status, created_at, stop_price, take_profit_price,
+                 margin_change, margin_provenance)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FILLED', ?, ?, ?, ?, ?)""",
                 (
                     order_id,
                     tenant_id,
@@ -525,6 +622,8 @@ class PaperBrokerService(BrokerAdapter):
                     str(order.take_profit_price)
                     if order.take_profit_price is not None
                     else None,
+                    str(margin_change) if margin_change is not None else None,
+                    margin_provenance,
                 ),
             )
             cost_rows = [
@@ -696,6 +795,16 @@ class PaperBrokerService(BrokerAdapter):
             )
             return True
 
+    def reserved_margin_for(self, symbol: str, market: Market, asset_class: AssetClass, tenant_id: str = "default") -> Decimal:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT reserved_margin FROM paper_derivative_margin WHERE tenant_id=? AND symbol=? AND market=? AND asset_class=?",
+                (tenant_id, symbol, market.value, asset_class.value),
+            ).fetchone()
+        return Decimal(0) if row is None else finite_amount(
+            row["reserved_margin"], "invalid_reserved_derivative_margin", nonnegative=True
+        )
+
     def get_margin(self, tenant_id: str = "default") -> BrokerMargin:
         with self._lock, self._connection:
             self._ensure_account(tenant_id)
@@ -704,16 +813,42 @@ class PaperBrokerService(BrokerAdapter):
                 (tenant_id,),
             ).fetchone()
             positions = self.get_positions(tenant_id)
-        gross = sum(
-            (row.average_price * row.quantity for row in positions),
+            margin_rows = self._connection.execute(
+                "SELECT reserved_margin FROM paper_derivative_margin WHERE tenant_id=?",
+                (tenant_id,),
+            ).fetchall()
+        # BrokerMargin.gross_position_value is an account-value input used by the generic
+        # account-summary adapter, not the risk engine's gross-notional measure. Cash
+        # instruments contribute their entry cost; futures contribute only collateral.
+        # Full futures notional remains available from PortfolioSnapshot.gross_exposure.
+        cash_position_value = sum(
+            (
+                row.average_price * row.quantity
+                for row in positions
+                if row.asset_class not in MARGINED_FUTURES_ASSET_CLASSES
+            ),
             Decimal(0),
         )
+        reserved_margin = sum(
+            (
+                finite_amount(
+                    row["reserved_margin"],
+                    "invalid_reserved_derivative_margin",
+                    nonnegative=True,
+                )
+                for row in margin_rows
+            ),
+            Decimal(0),
+        )
+        account_position_value = cash_position_value + reserved_margin
         cash = finite_amount(account["cash_balance"], "invalid_account_cash")
         return BrokerMargin(
             tenant_id,
             finite_amount(account["starting_capital"], "invalid_starting_capital", positive=True),
             cash,
-            finite_amount(gross, "invalid_gross_position_value", nonnegative=True),
+            finite_amount(
+                account_position_value, "invalid_gross_position_value", nonnegative=True
+            ),
             cash,
         )
 
@@ -721,7 +856,8 @@ class PaperBrokerService(BrokerAdapter):
         with self._lock:
             rows = self._connection.execute(
                 """SELECT order_id, tenant_id, symbol, market, asset_class, side, quantity,
-                fill_price, notional, status, created_at, stop_price, take_profit_price
+                fill_price, notional, status, created_at, stop_price, take_profit_price,
+                margin_change, margin_provenance
                 FROM paper_ledger WHERE tenant_id = ? ORDER BY id""",
                 (tenant_id,),
             ).fetchall()
@@ -740,6 +876,8 @@ class PaperBrokerService(BrokerAdapter):
                 datetime.fromisoformat(row["created_at"]),
                 _optional_decimal(row["stop_price"]),
                 _optional_decimal(row["take_profit_price"]),
+                _optional_decimal(row["margin_change"]),
+                row["margin_provenance"],
             )
             for row in rows
         )
