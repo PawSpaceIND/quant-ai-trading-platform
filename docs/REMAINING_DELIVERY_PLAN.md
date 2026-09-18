@@ -215,3 +215,15 @@ no constructors, accounts or providers are inferred. The actual dashboard browse
 fixture now uses this factory. Host provisioning, independent identity/TLS and target
 host acceptance remain open; this is not a rollout or completion of M06/M08. See
 RECOVERY_ONLY_SERVICE.md and the scoped follow-up to #154.
+
+
+### Explicit recovery-listener lifecycle with the existing daemon
+
+An optional loopback RecoveryServiceHost can now be attached before DaemonRunner.start
+using that exact daemon/runtime, selected persistent keys and existing recovery operations.
+Protection starts first; listener failures latch entry holds without stopping protection.
+Shutdown wakes the cadence and drains admitted recovery before protection/stream teardown.
+The host does not provision credentials, rebuild the trading runtime or close borrowed stores.
+See `COHOSTED_RECOVERY_SERVICE.md` for socket/drain limits and acceptance evidence.
+Environment-only rollout, real host/security/load acceptance and the full M06/M08 milestones
+remain open. Position-linked risk work is in the separate #158 lane, not modified here.
