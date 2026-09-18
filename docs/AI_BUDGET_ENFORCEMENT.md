@@ -1,87 +1,76 @@
-# Existing AI budget enforcement: operator contract
+# AI budget enforcement: aggregate admission contract
 
-This document describes current implementation, not a new spending policy or a
-strict account-wide billing guarantee. It addresses the immediate clarification in
-issue #162. It does not activate a model, raise a limit, widen a watchlist, clear a
-halt, change credentials, or authorize live-money execution.
+This document describes the paper runtime's source-level AI admission controls. It does
+not claim a provider invoice or currency-denominated spending ceiling and does not change
+credentials, model selection, watchlists, trading limits or live-money authority.
 
-## What the existing settings mean
+## Daily ceilings
 
 `PRAMANA_AI_DAILY_CALL_LIMIT` defaults to 500 and
-`PRAMANA_AI_DAILY_TOKEN_LIMIT` defaults to 2,000,000. Existing operator-selected
-values take precedence. Both limits apply **independently to each scope** in the
-SQLite budget ledger: `consensus` and `headline_sentiment`.
+`PRAMANA_AI_DAILY_TOKEN_LIMIT` defaults to 2,000,000. Existing positive
+operator-selected values still take precedence.
 
-The day is a **UTC calendar day**, not the exchange session or the local calendar
-day. The UTC date changes at 05:30 Asia/Kolkata. Rows remain in the durable database;
-restarting a process does not erase that day's used admissions or recorded tokens.
+The configured values now apply in two places:
 
-The call counter measures adapter admissions. It is not a guaranteed count of
-provider HTTP attempts, since transport retry behavior is separate. The token
-counter adds reported `input_tokens` and `output_tokens` after a response arrives.
-It does not incorporate cache-creation/cache-read fields into this counter and is
-not a currency ledger or a complete provider billing meter. Missing or malformed
-usage contributes zero tokens, but does not refund the already admitted call.
+1. each named AI scope (`consensus`, `headline_sentiment`); and
+2. one account-wide aggregate ledger shared by all scopes.
 
-`reserve(scope)` atomically checks that scope's existing call and token totals and
-increments its call counter. A database error refuses admission. It does **not**
-reserve the next request's potential token consumption before sending the request.
-Consequently a request admitted just below the token threshold can take the total
-above it. Later reservations then refuse. Concurrent in-flight admissions and
-incomplete usage reporting need separate treatment in any future hard-ceiling design.
+The aggregate call counter means 500 is at most 500 admitted AI calls across all scopes,
+not 500 calls independently for each scope.
 
-## Executable synthetic examples
+The counter day remains UTC. Restarting a process does not clear that day's rows.
 
-With a 100-token threshold and 99 already recorded tokens, a new call is admitted.
-If that response reports another 40 tokens, the recorded total becomes 139 and the
-following admission refuses. These are synthetic token counts, not actual account
-usage or a cost estimate. Recording all 40 is correct accounting; silently clipping
-the ledger to 100 would conceal consumed usage rather than enforce a ceiling.
+## Pre-request token reservation
 
-With a per-scope call limit of one, one `consensus` admission and one
-`headline_sentiment` admission both succeed. That is two aggregate admissions,
-not proof of a one-call account-wide maximum. Each scope then refuses its next call.
+Production Anthropic calls calculate a conservative allowance before network I/O. The
+allowance consists of the UTF-8 size of the complete structured request, the requested
+maximum output tokens and fixed provider/tool framing headroom. Admission atomically
+checks both the scope and aggregate call/token headroom and records the reservation before
+the request leaves the process.
 
-The matching executable characterizations are in
-`tests/test_ai_budget_enforcement_contract.py`. They describe existing behavior;
-they do not certify it as a hard aggregate limit or waive issue #162.
+When valid provider usage is returned, recorded input/output usage is added and the
+matching reservation is released. If a timeout, provider failure or malformed/missing
+usage prevents reliable reconciliation, the reservation remains consumed for the UTC day.
+The safe failure mode is therefore reduced AI availability, not reopened spending
+headroom.
 
-## Response ceilings are a different control
+Provider-reported token usage remains the accounting truth after a completed call.
+Reservations are deliberately conservative admission units; they are not a provider bill,
+a rupee/dollar cost estimate or proof of the provider's final invoiced token categories.
 
-The consensus default is 1,200 output tokens. The separately reviewed explicit
-`PRAMANA_CONSENSUS_MAX_TOKENS` choice can reach 4,096; merging code does not select it.
-The headline response ceiling remains 1,000. These per-response output allowances
-are not input-token reservations, daily aggregate limits or currency limits.
-Increasing an allowed response size can increase the overshoot of a post-usage
-threshold. Existing configured daily values must not be raised to hide exhaustion.
+## Durable upgrade behavior
 
-## Operator acceptance before a rollout
+Existing SQLite databases are migrated in place by adding the reservation column if
+needed and creating the aggregate table. Existing per-scope calls and recorded tokens are
+summed into a missing aggregate day row exactly once. Upgrading therefore cannot reset
+already-consumed daily headroom.
 
-Keep the paper-only setting and current positive budget values unchanged. Zero or
-negative configured call/token limits explicitly disable this implementation's
-budget; they must not be used as an exhaustion workaround. Preserve the budget
-SQLite database, ledger and decision evidence when restarting or deploying.
+## Concurrency and failure behavior
 
-Review scope-specific calls, recorded tokens, remaining calls/tokens and exhausted
-status without printing credentials. Do not advertise these values as a hard
-account-wide monetary cap. Actual billed spend requires separate provider evidence.
-When reported usage is valid and the database write succeeds, rejection of the
-response still records its consumed input/output tokens. A logged write failure
-is not proof that consumption was persisted. Invalid responses must never be
-promoted into model evidence to make the system look active.
+Aggregate and scope admission are committed in one `BEGIN IMMEDIATE` transaction. If
+either ceiling refuses, the transaction rolls back and no call is admitted. Multiple
+threads/processes sharing the SQLite file therefore cannot each consume the same remaining
+aggregate call slot.
 
-A hard aggregate ceiling remains a separate policy and engineering decision. Its
-acceptance must define the aggregate/per-scope relationship, conservative reservation
-of input/output allowances, unknown usage and timeout/retry treatment, concurrency,
-UTC-day rollover and durable reconciliation. Until implemented and independently
-verified, no strict aggregate or currency-ceiling claim is justified.
+SQLite errors fail closed. Invalid reservation values are rejected. Unknown usage does
+not release a reservation.
 
-## Implementation sources
+## What this control does not claim
 
-- `src/quant_ai/llm/budget.py`: `reserve`, `record`, `status`, `current_day`, and
-  `budget_from_env`.
-- `src/quant_ai/llm/anthropic_client.py`: scope names, request ceilings, usage recording
-  and unchanged transport construction.
-- `deploy/docker-compose.yml`: forwarding of operator settings to the engine.
+- It does not convert tokens into currency or reproduce the provider invoice.
+- It does not prove that provider-side retries, caching categories or billing adjustments
+  equal the local counters.
+- It does not authorize live-money trading.
+- It does not require the AI to trade; budget exhaustion degrades consensus to the
+  existing neutral/preserve-capital path.
 
-No statutory rates, model prices or new policy values are introduced here.
+## Implementation and verification
+
+- `src/quant_ai/llm/budget.py`: durable scope + aggregate ledger, atomic admission,
+  reservation reconciliation and migration.
+- `src/quant_ai/llm/anthropic_client.py`: conservative pre-request reservations for
+  consensus and headline scoring.
+- `tests/test_ai_budget.py`: admission, concurrency, provider-call and reconciliation
+  coverage.
+- `tests/test_ai_budget_enforcement_contract.py`: aggregate cross-scope, token-headroom,
+  unknown-usage and legacy-migration acceptance.

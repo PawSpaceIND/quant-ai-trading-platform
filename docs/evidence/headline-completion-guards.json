@@ -116,14 +116,14 @@
     {
       "id": "usage_before_rejection",
       "path": "src/quant_ai/llm/anthropic_client.py",
-      "old": "self.budget.record(HEADLINE_BUDGET_SCOPE, provenance[\"usage\"])",
+      "old": "self.budget.record(\n                HEADLINE_BUDGET_SCOPE,\n                provenance[\"usage\"],\n                token_reservation=budget_reservation,\n            )",
       "new": "pass",
       "test": "tests/test_headline_completion.py::test_spent_usage_is_recorded_before_rejection_without_extra_request"
     },
     {
       "id": "budget_before_request",
       "path": "src/quant_ai/llm/anthropic_client.py",
-      "old": "if self.budget is not None and not self.budget.reserve(HEADLINE_BUDGET_SCOPE):",
+      "old": "if self.budget is not None and not self.budget.reserve(\n            HEADLINE_BUDGET_SCOPE, budget_reservation\n        ):",
       "new": "if False:",
       "test": "tests/test_headline_completion.py::test_budget_exhaustion_prevents_the_first_sdk_request"
     }

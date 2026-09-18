@@ -108,7 +108,7 @@ def test_tool_envelope_must_identify_one_consensus(kind, code):
 
 
 def test_invalid_call_still_counts_against_existing_budget(tmp_path):
-    budget = SqliteAIBudget(tmp_path / "budget.sqlite", daily_call_limit=1, daily_token_limit=2000)
+    budget = SqliteAIBudget(tmp_path / "budget.sqlite", daily_call_limit=1, daily_token_limit=500000)
     llm, create = client(stop="max_tokens", budget=budget)
     with pytest.raises(ConsensusSchemaError):
         run(llm)

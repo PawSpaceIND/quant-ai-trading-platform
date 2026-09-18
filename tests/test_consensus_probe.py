@@ -40,11 +40,11 @@ def setup_probe(tmp_path, monkeypatch):
     source = folder / "proof.json"
     source.write_text(json.dumps(saved))
     db = tmp_path / "ai-budget.sqlite"
-    budget = SqliteAIBudget(db, daily_call_limit=1, daily_token_limit=2000)
+    budget = SqliteAIBudget(db, daily_call_limit=1, daily_token_limit=500000)
     budget.close()
     for name, value in {"TRADING_LIVE_MONEY_ACTIVE": "false", "ANTHROPIC_API_KEY": "PRIVATE_KEY",
                         "PRAMANA_PROOF_DIR": str(folder), "PRAMANA_AI_BUDGET_DB": str(db),
-                        "PRAMANA_AI_DAILY_CALL_LIMIT": "1", "PRAMANA_AI_DAILY_TOKEN_LIMIT": "2000"}.items():
+                        "PRAMANA_AI_DAILY_CALL_LIMIT": "1", "PRAMANA_AI_DAILY_TOKEN_LIMIT": "50000"}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     sdk = SimpleNamespace(messages=SimpleNamespace(create=AsyncMock(return_value=response())), close=AsyncMock())
