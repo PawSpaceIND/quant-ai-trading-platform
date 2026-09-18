@@ -317,7 +317,7 @@ class SwarmMarketAnalysisPipeline:
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
         required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
-        macro_at = macro.observed_at if required_macro <= macro.indicators.keys() else None
+        macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
             self.freshness.validate(DataCategory.PRICE, last_price_at, now),
@@ -453,7 +453,7 @@ class SwarmMarketAnalysisPipeline:
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
         required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
-        macro_at = macro.observed_at if required_macro <= macro.indicators.keys() else None
+        macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
             self.freshness.validate(DataCategory.PRICE, last_price_at, now),
@@ -777,6 +777,9 @@ class SwarmMarketAnalysisPipeline:
                 ("news", freshness(states.news)),
                 ("macro", freshness(states.macro)),
                 ("fundamentals", freshness(states.fundamentals)),
+            ) + (
+                (("macro_oldest_observed_at", macro.freshness_observed_at.isoformat()),)
+                if macro.indicators and macro.oldest_observed_at is not None else ()
             ),
             timeframes=timeframes,
             regime=regime,

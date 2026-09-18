@@ -107,7 +107,7 @@ def test_the_overnight_firewall_no_longer_refuses_every_evening_entry_as_out_of_
 
 
 def test_the_closing_window_is_measured_against_the_close_the_instrument_actually_has():
-    """A window anchored to 15:30 for a book that shuts at 23:55 is never in force.
+    """A window anchored to 15:30 for a book that shuts at 23:30 is never in force.
 
     The window refuses entries in the final minutes before the close, so that a position
     is not opened with no time left to manage it. Anchored to the wrong close it either
@@ -121,8 +121,8 @@ def test_the_closing_window_is_measured_against_the_close_the_instrument_actuall
     firewall = OvernightExposureFirewall(policy, calendar=book_calendar())
     portfolio = PortfolioSnapshot(EQUITY, Decimal(0), Decimal(0), EQUITY)
 
-    # 23:40 IST, inside MCX's final half hour under the DST close of 23:55.
-    late = datetime(2026, 9, 16, 23, 40, tzinfo=IST).astimezone(timezone.utc)
+    # 23:20 IST, inside MCX's final half hour under the DST close of 23:30.
+    late = datetime(2026, 9, 16, 23, 20, tzinfo=IST).astimezone(timezone.utc)
     assert firewall.evaluate(order("GOLD"), portfolio, late).reason == "overnight_closing_window"
     # 20:00 is mid-session for the metal, so the window must not be in force.
     assert firewall.evaluate(order("GOLD"), portfolio, EVENING).approved
@@ -143,18 +143,16 @@ def test_an_unmapped_calendar_still_refuses_the_evening_so_the_map_is_what_opens
     assert decision.reason == "overnight_entry_outside_session"
 
 
-def test_teaching_the_calendar_about_mcx_does_not_let_mcx_into_the_pilot():
-    """The boundary this change deliberately leaves where it is.
+def test_teaching_calendar_about_mcx_alone_does_not_admit_it_to_pilot():
+    """MCX hours are not admission without verified fee and margin evidence.
 
-    ``validate_pilot_instruments`` restricts the pilot watchlist to NSE cash equity and
-    ETFs in INR. Knowing MCX hours is a prerequisite for ever trading a metal; it is not
-    permission to, and the two must not be confused because one of them is a risk control
-    covering currency, lot size, margin and settlement that none of this touches. Pinned
-    so that a later reading of "we support MCX now" cannot quietly become true.
+    The pilot can now admit a fully bound MCX contract, but the session map alone is never
+    permission. This fixture supplies no verified derivative economics, so admission still
+    refuses it.
     """
     from quant_ai.governance.pilot import validate_pilot_instruments
 
-    with pytest.raises(ValueError, match="not_supported"):
+    with pytest.raises(ValueError, match="pilot_mcx_fee_schedule_unverified"):
         validate_pilot_instruments((GOLD,))
     with pytest.raises(ValueError, match="not_supported"):
         validate_pilot_instruments((NIFTY,))  # an index is not cash equity either

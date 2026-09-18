@@ -288,6 +288,7 @@ def test_legacy_program_without_parent_snapshot_cannot_rebind_by_symbol(tmp_path
             from quant_ai.execution.institutional import request_fingerprint
             kwargs["parent_order_payload"] = None
             kwargs.pop("risk_authority_payload", None)
+            kwargs.pop("context_payload", None)  # Complete historical v0 writer shape.
             kwargs["runtime_context_sha256"] = request_fingerprint(request)
             return create(**kwargs)
         monkeypatch.setattr(h.programs, "create", legacy_create)

@@ -1,8 +1,10 @@
 """Conservative same-journal reservations for explicitly configured paper accounts.
 
-Reservations stay charged after partial/complete fills and uncertain dispatches.
-Only never-claimed program cancellation releases a charge in this first version.
-No real account limit, FX rate or release evidence is inferred.
+Reservation rows remain immutable after partial/complete fills and uncertain dispatches.
+Never-claimed cancellation retains its explicit release record. The integrated
+institutional path may derive a smaller effective charge only from separately
+verified broker/journal state; this module never guesses position release itself.
+No real account limit, FX rate or external broker evidence is inferred.
 """
 from __future__ import annotations
 
@@ -231,7 +233,10 @@ class SharedRiskReservations:
         else:
             _check(saved["payload"] == raw and saved["sha256"] == _sha(raw), "configuration_changed")
 
-    def reserve(self, program, *, evidence, equity, currency, at):
+    def reserve(
+        self, program, *, evidence, equity, currency, at,
+        existing_reserved_loss: Decimal | None = None,
+    ):
         _check(self.db.in_transaction, "transaction_required")
         _check(isinstance(evidence, EdgeEvidence), "evidence_required")
         replace(evidence)
@@ -253,7 +258,12 @@ class SharedRiskReservations:
             _check(self.db.execute("SELECT 1 FROM shared_risk_releases WHERE program_id=?", (program.program_id,)).fetchone() is None, "released_decision_cannot_restart")
             _check(saved["payload"] == raw and saved["sha256"] == _sha(raw), "repeated_reservation_changed")
         else:
-            total = _decoded_amount(report["reservedLoss"]) + amount
+            raw_existing = _decoded_amount(report["reservedLoss"])
+            existing = raw_existing
+            if existing_reserved_loss is not None:
+                existing = _amount(existing_reserved_loss)
+                _check(existing <= raw_existing, "position_capacity_exceeds_reservations")
+            total = existing + amount
             self._capacity(report, equity, total)
             self.db.execute("INSERT INTO shared_risk_reservations VALUES(?,?,?,?)", (program.program_id, program.tenant_id, raw, _sha(raw)))
         return verify_shared_risk(self.db, program.tenant_id)
@@ -263,7 +273,10 @@ class SharedRiskReservations:
         _amount(equity, positive=True)
         _check(total <= equity * _decoded_amount(report["policy"]["maxLossFraction"], positive=True), "budget_exceeded")
 
-    def check(self, program, *, policy, ledger_key, currency, equity, evidence):
+    def check(
+        self, program, *, policy, ledger_key, currency, equity, evidence,
+        effective_reserved_loss: Decimal | None = None,
+    ):
         with self.journal.transaction():
             configured = selected(self.db, program.tenant_id)
             if not configured and policy is None:
@@ -277,7 +290,12 @@ class SharedRiskReservations:
             value = _json(charge[0])
             _check(value["adverseReturn"] == str(evidence.average_loss_return)
                    and value["costReturn"] == str(evidence.expected_cost_return), "reservation_evidence_mismatch")
-            self._capacity(report, equity, _decoded_amount(report["reservedLoss"]))
+            raw_reserved = _decoded_amount(report["reservedLoss"])
+            effective = raw_reserved
+            if effective_reserved_loss is not None:
+                effective = _amount(effective_reserved_loss)
+                _check(effective <= raw_reserved, "position_capacity_exceeds_reservations")
+            self._capacity(report, equity, effective)
 
     def cancel_unclaimed(self, program_id, *, tenant_id, at):
         with self.journal.transaction():

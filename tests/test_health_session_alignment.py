@@ -130,8 +130,9 @@ def test_observation_does_not_expose_symbols_or_private_payload_fields(tmp_path)
 
 
 @pytest.mark.parametrize("exchange,now", [("CDS", datetime(2026, 9, 18, 11, tzinfo=UTC)),
-    ("MCX", datetime(2026, 9, 18, 18, 15, tzinfo=UTC))])
+    ("MCX", datetime(2026, 9, 18, 17, 45, tzinfo=UTC))])
 def test_other_existing_exchange_open_intervals_are_respected(tmp_path, exchange, now):
+    # MCX is 23:15 IST, inside the corrected September 23:30 close.
     result = health_for(tmp_path, [item(exchange=exchange)], now=now)
     assert result["market_data"]["state"] == "blind"
 

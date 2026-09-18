@@ -197,7 +197,7 @@ def test_covered_exit_works_without_shared_entry_configuration(tmp_path):
         sale=h.coordinator.prepare(request);assert sale.approved
         assert h.coordinator.execute_due(sale.program.program_id,now=NOW).stage.value=="COMPLETE"
         assert h.broker.get_positions("tenant")==()
-        # Used-risk release requires a future reconciled position lifecycle; never guess.
+        # Raw reservation history stays immutable; position-linked effective capacity is derived separately.
         assert verify_shared_risk(h.programs.db,"tenant")["reservedLoss"]=="50"
     finally:h.close()
 

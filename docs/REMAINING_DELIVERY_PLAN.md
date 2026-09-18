@@ -81,3 +81,173 @@ See `SHARED_RISK_ADMISSION_WITNESS.md`. This closes the named missing-never-exec
 reservation case relative to the retained broker ledger, not rollback of both stores,
 cross-host fencing or authenticated external authority. Used-position release remains
 unimplemented, so M01 stays partial and the 12 milestone count is unchanged.
+
+## M02 component continuation — complete supplied request/plan storage
+
+The `feat/persisted-institutional-context` branch, based on refreshed #137 at
+`edad0e73a44f32bb332f53a08a55aa5dbb2aa071`, adds typed storage of every current
+InstitutionalTradeRequest and ExecutionPlan field. Parent, slices and snapshot
+commit together. Explicit reconstruction checks approved hashes, full liquidity
+inputs and programme identity without creating an order or fetching new data.
+Offline restore reports retained-context coverage separately from activation.
+
+This proceeds on an independent persistence component while M01's position-linked
+release remains open; it does not waive or retry that release work. Full M02
+acceptance still needs actual source/feature/model lineage and release evidence
+from the integrated producer path. M03 daemon wiring, M01 completion and the other
+milestones remain open. No current account or running daemon is migrated or switched.
+See `PERSISTED_EXECUTION_CONTEXT.md` and the scoped PR's exact test evidence.
+
+### M02 integration follow-up — selected accounting namespace
+
+Review of the stored-context restart path reproduced a genuine attribution defect:
+a request/fill for one tenant could be completed using another tenant's accounting
+adapter. Existing #140 now gains explicit process-local accounting scope checks at
+preparation, binding, dispatch and recovery, plus transactional trade/cost posting
+and stable protective-accounting selection. Mid-posting scope drift rolls back
+journal records while retaining the committed fill for idempotent recovery.
+See `INSTITUTIONAL_ACCOUNTING_SCOPE.md`. This closes the named misattribution paths,
+not authenticated account ownership or a persistent signed accounting-file bind.
+M01 release, full M02 producer/source lineage, M03 runtime assembly and the remaining
+milestones stay open; no live setting or real account is changed by these tests.
+
+### Persisted accounting-store selection prerequisite
+
+New programmes retain the selected local accounting-store identity, tenant, base
+currency and path. A reconstructed coordinator verifies that retained selection;
+copy/restore verification checks identity even when paths intentionally differ.
+This extends the earlier process-local accounting guard across restart for explicitly
+bound programmes. Older unbound rows remain reported unverified. No position-risk
+capacity is released, no daemon is activated and no full milestone is marked complete.
+See `DURABLE_ACCOUNTING_SELECTION.md` for the local identity and rollback limits.
+
+### M03 immediate operating-path bridge (partial)
+
+An explicitly selected `InstitutionalRuntimeInputs` configuration now connects the
+existing synchronous/asynchronous swarm route and actual runner factory to the
+institutional coordinator, programme journal, shared-risk admission and accounting.
+It requires bound NSE cash, immediate execution and supplied institutional inputs;
+missing inputs cannot fall back to direct submission. Default deployment selection
+is unchanged. Trace provenance and final daemon operating checks are retained.
+Automatic scheduled execution/recovery, source qualification, M01 capacity release
+and target-host acceptance remain open. See `INSTITUTIONAL_SWARM_BRIDGE.md`; no whole
+milestone is marked complete by the synthetic bridge tests.
+
+### M03 immediate-bridge recovery component
+
+The selected immediate institutional swarm service now has an explicit historical
+reconciliation API. It reconstructs saved bridge inputs, verifies original decision
+trace/receipt identity and completed trade/fee postings, and uses existing OMS and
+accounting recovery without new orders or current market providers. Missing receipts
+retain uncertainty; independent exits and reserved risk are unchanged. This is not
+authenticated operator review, unattended recovery or scheduled programme service.
+M03 and M01 remain partial. See `INSTITUTIONAL_BRIDGE_RECOVERY.md` and PR #146.
+
+### M03 actual immediate daemon-cycle acceptance
+
+Actual build_ghost_runner/run_once testing exposed and repaired a final-preflight
+self-block: the daemon had mistaken its own freshly submitted institutional child
+for unrelated unresolved OMS work. The final phase now validates that exact claimed
+child while initial admission/restart retain the full unresolved-order fence.
+Synthetic cycles exercise required book-risk gates, accounting failure/recovery,
+independent protection and off-hours behavior without SDK or model network calls.
+The immediate component has real daemon-cycle coverage; scheduled lifecycle,
+authenticated rollout, qualified sources and the remaining M03 gates stay open.
+See `INSTITUTIONAL_DAEMON_CYCLE.md` and the exact PR #146 certification.
+
+
+### M01 position-linked effective-capacity continuation
+
+The stacked feat/position-linked-risk-release component keeps every approved
+reservation row as historical evidence while deriving the capacity charge from
+the verified broker/journal pair. Pending or receipt-less DISPATCHING children
+remain fully charged; committed BUY quantity is charged against the internally
+reconciled open paper position. A fully reconciled close can therefore free
+effective capacity without deleting reservation history. Partial closes reduce
+only reconciled exposure, terminal unfilled child quantities no longer consume
+future capacity, and an executed journal child without its broker receipt refuses.
+
+When several entry programmes could own aggregate remaining shares, the derivation
+assigns shares to the highest per-unit reservation first rather than guessing a
+favourable lot allocation. Dispatch holds the execution-journal transaction across
+the broker-derived measure and shared-risk check, preserving the existing
+journal-to-broker lock order. There is no new release store.
+
+This closes the named local position-capacity lifecycle for the selected
+single-currency paper cash path once its PR is reviewed/merged. It does not turn
+internal SQLite reconciliation into external broker-account evidence, add
+distributed fencing, or complete the wider M01 account-authority boundary.
+See POSITION_LINKED_SHARED_RISK.md.
+
+### M06 scoped authenticated bookkeeping-recovery component
+
+A separate opt-in API component now wraps the immediate bridge's existing historical
+reconciliation. It requires explicitly issued recovery permissions, tenant-derived
+server selection, the saved context digest and an exact confirmation. A durable
+REQUESTED audit event precedes any bookkeeping; returned/failed outcomes and request
+idempotency retain uncertainty across interruption. Queued credential revocation is
+rechecked. Ordinary existing credentials gain no recovery permissions.
+
+This closes a component gap, not the entire operations milestone. Credentials remain
+in-memory possession keys, not persistent identity/MFA or independent approval. The
+new audit store still needs coordinated backup/restore inclusion. Front-end operator
+review, production provisioning, TLS/gateway validation, cross-host recovery and
+independent security/human acceptance remain open. M01 risk-capacity release and M03
+scheduled execution are unchanged. No running account or deployment was modified.
+See `AUTHENTICATED_INSTITUTIONAL_RECOVERY.md` for endpoints, tested failure cases and
+explicit exclusions. Exact final evidence is recorded in the scoped follow-up PR.
+
+### M07 operator-audit retention component
+
+An explicitly selected operator recovery audit now travels in schema-6 stopped-writer
+bundles with its ledger/OMS/accounting/programmes. Offline validation checks full audit
+history, exact saved contexts, source traces and returned receipt references; unknown
+outcomes stay unknown and no request is replayed. Schema 1-5 and selected AI/research
+coverage remain compatible. Unselected audit state is not claimed as captured.
+Automatic scheduling, independent audit-selection pins, authenticated off-host retention
+and actual restoration acceptance remain open. See `OPERATOR_AUDIT_BACKUP.md`.
+
+### M06 durable operator-credential component
+
+An explicitly selected PersistentApiKeyRegistry now supports local persistent
+possession-key grants, bounded aware expiry, irreversible revocation and atomic
+same-permission rotation. Existing API defaults remain in memory; deployed accounts
+are not changed. The real recovery handlers can use the durable registry and retain
+queued-principal checks across revocation/expiry/rotation. This is not external human
+identity, MFA, secure credential distribution, gateway rollout or off-host credential
+recovery. See `PERSISTENT_OPERATOR_CREDENTIALS.md` for limits and exact test scope.
+The M06 milestone and wider release requirements remain open.
+
+### M06/M09 component — explicit dashboard recovery console
+
+The Activity page now has an opt-in programme inspection, confirmation and recorded
+request-outcome workflow through the existing scoped recovery API. Server-side keys
+are never browser input; tenant/context identity and post-dispatch uncertainty remain
+explicit. Browser tests run the real Python API, persistent credential store, audit
+and paper bridge using disposable state. The read-only OMS panel remains unchanged.
+No deployment, credential issuance, halt clearing, risk release or live order is
+performed. See `OPERATOR_RECOVERY_CONSOLE.md`. Independent human/security/host and
+actor-identity acceptance remain open; the entire M06/M09 milestones are not closed.
+
+### M06/M08 recovery-only application surface
+
+The dedicated create_recovery_app factory reuses the existing scoped recovery API,
+but installs only health and its three bookkeeping routes. It requires explicitly
+selected durable credentials and existing tenant runtimes, freezes that mapping,
+and bounds incoming recovery bodies. General trading/model endpoints are absent;
+no constructors, accounts or providers are inferred. The actual dashboard browser
+fixture now uses this factory. Host provisioning, independent identity/TLS and target
+host acceptance remain open; this is not a rollout or completion of M06/M08. See
+RECOVERY_ONLY_SERVICE.md and the scoped follow-up to #154.
+
+
+### Explicit recovery-listener lifecycle with the existing daemon
+
+An optional loopback RecoveryServiceHost can now be attached before DaemonRunner.start
+using that exact daemon/runtime, selected persistent keys and existing recovery operations.
+Protection starts first; listener failures latch entry holds without stopping protection.
+Shutdown wakes the cadence and drains admitted recovery before protection/stream teardown.
+The host does not provision credentials, rebuild the trading runtime or close borrowed stores.
+See `COHOSTED_RECOVERY_SERVICE.md` for socket/drain limits and acceptance evidence.
+Environment-only rollout, real host/security/load acceptance and the full M06/M08 milestones
+remain open. Position-linked risk work is in the separate #158 lane, not modified here.

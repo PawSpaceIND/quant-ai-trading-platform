@@ -76,7 +76,7 @@ Evidence: `intelligence/pipeline.py`, `execution/scheduler.py`, `backtesting/tea
 
 ### 4. Data and feature readiness — pilot blocker
 
-Ghost fundamentals default to sandbox; news/macro also fall back to sandbox without configured providers. The local dashboard snapshot observed earlier reported missing FRED, licensed fundamentals and IBKR; these were snapshot reports, not independent credential checks. Fresh timestamps alone do not turn synthetic constants into real evidence.
+The earlier sandbox-default diagnosis is superseded for `build_ghost_runner_from_env()`: its production provider factory selects explicit failover wrappers, returns empty news/macro on missing configuration or failure, and selects Yahoo fundamentals by default (`none` disables it). Low-level test/demo factories still have sandbox defaults. A configured adapter is not verified retrieval, freshness or source authenticity. The earlier local dashboard snapshot remains historical evidence, not a current AWS credential or provider check. See `docs/INTELLIGENCE_INPUT_VERIFICATION.md` for the scoped diagnostic and remaining acceptance.
 
 **Acceptance:** every enabled decision feature has a source, observation time, availability status and documented fallback. Either supply licensed inputs or disable/reweight dependent signals explicitly and revalidate that strategy. Do not substitute a sandbox value in a supposedly real-data evaluation. Verify holiday overrides, symbol mapping and correct trade timestamps; render epoch-zero index timestamps as unavailable.
 
