@@ -75,6 +75,27 @@ is never cleared by a study whose data provenance was never examined.
 search and every statistic constant and changes only the universe. The clean run clears; the
 survivor-only run does not.
 
+## It is wired into promotion, not offered to it
+
+A gate nothing calls is decoration. `PromotionPolicy` now carries
+`require_selection_correction`, defaulting to on, and `evaluate_promotion` takes a
+keyword-only `SelectionEvidence` carrying the candidate count, the deflated Sharpe and the
+universe verdict. Absence is a rejection (`selection_bias_uncorrected`), not a pass.
+
+`governance/pilot_review.py` was already loading the trial register and checking only that
+it recorded at least one run — the cumulative candidate count was read and thrown away, so a
+strategy chosen as the best of five hundred variants reached promotion on statistics never
+corrected for the search that found it. It now builds `SelectionEvidence` from that count
+plus the study's typed gate result, and refuses a strategy review that does not carry one.
+
+`learning/candidates.py` threads the same evidence through the hash-chained approval record,
+so an approval carries the correction it relied on and a later reader can see the search was
+counted rather than assume it.
+
+The escape hatch is `PromotionPolicy(require_selection_correction=False)`, for a genuinely
+pre-registered single hypothesis. It has to be stated in the policy, where it is visible in
+the signed record, rather than being the default.
+
 ## What clearing it does not mean
 
 Nothing here approves anything. A cleared statistical gate means a result is not obviously
