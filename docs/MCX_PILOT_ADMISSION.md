@@ -133,3 +133,30 @@ Normal weekday boundary and overnight-firewall tests cover winter and summer.
 This does not qualify special/holiday half-days, agricultural contract sessions,
 future exchange-circular changes or actual evening-feed/protection operation.
 Do not enable MCX on a running account solely because these tests pass.
+
+## Integration with the persisted health observer
+
+After the session-aware health observer was merged in #160, its existing MCX
+open-interval test used 23:45 IST in September. That is after the corrected 23:30
+close. The combined unchanged-source check reproduced one failure and 234 passes:
+the observer correctly reported `closed`, while the fixture expected `blind`.
+The fixture now uses 23:15 IST and retains the open-but-stale refusal assertion.
+Neither the observer nor the production closing-time rule was altered.
+
+`test_mcx_health_session_boundaries.py` adds 24 real-SQLite checks: four seasons,
+just before/exactly at/just after the exclusive close, and a closed NSE instrument
+marked either fresh or stale. Every check also verifies equivalent UTC input,
+zero-age persisted timestamps, the expected availability reason and unchanged
+SQLite bytes. A closed NSE feed cannot hide a blind, still-open MCX session.
+
+`test_mcx_health_boundary_guards.py` reuses the existing disposable-source harness.
+Its three passing controls must fail named assertions when the standard close,
+DST close or exclusive-close guard is deliberately reversed or removed. Behavior
+and guard modules are separate so the copied control needs no mutation inventory.
+The focused boundary/guard/existing-health combination passed 70 cases. Initial
+new-test heartbeat-field and copied-harness import failures are retained in the
+local evidence, not counted as product incidents or passing guard proofs.
+
+Final full-suite and CI results belong to the exact published PR head. These
+synthetic observations do not certify the host's actual feed, calendar overrides,
+alerts, entitlement or operating readiness. Merge and deployment remain owner actions.
