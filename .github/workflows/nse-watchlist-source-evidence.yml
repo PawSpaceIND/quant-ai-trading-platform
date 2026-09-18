@@ -6,8 +6,10 @@ on:
       - '.github/workflows/nse-watchlist-source-evidence.yml'
       - 'src/quant_ai/governance/nse_watchlist.py'
       - 'scripts/prepare_nse_watchlist.py'
+      - 'scripts/inspect_watchlist_budget.py'
       - 'tests/test_nse_watchlist*.py'
       - 'docs/evidence/nse-watchlist-guard-inventory.json'
+      - 'docs/evidence/nse-watchlist-budget-guard-inventory.json'
 
 permissions:
   contents: read
@@ -26,7 +28,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -e '.[dev]'
       - name: Verify preparation and deliberate guard removal with synthetic sources
-        run: python -B -m pytest -q tests/test_nse_watchlist.py tests/test_nse_watchlist_mutations.py --junitxml=watchlist-verification.xml
+        run: python -B -m pytest -q tests/test_nse_watchlist.py tests/test_nse_watchlist_mutations.py tests/test_nse_watchlist_budget.py tests/test_nse_watchlist_budget_mutations.py --junitxml=watchlist-verification.xml
       - name: Preserve verification result, including failures
         if: always()
         uses: actions/upload-artifact@v4

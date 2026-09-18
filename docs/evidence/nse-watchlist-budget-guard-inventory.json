@@ -1,0 +1,159 @@
+{
+  "schema": "pramana.watchlist_budget_guards.v1",
+  "mutations": [
+    {
+      "id": "budget_paper_mode_required",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(environ.get(\"TRADING_LIVE_MONEY_ACTIVE\", \"\").strip().lower() == \"false\",\n             \"budget_paper_mode_required\")",
+      "new": "_require(True, 'budget_paper_mode_required')",
+      "test": "tests/test_nse_watchlist_budget.py::test_paper_mode_must_be_explicit"
+    },
+    {
+      "id": "budget_aware_clock_required",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(isinstance(now, datetime) and now.utcoffset() is not None,\n             \"budget_aware_clock_required\")",
+      "new": "_require(True, 'budget_aware_clock_required')",
+      "test": "tests/test_nse_watchlist_budget.py::test_clock_requires_timezone"
+    },
+    {
+      "id": "budget_window_invalid",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(type(days) is int and 1 <= days <= MAX_DAYS, \"budget_window_invalid\")",
+      "new": "_require(True, 'budget_window_invalid')",
+      "test": "tests/test_nse_watchlist_budget.py::test_window_is_bounded_and_not_boolean"
+    },
+    {
+      "id": "budget_limit_disabled_or_unusable",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(0 < value <= SQLITE_MAX_INTEGER, \"budget_limit_disabled_or_unusable\")",
+      "new": "_require(True, 'budget_limit_disabled_or_unusable')",
+      "test": "tests/test_nse_watchlist_budget.py::test_disabled_unusable_or_malformed_limits_refuse"
+    },
+    {
+      "id": "budget_regular_database_required",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(stat.S_ISREG(info.st_mode), \"budget_regular_database_required\")",
+      "new": "_require(True, 'budget_regular_database_required')",
+      "test": "tests/test_nse_watchlist_budget.py::test_database_symlink_refused"
+    },
+    {
+      "id": "budget_row_identity_invalid",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(day in dates and scope in SCOPES, \"budget_row_identity_invalid\")",
+      "new": "_require(True, 'budget_row_identity_invalid')",
+      "test": "tests/test_nse_watchlist_budget.py::test_malformed_selected_date_refuses"
+    },
+    {
+      "id": "budget_duplicate_or_excess_rows",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require((day, scope) not in observed, \"budget_duplicate_or_excess_rows\")",
+      "new": "_require(True, 'budget_duplicate_or_excess_rows')",
+      "test": "tests/test_nse_watchlist_budget.py::test_duplicate_or_excess_rows_refused[False]"
+    },
+    {
+      "id": "budget_counters_invalid",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(all(type(value) is int and 0 <= value <= SQLITE_MAX_INTEGER\n                     for value in (calls, inputs, outputs)), \"budget_counters_invalid\")",
+      "new": "_require(True, 'budget_counters_invalid')",
+      "test": "tests/test_nse_watchlist_budget.py::test_invalid_counters_refuse_without_echo"
+    },
+    {
+      "id": "budget_table_unavailable",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(table == [(\"table\",)], \"budget_table_unavailable\")",
+      "new": "_require(True, 'budget_table_unavailable')",
+      "test": "tests/test_nse_watchlist_budget.py::test_real_table_required_not_fabricated_view"
+    },
+    {
+      "id": "budget_row_limit",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "_require(len(rows) <= 2 * days, \"budget_row_limit\")",
+      "new": "_require(True, 'budget_row_limit')",
+      "test": "tests/test_nse_watchlist_budget.py::test_duplicate_or_excess_rows_refused[True]"
+    },
+    {
+      "id": "read_only_connection",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "\"?mode=ro\"",
+      "new": "\"?mode=rw\"",
+      "test": "tests/test_nse_watchlist_budget.py::test_database_connection_uses_read_only_mode"
+    },
+    {
+      "id": "query_only",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "db.execute(\"PRAGMA query_only=ON\")",
+      "new": "db.execute(\"PRAGMA query_only=OFF\")",
+      "test": "tests/test_nse_watchlist_budget.py::test_query_only_untrusted_schema_transaction_and_work_limit"
+    },
+    {
+      "id": "trusted_schema",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "db.execute(\"PRAGMA trusted_schema=OFF\")",
+      "new": "db.execute(\"PRAGMA trusted_schema=ON\")",
+      "test": "tests/test_nse_watchlist_budget.py::test_query_only_untrusted_schema_transaction_and_work_limit"
+    },
+    {
+      "id": "snapshot_transaction",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "db.execute(\"BEGIN\")",
+      "new": "db.execute(\"SELECT 1\")",
+      "test": "tests/test_nse_watchlist_budget.py::test_query_only_untrusted_schema_transaction_and_work_limit"
+    },
+    {
+      "id": "work_limit",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "return int(steps[0] > 100)",
+      "new": "return 0",
+      "test": "tests/test_nse_watchlist_budget.py::test_query_only_untrusted_schema_transaction_and_work_limit"
+    },
+    {
+      "id": "bounded_returned_rows",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "\"ORDER BY day, scope LIMIT ?\"",
+      "new": "\"ORDER BY day, scope LIMIT (? + 100)\"",
+      "test": "tests/test_nse_watchlist_budget.py::test_sql_limits_rows_before_python_processing"
+    },
+    {
+      "id": "redacted_arguments",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "raise BudgetObservationError(\"budget_arguments_invalid\")",
+      "new": "super().error(message)",
+      "test": "tests/test_nse_watchlist_budget.py::test_cli_refuses_invalid_arguments_without_echo"
+    },
+    {
+      "id": "redacted_limit_errors",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "raise BudgetObservationError(\"budget_limit_invalid\") from None",
+      "new": "raise",
+      "test": "tests/test_nse_watchlist_budget.py::test_disabled_unusable_or_malformed_limits_refuse"
+    },
+    {
+      "id": "redacted_unexpected_errors",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "except Exception:  # noqa: BLE001 - diagnostic boundary must not echo private input\n        print(json.dumps({\"status\": \"observation_refused\", \"reason\": \"budget_observation_failed\"}))",
+      "new": "except Exception as error:  # noqa: BLE001 - deliberately broken diagnostic for test\n        print(json.dumps({\"status\": \"observation_refused\", \"reason\": str(error)}))",
+      "test": "tests/test_nse_watchlist_budget.py::test_cli_read_failure_details_redacted"
+    },
+    {
+      "id": "missing_is_unknown",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "\"reservedLogicalCalls\": None,",
+      "new": "\"reservedLogicalCalls\": 0,",
+      "test": "tests/test_nse_watchlist_budget.py::test_missing_rows_are_unknown_not_zero"
+    },
+    {
+      "id": "utc_budget_axis",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "current = now.astimezone(timezone.utc)",
+      "new": "current = now",
+      "test": "tests/test_nse_watchlist_budget.py::test_budget_day_remains_utc_across_india_midnight"
+    },
+    {
+      "id": "separate_scopes_filter",
+      "path": "scripts/inspect_watchlist_budget.py",
+      "old": "\"WHERE day BETWEEN ? AND ? AND scope IN (?, ?) \"",
+      "new": "\"WHERE day BETWEEN ? AND ? AND (? IS NOT NULL AND ? IS NOT NULL) \"",
+      "test": "tests/test_nse_watchlist_budget.py::test_unrelated_scopes_and_old_dates_never_printed"
+    }
+  ]
+}
