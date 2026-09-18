@@ -37,6 +37,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+#: Trading days between progress lines. Frequent enough that a stall shows up within a
+#: minute or two of starting, sparse enough that the log stays readable over ten years.
+PROGRESS_EVERY = 25
+
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
@@ -187,7 +191,9 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--requests-per-second", type=float, default=2.0,
                         help="be polite; the exchanges throttle aggressively")
-    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--timeout", type=int, default=30,
+                        help="seconds per request; a throttled exchange hangs rather than "
+                             "refusing, so a long timeout turns a rate limit into a stall")
     args = parser.parse_args(argv)
 
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
@@ -202,6 +208,8 @@ def main(argv=None) -> int:
     failures = []
     day = start
     interrupted = None
+    considered = 0
+    started_at = time.monotonic()
     try:
         while day <= end:
             if day.weekday() >= 5:  # The exchanges do not settle at weekends.
@@ -221,6 +229,18 @@ def main(argv=None) -> int:
                 failures.append((day, detail))
                 if delay:
                     time.sleep(delay)
+            considered += 1
+            if considered % PROGRESS_EVERY == 0:
+                # A run of this length with no output cannot be told from a hung one. The
+                # line carries the day reached and the elapsed time so a stall is obvious
+                # from the log rather than only from counting files on disk.
+                elapsed = time.monotonic() - started_at
+                rate = saved / elapsed if elapsed > 0 else 0.0
+                print(
+                    f"  {day.isoformat()}: saved {saved}, absent {missing}, failed {failed}"
+                    f" ({rate * 60:.0f}/min)",
+                    file=sys.stderr, flush=True,
+                )
             day += timedelta(days=1)
     except KeyboardInterrupt:
         # Stopping a download that takes hours is a normal thing to do, not a crash. The
