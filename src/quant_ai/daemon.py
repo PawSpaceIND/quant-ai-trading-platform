@@ -164,6 +164,10 @@ class DaemonRunner:
         self._runner_loop = None
         self.intraday_warmup_provider = intraday_warmup_provider
         self.intraday_warmup_instruments = tuple(intraday_warmup_instruments)
+        self.intraday_warmup_status = {
+            item.symbol: {"status": "pending", "bars": 0, "updatedAt": None}
+            for item in self.intraday_warmup_instruments
+        }
 
     def attach_recovery_service(self, service) -> None:
         """Explicitly cohost recovery for this exact runtime; default remains absent."""
@@ -249,18 +253,31 @@ class DaemonRunner:
         seed = getattr(feed, "seed_closed_candles", None)
         recent = getattr(feed, "fetch_recent_ohlcv", None)
         if not callable(seed) or not callable(recent):
+            stamp = now.isoformat()
+            for instrument in self.intraday_warmup_instruments:
+                self.intraday_warmup_status[instrument.symbol] = {
+                    "status": "unavailable", "bars": 0, "updatedAt": stamp
+                }
             self._logger.warning("intraday_warmup_feed_unsupported")
             return
         for instrument in self.intraday_warmup_instruments:
             if self._stop_requested:
                 return
+            stamp = now.isoformat()
             try:
                 candles = tuple(provider.fetch(instrument, now))
                 seed(candles, now)
                 available = len(recent(instrument, now, count=60))
             except Exception:  # noqa: BLE001 - external history must fail closed, not crash protection
+                self.intraday_warmup_status[instrument.symbol] = {
+                    "status": "failed", "bars": 0, "updatedAt": stamp
+                }
                 self._logger.warning("intraday_warmup_failed symbol=%s", instrument.symbol)
                 continue
+            status = "ready" if available >= 50 else "insufficient"
+            self.intraday_warmup_status[instrument.symbol] = {
+                "status": status, "bars": available, "updatedAt": stamp
+            }
             if available < 50:
                 self._logger.warning(
                     "intraday_warmup_insufficient symbol=%s bars=%d", instrument.symbol, available
