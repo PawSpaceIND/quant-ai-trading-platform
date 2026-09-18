@@ -106,8 +106,13 @@ def opener_for(exchange: str):
     try:
         opener.open(home, timeout=30).read(1024)
     except (urllib.error.URLError, TimeoutError) as error:
-        print(f"warning: could not reach {home} to establish a session ({error}); "
-              "downloads will probably be rejected", file=sys.stderr)
+        # Not fatal, and not a prediction of failure: the archive hosts are separate from
+        # the home page and have been observed serving files normally while the home page
+        # answers 403 to a datacentre IP. Say what happened and let the download report
+        # its own result.
+        print(f"note: {home} did not set a session cookie ({error}). The archive host is "
+              "separate and often serves anyway - the per-day counts below are the real "
+              "answer.", file=sys.stderr)
     return opener
 
 
