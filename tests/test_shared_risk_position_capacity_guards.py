@@ -83,6 +83,23 @@ CASES = helper_guard_cases() + [
 ]
 
 
+SNAPSHOT_TEST = "tests/test_position_capacity_snapshot.py::"
+CASES += [
+    {"id": "ledger_snapshot", "path": BINDING,
+     "old": "with _capacity_read_snapshot(ledger), _capacity_read_snapshot(journal):",
+     "new": "with _capacity_read_snapshot(journal):",
+     "test": SNAPSHOT_TEST + "test_external_position_change_after_reconcile_does_not_free_unchecked_capacity"},
+    {"id": "journal_snapshot", "path": BINDING,
+     "old": "with _capacity_read_snapshot(ledger), _capacity_read_snapshot(journal):",
+     "new": "with _capacity_read_snapshot(ledger):",
+     "test": SNAPSHOT_TEST + "test_external_slice_change_after_binding_is_not_adopted_in_capacity"},
+    {"id": "conservative_lot_attribution", "path": BINDING,
+     "old": "candidates, key=lambda item: (item[0], item[2]), reverse=True",
+     "new": "candidates, key=lambda item: (item[0], item[2]), reverse=False",
+     "test": SNAPSHOT_TEST + "test_remaining_ambiguous_shares_keep_highest_parent_risk_first"},
+]
+
+
 @pytest.mark.parametrize("case", CASES, ids=[row["id"] for row in CASES])
 def test_position_capacity_guard_needs_control_and_named_failure(tmp_path, case):
     protected = {
@@ -103,7 +120,8 @@ def test_position_capacity_guard_needs_control_and_named_failure(tmp_path, case)
         for failure in row.findall("failure")
     ]
     assert failures
-    assert all(name and message for name, message in failures)
+    assert all(name and message.startswith(("assert ", "AssertionError:", "Failed:"))
+               for name, message in failures), failures
     assert before == {
         name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
         for name in protected

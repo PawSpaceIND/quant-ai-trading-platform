@@ -1,7 +1,8 @@
 """Local broker-ledger pin for an explicitly selected shared-risk journal.
 
-This adds refusal checks, not a new order transport, account limit, capacity release
-or broker-account authentication. Independent covered exits never read the journal.
+Retains pairing guards and derives effective reserved loss from reconciled paper
+positions. No new order transport, account limit or external broker authentication
+is introduced. Independent covered exits never read the journal.
 """
 from __future__ import annotations
 
@@ -9,11 +10,12 @@ import hashlib
 import json
 import re
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
 from quant_ai.domain.models import AssetClass, Market, Side
 from quant_ai.execution.reconciliation import reconcile_paper
@@ -232,6 +234,17 @@ def verify_committed_entry_coverage(ledger, journal, tenant, pin):
     return len(rows)
 
 
+@contextmanager
+def _capacity_read_snapshot(db):
+    """Retain checked source rows through derivation, preserving caller transactions."""
+    name = "position_capacity_" + uuid4().hex
+    db.execute(f"SAVEPOINT {name}")
+    try:
+        yield
+    finally:
+        db.execute(f"RELEASE SAVEPOINT {name}")
+
+
 def position_linked_capacity(ledger, journal, tenant, *, check_paths=True):
     """Conservative effective shared-risk charge from reconciled broker exposure.
 
@@ -244,125 +257,126 @@ def position_linked_capacity(ledger, journal, tenant, *, check_paths=True):
 
     This is internal paper-ledger reconciliation, not an external broker assertion.
     """
-    pin = _verify_binding_pair(ledger, journal, tenant, check_paths=check_paths)
-    _check(pin is not None, "position_capacity_binding_missing")
-    reconciliation = reconcile_paper(ledger, tenant)
-    _check(reconciliation.get("status") == "matched", "position_capacity_reconciliation_failed")
+    with _capacity_read_snapshot(ledger), _capacity_read_snapshot(journal):
+        pin = _verify_binding_pair(ledger, journal, tenant, check_paths=check_paths)
+        _check(pin is not None, "position_capacity_binding_missing")
+        reconciliation = reconcile_paper(ledger, tenant)
+        _check(reconciliation.get("status") == "matched", "position_capacity_reconciliation_failed")
 
-    report = verify_shared_risk(journal, tenant)
-    raw_total = _decoded_amount(report["reservedLoss"])
-    released = {
-        row["program_id"]
+        report = verify_shared_risk(journal, tenant)
+        raw_total = _decoded_amount(report["reservedLoss"])
+        released = {
+            row["program_id"]
+            for row in _rows(
+                journal,
+                "SELECT program_id FROM shared_risk_releases WHERE tenant_id=?",
+                (tenant,),
+            )
+        }
+
+        # verify_binding_pair has already checked every committed BUY receipt against
+        # the retained programme/slice claim. Build only the quantity index here.
+        committed_by_slice = {}
         for row in _rows(
+            ledger,
+            """SELECT l.quantity,e.payload FROM paper_ledger l
+               JOIN paper_decision_evidence e
+                 ON e.order_id=l.order_id AND e.tenant_id=l.tenant_id
+               WHERE l.tenant_id=? AND l.side='BUY' ORDER BY l.id""",
+            (tenant,),
+        ):
+            payload = _source_payload(row["payload"])
+            pid, sequence = payload["institutional_program"], payload["institutional_slice"]
+            key = (pid, sequence)
+            committed_by_slice[key] = row["quantity"]
+
+        pending_risk = Decimal(0)
+        committed_capacity = {}
+        reservations = _rows(
             journal,
-            "SELECT program_id FROM shared_risk_releases WHERE tenant_id=?",
+            "SELECT * FROM shared_risk_reservations WHERE tenant_id=? ORDER BY program_id",
             (tenant,),
         )
-    }
+        for reservation in reservations:
+            pid = reservation["program_id"]
+            if pid in released:
+                continue
+            body = _json(reservation["payload"])
+            amount = _decoded_amount(body["amount"], positive=True)
+            program = journal.execute(
+                "SELECT * FROM execution_programs WHERE tenant_id=? AND program_id=?",
+                (tenant, pid),
+            ).fetchone()
+            parent = order_from_snapshot(program["parent_order_payload"])
+            per_unit = amount / Decimal(parent.quantity)
+            slices = _rows(
+                journal,
+                """SELECT sequence,quantity,state FROM execution_program_slices
+                   WHERE program_id=? ORDER BY sequence""",
+                (pid,),
+            )
+            committed = 0
+            pending = 0
+            for slice_ in slices:
+                key = (pid, slice_["sequence"])
+                filled = committed_by_slice.get(key)
+                state = slice_["state"]
+                if filled is not None:
+                    committed += filled
+                elif state in {"PENDING", "DISPATCHING"}:
+                    # DISPATCHING without a receipt is uncertain, so retain the charge.
+                    pending += slice_["quantity"]
+                else:
+                    _check(
+                        state in {"FAILED", "CANCELLED"},
+                        "position_capacity_unrecorded_fill_state_invalid",
+                    )
+            pending_risk += per_unit * Decimal(pending)
+            if committed:
+                instrument_key = (parent.symbol, parent.market.value, parent.asset_class.value)
+                committed_capacity.setdefault(instrument_key, []).append((per_unit, committed, pid))
 
-    # verify_binding_pair has already checked every committed BUY receipt against
-    # the retained programme/slice claim. Build only the quantity index here.
-    committed_by_slice = {}
-    for row in _rows(
-        ledger,
-        """SELECT l.quantity,e.payload FROM paper_ledger l
-           JOIN paper_decision_evidence e
-             ON e.order_id=l.order_id AND e.tenant_id=l.tenant_id
-           WHERE l.tenant_id=? AND l.side='BUY' ORDER BY l.id""",
-        (tenant,),
-    ):
-        payload = _source_payload(row["payload"])
-        pid, sequence = payload["institutional_program"], payload["institutional_slice"]
-        key = (pid, sequence)
-        committed_by_slice[key] = row["quantity"]
-
-    pending_risk = Decimal(0)
-    committed_capacity = {}
-    reservations = _rows(
-        journal,
-        "SELECT * FROM shared_risk_reservations WHERE tenant_id=? ORDER BY program_id",
-        (tenant,),
-    )
-    for reservation in reservations:
-        pid = reservation["program_id"]
-        if pid in released:
-            continue
-        body = _json(reservation["payload"])
-        amount = _decoded_amount(body["amount"], positive=True)
-        program = journal.execute(
-            "SELECT * FROM execution_programs WHERE tenant_id=? AND program_id=?",
-            (tenant, pid),
-        ).fetchone()
-        parent = order_from_snapshot(program["parent_order_payload"])
-        per_unit = amount / Decimal(parent.quantity)
-        slices = _rows(
-            journal,
-            """SELECT sequence,quantity,state FROM execution_program_slices
-               WHERE program_id=? ORDER BY sequence""",
-            (pid,),
-        )
-        committed = 0
-        pending = 0
-        for slice_ in slices:
-            key = (pid, slice_["sequence"])
-            filled = committed_by_slice.get(key)
-            state = slice_["state"]
-            if filled is not None:
-                committed += filled
-            elif state in {"PENDING", "DISPATCHING"}:
-                # DISPATCHING without a receipt is uncertain, so retain the charge.
-                pending += slice_["quantity"]
-            else:
-                _check(
-                    state in {"FAILED", "CANCELLED"},
-                    "position_capacity_unrecorded_fill_state_invalid",
-                )
-        pending_risk += per_unit * Decimal(pending)
-        if committed:
-            instrument_key = (parent.symbol, parent.market.value, parent.asset_class.value)
-            committed_capacity.setdefault(instrument_key, []).append((per_unit, committed, pid))
-
-    positions = {}
-    for row in _rows(
-        ledger,
-        """SELECT symbol,market,asset_class,quantity FROM paper_positions
-           WHERE tenant_id=? ORDER BY symbol,market,asset_class""",
-        (tenant,),
-    ):
-        quantity = row["quantity"]
-        key = (row["symbol"], row["market"], row["asset_class"])
-        positions[key] = quantity
-
-    position_risk = Decimal(0)
-    for key, quantity in positions.items():
-        candidates = committed_capacity.get(key, ())
-        remaining = quantity
-        # Max-risk allocation avoids inventing which historical lot a SELL closed.
-        for per_unit, committed, _pid in sorted(
-            candidates, key=lambda item: (item[0], item[2]), reverse=True
+        positions = {}
+        for row in _rows(
+            ledger,
+            """SELECT symbol,market,asset_class,quantity FROM paper_positions
+               WHERE tenant_id=? ORDER BY symbol,market,asset_class""",
+            (tenant,),
         ):
-            used = min(remaining, committed)
-            position_risk += per_unit * Decimal(used)
-            remaining -= used
-            if remaining == 0:
-                break
+            quantity = row["quantity"]
+            key = (row["symbol"], row["market"], row["asset_class"])
+            positions[key] = quantity
 
-    effective = pending_risk + position_risk
-    _check(
-        effective.is_finite()
-        and effective >= 0
-        and effective <= raw_total,
-        "position_capacity_exceeds_reservations",
-    )
-    return {
-        "status": "consistent",
-        "rawReservedLoss": str(raw_total),
-        "effectiveReservedLoss": str(effective),
-        "pendingRisk": str(pending_risk),
-        "openPositionRisk": str(position_risk),
-        "activationAuthorized": False,
-        "scope": "reconciled_internal_paper_position; not external_broker_reconciliation",
-    }
+        position_risk = Decimal(0)
+        for key, quantity in positions.items():
+            candidates = committed_capacity.get(key, ())
+            remaining = quantity
+            # Max-risk allocation avoids inventing which historical lot a SELL closed.
+            for per_unit, committed, _pid in sorted(
+                candidates, key=lambda item: (item[0], item[2]), reverse=True
+            ):
+                used = min(remaining, committed)
+                position_risk += per_unit * Decimal(used)
+                remaining -= used
+                if remaining == 0:
+                    break
+
+        effective = pending_risk + position_risk
+        _check(
+            effective.is_finite()
+            and effective >= 0
+            and effective <= raw_total,
+            "position_capacity_exceeds_reservations",
+        )
+        return {
+            "status": "consistent",
+            "rawReservedLoss": str(raw_total),
+            "effectiveReservedLoss": str(effective),
+            "pendingRisk": str(pending_risk),
+            "openPositionRisk": str(position_risk),
+            "activationAuthorized": False,
+            "scope": "reconciled_internal_paper_position; not external_broker_reconciliation",
+        }
 
 
 def pin_account(broker, journal, tenant, *, allow_create, program_id):

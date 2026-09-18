@@ -83,3 +83,22 @@ settlement work and are not silently brought into this account-risk model.
 
 This component does not implement multi-host fencing, external broker
 reconciliation, live money, or a profitability claim.
+
+## Stable source reads and demonstrated concurrent admission
+
+The capacity reader now holds a SQLite savepoint on each selected source from
+binding/reconciliation checks through its final derivation. Nested callers retain
+their own transactions; refusal closes only the reader's savepoints. This is not
+one distributed transaction across the two databases, nor a multi-host lease.
+Callers must continue to serialize concurrent use of the same connection.
+
+Two independent-connection regressions reproduced the earlier mixed-read defect:
+a position deleted after reconciliation, or a child changed after binding checks,
+could make the reader report zero charge from state it had not verified. Both
+now remain on the checked snapshot; the next read refuses a corrupt ledger.
+Additional tests cover successful/refused nested reads and conservative allocation
+of remaining ambiguous shares to the highest-risk recorded parent first.
+
+The original reservation is retained. No balance, fee, price, margin or risk-policy
+constant is supplied by these tests; all fixture numbers are synthetic. Software
+checks are not proof of actual host/source qualification or strategy effectiveness.
