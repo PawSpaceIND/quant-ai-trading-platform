@@ -319,13 +319,26 @@ def _cost_fraction(bars: Sequence[Any]) -> float | None:
 
 
 def _eligible_at(
-    series: Sequence[Series], universe: PointInTimeUniverse, day: date, lookback: int
+    series: Sequence[Series],
+    universe: PointInTimeUniverse,
+    day: date,
+    lookback: int,
+    cache: dict[Any, Any] | None = None,
 ) -> list[tuple[Series, int]]:
-    """Every name this study may rank on ``day``, judged only on what was known by then."""
+    """Every name this study may rank on ``day``, judged only on what was known by then.
+
+    Eligibility is a property of the day, not of the signal asking, so every candidate shares
+    one answer per month and filters it by its own lookback. Eighteen candidates re-deriving
+    the same tradeable set over three thousand names is the difference between a study that
+    finishes and one that does not.
+    """
+    key = ("eligible", day)
+    if cache is not None and key in cache:
+        return [(item, cut) for item, cut in cache[key] if cut >= lookback]
     out: list[tuple[Series, int]] = []
     for item in series:
         cut = item.upto(day)
-        if cut == 0 or cut < lookback:
+        if cut == 0:
             continue
         try:
             if not universe.was_tradeable(item.symbol, day):
@@ -336,7 +349,9 @@ def _eligible_at(
         if not item.eligible(cut):
             continue
         out.append((item, cut))
-    return out
+    if cache is not None:
+        cache[key] = out
+    return [(item, cut) for item, cut in out if cut >= lookback]
 
 
 def backtest_signal(
@@ -345,6 +360,7 @@ def backtest_signal(
     signal: CrossSectionalSignal,
     horizon: int,
     calendar: Sequence[date],
+    cache: dict[Any, Any] | None = None,
 ) -> dict[str, Any]:
     """Overlapping tranches, measured as excess over the universe the names came from.
 
@@ -369,7 +385,7 @@ def backtest_signal(
     unpriceable = 0
 
     for month, index in enumerate(bounds[:-1]):
-        picks = _eligible_at(series, universe, calendar[index], signal.lookback)
+        picks = _eligible_at(series, universe, calendar[index], signal.lookback, cache)
         ranked: list[tuple[float, Series, int]] = []
         for item, cut in picks:
             value = signal.score(item.closes[:cut], item.volumes[:cut])
@@ -382,7 +398,13 @@ def backtest_signal(
         width = max(MINIMUM_NAMES, int(len(ranked) * SELECTION_FRACTION))
         held, costs = [], []
         for _, item, cut in ranked[:width]:
-            cost = _cost_fraction(item.bars[:cut])
+            key = ("cost", item.symbol, month)
+            if cache is not None and key in cache:
+                cost = cache[key]
+            else:
+                cost = _cost_fraction(item.bars[:cut])
+                if cache is not None:
+                    cache[key] = cost
             if cost is None:
                 unpriceable += 1
                 continue
@@ -421,7 +443,7 @@ def backtest_signal(
 
         # Every eligible name, equally weighted: the return of not ranking at all.
         benchmark: list[float] = []
-        for item, _cut in _eligible_at(series, universe, calendar[opening], LIQUIDITY_WINDOW):
+        for item, _cut in _eligible_at(series, universe, calendar[opening], LIQUIDITY_WINDOW, cache):
             moved = item.month_return(calendar[opening], calendar[closing])
             if moved is not None:
                 benchmark.append(moved[0])
@@ -525,8 +547,11 @@ def run_cross_sectional_study(
     summary = register_summary(register, study=STUDY)
     charged = int(summary["candidate_trials"])
 
+    # One cache across the whole search: eligibility and friction depend on the month and the
+    # name, never on which candidate is asking.
+    shared: dict[Any, Any] = {}
     candidates = [
-        backtest_signal(series, universe, signal, horizon, calendar)
+        backtest_signal(series, universe, signal, horizon, calendar, shared)
         for signal in signals
         for horizon in horizons
     ]

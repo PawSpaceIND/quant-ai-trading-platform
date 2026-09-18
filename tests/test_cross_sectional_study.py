@@ -25,6 +25,7 @@ from quant_ai.research.cross_sectional import (
     MINIMUM_TURNOVER,
     CrossSectionalSignal,
     Series,
+    _eligible_at,
     backtest_signal,
 )
 
@@ -320,3 +321,42 @@ def test_running_it_again_is_charged_for_looking_again(tmp_path):
     second = run_cross_sectional_study(datasets, manifest, register=register, horizons=(63,))
 
     assert second["trial_register"]["candidate_trials"] > first["trial_register"]["candidate_trials"]
+
+
+def test_the_shared_cache_changes_speed_and_nothing_else():
+    """Eligibility and friction depend on the month and the name, never on which candidate is
+    asking - so memoising them across eighteen candidates must be invisible in the result. A
+    cache that changes an answer is worse than no cache, because it changes it quietly."""
+    names = [f"NAME{index}" for index in range(30)]
+    series = [_series(name, _drifting(0.0003 + index * 0.00002)) for index, name in enumerate(names)]
+    universe = _universe(names)
+    signal = next(item for item in CLOSE_SIGNALS if item.name == "momentum_12_1")
+
+    uncached = backtest_signal(series, universe, signal, 63, _days())
+    shared: dict = {}
+    first = backtest_signal(series, universe, signal, 63, _days(), shared)
+    # A second candidate reading a warm cache must also agree.
+    second = backtest_signal(series, universe, signal, 63, _days(), shared)
+
+    assert first["returns"] == uncached["returns"] == second["returns"]
+    assert first["universe_returns"] == uncached["universe_returns"]
+    assert first["positions_exited_on_delisting"] == uncached["positions_exited_on_delisting"]
+
+
+def test_a_cached_month_still_respects_each_caller_s_own_lookback():
+    """The cached set is every eligible name on that day, and each caller filters it by the
+    history its own signal needs. Tested on _eligible_at directly because the shipped signals
+    all guard their own lookback too - going through them would pass whatever this did."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    day = _days()[300]
+    shared: dict = {}
+
+    # Cold, by a caller that needs little history: fills the cache with every eligible name.
+    shallow = _eligible_at(series, universe, day, 60, shared)
+    # Warm, by a caller that needs more history than any of these names have on that day.
+    deep = _eligible_at(series, universe, day, 500, shared)
+
+    assert len(shallow) == 20
+    assert deep == []
