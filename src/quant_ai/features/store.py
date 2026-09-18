@@ -148,34 +148,38 @@ class PointInTimeFeatureStore:
         self.db.close()
 
     def append(self, observation: FeatureObservation) -> None:
+        with self.db:
+            self._insert_observation(observation)
+
+    def _insert_observation(self, observation: FeatureObservation) -> None:
+        """Insert within the caller transaction; preserve append() public semantics."""
         payload = observation.payload()
         digest = _sha(payload)
-        with self.db:
-            existing = self.db.execute(
-                "SELECT payload_sha256 FROM feature_observations WHERE observation_id=?",
-                (observation.observation_id,),
-            ).fetchone()
-            if existing is not None:
-                if existing[0] != digest:
-                    raise ValueError("feature_observation_id_payload_mismatch")
-                return
-            try:
-                self.db.execute(
-                    "INSERT INTO feature_observations VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        observation.observation_id,
-                        observation.subject,
-                        observation.feature,
-                        str(observation.value),
-                        payload["observedAt"],
-                        payload["availableAt"],
-                        observation.source_id,
-                        observation.schema_id,
-                        digest,
-                    ),
-                )
-            except sqlite3.IntegrityError as error:
-                raise ValueError("duplicate_feature_revision_identity") from error
+        existing = self.db.execute(
+            "SELECT payload_sha256 FROM feature_observations WHERE observation_id=?",
+            (observation.observation_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != digest:
+                raise ValueError("feature_observation_id_payload_mismatch")
+            return
+        try:
+            self.db.execute(
+                "INSERT INTO feature_observations VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    observation.observation_id,
+                    observation.subject,
+                    observation.feature,
+                    str(observation.value),
+                    payload["observedAt"],
+                    payload["availableAt"],
+                    observation.source_id,
+                    observation.schema_id,
+                    digest,
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise ValueError("duplicate_feature_revision_identity") from error
 
     def snapshot(
         self,

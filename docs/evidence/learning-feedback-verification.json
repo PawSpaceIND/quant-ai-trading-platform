@@ -1,0 +1,317 @@
+{
+  "schema": "pramana.learning-feedback-verification.v1",
+  "base_commit": "5bacb52337351c41fe782ac848edf1ae33647614",
+  "baseline": {
+    "tests": 2565,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "baseline_ordinary_passed": 2551,
+  "first_full_candidate": {
+    "tests": 2649,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "first_full_candidate_ordinary_passed": 2634,
+  "first_full_candidate_failure": "tests/test_cli_runtime_reporting.py::test_learning_already_earned_is_reported_rather_than_rebuilt_as_nothing",
+  "repair": "Synthetic helper adds resolver-produced exit_at; all original assertions unchanged.",
+  "existing_assertions_preserved": {
+    "tests/test_attribution_memory.py": 24,
+    "tests/test_backtest_fidelity.py": 32,
+    "tests/test_cli_runtime_reporting.py": 7
+  },
+  "focused": {
+    "tests": 149,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "before_after_reproduction": {
+    "baseline": {
+      "tests": 3,
+      "failures": 3,
+      "errors": 0,
+      "skipped": 0
+    },
+    "candidate": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "guard_sensitivity": [
+    {
+      "guard": "audit_digest",
+      "target": "tests/test_specialist_feedback.py::test_corrupt_audit_digest_refuses_even_when_source_payload_is_unchanged",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "audit_immutability",
+      "target": "tests/test_specialist_feedback.py::test_feedback_audit_is_append_only",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 2,
+          "failures": 2,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "closed_entry_scope",
+      "target": "tests/test_specialist_feedback.py::test_invalid_or_ineligible_outcomes_never_change_weights",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 21,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 21,
+          "failures": 3,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "monitor_nonoverlap",
+      "target": "tests/test_learning_monitor.py::test_overlapping_windows_cannot_multiply_eligible_samples",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "monitor_recency",
+      "target": "tests/test_learning_monitor.py::test_stale_recent_evidence_is_not_healthy",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "monitor_sample_floor",
+      "target": "tests/test_learning_monitor.py::test_minimum_window_sample_is_not_lowered",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 3,
+          "failures": 3,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "monitor_tenant",
+      "target": "tests/test_learning_monitor.py::test_invalid_configuration_and_mixed_artifacts_refuse",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 13,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 13,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "next_decision_refresh",
+      "target": "tests/test_specialist_feedback.py::test_new_resolved_outcome_is_used_before_next_evidence_weighting",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "outcome_time",
+      "target": "tests/test_specialist_feedback.py::test_invalid_or_ineligible_outcomes_never_change_weights",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 21,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 21,
+          "failures": 2,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "source_consistency",
+      "target": "tests/test_specialist_feedback.py::test_deleted_consumed_source_does_not_silently_reset_history",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "supporter_only",
+      "target": "tests/test_specialist_feedback.py::test_only_supporters_receive_realized_entry_credit",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 2,
+          "failures": 2,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "guard": "unrelated_trace_credit",
+      "target": "tests/test_specialist_feedback.py::test_bound_legacy_delta_callback_cannot_credit_the_latest_unrelated_trace",
+      "runs": [
+        {
+          "label": "control",
+          "exit": 0,
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "label": "mutant",
+          "exit": 1,
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Synthetic tests only; no production data, broker or model requests.",
+    "Final full-source/CI results are recorded in the PR conversation after completion.",
+    "Configured genuine probability-forecast source and human alert receipt remain unverified.",
+    "Original remote partial worktree is retained, not blindly pushed."
+  ]
+}

@@ -177,30 +177,33 @@ class ForecastOutcomeJournal:
         }
 
     def record_forecast(self, item: ProbabilityForecast) -> None:
+        with self.db:
+            self._insert_forecast(item)
+
+    def _insert_forecast(self, item: ProbabilityForecast) -> None:
         payload = self._forecast_payload(item)
         digest = _digest_payload(payload)
-        with self.db:
-            existing = self.db.execute(
-                "SELECT payload_sha256 FROM probability_forecasts WHERE forecast_id=?",
-                (item.forecast_id,),
-            ).fetchone()
-            if existing is not None:
-                if existing[0] != digest:
-                    raise ValueError("forecast_id_payload_mismatch")
-                return
-            try:
-                self.db.execute(
-                    "INSERT INTO probability_forecasts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        item.forecast_id, item.pair_id, item.candidate_id, item.subject,
-                        str(item.probability_positive_after_cost),
-                        payload["decisionAt"], payload["resolveAfter"],
-                        item.feature_snapshot_sha256, item.model_artifact_sha256,
-                        item.cost_policy_sha256, item.regime, digest,
-                    ),
-                )
-            except sqlite3.IntegrityError as error:
-                raise ValueError("duplicate_candidate_pair_forecast") from error
+        existing = self.db.execute(
+            "SELECT payload_sha256 FROM probability_forecasts WHERE forecast_id=?",
+            (item.forecast_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != digest:
+                raise ValueError("forecast_id_payload_mismatch")
+            return
+        try:
+            self.db.execute(
+                "INSERT INTO probability_forecasts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    item.forecast_id, item.pair_id, item.candidate_id, item.subject,
+                    str(item.probability_positive_after_cost),
+                    payload["decisionAt"], payload["resolveAfter"],
+                    item.feature_snapshot_sha256, item.model_artifact_sha256,
+                    item.cost_policy_sha256, item.regime, digest,
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise ValueError("duplicate_candidate_pair_forecast") from error
 
     def resolve(
         self,
