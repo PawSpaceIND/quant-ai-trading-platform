@@ -62,6 +62,18 @@ DEFAULT_GAP_THRESHOLD = Decimal("0.25")
 #: points at a data error — a misplaced decimal, or two securities merged under one key.
 IMPLAUSIBLE_FACTOR = Decimal(1000)
 
+#: Calendar days between two bars beyond which they are not consecutive sessions. A long
+#: weekend with holidays either side reaches about five days; past a week the security did
+#: not trade in between.
+#:
+#: This gates the gap detector, and it matters. An instrument's bars are the days it traded,
+#: not the days the market was open, so a security suspended for two years has adjacent bars
+#: two years apart, and an "overnight move" measured across that hole is a multi-year
+#: return. On a real NSE archive every one of the ten largest such readings was a penny
+#: stock resuming from suspension - VISESHINFO at +2000% on a previous close of 0.05 - each
+#: reported as an unexplained corporate action, and each carrying no such information.
+MAX_CONSECUTIVE_SESSION_DAYS = 7
+
 
 @dataclass(frozen=True)
 class CorporateActionRecord:
@@ -214,6 +226,9 @@ def _discontinuities_for(
             continue
         disagreement = abs(stated - actual) / actual
         move = (current.close - actual) / actual
+        # Bars are the days this security traded, not the days the market was open.
+        span = (current.trading_day - previous.trading_day).days
+        consecutive = span <= MAX_CONSECUTIVE_SESSION_DAYS
 
         if disagreement > tolerance:
             # The exchange restated the previous close: it is telling us an action applied.
@@ -230,7 +245,7 @@ def _discontinuities_for(
                     detector="exchange-prevclose",
                 )
             )
-        elif abs(move) >= gap_threshold:
+        elif consecutive and abs(move) >= gap_threshold:
             # No restatement, but a move past every circuit limit. Either an action the
             # venue did not signal, or a data error. Both need a human before a study runs.
             found.append(

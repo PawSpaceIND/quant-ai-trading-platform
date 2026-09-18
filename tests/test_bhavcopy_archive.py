@@ -638,3 +638,44 @@ def test_a_stock_closing_at_its_circuit_limit_is_not_called_a_corporate_action()
     ]
     broken = reconstruct_universe(wider, source="NSE bhavcopy archive, test fixture")
     assert reconcile(broken.histories).unsignalled_gaps == 1
+
+
+def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_action():
+    # An instrument's bars are the days it traded, not the days the market was open, so a
+    # security suspended for two years has adjacent bars two years apart. Measuring an
+    # overnight move across that hole gives a multi-year return. On a real NSE archive the
+    # largest such readings were penny stocks resuming from suspension - VISESHINFO at
+    # +2000% on a previous close of 0.05 - every one of them reported as an unexplained
+    # corporate action, and every one of them a resumption carrying no such information.
+    before, after = date(2020, 1, 6), date(2022, 3, 29)
+    rows = [
+        parse_bhavcopy(nse_file(before, [
+            nse_row("SUSPENDED", before, Decimal("0.05"), Decimal("0.05"),
+                    isin="INE017A01011")])),
+        parse_bhavcopy(nse_file(after, [
+            nse_row("SUSPENDED", after, Decimal("1.05"), Decimal("0.05"),
+                    isin="INE017A01011")])),
+    ]
+    result = reconstruct_universe(
+        rows, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+
+    report = reconcile(result.histories)
+
+    assert report.unsignalled_gaps == 0
+
+    # The same move between genuinely adjacent sessions is still caught, so the detector is
+    # gated on adjacency rather than switched off.
+    adjacent = sessions(2, start=date(2020, 1, 6))
+    tight = [
+        parse_bhavcopy(nse_file(adjacent[0], [
+            nse_row("JUMPY", adjacent[0], Decimal("0.05"), Decimal("0.05"),
+                    isin="INE018A01011")])),
+        parse_bhavcopy(nse_file(adjacent[1], [
+            nse_row("JUMPY", adjacent[1], Decimal("1.05"), Decimal("0.05"),
+                    isin="INE018A01011")])),
+    ]
+    jumpy = reconstruct_universe(
+        tight, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+    assert reconcile(jumpy.histories).unsignalled_gaps == 1
