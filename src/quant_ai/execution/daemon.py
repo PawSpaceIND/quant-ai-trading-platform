@@ -130,6 +130,9 @@ class AutonomousTradingDaemon:
         runtime = self.scheduler.pipeline.runtime
         runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
         runtime.pre_submit_check = self._pilot_pre_submit
+        from quant_ai.agents.institutional_runtime import InstitutionalSwarmPaperTradingService
+        if isinstance(runtime, InstitutionalSwarmPaperTradingService):
+            runtime.bind_inflight_preflight(self._pilot_inflight_pre_submit)
         self.tracker.broker.get_starting_capital(self.tenant_id)
         self.check_protection_coverage(self.clock())
         self._reconcile_pilot()
@@ -152,7 +155,11 @@ class AutonomousTradingDaemon:
             self.trade_evidence = build_trade_evidence(self.tracker.broker._connection, self.tenant_id)
         return True
 
-    def _pilot_pre_submit(self, proposal) -> str | None:
+    def _pilot_inflight_pre_submit(self, proposal, in_flight) -> str | None:
+        """Recheck all operating gates while recognizing only this claimed child."""
+        return self._pilot_pre_submit(proposal, in_flight=in_flight)
+
+    def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
         self.apply_operator_halt()
         if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
             return "pilot_protection_incomplete"
@@ -163,7 +170,7 @@ class AutonomousTradingDaemon:
                 return 'pilot_strategy_manifest_unverified'
         if proposal.side != Side.SELL:
             from quant_ai.governance.runtime_identity import runtime_identity_entry_issue
-            issue = runtime_identity_entry_issue(self)
+            issue = runtime_identity_entry_issue(self, in_flight=in_flight)
             if issue is not None:
                 self.engage_kill_switch(issue)
                 return issue

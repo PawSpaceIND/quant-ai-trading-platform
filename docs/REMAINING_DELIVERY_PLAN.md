@@ -142,3 +142,15 @@ accounting recovery without new orders or current market providers. Missing rece
 retain uncertainty; independent exits and reserved risk are unchanged. This is not
 authenticated operator review, unattended recovery or scheduled programme service.
 M03 and M01 remain partial. See `INSTITUTIONAL_BRIDGE_RECOVERY.md` and PR #146.
+
+### M03 actual immediate daemon-cycle acceptance
+
+Actual build_ghost_runner/run_once testing exposed and repaired a final-preflight
+self-block: the daemon had mistaken its own freshly submitted institutional child
+for unrelated unresolved OMS work. The final phase now validates that exact claimed
+child while initial admission/restart retain the full unresolved-order fence.
+Synthetic cycles exercise required book-risk gates, accounting failure/recovery,
+independent protection and off-hours behavior without SDK or model network calls.
+The immediate component has real daemon-cycle coverage; scheduled lifecycle,
+authenticated rollout, qualified sources and the remaining M03 gates stay open.
+See `INSTITUTIONAL_DAEMON_CYCLE.md` and the exact PR #146 certification.

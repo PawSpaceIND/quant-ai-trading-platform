@@ -91,3 +91,13 @@ providers or submitting another order. It returns original committed references,
 not a new execution event or permission to trade. Source-trace correspondence and
 completed-accounting postconditions are checked. See `INSTITUTIONAL_BRIDGE_RECOVERY.md`
 for the tested scope, missing-receipt holds and remaining operational boundaries.
+
+## Actual daemon-cycle verification
+
+The bridge's final operating check now distinguishes its exact currently claimed
+SUBMITTED child from unresolved historical OMS work. Initial admission/restart
+still refuse all unresolved submissions; wrong or extra open orders, uncertain
+states, changed intents and committed unrecorded fills are never exempted.
+The original pilot checks still run at both stages. This repairs the self-blocking
+case exposed by actual run_once integration rather than isolated service calls.
+See `INSTITUTIONAL_DAEMON_CYCLE.md` for scope and synthetic end-to-end acceptance.

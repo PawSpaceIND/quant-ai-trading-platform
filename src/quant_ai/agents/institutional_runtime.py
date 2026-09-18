@@ -35,6 +35,7 @@ from quant_ai.execution.institutional import (
 from quant_ai.execution.planner import ExecutionAlgorithm
 from quant_ai.execution.program import ExecutionProgramJournal, SliceState
 from quant_ai.execution.shared_risk import SharedRiskPolicy
+from quant_ai.governance.runtime_identity import InFlightOmsSubmission
 from quant_ai.governance.runtime_manifest import stable
 from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
@@ -115,6 +116,8 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
             raise TypeError("institutional_runtime_durable_oms_required")
         self._inputs = institutional_inputs
         self._route_lock = RLock()
+        self._inflight_preflight = None
+        self._initial_preflight = None
         self._coordinator = InstitutionalPaperCoordinator(
             broker=self.broker, oms=self.oms, programs=institutional_inputs.programs,
             accounting=institutional_inputs.accounting, warden=self.warden,
@@ -143,9 +146,21 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
             "providers": {name: identity(getattr(self._inputs, name)) for name in (
                 "request_provider", "factor_position_provider", "strategy_exposure_provider",
                 "slice_volume_provider")},
+            "inFlightPreflight": (None if self._inflight_preflight is None else {
+                "final": identity(self._inflight_preflight),
+                "initial": identity(self._initial_preflight)}),
             "scheduledExecution": False,
             "automaticRecovery": False,
         }
+
+    def bind_inflight_preflight(self, check):
+        """Bind the daemon's final-phase check once; never drop initial admission."""
+        if (not callable(check) or not callable(self.pre_submit_check)
+                or self._inflight_preflight is not None and (
+                    self._inflight_preflight != check or self._initial_preflight != self.pre_submit_check)):
+            raise ValueError("institutional_runtime_inflight_preflight_invalid")
+        self._inflight_preflight = check
+        self._initial_preflight = self.pre_submit_check
 
     def _snapshot(self):
         if not callable(self.snapshot_provider):
@@ -163,6 +178,9 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
                 or self._coordinator.factor_position_provider is not self._inputs.factor_position_provider
                 or self._coordinator.strategy_exposure_provider is not self._inputs.strategy_exposure_provider
                 or self._coordinator.slice_volume_provider is not self._inputs.slice_volume_provider):
+            raise ValueError("institutional_runtime_wiring_changed")
+        if (require_preflight and self._inflight_preflight is not None
+                and self.pre_submit_check != self._initial_preflight):
             raise ValueError("institutional_runtime_wiring_changed")
         if require_preflight and not callable(self.pre_submit_check):
             raise TypeError("institutional_runtime_preflight_unavailable")
@@ -323,7 +341,8 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
             result = self._coordinator.execute_due(prepared.program.program_id,
                 now=request.observed_at,
                 pre_submit_check=lambda child: self._operating_guard(
-                    child, request, proposal, plan, tenant_id),
+                    child, request, proposal, plan, tenant_id,
+                    program_id=prepared.program.program_id),
                 decision_trace=trace_data)
         except (ValueError, TypeError, OSError, RuntimeError, ArithmeticError, sqlite3.Error):
             return refuse("institutional_execution_recovery_required", OrderState.SUBMISSION_UNCERTAIN)
@@ -346,13 +365,28 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
             LOGGER.exception("institutional_trace_projection_failed; canonical receipt retained")
         return SwarmExecutionResult(proposal, actual_risk, fill, stress, trace, OrderState.FILLED)
 
-    def _operating_guard(self, child, analysis, proposal, plan, tenant_id):
+    def _operating_guard(self, child, analysis, proposal, plan, tenant_id, *, program_id=None):
         """Re-run operating controls after input providers and OMS callbacks."""
         try:
             self._assert_wiring()
             if os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "true":
                 return "institutional_runtime_paper_only"
-            veto = self.pre_submit_check(proposal)
+            if self._inflight_preflight is None:
+                veto = self.pre_submit_check(proposal)
+            else:
+                # Context is derived from the already prepared/claimed programme,
+                # never from caller-supplied IDs or a blanket OMS exemption.
+                program = self._inputs.programs.get(program_id)
+                expected_id = self.oms.client_order_id(child, f"{proposal.decision_id}:slice:1")
+                if (program.tenant_id != tenant_id or program.decision_id != proposal.decision_id
+                        or len(program.slices) != 1 or program.slices[0].sequence != 1
+                        or program.slices[0].state is not SliceState.DISPATCHING
+                        or program.slices[0].client_order_id != expected_id
+                        or program.slices[0].broker_order_id is not None
+                        or canonical_order_intent(order_from_snapshot(program.parent_order_payload))
+                           != canonical_order_intent(child)):
+                    return "institutional_runtime_inflight_identity_mismatch"
+                veto = self._inflight_preflight(proposal, InFlightOmsSubmission(expected_id, child))
             if veto is not None:
                 return veto
             snapshot = self._snapshot()
