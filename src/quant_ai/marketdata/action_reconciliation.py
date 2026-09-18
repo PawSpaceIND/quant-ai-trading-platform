@@ -180,9 +180,35 @@ class ReconciliationReport:
         return self.verdict in {"clean", "self_adjusting"}
 
     def worst_unexplained(self, limit: int = 10) -> tuple:
-        pending = [item for item in self.discontinuities if not item.explained]
+        """The largest breaks nothing can account for: the set a purchase would address.
+
+        Deliberately *not* every unmatched discontinuity. With no corporate-action records
+        supplied nothing is matched, so that set is the whole archive and its top entries
+        are dominated by the largest actions the exchange itself signalled - which
+        ``back_adjust`` fixes for free and which no vendor is needed for. Ranking those
+        here made a report whose purpose is to size a purchase argue for one that is not
+        required.
+
+        What is left is the breaks the venue never signalled and no record explains.
+        """
+        pending = [
+            item for item in self.discontinuities
+            if not item.explained and item.detector == "unexplained-gap"
+        ]
         pending.sort(key=lambda item: abs(item.overnight_move), reverse=True)
         return tuple(pending[:limit])
+
+    def largest_self_adjusting(self, limit: int = 10) -> tuple:
+        """The biggest breaks the exchange signalled, which the archive corrects itself.
+
+        Kept separate so a reader can see them without them crowding out the ones that
+        actually need a decision.
+        """
+        signalled = [
+            item for item in self.discontinuities if item.detector == "exchange-prevclose"
+        ]
+        signalled.sort(key=lambda item: abs(item.overnight_move), reverse=True)
+        return tuple(signalled[:limit])
 
     def as_evidence(self) -> dict:
         by_detector: dict = {}
@@ -203,6 +229,9 @@ class ReconciliationReport:
             "verdict": self.verdict,
             "usable_for_research": self.usable_for_research,
             "worst_unexplained": [item.as_evidence() for item in self.worst_unexplained()],
+            "largest_self_adjusting": [
+                item.as_evidence() for item in self.largest_self_adjusting()
+            ],
             "notes": list(self.notes),
             "limitation": (
                 "Detection finds breaks in the price series. It does not identify the action "

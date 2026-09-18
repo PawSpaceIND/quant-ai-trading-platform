@@ -761,3 +761,39 @@ def test_each_security_that_shared_a_ticker_gets_its_own_dataset_file(tmp_path):
         for name in written
     }
     assert manifest_names == dataset_names
+
+
+def test_the_purchase_decision_list_excludes_breaks_the_archive_fixes_itself():
+    # worst_unexplained exists to size a purchase. With no records supplied nothing is
+    # "explained", so ranking every unmatched discontinuity put the largest
+    # exchange-signalled actions at the top - the ones back_adjust corrects for free. On a
+    # real NSE archive that filled all ten slots with penny-stock resumptions the venue had
+    # restated, and made a report arguing for vendor data that was not needed.
+    days, split = split_history()
+    gap_days = sessions(3, start=date(2021, 6, 1))
+    gap_rows = [
+        parse_bhavcopy(nse_file(gap_days[0], [
+            nse_row("GAPPY", gap_days[0], Decimal("100.00"), Decimal("100.00"),
+                    isin="INE040A01011")])),
+        parse_bhavcopy(nse_file(gap_days[1], [
+            nse_row("GAPPY", gap_days[1], Decimal("60.00"), Decimal("100.00"),
+                    isin="INE040A01011")])),
+        parse_bhavcopy(nse_file(gap_days[2], [
+            nse_row("GAPPY", gap_days[2], Decimal("60.00"), Decimal("60.00"),
+                    isin="INE040A01011")])),
+    ]
+    gappy = reconstruct_universe(gap_rows, source="NSE bhavcopy archive, test fixture")
+
+    report = reconcile(list(split.histories) + list(gappy.histories))
+
+    # The split moves -90%, far larger than the gap's -40%, so ranking by size alone would
+    # put it first. It is signalled, so it does not belong in the purchase list at all.
+    assert report.self_adjustable == 1
+    assert report.unsignalled_gaps == 1
+    assert [item.symbol for item in report.worst_unexplained()] == ["GAPPY"]
+    assert all(item.detector == "unexplained-gap" for item in report.worst_unexplained())
+    assert [item.symbol for item in report.largest_self_adjusting()] == ["SPLIT"]
+
+    evidence = report.as_evidence()
+    assert [item["symbol"] for item in evidence["worst_unexplained"]] == ["GAPPY"]
+    assert [item["symbol"] for item in evidence["largest_self_adjusting"]] == ["SPLIT"]
