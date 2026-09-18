@@ -1,0 +1,131 @@
+{
+  "scope": "OFFLINE_COPIED_SOURCE_ONLY",
+  "mutations": [
+    {
+      "id": "metadata_projection",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "provenance.update(response_shape)",
+      "new": "pass",
+      "test": "tests/test_headline_completion.py::test_complete_reply_has_real_completion_and_payload_identity"
+    },
+    {
+      "id": "malformed_metadata_refusal",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "except (TypeError, ValueError):\n            return invalid_headline(\"invalid_response_metadata\")",
+      "new": "except ArithmeticError:\n            return invalid_headline(\"invalid_response_metadata\")",
+      "test": "tests/test_headline_completion.py::test_malformed_metadata_refuses_after_usage_recording"
+    },
+    {
+      "id": "headline_tool_count",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "getattr(block, \"name\", None) == HEADLINE_TOOL_NAME for block in headline_tools",
+      "new": "False for block in headline_tools",
+      "test": "tests/test_headline_completion.py::test_complete_reply_has_real_completion_and_payload_identity"
+    },
+    {
+      "id": "diagnose_max_tokens",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop == \"max_tokens\":",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[truncated]"
+    },
+    {
+      "id": "diagnose_refusal",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop == \"refusal\":",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[refused]"
+    },
+    {
+      "id": "diagnose_pause_turn",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop == \"pause_turn\":",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[paused]"
+    },
+    {
+      "id": "diagnose_model_context_window_exceeded",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop == \"model_context_window_exceeded\":",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[context]"
+    },
+    {
+      "id": "explicit_stop_must_complete",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop not in {None, \"tool_use\"}:",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[end_turn]"
+    },
+    {
+      "id": "sdk_requires_termination",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if headline_stop is None and self.transport_kind == \"anthropic_sdk\":",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[missing]"
+    },
+    {
+      "id": "missing_headline_tool",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if not headline_tools:",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_envelope_requires_one_correct_object_tool[missing]"
+    },
+    {
+      "id": "single_headline_tool",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if len(headline_tools) != 1:",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_envelope_requires_one_correct_object_tool[duplicate]"
+    },
+    {
+      "id": "expected_headline_tool",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if getattr(headline_tools[0], \"name\", None) != HEADLINE_TOOL_NAME:",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_envelope_requires_one_correct_object_tool[wrong]"
+    },
+    {
+      "id": "object_before_parser",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if not isinstance(headline_payload, dict):",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_parser_is_not_called_on_nonobject_input"
+    },
+    {
+      "id": "strict_headline_parser",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "            self.parse_headline_scores(headline_payload, len(headlines))\n        except ConsensusSchemaError:",
+      "new": "            pass\n        except ConsensusSchemaError:",
+      "test": "tests/test_headline_completion.py::test_adapter_validates_existing_strict_schema_before_completion[range]"
+    },
+    {
+      "id": "redacted_schema_failure",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "except ConsensusSchemaError:\n            return invalid_headline(\"invalid_headline_schema\")",
+      "new": "except ConsensusSchemaError as error:\n            return invalid_headline(str(error))",
+      "test": "tests/test_headline_completion.py::test_schema_error_does_not_echo_provider_values"
+    },
+    {
+      "id": "invalid_status",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "finish(\"invalid_schema\", \"Headline response failed validation\")",
+      "new": "finish(\"completed\", \"Headline response failed validation\")",
+      "test": "tests/test_headline_completion.py::test_sdk_termination_must_be_completed_tool[truncated]"
+    },
+    {
+      "id": "usage_before_rejection",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "self.budget.record(HEADLINE_BUDGET_SCOPE, provenance[\"usage\"])",
+      "new": "pass",
+      "test": "tests/test_headline_completion.py::test_spent_usage_is_recorded_before_rejection_without_extra_request"
+    },
+    {
+      "id": "budget_before_request",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if self.budget is not None and not self.budget.reserve(HEADLINE_BUDGET_SCOPE):",
+      "new": "if False:",
+      "test": "tests/test_headline_completion.py::test_budget_exhaustion_prevents_the_first_sdk_request"
+    }
+  ]
+}
