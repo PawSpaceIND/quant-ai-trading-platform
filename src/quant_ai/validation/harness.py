@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import fmean
 
+from quant_ai.marketdata.point_in_time import SurvivorshipAudit
 from quant_ai.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
     expected_maximum_sharpe,
@@ -63,6 +64,7 @@ class ValidationVerdict:
     observations: int
     trials: int
     overfitting: OverfittingReport | None
+    universe: SurvivorshipAudit | None
 
     def as_evidence(self) -> dict[str, object]:
         report = {
@@ -77,6 +79,8 @@ class ValidationVerdict:
             "trials": self.trials,
             "limitation": LIMITATION,
         }
+        if self.universe is not None:
+            report["universe"] = self.universe.as_evidence()
         if self.overfitting is not None:
             report["overfitting"] = {
                 "probability": self.overfitting.probability,
@@ -117,6 +121,7 @@ def validate_candidate(
     candidate_sharpes: Sequence[float],
     label_span: int = 0,
     performance_matrix: Sequence[Sequence[float]] | None = None,
+    universe_audit: SurvivorshipAudit | None = None,
     overfitting_chunks: int = 8,
     thresholds: ValidationThresholds | None = None,
 ) -> ValidationVerdict:
@@ -126,6 +131,11 @@ def validate_candidate(
     ``performance_matrix`` is one row per observation and one column per candidate; when it
     is supplied the CSCV overfitting test runs too, and when it is absent the verdict says
     so rather than passing silently on two statistics out of three.
+
+    ``universe_audit`` is the survivorship check on the data the study consumed. A study run
+    on a universe assembled from the companies that still exist clears every statistic in
+    this module and is still wrong, because the bias is in the input rather than the
+    estimator. Omitting the audit is therefore reported as a reason, not waved through.
     """
     limits = thresholds or ValidationThresholds()
     variance = trial_sharpe_variance(candidate_sharpes)
@@ -159,6 +169,15 @@ def validate_candidate(
             f"this sharpe to be significant at {limits.track_record_confidence:.0%}"
         )
 
+    if universe_audit is None:
+        reasons.append(
+            "the universe this study consumed was never audited for survivorship, so an "
+            "upward bias in the input cannot be ruled out by any statistic here"
+        )
+    elif not universe_audit.usable_for_research:
+        detail = universe_audit.reasons[0] if universe_audit.reasons else universe_audit.verdict
+        reasons.append(f"universe is not research-grade ({universe_audit.verdict}): {detail}")
+
     report: OverfittingReport | None = None
     if performance_matrix is None:
         reasons.append(
@@ -191,4 +210,5 @@ def validate_candidate(
         observations=moments.count,
         trials=trials,
         overfitting=report,
+        universe=universe_audit,
     )

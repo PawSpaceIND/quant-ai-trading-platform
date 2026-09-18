@@ -59,13 +59,28 @@ Every check is sabotage-verified: ignoring the trial count fails 4 tests, defaul
 `trials` to 1 fails 1, removing the degenerate-variance guard fails 1, dropping the label
 purge fails 1, and forcing the overfitting rank to "generalised" fails 1.
 
+## The universe the study ran on
+
+The statistics above correct for how hard you searched. They cannot correct for a biased
+input: a study run on a universe assembled from the companies that still exist passes every
+one of them and is still wrong, because the bias is upstream of the estimator.
+
+`validate_candidate` therefore takes a `universe_audit` from
+`quant_ai.marketdata.point_in_time`. A universe that records no delistings at all across
+several years is reported as `survivor_only` and blocks the gate; an implausibly low failure
+rate is reported as `implausibly_clean`. Omitting the audit is itself a reason, so the gate
+is never cleared by a study whose data provenance was never examined.
+
+`test_a_survivor_only_universe_blocks_an_otherwise_perfect_candidate` holds the returns, the
+search and every statistic constant and changes only the universe. The clean run clears; the
+survivor-only run does not.
+
 ## What clearing it does not mean
 
 Nothing here approves anything. A cleared statistical gate means a result is not obviously
-selection noise. It says nothing about capacity, regime coverage, execution realism, or
-whether the data the study consumed was trustworthy in the first place — and a study run on
-survivorship-biased history will clear this gate while still being wrong, because the bias
-is in the input, not the statistic. It is not permission to trade.
+selection noise and the data it ran on is not obviously survivor-only. It says nothing about
+capacity, regime coverage or execution realism, and a plausible delisting rate is not proof
+that the constituent history is correct. It is not permission to trade.
 
 ## References
 

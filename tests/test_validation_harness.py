@@ -10,10 +10,12 @@ harness that will eventually put real money behind noise.
 from __future__ import annotations
 
 import math
+from datetime import date
 from random import Random
 
 import pytest
 
+from quant_ai.marketdata.point_in_time import Listing, PointInTimeUniverse
 from quant_ai.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
     expected_maximum_sharpe,
@@ -32,6 +34,31 @@ from quant_ai.validation.purged_cv import purged_kfold
 
 def noise(rng: Random, count: int, drift: float = 0.0) -> list[float]:
     return [rng.gauss(drift, 1.0) for _ in range(count)]
+
+
+def plausible_universe(delisted: int = 12, total: int = 200) -> object:
+    """A ten-year universe that loses names at a believable rate."""
+    listings = [
+        Listing(f"SYM{index:03d}", "INDIA", date(2015, 1, 1),
+                date(2019, 6, 1) if index < delisted else None,
+                "insolvency" if index < delisted else "")
+        for index in range(total)
+    ]
+    return PointInTimeUniverse(
+        listings, source="test-fixture",
+        coverage_from=date(2015, 1, 1), coverage_to=date(2025, 1, 1),
+    ).audit()
+
+
+def survivor_only_universe() -> object:
+    """Ten years, two hundred names, not one failure. The shape of a modern-constituent list."""
+    listings = [
+        Listing(f"SYM{index:03d}", "INDIA", date(2015, 1, 1)) for index in range(200)
+    ]
+    return PointInTimeUniverse(
+        listings, source="test-fixture",
+        coverage_from=date(2015, 1, 1), coverage_to=date(2025, 1, 1),
+    ).audit()
 
 
 def sweep(seed: int, strategies: int, observations: int, drift: float = 0.0) -> list[list[float]]:
@@ -106,6 +133,7 @@ def test_a_real_edge_with_a_small_search_clears_the_gate() -> None:
         trials=len(columns),
         candidate_sharpes=sharpes,
         performance_matrix=matrix,
+        universe_audit=plausible_universe(),
     )
     assert verdict.clears_statistical_gate is True, verdict.reasons
     assert verdict.deflated_sharpe >= 0.95
@@ -239,3 +267,52 @@ def test_purged_kfold_validates_its_arguments() -> None:
         purged_kfold(10, splits=1)
     with pytest.raises(ValueError, match="embargo must be"):
         purged_kfold(100, embargo=1.0)
+
+
+# ------------------------------------------------------------------------- survivorship
+
+
+def test_a_survivor_only_universe_blocks_an_otherwise_perfect_candidate() -> None:
+    """The statistics all pass. The input is still biased, and the gate has to say so."""
+    rng = Random(7)
+    observations = 1500
+    winner = noise(rng, observations, drift=0.14)
+    others = [noise(rng, observations) for _ in range(9)]
+    columns = [winner] + others
+    sharpes = [sharpe_ratio(series) for series in columns]
+    matrix = [[columns[n][t] for n in range(len(columns))] for t in range(observations)]
+
+    clean = validate_candidate(
+        winner, trials=10, candidate_sharpes=sharpes,
+        performance_matrix=matrix, universe_audit=plausible_universe(),
+    )
+    biased = validate_candidate(
+        winner, trials=10, candidate_sharpes=sharpes,
+        performance_matrix=matrix, universe_audit=survivor_only_universe(),
+    )
+
+    # Identical returns, identical search, identical statistics.
+    assert clean.deflated_sharpe == biased.deflated_sharpe
+    assert clean.clears_statistical_gate is True
+    assert biased.clears_statistical_gate is False
+    assert any("survivor_only" in reason for reason in biased.reasons)
+
+
+def test_an_unaudited_universe_is_reported_not_assumed_clean() -> None:
+    rng = Random(7)
+    series = noise(rng, 1500, drift=0.14)
+    sharpes = [sharpe_ratio(series), 0.01]
+    verdict = validate_candidate(series, trials=2, candidate_sharpes=sharpes)
+    assert any("never audited for survivorship" in reason for reason in verdict.reasons)
+
+
+def test_the_universe_audit_reaches_the_evidence_record() -> None:
+    rng = Random(7)
+    series = noise(rng, 1500, drift=0.14)
+    sharpes = [sharpe_ratio(series), 0.01]
+    evidence = validate_candidate(
+        series, trials=2, candidate_sharpes=sharpes,
+        universe_audit=plausible_universe(),
+    ).as_evidence()
+    assert evidence["universe"]["verdict"] == "plausible"
+    assert "limitation" in evidence["universe"]
