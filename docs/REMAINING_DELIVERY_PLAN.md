@@ -204,3 +204,14 @@ and paper bridge using disposable state. The read-only OMS panel remains unchang
 No deployment, credential issuance, halt clearing, risk release or live order is
 performed. See `OPERATOR_RECOVERY_CONSOLE.md`. Independent human/security/host and
 actor-identity acceptance remain open; the entire M06/M09 milestones are not closed.
+
+### M06/M08 recovery-only application surface
+
+The dedicated create_recovery_app factory reuses the existing scoped recovery API,
+but installs only health and its three bookkeeping routes. It requires explicitly
+selected durable credentials and existing tenant runtimes, freezes that mapping,
+and bounds incoming recovery bodies. General trading/model endpoints are absent;
+no constructors, accounts or providers are inferred. The actual dashboard browser
+fixture now uses this factory. Host provisioning, independent identity/TLS and target
+host acceptance remain open; this is not a rollout or completion of M06/M08. See
+RECOVERY_ONLY_SERVICE.md and the scoped follow-up to #154.
