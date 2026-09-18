@@ -28,6 +28,7 @@ class TradingAlertCode(str, Enum):
     STOP_LOSS_TRIGGERED = "STOP_LOSS_TRIGGERED"
     TAKE_PROFIT_TRIGGERED = "TAKE_PROFIT_TRIGGERED"
     CADENCE_TICK_FAILED = "CADENCE_TICK_FAILED"
+    LEARNING_EVIDENCE_DEGRADED = "LEARNING_EVIDENCE_DEGRADED"
     # A price step across a session boundary that the engine could not explain. Its own
     # code because an operator has to be able to find these without reading every stop
     # alert: they are the cases where a corporate action and a catastrophic gap are

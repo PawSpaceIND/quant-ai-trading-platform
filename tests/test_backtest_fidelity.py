@@ -228,7 +228,8 @@ def test_the_replay_starts_every_specialist_unscored(tmp_path, monkeypatch):
         "expected_risk": "0.005", "reference_price": "100", "stop_price": "95",
         "take_profit_price": "110", "regime": "trending_up", "mode": "llm",
         "governance": "filled", "reason": None, "order_id": "closed-1",
-        "agents": json.dumps({"technical": "BUY"}), "realized_net_pnl": "250",
+        "agents": json.dumps({"technical": {"stance": "BUY", "confidence": "0.7"}}),
+        "realized_net_pnl": "250", "exit_at": datetime(2026, 9, 1, 1, tzinfo=timezone.utc).isoformat(),
     })
     assert harness.build_runtime().attribution.weight_for("technical") == (
         Decimal(1), "unscored",
