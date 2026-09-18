@@ -10,8 +10,13 @@ from quant_ai.marketdata.models import Candle
 
 
 def yahoo_symbol(symbol: str, market: Market) -> str:
-    """Yahoo ticker for a canonical symbol: NSE listings carry the ``.NS`` suffix."""
-    if market == Market.INDIA and not symbol.endswith(".NS"):
+    """Yahoo ticker for a canonical symbol: NSE listings carry the ``.NS`` suffix.
+
+    Yahoo's index tickers are already fully qualified and are never exchange-suffixed:
+    NIFTY 50 is ``^NSEI``, and ``^NSEI.NS`` is not a symbol Yahoo knows. A leading caret
+    marks that namespace, so it is passed through untouched.
+    """
+    if market == Market.INDIA and not symbol.endswith(".NS") and not symbol.startswith("^"):
         return f"{symbol}.NS"
     return symbol
 
@@ -55,6 +60,14 @@ class YahooFinanceMarketDataAdapter(MarketDataFeed):
             if any(index >= len(items) or items[index] is None for items in values):
                 continue
             open_, high, low, close, volume = (Decimal(str(items[index])) for items in values)
+            # Yahoo also reports a session as a literal zero rather than a null - seen on
+            # thinly traded NSE ETFs in their early years. Zero is not a price anything
+            # changed hands at, so the session is skipped exactly as a null one is, and
+            # shows up in the provenance gap report. Passing it on would either raise out
+            # of ``Candle`` and abort a whole symbol, or, if the guard were relaxed,
+            # register as a 100% drawdown the market never had.
+            if min(open_, high, low, close) <= 0:
+                continue
             candles.append(
                 Candle(
                     instrument,
@@ -67,6 +80,26 @@ class YahooFinanceMarketDataAdapter(MarketDataFeed):
                 )
             )
         return tuple(candles)
+
+    def first_trade_date(self, instrument: Instrument) -> datetime | None:
+        """When Yahoo's own record for this instrument begins, or ``None`` if it won't say.
+
+        Yahoo does not answer a window that ends before an instrument's first trade with an
+        empty series. It answers ``400 Bad Request`` and ``"Data doesn't exist for startDate
+        = ..."``, which reaches a caller as an ordinary rejected request - indistinguishable
+        from an unreachable provider, and fatal to anything that treats a failed window as a
+        reason to abandon the symbol. ``meta.firstTradeDate`` is on every chart response and
+        says where to start asking instead. Reading it costs one bounded request over the
+        shortest range the API serves.
+        """
+        payload = self.client.get_json(
+            f"{self.base_url}/{self._provider_symbol(instrument)}",
+            params={"range": "1d", "interval": "1d"},
+        )
+        raw = (self._result(payload).get("meta") or {}).get("firstTradeDate")
+        if raw is None:
+            return None
+        return datetime.fromtimestamp(int(raw), timezone.utc)
 
     def latest_tick(self, instrument: Instrument) -> MarketTick:
         payload = self.client.get_json(

@@ -1,0 +1,116 @@
+{
+  "reviewed_commit": "ba360107db8fd61a0d4d157daf796cf175b2182e",
+  "status": "OPEN: production edit tool-blocked; unchanged implementation",
+  "scope": "synthetic preflight input/report boundary; checker substituted, no trading guard claims",
+  "ordinary_baseline_summary": "13 failed, 1584 passed, 2 warnings, 14 subtests passed in 51.17s",
+  "acceptance": {
+    "passed": 2,
+    "failed": 20,
+    "errors": 0
+  },
+  "source_sha256": "a2143e57c61ce04a44cb2853593785fb8a62701fb0c7500092173f44b9f9a1b9",
+  "acceptance_sha256": "1bcbc96f8715021776340f7252fa4d4ef79d8e29be28c61b199ad8bc33675c19",
+  "execution_path_at_initial_reproduction": "tests/test_risk_preflight_input_boundary.py",
+  "retained_path": "acceptance/test_risk_preflight_input_boundary.py",
+  "not_default_collected": true,
+  "guard_removal_certification": false,
+  "actual_market_history_verified": false,
+  "host_acceptance": false,
+  "failed_cases": [
+    "test_duplicate_directive_keys_refuse_before_history[\"max_open_positions\":5,\"max_open_positions\":5]",
+    "test_duplicate_directive_keys_refuse_before_history[\"extra\":{\"field\":\"first\",\"field\":\"last\"}]",
+    "test_duplicate_directive_keys_refuse_before_history[\"extra\":{\"a\":1,\"\\\\u0061\":2}]",
+    "test_non_json_numbers_refuse_before_history[NaN]",
+    "test_non_json_numbers_refuse_before_history[Infinity]",
+    "test_non_json_numbers_refuse_before_history[-Infinity]",
+    "test_top_level_must_be_object[0]",
+    "test_top_level_must_be_object[1]",
+    "test_oversized_inputs_refuse_before_history[0]",
+    "test_oversized_inputs_refuse_before_history[1]",
+    "test_unusable_output_refuses_before_history[file]",
+    "test_unusable_output_refuses_before_history[directory]",
+    "test_unusable_output_refuses_before_history[dangling_symlink]",
+    "test_unusable_output_refuses_before_history[missing_parent]",
+    "test_input_changed_during_check_cannot_publish_success[0]",
+    "test_input_changed_during_check_cannot_publish_success[1]",
+    "test_reports_bind_exact_input_bytes_without_copying_them",
+    "test_write_failure_never_publishes_a_partial_report",
+    "test_published_report_has_private_permissions",
+    "test_unready_result_remains_nonzero_with_bound_inputs"
+  ],
+  "retained_path_reexecution": "20 failed, 2 passed, no collection errors; exit 1",
+  "proposed_policy_not_owner_requirement": "The 1 MiB input bound is a proposed engineering limit, not a market/risk threshold.",
+  "source_edit_applied": false,
+  "ordinary_after_summary": "13 failed, 1584 passed, 2 warnings, 14 subtests passed in 59.67s",
+  "ordinary_failure_identities_unchanged": true,
+  "ordinary_failure_identities": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "existing_source_hashes_checked": 454,
+  "existing_source_hashes_unchanged": true,
+  "reviewed_ci": {
+    "head": "ba360107db8fd61a0d4d157daf796cf175b2182e",
+    "run": 35189036516,
+    "conclusion": "failure",
+    "failed_job": "containers",
+    "failed_job_id": 105097286575,
+    "successful_jobs": [
+      "test",
+      "ui",
+      "browser-ui",
+      "cloud-web",
+      "security"
+    ]
+  }
+}

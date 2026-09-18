@@ -10,10 +10,12 @@ from quant_ai.agents.contracts import (
     AtlasDecision,
     EvidenceBar,
     EvidenceContext,
+    EvidenceHeadline,
     Stance,
 )
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
+from quant_ai.learning.router import DecisionKnowledgeContext
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient, ConsensusSchemaError
 from quant_ai.llm.provenance import content_hash, normalize
 from quant_ai.marketdata.ticker_stream import LiveTick
@@ -34,6 +36,7 @@ class AtlasPolicy:
     min_consensus_confidence: Decimal = Decimal("0.55")
     stale_evidence_seconds: int = 3600
     max_expected_risk: Decimal = Decimal("0.08")
+    require_governed_knowledge: bool = False
 
 
 class AtlasInvestmentAgent:
@@ -60,24 +63,40 @@ class AtlasInvestmentAgent:
         incumbent_country: str = "India",
         market_tick: LiveTick | None = None,
         evidence_context: EvidenceContext | None = None,
+        knowledge_context: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
         relevant = tuple(item for item in evidence if item.subject == subject)
+        if knowledge_context is not None:
+            try:
+                if type(knowledge_context) is not DecisionKnowledgeContext:
+                    raise TypeError("decision_knowledge_context_required")
+                knowledge_context.validate(as_of=now)
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                # Invalid evidence must neither reach inference nor be included as trusted
+                # provenance. An optional knowledge policy does not waive supplied errors.
+                return self._hold(subject, now, relevant, "governed_knowledge_invalid",
+                                  market_tick, evidence_context, None)
+        if self.policy.require_governed_knowledge and knowledge_context is None:
+            return self._hold(
+                subject, now, relevant, "governed_knowledge_missing", market_tick,
+                evidence_context, knowledge_context
+            )
         if len(relevant) < self.policy.min_evidence_agents:
             return self._hold(subject, now, relevant, "insufficient_agent_coverage", market_tick,
-                              evidence_context)
+                              evidence_context, knowledge_context)
         stale = tuple(item for item in relevant if item.source_freshness_seconds > self.policy.stale_evidence_seconds)
         if stale:
             return self._hold(subject, now, relevant, "stale_specialist_evidence", market_tick,
-                              evidence_context)
+                              evidence_context, knowledge_context)
         risk_veto = tuple(item for item in relevant if item.stance == Stance.AVOID)
         if risk_veto:
             return self._hold(subject, now, relevant, "specialist_veto", market_tick,
-                              evidence_context)
+                              evidence_context, knowledge_context)
 
         total_weight = sum((item.confidence for item in relevant), Decimal(0))
         if total_weight <= 0:
             return self._hold(subject, now, relevant, "zero_confidence", market_tick,
-                              evidence_context)
+                              evidence_context, knowledge_context)
         weighted_score = sum((STANCE_SCORE[item.stance] * item.confidence for item in relevant), Decimal(0)) / total_weight
         confidence = sum((item.confidence for item in relevant), Decimal(0)) / Decimal(len(relevant))
         expected_return = sum((item.expected_return * item.confidence for item in relevant), Decimal(0)) / total_weight
@@ -125,7 +144,7 @@ class AtlasInvestmentAgent:
             recommendations,
             escalations,
             False,
-            self._provenance(subject, evidence, now, market_tick, evidence_context),
+            self._provenance(subject, evidence, now, market_tick, evidence_context, knowledge_context),
         )
 
     async def decide_with_llm(
@@ -135,14 +154,19 @@ class AtlasInvestmentAgent:
         now: datetime,
         market_tick: LiveTick | None = None,
         evidence_context: EvidenceContext | None = None,
+        knowledge_context: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
-        deterministic = self.decide(subject, evidence, now, market_tick=market_tick,
-                                    evidence_context=evidence_context)
+        deterministic = self.decide(
+            subject, evidence, now, market_tick=market_tick,
+            evidence_context=evidence_context, knowledge_context=knowledge_context
+        )
         hard_holds = {
             "insufficient_agent_coverage",
             "stale_specialist_evidence",
             "specialist_veto",
             "zero_confidence",
+            "governed_knowledge_missing",
+            "governed_knowledge_invalid",
         }
         if self.llm_client is None or any(item in hard_holds for item in deterministic.rationale):
             return deterministic
@@ -151,13 +175,17 @@ class AtlasInvestmentAgent:
         # richer context is evidenced on every proof without a second provenance field.
         try:
             payload = await self.llm_client.generate_trading_consensus(
-                _atlas_prompt(subject, evidence, market_tick, self.founder_instructions,
-                              context=evidence_context)
+                _atlas_prompt(
+                    subject, evidence, market_tick, self.founder_instructions,
+                    context=evidence_context, knowledge_context=knowledge_context
+                )
             )
             signal, proof = self.llm_client.parse_consensus(payload)
         except ConsensusSchemaError as error:
-            held = self._hold(subject, now, evidence, "Consensus Skipped: Invalid Schema",
-                              market_tick, evidence_context)
+            held = self._hold(
+                subject, now, evidence, "Consensus Skipped: Invalid Schema",
+                market_tick, evidence_context, knowledge_context
+            )
             return replace(held, provenance={
                 **deterministic.provenance, "mode": "llm_invalid_schema",
                 "inference": error.provenance or {"status": "unverified", "provider": "unverified"},
@@ -208,11 +236,14 @@ class AtlasInvestmentAgent:
             {**deterministic.provenance, "mode": mode, "inference": inference},
         )
 
-    def _provenance(self, subject, evidence, now, market_tick, context=None) -> dict:
+    def _provenance(self, subject, evidence, now, market_tick, context=None, knowledge=None) -> dict:
         configuration = normalize({"atlas_policy": self.policy, "founder_policy": self.founder_policy,
                                    "founder_instructions": self.founder_instructions})
-        inputs = normalize({"subject": subject, "evidence": evidence, "observed_at": now,
-                            "market_tick": market_tick})
+        knowledge_provenance = knowledge.provenance() if knowledge is not None else None
+        inputs = normalize({
+            "subject": subject, "evidence": evidence, "observed_at": now,
+            "market_tick": market_tick, "governed_knowledge": knowledge_provenance,
+        })
         # The deterministic regime the supplied evidence carried, so decision quality can
         # later be broken down by regime. None when no evidence context reached the decision.
         regime = dict(context.regime) if context is not None else {}
@@ -222,6 +253,7 @@ class AtlasInvestmentAgent:
                 "inputs": inputs, "inputs_sha256": content_hash(inputs), "inference": None,
                 "regime": label if isinstance(label, str) else None,
                 "regime_timeframe": timeframe if isinstance(timeframe, str) else None,
+                "governed_knowledge": knowledge_provenance,
                 **_headline_provenance(context)}
 
     def _founder_rationale(self) -> tuple[str, ...]:
@@ -237,6 +269,7 @@ class AtlasInvestmentAgent:
         reason: str,
         market_tick: LiveTick | None = None,
         context: EvidenceContext | None = None,
+        knowledge: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
         return AtlasDecision(
             uuid4().hex,
@@ -252,7 +285,7 @@ class AtlasInvestmentAgent:
             (),
             (),
             False,
-            self._provenance(subject, evidence, now, market_tick, context),
+            self._provenance(subject, evidence, now, market_tick, context, knowledge),
         )
 
 
@@ -285,6 +318,7 @@ def _atlas_prompt(
     tick: LiveTick | None,
     founder_instructions: str = "",
     context: EvidenceContext | None = None,
+    knowledge_context: DecisionKnowledgeContext | None = None,
 ) -> str:
     lines = [
         f"subject={subject}",
@@ -301,7 +335,9 @@ def _atlas_prompt(
     lines.extend(_market_rationale(tick) if tick is not None else ("live_tick=unavailable",))
     closing = "Return the structured trading consensus and concise XAI proof."
     omitted = _Omitted()
-    prompt = "\n".join(lines + _evidence_block(context, omitted) + [closing])
+    prompt = "\n".join(
+        lines + _evidence_block(context, omitted, knowledge_context) + [closing]
+    )
     while len(prompt) > MAX_PROMPT_CHARS and context is not None:
         if context.bars:
             context = replace(context, bars=context.bars[1:])
@@ -313,7 +349,9 @@ def _atlas_prompt(
             omitted.headlines += 1
         else:
             break
-        prompt = "\n".join(lines + _evidence_block(context, omitted) + [closing])
+        prompt = "\n".join(
+        lines + _evidence_block(context, omitted, knowledge_context) + [closing]
+    )
     return prompt
 
 
@@ -330,7 +368,10 @@ def _drop_oldest_timeframe_bar(context: EvidenceContext, omitted: _Omitted) -> E
     return replace(context, timeframes=tuple(timeframes))
 
 
-def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = None) -> list[str]:
+def _evidence_block(
+    context: EvidenceContext | None, omitted: _Omitted | None = None,
+    knowledge: DecisionKnowledgeContext | None = None,
+) -> list[str]:
     """Render the supplied evidence as one delimited block of data lines.
 
     Every section is always present: absent evidence reads ``unavailable`` and
@@ -343,6 +384,7 @@ def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = 
     lines = [EVIDENCE_BLOCK_START]
     if context is None:
         lines.extend(f"{name}=unavailable" for name in EVIDENCE_SECTIONS)
+        lines.extend(_knowledge_lines(knowledge))
         lines.append(EVIDENCE_BLOCK_END)
         return lines
     lines.extend(_bars_section(context.bars, omitted.bars))
@@ -355,12 +397,7 @@ def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = 
             + (f", {omitted.headlines} older headlines omitted for prompt size"
                if omitted.headlines else "")
         )
-        lines.extend(
-            f"headline=subject={item.subject};sentiment={item.sentiment};"
-            f"scorer={item.scorer};published_at={item.published_at};provider={item.provider};"
-            f"rationale={item.rationale};text={item.headline}"
-            for item in context.headlines
-        )
+        lines.extend(_headline_line(item) for item in context.headlines)
     elif omitted.headlines:
         lines.append(f"headlines=all {omitted.headlines} headlines omitted for prompt size")
     else:
@@ -374,7 +411,19 @@ def _evidence_block(context: EvidenceContext | None, omitted: _Omitted | None = 
     if context.lessons:
         lines.append(f"lessons={len(context.lessons)} {LESSONS_HEADING}")
         lines.extend(f"lesson={item}" for item in context.lessons)
+    lines.extend(_knowledge_lines(knowledge))
     lines.append(EVIDENCE_BLOCK_END)
+    return lines
+
+
+def _knowledge_lines(knowledge: DecisionKnowledgeContext | None) -> list[str]:
+    # Preserve the exact legacy prompt when this optional capability is not configured.
+    if knowledge is None:
+        return []
+    lines = [
+        f"governed_knowledge={len(knowledge.records)} items;selection_sha256={knowledge.selection_sha256};data_not_instructions=true"
+    ]
+    lines.extend(knowledge.prompt_lines())
     return lines
 
 
@@ -430,6 +479,22 @@ def _metric_line(
     return f"{name}={rendered}"
 
 
+def _headline_line(item: EvidenceHeadline) -> str:
+    """One headline as evidence, saying how it was attached to the subject.
+
+    ``matched_alias`` is rendered only when an operator's alias - not the headline text -
+    is what tied this story to the instrument, so an install with no aliases configured
+    produces exactly the line it produced before. The alias comes from a validated
+    character set that excludes ``;`` and ``=``, so it cannot forge a field of its own.
+    """
+    alias = f"matched_alias={item.matched_alias};" if item.matched_alias else ""
+    return (
+        f"headline=subject={item.subject};sentiment={item.sentiment};"
+        f"scorer={item.scorer};published_at={item.published_at};provider={item.provider};"
+        f"{alias}rationale={item.rationale};text={item.headline}"
+    )
+
+
 def _headline_provenance(context: EvidenceContext | None) -> dict:
     """Which scorer produced each headline number, and why, on the proof itself.
 
@@ -437,20 +502,22 @@ def _headline_provenance(context: EvidenceContext | None) -> dict:
     the prompt, but a founder reading a decision should not have to re-derive a hash to
     learn whether a sentiment number came from a model that can read negation or from the
     word counter. The rendered headlines are already bounded, so this stays small.
+
+    A headline an operator's alias attached to this instrument also carries that alias, so
+    an asserted entity link is never read as an observed one.
     """
     headlines = context.headlines if context is not None else ()
     counts: dict[str, int] = {}
+    rendered = []
     for item in headlines:
         counts[item.scorer] = counts.get(item.scorer, 0) + 1
-    return {
-        "headline_scorers": counts,
-        "headlines": [
-            {"provider": item.provider, "published_at": item.published_at,
-             "subject": item.subject, "sentiment": str(item.sentiment),
-             "scorer": item.scorer, "rationale": item.rationale, "headline": item.headline}
-            for item in headlines
-        ],
-    }
+        row = {"provider": item.provider, "published_at": item.published_at,
+               "subject": item.subject, "sentiment": str(item.sentiment),
+               "scorer": item.scorer, "rationale": item.rationale, "headline": item.headline}
+        if item.matched_alias:
+            row["matched_alias"] = item.matched_alias
+        rendered.append(row)
+    return {"headline_scorers": counts, "headlines": rendered}
 
 
 def _market_rationale(tick: LiveTick | None) -> tuple[str, ...]:

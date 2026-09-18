@@ -51,8 +51,12 @@ DIRECTIVES = {
     "max_open_positions": 3,
     "watchlist": [
         {"symbol": "NIFTY", "market": "INDIA", "asset_class": "INDEX", "currency": "INR", "exchange": "NSE"},
-        {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX"},
-        {"symbol": "USDINR", "market": "INDIA", "asset_class": "FX", "currency": "INR", "exchange": "CDS"},
+        {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL", "currency": "INR", "exchange": "MCX",
+         # An MCX row is a dated contract, so the directives file has to name which one.
+         "expiry": "2026-12-05", "lot_size": 100, "tick_size": "1"},
+        {"symbol": "USDINR", "market": "INDIA", "asset_class": "FX", "currency": "INR", "exchange": "CDS",
+         # Currency derivatives are dated too: USDINR is a monthly contract, 1000 USD a lot.
+         "expiry": "2026-12-29", "lot_size": 1000, "tick_size": "0.0025"},
         {"symbol": "AAPL", "market": "USA", "asset_class": "EQUITY", "currency": "USD", "exchange": "NASDAQ"},
     ],
     "instructions": "Preserve capital first. Prefer liquid, large instruments.",
@@ -203,8 +207,12 @@ def test_daemon_evaluates_every_watchlist_instrument_and_charges_country_exposur
     for minute in range(61):
         at = start + timedelta(minutes=minute)
         buffer.put(LiveTick("NIFTY", Decimal(24000 + minute), Decimal(1000 * minute), None, None, at, "test"))
+        buffer.put(LiveTick("RELIANCE", Decimal(24000 + minute), Decimal(1000 * minute), None, None, at, "test"))
         buffer.put(LiveTick("AAPL", Decimal(220), Decimal(1000 * minute), None, None, at, "test"))
-    broker.buy(OrderIntent("NIFTY", Market.INDIA, Side.BUY, 2, Decimal(24000), "seed", AssetClass.INDEX, "watch", Decimal(23500), Decimal(24500)))
+    # The seeded holding is an NSE share, not the index the watchlist is briefed on. An
+    # index cannot be bought - you buy a future or an ETF on it - and the friction model
+    # now refuses to price one rather than charging it the cash-equity schedule.
+    broker.buy(OrderIntent("RELIANCE", Market.INDIA, Side.BUY, 2, Decimal(24000), "seed", AssetClass.EQUITY, "watch", Decimal(23500), Decimal(24500)))
 
     brief = asyncio.run(daemon.run_once(now))
 

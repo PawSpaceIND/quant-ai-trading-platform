@@ -18,9 +18,9 @@ function source() {
   fs.rmSync(file,{force:true}); const db=new DatabaseSync(file);
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE paper_accounts(tenant_id TEXT PRIMARY KEY,starting_capital TEXT,cash_balance TEXT,updated_at TEXT);
-    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT);
+    CREATE TABLE paper_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,side TEXT,quantity INTEGER,fill_price TEXT,notional TEXT,status TEXT,created_at TEXT,stop_price TEXT,take_profit_price TEXT,margin_change TEXT,margin_provenance TEXT,instrument_identity TEXT);
     CREATE TABLE paper_cost_ledger(id INTEGER PRIMARY KEY,order_id TEXT,tenant_id TEXT,code TEXT,amount TEXT,cash_debit INTEGER,created_at TEXT);
-    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT);
+    CREATE TABLE paper_positions(tenant_id TEXT,symbol TEXT,market TEXT,asset_class TEXT,quantity INTEGER,average_price TEXT,stop_price TEXT,take_profit_price TEXT,instrument_identity TEXT);
     CREATE TABLE paper_live_valuations(tenant_id TEXT,timestamp TEXT,ledger_id INTEGER,payload TEXT);`);
   db.prepare("INSERT INTO paper_accounts VALUES ('default',?,?,?)").run(shared.account.starting_capital,shared.account.cash_balance,shared.valuation.updatedAt);
   for(const [table,rows] of [["paper_ledger",shared.fills],["paper_cost_ledger",shared.costs],["paper_positions",shared.positions]] as const)
@@ -129,7 +129,7 @@ test("a concurrent WAL fill cannot mix the benchmark history with the previously
   t.mock.method(DatabaseSync.prototype,"prepare",function(this:DatabaseSync,sql:string){
     if(sql==="SELECT * FROM paper_ledger WHERE tenant_id=? ORDER BY id LIMIT 20001" && ++reads===2){
       committed=true;writer.exec(`BEGIN;
-        INSERT INTO paper_ledger VALUES(7,'concurrent','default','TCS','INDIA','EQUITY','BUY',1,'100','100','FILLED','2026-09-14T11:59:59+05:30',NULL,NULL);
+        INSERT INTO paper_ledger (id,order_id,tenant_id,symbol,market,asset_class,side,quantity,fill_price,notional,status,created_at,stop_price,take_profit_price) VALUES(7,'concurrent','default','TCS','INDIA','EQUITY','BUY',1,'100','100','FILLED','2026-09-14T11:59:59+05:30',NULL,NULL);
         INSERT INTO paper_cost_ledger VALUES(100,'concurrent','default','SPREAD','0',0,'2026-09-14T11:59:59+05:30');
         INSERT INTO paper_cost_ledger VALUES(101,'concurrent','default','SLIPPAGE','0',0,'2026-09-14T11:59:59+05:30');
         UPDATE paper_accounts SET cash_balance='9544.39626'; UPDATE paper_positions SET quantity=4,average_price='105.88' WHERE symbol='TCS'; COMMIT;`);

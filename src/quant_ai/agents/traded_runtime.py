@@ -71,6 +71,7 @@ GOVERNED_ATTRIBUTES = frozenset(
         "snapshot_provider",
         "pre_submit_check",
         "strategy_manifest_provider",
+        "oms",
     }
 )
 
@@ -82,6 +83,7 @@ def build_traded_runtime(
     llm_client: AnthropicSwarmClient | None = None,
     xai_logger: XAITraceLogger | None = None,
     book_risk_history=None,
+    book_risk_required_symbols: tuple[str, ...] = (),
     overnight_risk: OvernightExposureFirewall | None = None,
     attribution_journal_tenant: str | None = None,
 ) -> SwarmPaperTradingService:
@@ -108,6 +110,7 @@ def build_traded_runtime(
             book_risk=BookRiskFirewall(
                 history_provider=book_risk_history,
                 sector_map=directives.sector_map or sector_map_from_env(),
+                required_symbols=book_risk_required_symbols,
             ),
             overnight_risk=overnight_risk or overnight_risk_from_env(),
         ),
@@ -166,6 +169,9 @@ def runtime_configuration(runtime: SwarmPaperTradingService) -> dict:
             item.observations for item in runtime.attribution.attribution()
         ),
         "killSwitchEngaged": runtime.kill_switch.engaged,
+        # OMS state itself is per-run evidence; whether durable OMS enforcement is armed is
+        # a traded-runtime policy difference and must not drift between compared runtimes.
+        "orderManagement": {"durableOms": runtime.oms is not None},
         "hooks": {
             "snapshotProvider": runtime.snapshot_provider is not None,
             "preSubmitCheck": runtime.pre_submit_check is not None,

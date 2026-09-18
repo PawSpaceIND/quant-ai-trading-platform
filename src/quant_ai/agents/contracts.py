@@ -104,6 +104,9 @@ KEYWORD_SCORER = "keyword"
 MODEL_SCORER = "model"
 HEADLINE_SCORERS = (MODEL_SCORER, KEYWORD_SCORER)
 MAX_HEADLINE_RATIONALE_CHARS = 160
+# An operator-asserted alias that attached a headline to an instrument, bounded to the
+# same 40 characters the alias configuration allows.
+MAX_HEADLINE_ALIAS_CHARS = 40
 # Higher-timeframe context: a few closed bars per timeframe, so the consensus can see
 # the trend it is trading inside without a second minute-by-minute bar list.
 MAX_TIMEFRAMES = 4
@@ -133,6 +136,10 @@ class EvidenceHeadline:
     ``scorer`` names who produced ``sentiment`` and ``rationale`` says why in one short
     line. A model rationale is derived from untrusted headline text, so it is bounded and
     single-line and carries no ``;`` of its own: it can never forge another evidence field.
+
+    ``matched_alias`` is empty when the headline named this subject itself. When it is set,
+    the headline reached this instrument through an operator-asserted alias rather than an
+    observed mention, and the proof says which alias made the claim.
     """
 
     subject: str
@@ -142,6 +149,7 @@ class EvidenceHeadline:
     provider: str
     scorer: str = KEYWORD_SCORER
     rationale: str = ""
+    matched_alias: str = ""
 
     def __post_init__(self) -> None:
         if len(self.headline) > MAX_HEADLINE_CHARS:
@@ -156,6 +164,12 @@ class EvidenceHeadline:
             )
         if any(char in self.rationale for char in "\r\n;"):
             raise ValueError("headline rationale must be a single line without ';'")
+        if len(self.matched_alias) > MAX_HEADLINE_ALIAS_CHARS:
+            raise ValueError(
+                f"matched alias must be at most {MAX_HEADLINE_ALIAS_CHARS} characters"
+            )
+        if any(char in self.matched_alias for char in "\r\n;="):
+            raise ValueError("matched alias must be a single line without ';' or '='")
 
 
 @dataclass(frozen=True)

@@ -33,7 +33,7 @@ FIELDS = {
         "plan",
     ),
     "quant_ai.execution.scheduler.AutonomousCadenceScheduler": ("cadence",),
-    "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": (),
+    "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": ("bind_order_instruments",),
     "quant_ai.agents.swarm.AtlasCIOAgent": (),
     "quant_ai.analytics.attribution.AgentAttributionEngine": (),
     "quant_ai.execution.session.MarketCalendar": ("holidays", "special_sessions"),
@@ -50,6 +50,7 @@ FIELDS = {
         "blocked_asset_classes",
         "book_risk_policy",
         "book_risk_armed",
+        "book_risk_inputs",
         "overnight_risk_policy",
     ),
     "quant_ai.intelligence.adversarial.AdversarialStressAgent": (
@@ -111,6 +112,7 @@ FIELDS = {
         "model",
         "timeout_seconds",
         "transport_kind",
+        "consensus_max_tokens",
     ),
     "quant_ai.marketdata.ticker_stream.ZerodhaKiteTicker": ("instrument_tokens", "symbol_by_token"),
     "quant_ai.marketdata.ticker_stream.IBKRAsyncTicker": (
@@ -351,8 +353,24 @@ class RuntimeManifest:
                     self._dependencies[package] = version(package)
                 except PackageNotFoundError:
                     self._dependencies[package] = None
+        from quant_ai.governance.runtime_identity import path_digest, runtime_identity_configuration
+        from quant_ai.instruments.identity import canonical_instrument_identity
+        from quant_ai.orders.oms import DurableOms
+        identity = runtime_identity_configuration(r.broker, d.tenant_id)
+        oms = r.oms
+        oms_identity = {"durable": isinstance(oms, DurableOms),
+                        "path_sha256": path_digest(oms.path) if isinstance(oms, DurableOms) else None}
+        if identity is not None:
+            if (p.bind_order_instruments is not True or not oms_identity["durable"]
+                    or oms_identity["path_sha256"] != identity["oms_path_sha256"]
+                    or {i.symbol: canonical_instrument_identity(i) for i in d.instruments} != identity["instruments"]):
+                issues.append("runtime_identity_wiring_mismatch")
+        elif p.bind_order_instruments:
+            issues.append("runtime_identity_configuration_missing")
         manifest = {
             "schema": "pramana.runtime_strategy.v1",
+            "order_identity": identity or {"mode": "legacy_cash"},
+            "order_management": oms_identity,
             "tenant_id": d.tenant_id,
             "release_revision": self.revision,
             "execution_mode": "paper",
@@ -365,6 +383,11 @@ class RuntimeManifest:
             "components": components,
             "streams": [describe(s, issues) for s in self.streams],
             "specialists": agents,
+            "daily_history": {
+                "provider": getattr(p.history, "provider_id", None),
+                "sessions": getattr(p.history, "sessions", None),
+                "type": None if p.history is None else f"{type(p.history).__module__}.{type(p.history).__qualname__}",
+            },
             "news_window_seconds": p.news_window.total_seconds(),
             "baseline_risk_policy": stable(RiskPolicy()),
         }

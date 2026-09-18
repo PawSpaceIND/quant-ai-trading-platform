@@ -1,0 +1,970 @@
+"""Durable, broker-neutral order-management journal.
+
+This module records order intent and lifecycle; it never sends a broker request.  The event
+journal is append-only and hash chained, while ``oms_orders`` is a restart-friendly projection
+that is independently checked against the event stream before it is trusted.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from threading import RLock
+from typing import Self
+from uuid import uuid4
+
+from quant_ai.domain.models import OrderIntent
+from quant_ai.instruments.identity import stored_identity
+from quant_ai.orders.execution_identity import (
+    assert_fill_source,
+    execution_identity,
+    external_fill_id,
+)
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
+from quant_ai.orders.state import OrderLifecycle, OrderState
+
+SCHEMA_VERSION = 1
+PAPER_RECOVERY_SCHEMA_VERSION = 2
+_SHA = re.compile(r"[0-9a-f]{64}")
+_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+TERMINAL = frozenset({OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED})
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def _hash(value: object) -> str:
+    return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _instant(value: datetime, name: str) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name}_must_be_timezone_aware")
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _decimal(value: object, name: str, *, positive: bool = False) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as error:
+        raise ValueError(f"invalid_{name}") from error
+    if not result.is_finite() or (positive and result <= 0):
+        raise ValueError(f"invalid_{name}")
+    return result
+
+
+def _paper_recovery_proof(value):
+    required = {"schema", "plan_sha256", "receipt_sha256", "reviewer", "recovered_at"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    if value["schema"] != "pramana.paper_oms_recovery.v1":
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    for key in ("plan_sha256", "receipt_sha256"):
+        if not isinstance(value[key], str) or not _SHA.fullmatch(value[key]):
+            raise ValueError("oms_paper_recovery_proof_invalid")
+    reviewer = value["reviewer"]
+    if (not isinstance(reviewer, str) or not 0 < len(reviewer) <= 256
+            or reviewer != reviewer.strip() or any(not c.isprintable() for c in reviewer)):
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    moment = datetime.fromisoformat(value["recovered_at"])
+    if _instant(moment, "recovery_at") != value["recovered_at"]:
+        raise ValueError("oms_paper_recovery_proof_invalid")
+    return dict(value)
+
+
+@dataclass(frozen=True)
+class OmsOrder:
+    client_order_id: str
+    tenant_id: str
+    strategy_id: str
+    state: OrderState
+    symbol: str
+    market: str
+    asset_class: str
+    side: str
+    requested_quantity: int
+    reference_price: Decimal
+    filled_quantity: int
+    average_fill_price: Decimal | None
+    broker_order_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    last_event_sequence: int
+    instrument_identity: str | None = None
+
+    @property
+    def pending_quantity(self) -> int:
+        return self.requested_quantity - self.filled_quantity
+
+
+class DurableOms:
+    """SQLite OMS projection plus append-only event/fill history."""
+
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
+        if type(read_only) is not bool:
+            raise TypeError("oms_read_only_must_be_boolean")
+        self._read_only = read_only
+        self._lock = RLock()
+        self.path = Path(path)
+        if read_only:
+            if (self.path.is_symlink() or not self.path.is_file()
+                    or self.path.stat().st_nlink != 1):
+                raise ValueError("oms_read_only_regular_existing_file_required")
+            self.db = sqlite3.connect(
+                self.path.resolve().as_uri() + "?mode=ro", uri=True,
+                timeout=2, check_same_thread=False,
+            )
+            self.db.row_factory = sqlite3.Row
+            try:
+                self.db.execute("PRAGMA query_only=ON")
+                self.db.execute("PRAGMA trusted_schema=OFF")
+                self.db.execute("PRAGMA busy_timeout=2000")
+                rows = self.db.execute("SELECT id,version FROM oms_meta").fetchall()
+                if (len(rows) != 1 or rows[0][0] != 1
+                        or rows[0][1] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}):
+                    raise ValueError("oms_schema_version_mismatch")
+            except BaseException:
+                self.db.close()
+                raise
+            return  # No schema creation, journal-mode change, or migration on inspection.
+        if self.path != Path(":memory:") and self.path.exists() and self.path.is_symlink():
+            raise ValueError("oms_symlink_unsupported")
+        if str(self.path) != ":memory:" and not self.path.exists():
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+        self.db = sqlite3.connect(str(self.path), timeout=10, check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA busy_timeout=2000")
+        self._schema()
+
+    def close(self) -> None:
+        self.db.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
+
+    def _schema(self) -> None:
+        with self.db:
+            self.db.executescript("""
+                CREATE TABLE IF NOT EXISTS oms_meta(
+                    id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS oms_orders(
+                    client_order_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    strategy_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    asset_class TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    requested_quantity INTEGER NOT NULL,
+                    reference_price TEXT NOT NULL,
+                    filled_quantity INTEGER NOT NULL,
+                    average_fill_price TEXT,
+                    broker_order_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_event_sequence INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS oms_events(
+                    client_order_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    at TEXT NOT NULL,
+                    previous_hash TEXT,
+                    event_hash TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY(client_order_id, sequence),
+                    UNIQUE(event_hash)
+                );
+                CREATE TABLE IF NOT EXISTS oms_fills(
+                    fill_id TEXT PRIMARY KEY,
+                    client_order_id TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    price TEXT NOT NULL,
+                    at TEXT NOT NULL,
+                    broker_order_id TEXT
+                );
+                CREATE TABLE IF NOT EXISTS oms_broker_evidence_bindings(
+                    client_order_id TEXT PRIMARY KEY,
+                    broker TEXT NOT NULL, account_ref TEXT NOT NULL,
+                    broker_order_id TEXT NOT NULL, instrument_id TEXT NOT NULL,
+                    exchange TEXT NOT NULL, product TEXT NOT NULL,
+                    UNIQUE(broker,account_ref,broker_order_id)
+                );
+                CREATE TABLE IF NOT EXISTS oms_replacements(
+                    original_client_order_id TEXT PRIMARY KEY,
+                    replacement_client_order_id TEXT NOT NULL UNIQUE,
+                    reason TEXT NOT NULL,
+                    at TEXT NOT NULL
+                );
+            """)
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(oms_orders)")}
+            if "instrument_identity" not in columns:
+                self.db.execute("ALTER TABLE oms_orders ADD COLUMN instrument_identity TEXT")
+            row = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
+            if row is None:
+                self.db.execute("INSERT INTO oms_meta VALUES(1,?)", (SCHEMA_VERSION,))
+            elif row[0] not in {SCHEMA_VERSION, PAPER_RECOVERY_SCHEMA_VERSION}:
+                raise ValueError("oms_schema_version_mismatch")
+            for table in ("oms_events", "oms_fills", "oms_replacements", "oms_broker_evidence_bindings"):
+                for verb in ("UPDATE", "DELETE"):
+                    name = f"{table}_{verb.lower()}_blocked"
+                    self.db.execute(
+                        f"CREATE TRIGGER IF NOT EXISTS {name} BEFORE {verb} ON {table} "
+                        "BEGIN SELECT RAISE(ABORT,'OMS history is append-only'); END"
+                    )
+
+    @contextmanager
+    def transaction(self):
+        """Serialize before reading and preserve outer atomicity across nested mutations."""
+        with self._lock:
+            nested = self.db.in_transaction
+            savepoint = "oms_" + uuid4().hex
+            self.db.execute(f"SAVEPOINT {savepoint}" if nested else
+                            "BEGIN" if self._read_only else "BEGIN IMMEDIATE")
+            try:
+                yield
+                self.db.execute(f"RELEASE SAVEPOINT {savepoint}" if nested else "COMMIT")
+            except BaseException:
+                if self.db.in_transaction:
+                    if nested:
+                        self.db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                        self.db.execute(f"RELEASE SAVEPOINT {savepoint}")
+                    else:
+                        self.db.rollback()
+                raise
+
+    @staticmethod
+    def client_order_id(order: OrderIntent, decision_id: str) -> str:
+        if not decision_id.strip():
+            raise ValueError("decision_id_required")
+        raw = {
+            "tenant": order.tenant_id,
+            "strategy": order.strategy_id,
+            "market": order.market.value,
+            "assetClass": order.asset_class.value,
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "quantity": order.quantity,
+            "referencePrice": str(order.reference_price),
+            "decisionId": decision_id,
+        }
+        identity = bound_identity(order)
+        if identity is not None:
+            raw["instrumentIdentity"] = identity
+        return "OMS-" + _hash(raw)[:40]
+
+    def create(
+        self,
+        order: OrderIntent,
+        *,
+        decision_id: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        if type(order.quantity) is not int or order.quantity <= 0 or order.reference_price <= 0:
+            raise ValueError("oms_invalid_order_geometry")
+        at = now or datetime.now(timezone.utc)
+        stamp = _instant(at, "order_created_at")
+        client_id = self.client_order_id(order, decision_id)
+        with self.transaction():
+            existing = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?", (client_id,)
+            ).fetchone()
+            if existing is not None:
+                decoded = self._decode(existing)
+                self._assert_same_intent(decoded, order)
+                return decoded
+            self.db.execute(
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (client_id, order.tenant_id, order.strategy_id, OrderState.CREATED.value,
+                 order.symbol, order.market.value, order.asset_class.value, order.side.value,
+                 order.quantity, str(order.reference_price), 0, None, None, stamp, stamp, 0,
+                 bound_identity(order)),
+            )
+            self._append_event_locked(client_id, "CREATED", at, {
+                "decisionId": decision_id,
+                "approvedIntent": canonical_order_intent(order),
+                "order": {
+                    "tenantId": order.tenant_id, "strategyId": order.strategy_id,
+                    "market": order.market.value, "assetClass": order.asset_class.value,
+                    "symbol": order.symbol, "side": order.side.value,
+                    "quantity": order.quantity, "referencePrice": str(order.reference_price),
+                    **({"instrumentIdentity": bound_identity(order)} if bound_identity(order) is not None else {}),
+                },
+            })
+        return self.get(client_id)
+
+    def _assert_same_intent(self, current: OmsOrder, order: OrderIntent) -> None:
+        if (
+            current.tenant_id != order.tenant_id
+            or current.strategy_id != order.strategy_id
+            or current.symbol != order.symbol
+            or current.market != order.market.value
+            or current.asset_class != order.asset_class.value
+            or current.side != order.side.value
+            or current.requested_quantity != order.quantity
+            or current.reference_price != order.reference_price
+            or current.instrument_identity != bound_identity(order)
+        ):
+            raise ValueError("client_order_id_intent_mismatch")
+        original = self.intent_snapshot(current.client_order_id)
+        if original is not None and original != canonical_order_intent(order):
+            raise ValueError("client_order_id_intent_mismatch")
+
+    def intent_snapshot(self, client_order_id: str) -> str | None:
+        """Return the verified full snapshot, or unknown for a legacy creation event."""
+        with self.transaction():
+            self._verify_locked(client_order_id)
+            row = self.db.execute(
+                "SELECT payload FROM oms_events WHERE client_order_id=? AND sequence=1",
+                (client_order_id,),
+            ).fetchone()
+            return json.loads(row[0]).get("approvedIntent")
+
+    def get_intent(self, client_order_id: str) -> OrderIntent:
+        raw = self.intent_snapshot(client_order_id)
+        if raw is None:
+            raise ValueError("oms_legacy_full_intent_unavailable")
+        return order_from_snapshot(raw)
+
+    def transition(
+        self,
+        client_order_id: str,
+        target: OrderState,
+        *,
+        reason: str | None = None,
+        broker_order_id: str | None = None,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        self._validate_id(client_order_id, "client_order_id")
+        if broker_order_id is not None:
+            self._validate_id(broker_order_id, "broker_order_id")
+        at = now or datetime.now(timezone.utc)
+        with self.transaction():
+            row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(client_order_id)
+            current = self._decode(row)
+            lifecycle = OrderLifecycle(current.state)
+            lifecycle.transition(target)
+            broker = self._broker_identity(current.broker_order_id, broker_order_id)
+            self.db.execute(
+                "UPDATE oms_orders SET state=?,broker_order_id=?,updated_at=? WHERE client_order_id=?",
+                (target.value, broker, _instant(at, "order_transition_at"), client_order_id),
+            )
+            self._append_event_locked(client_order_id, target.value, at, {
+                "from": current.state.value, "to": target.value,
+                "reason": (reason or "").strip() or None, "brokerOrderId": broker,
+            })
+        return self.get(client_order_id)
+
+    def approve_risk(self, client_order_id: str, *, now: datetime | None = None) -> OmsOrder:
+        return self.transition(client_order_id, OrderState.RISK_APPROVED, now=now)
+
+    def submitted(
+        self, client_order_id: str, *, broker_order_id: str | None = None,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        return self.transition(
+            client_order_id, OrderState.SUBMITTED, broker_order_id=broker_order_id, now=now
+        )
+
+    def submission_uncertain(
+        self, client_order_id: str, *, reason: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        if not reason.strip():
+            raise ValueError("uncertain_submission_reason_required")
+        return self.transition(
+            client_order_id, OrderState.SUBMISSION_UNCERTAIN, reason=reason, now=now
+        )
+
+    def bind_broker_identity(
+        self, client_order_id: str, *, broker_order_id: str, reason: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        """Bind an externally observed broker ID without inventing a state transition."""
+        self._validate_id(client_order_id, "client_order_id")
+        self._validate_id(broker_order_id, "broker_order_id")
+        if not reason.strip():
+            raise ValueError("broker_identity_binding_reason_required")
+        at = now or datetime.now(timezone.utc)
+        with self.transaction():
+            row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(client_order_id)
+            current = self._decode(row)
+            broker = self._broker_identity(current.broker_order_id, broker_order_id)
+            if current.broker_order_id == broker:
+                return current
+            self.db.execute(
+                "UPDATE oms_orders SET broker_order_id=?,updated_at=? WHERE client_order_id=?",
+                (broker, _instant(at, "broker_identity_observed_at"), client_order_id),
+            )
+            self._append_event_locked(client_order_id, "BROKER_ID_OBSERVED", at, {
+                "brokerOrderId": broker, "reason": reason.strip(),
+                "state": current.state.value,
+            })
+        return self.get(client_order_id)
+
+    def broker_evidence_binding(self, client_order_id: str) -> dict[str, str] | None:
+        self._validate_id(client_order_id, "client_order_id")
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM oms_broker_evidence_bindings WHERE client_order_id=?",
+                (client_order_id,),
+            ).fetchone()
+            return None if row is None else {key: value for key, value in dict(row).items() if key != "client_order_id"}
+
+    def bind_broker_evidence(
+        self, client_order_id: str, binding: dict[str, str], *, now: datetime,
+    ) -> None:
+        """Persist observed account/contract identity; never infer a broker submission."""
+        fields = ("broker", "account_ref", "broker_order_id", "instrument_id", "exchange", "product")
+        if set(binding) != set(fields) or binding["broker"] != "zerodha-kite":
+            raise ValueError("broker_evidence_binding_invalid")
+        if not _SHA.fullmatch(binding["account_ref"]):
+            raise ValueError("broker_evidence_account_invalid")
+        for key in fields:
+            self._validate_id(binding[key], key)
+        with self.transaction():
+            current = self.get(client_order_id)
+            if current.state is OrderState.CREATED:
+                raise ValueError("broker_evidence_requires_risk_approval")
+            self._broker_identity(current.broker_order_id, binding["broker_order_id"])
+            existing = self.broker_evidence_binding(client_order_id)
+            if existing is not None:
+                if existing != binding:
+                    raise ValueError("broker_evidence_binding_changed")
+                return
+            self.db.execute(
+                "INSERT INTO oms_broker_evidence_bindings VALUES(?,?,?,?,?,?,?)",
+                (client_order_id, *(binding[key] for key in fields)),
+            )
+            self._append_event_locked(client_order_id, "BROKER_EVIDENCE_BOUND", now, binding)
+
+    def reject(self, client_order_id: str, *, reason: str, now: datetime | None = None) -> OmsOrder:
+        if not reason.strip():
+            raise ValueError("order_rejection_reason_required")
+        return self.transition(client_order_id, OrderState.REJECTED, reason=reason, now=now)
+
+    def cancel(self, client_order_id: str, *, reason: str, now: datetime | None = None) -> OmsOrder:
+        if not reason.strip():
+            raise ValueError("order_cancel_reason_required")
+        return self.transition(client_order_id, OrderState.CANCELLED, reason=reason, now=now)
+
+    def replace_cancelled(
+        self,
+        original_client_order_id: str,
+        replacement: OrderIntent,
+        *,
+        decision_id: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> OmsOrder:
+        """Create one conservative replacement after cancellation is confirmed.
+
+        Replacement never mutates the old order and never races an unconfirmed cancel. The
+        replacement may change price/protective levels and may reduce size, but it cannot
+        increase the original order's still-unfilled quantity or change economic identity.
+        """
+        self._validate_id(original_client_order_id, "client_order_id")
+        if not reason.strip():
+            raise ValueError("replacement_reason_required")
+        if (
+            type(replacement.quantity) is not int
+            or replacement.quantity <= 0
+            or replacement.reference_price <= 0
+        ):
+            raise ValueError("oms_invalid_order_geometry")
+        if not decision_id.strip():
+            raise ValueError("decision_id_required")
+        at = now or datetime.now(timezone.utc)
+        stamp = _instant(at, "replacement_at")
+        replacement_id = self.client_order_id(replacement, decision_id)
+        with self.transaction():
+            existing_link = self.db.execute(
+                "SELECT * FROM oms_replacements WHERE original_client_order_id=?",
+                (original_client_order_id,),
+            ).fetchone()
+            if existing_link is not None:
+                if (
+                    existing_link["replacement_client_order_id"] != replacement_id
+                    or existing_link["reason"] != reason.strip()
+                ):
+                    raise ValueError("replacement_lineage_payload_mismatch")
+                current = self.db.execute(
+                    "SELECT * FROM oms_orders WHERE client_order_id=?", (replacement_id,)
+                ).fetchone()
+                if current is None:
+                    raise ValueError("replacement_lineage_missing_order")
+                decoded = self._decode(current)
+                self._assert_same_intent(decoded, replacement)
+                return decoded
+
+            original_row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?",
+                (original_client_order_id,),
+            ).fetchone()
+            if original_row is None:
+                raise KeyError(original_client_order_id)
+            original = self._decode(original_row)
+            if original.state is not OrderState.CANCELLED:
+                raise ValueError("replacement_requires_confirmed_cancel")
+            if original.pending_quantity <= 0:
+                raise ValueError("cancelled_order_has_no_replaceable_quantity")
+            if (
+                original.tenant_id != replacement.tenant_id
+                or original.strategy_id != replacement.strategy_id
+                or original.symbol != replacement.symbol
+                or original.market != replacement.market.value
+                or original.asset_class != replacement.asset_class.value
+                or original.side != replacement.side.value
+                or original.instrument_identity != bound_identity(replacement)
+            ):
+                raise ValueError("replacement_economic_identity_changed")
+            if replacement.quantity > original.pending_quantity:
+                raise ValueError("replacement_exceeds_cancelled_remainder")
+            collision = self.db.execute(
+                "SELECT 1 FROM oms_orders WHERE client_order_id=?", (replacement_id,)
+            ).fetchone()
+            if collision is not None:
+                raise ValueError("replacement_order_preexists_without_lineage")
+            self.db.execute(
+                """INSERT INTO oms_orders
+                    (client_order_id,tenant_id,strategy_id,state,symbol,market,asset_class,side,
+                     requested_quantity,reference_price,filled_quantity,average_fill_price,
+                     broker_order_id,created_at,updated_at,last_event_sequence,instrument_identity)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    replacement_id, replacement.tenant_id, replacement.strategy_id,
+                    OrderState.CREATED.value, replacement.symbol, replacement.market.value,
+                    replacement.asset_class.value, replacement.side.value, replacement.quantity,
+                    str(replacement.reference_price), 0, None, None, stamp, stamp, 0,
+                    bound_identity(replacement),
+                ),
+            )
+            self._append_event_locked(replacement_id, "CREATED", at, {
+                "decisionId": decision_id,
+                "replacesClientOrderId": original_client_order_id,
+                "approvedIntent": canonical_order_intent(replacement),
+                "order": {
+                    "tenantId": replacement.tenant_id,
+                    "strategyId": replacement.strategy_id,
+                    "market": replacement.market.value,
+                    "assetClass": replacement.asset_class.value,
+                    "symbol": replacement.symbol,
+                    "side": replacement.side.value,
+                    "quantity": replacement.quantity,
+                    "referencePrice": str(replacement.reference_price),
+                    **({"instrumentIdentity": bound_identity(replacement)}
+                       if bound_identity(replacement) is not None else {}),
+                },
+            })
+            self.db.execute(
+                "INSERT INTO oms_replacements VALUES(?,?,?,?)",
+                (original_client_order_id, replacement_id, reason.strip(), stamp),
+            )
+            self._append_event_locked(original_client_order_id, "REPLACED_BY", at, {
+                "replacementClientOrderId": replacement_id,
+                "reason": reason.strip(),
+            })
+        return self.get(replacement_id)
+
+    def replacement_for(self, original_client_order_id: str) -> str | None:
+        self._validate_id(original_client_order_id, "client_order_id")
+        row = self.db.execute(
+            "SELECT replacement_client_order_id FROM oms_replacements "
+            "WHERE original_client_order_id=?",
+            (original_client_order_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def replacement_parent(self, replacement_client_order_id: str) -> str | None:
+        self._validate_id(replacement_client_order_id, "client_order_id")
+        row = self.db.execute(
+            "SELECT original_client_order_id FROM oms_replacements "
+            "WHERE replacement_client_order_id=?",
+            (replacement_client_order_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def fill(
+        self,
+        client_order_id: str,
+        *,
+        fill_id: str,
+        quantity: int,
+        price: Decimal,
+        broker_order_id: str | None = None,
+        now: datetime | None = None,
+        source_identity: dict[str, str] | None = None,
+        paper_recovery: dict[str, str] | None = None,
+    ) -> OmsOrder:
+        self._validate_id(client_order_id, "client_order_id")
+        self._validate_id(fill_id, "fill_id")
+        if broker_order_id is not None:
+            self._validate_id(broker_order_id, "broker_order_id")
+        if type(quantity) is not int or quantity <= 0:
+            raise ValueError("fill_quantity_must_be_positive_integer")
+        fill_price = _decimal(price, "fill_price", positive=True)
+        at = now or datetime.now(timezone.utc)
+        source = None if source_identity is None else execution_identity(source_identity)
+        recovery = None if paper_recovery is None else _paper_recovery_proof(paper_recovery)
+        if recovery is not None and not self.db.in_transaction:
+            raise ValueError("oms_paper_recovery_outer_transaction_required")
+        if recovery is not None and (source is not None or fill_id.startswith("KITE")):
+            raise ValueError("oms_paper_recovery_external_fill_forbidden")
+        if fill_id.startswith("KITE2:") and source is None:
+            raise ValueError("external_fill_source_required")
+        if source is not None and (external_fill_id(source) != fill_id
+                                   or source["brokerOrderId"] != broker_order_id):
+            raise ValueError("external_fill_identity_mismatch")
+        with self.transaction():
+            if source is not None:
+                assert_fill_source(
+                    source, tenant_id=self.get(client_order_id).tenant_id,
+                    broker_order_id=broker_order_id, at=at,
+                    binding=self.broker_evidence_binding(client_order_id),
+                )
+            duplicate = self.db.execute("SELECT * FROM oms_fills WHERE fill_id=?", (fill_id,)).fetchone()
+            if duplicate is not None:
+                if (
+                    duplicate["client_order_id"] != client_order_id
+                    or duplicate["quantity"] != quantity
+                    or _decimal(duplicate["price"], "fill_price") != fill_price
+                    or duplicate["broker_order_id"] != broker_order_id
+                    or source is not None and datetime.fromisoformat(duplicate["at"]) != at
+                ):
+                    raise ValueError("fill_id_payload_mismatch")
+                return self.get(client_order_id)
+            row = self.db.execute(
+                "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(client_order_id)
+            current = self._decode(row)
+            if current.state not in {
+                OrderState.SUBMITTED, OrderState.SUBMISSION_UNCERTAIN, OrderState.PARTIALLY_FILLED
+            }:
+                raise ValueError(f"fill_not_allowed_from_state:{current.state.value}")
+            total = current.filled_quantity + quantity
+            if total > current.requested_quantity:
+                raise ValueError("fill_exceeds_requested_quantity")
+            prior_notional = sum(
+                (_decimal(row["price"], "fill_price") * row["quantity"]
+                 for row in self.db.execute(
+                     "SELECT quantity,price FROM oms_fills WHERE client_order_id=? ORDER BY rowid",
+                     (client_order_id,),
+                 ).fetchall()), Decimal(0),
+            )
+            average = (prior_notional + fill_price * quantity) / total
+            target = (
+                OrderState.FILLED if total == current.requested_quantity
+                else OrderState.PARTIALLY_FILLED
+            )
+            OrderLifecycle(current.state).transition(target)
+            broker = self._broker_identity(current.broker_order_id, broker_order_id)
+            stamp = _instant(at, "fill_at")
+            self.db.execute(
+                "INSERT INTO oms_fills VALUES(?,?,?,?,?,?)",
+                (fill_id, client_order_id, quantity, str(fill_price), stamp, broker_order_id),
+            )
+            self.db.execute(
+                """UPDATE oms_orders SET state=?,filled_quantity=?,average_fill_price=?,
+                   broker_order_id=?,updated_at=? WHERE client_order_id=?""",
+                (target.value, total, str(average), broker, stamp, client_order_id),
+            )
+            self._append_event_locked(client_order_id, "FILL", at, {
+                "fillId": fill_id, "quantity": quantity, "price": str(fill_price),
+                "cumulativeFilled": total, "averageFillPrice": str(average),
+                "state": target.value, "brokerOrderId": broker,
+                **({"sourceIdentity": source} if source is not None else {}),
+                **({"paperRecovery": recovery} if recovery is not None else {}),
+            })
+        return self.get(client_order_id)
+
+    @staticmethod
+    def _broker_identity(existing: str | None, supplied: str | None) -> str | None:
+        if existing is not None and supplied is not None and existing != supplied:
+            raise ValueError("broker_order_identity_changed")
+        return existing or supplied
+
+    @staticmethod
+    def _validate_id(value: str, name: str) -> None:
+        if not isinstance(value, str) or not _ID.fullmatch(value):
+            raise ValueError(f"invalid_{name}")
+
+    def _append_event_locked(
+        self, client_order_id: str, kind: str, at: datetime, payload: dict[str, object]
+    ) -> None:
+        row = self.db.execute(
+            "SELECT last_event_sequence FROM oms_orders WHERE client_order_id=?",
+            (client_order_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(client_order_id)
+        sequence = int(row[0]) + 1
+        previous = self.db.execute(
+            "SELECT event_hash FROM oms_events WHERE client_order_id=? ORDER BY sequence DESC LIMIT 1",
+            (client_order_id,),
+        ).fetchone()
+        previous_hash = previous[0] if previous else None
+        stamp = _instant(at, "oms_event_at")
+        body = {
+            "clientOrderId": client_order_id, "sequence": sequence, "kind": kind,
+            "at": stamp, "previousHash": previous_hash, "payload": payload,
+        }
+        event_hash = _hash(body)
+        self.db.execute(
+            "INSERT INTO oms_events VALUES(?,?,?,?,?,?,?)",
+            (client_order_id, sequence, kind, stamp, previous_hash, event_hash,
+             _canonical(payload).decode()),
+        )
+        self.db.execute(
+            "UPDATE oms_orders SET last_event_sequence=? WHERE client_order_id=?",
+            (sequence, client_order_id),
+        )
+
+    def get(self, client_order_id: str) -> OmsOrder:
+        self._validate_id(client_order_id, "client_order_id")
+        row = self.db.execute(
+            "SELECT * FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(client_order_id)
+        return self._decode(row)
+
+    def fill_ids(self, client_order_id: str) -> tuple[str, ...]:
+        """Recorded fill identities, for external lifecycle reconciliation only."""
+        self._validate_id(client_order_id, "client_order_id")
+        if self.db.execute(
+            "SELECT 1 FROM oms_orders WHERE client_order_id=?", (client_order_id,)
+        ).fetchone() is None:
+            raise KeyError(client_order_id)
+        return tuple(
+            str(row[0])
+            for row in self.db.execute(
+                "SELECT fill_id FROM oms_fills WHERE client_order_id=? ORDER BY at,fill_id",
+                (client_order_id,),
+            ).fetchall()
+        )
+
+    def all_orders(self, tenant_id: str) -> tuple[OmsOrder, ...]:
+        """Include terminal orders: completion does not end reconciliation obligations."""
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT * FROM oms_orders WHERE tenant_id=? ORDER BY created_at,client_order_id",
+                (tenant_id,),
+            ).fetchall()
+            return tuple(self._decode(row) for row in rows)
+
+    def open_orders(self, tenant_id: str) -> tuple[OmsOrder, ...]:
+        return tuple(row for row in self.all_orders(tenant_id) if row.state not in TERMINAL)
+
+    def verify(self, client_order_id: str) -> dict[str, object]:
+        """Replay identity, legal states, broker binding and immutable fills in one snapshot."""
+        with self.transaction():
+            return self._verify_locked(client_order_id)
+
+    def _verify_locked(self, client_order_id: str) -> dict[str, object]:
+        current = self.get(client_order_id)
+        events = self.db.execute(
+            "SELECT * FROM oms_events WHERE client_order_id=? ORDER BY sequence",
+            (client_order_id,),
+        ).fetchall()
+        if not events or events[0]["kind"] != "CREATED":
+            raise ValueError("oms_event_chain_incomplete")
+        previous = None
+        fill_total = 0
+        weighted = Decimal(0)
+        state = OrderState.CREATED
+        broker = None
+        expected_fills = {}
+        evidence_binding = None
+        for expected, row in enumerate(events, 1):
+            if row["sequence"] != expected or row["previous_hash"] != previous:
+                raise ValueError("oms_event_chain_incomplete")
+            payload = json.loads(row["payload"])
+            body = {
+                "clientOrderId": client_order_id, "sequence": expected, "kind": row["kind"],
+                "at": row["at"], "previousHash": previous, "payload": payload,
+            }
+            if row["event_hash"] != _hash(body):
+                raise ValueError("oms_event_hash_mismatch")
+            previous = row["event_hash"]
+            kind = row["kind"]
+            if kind == "CREATED":
+                identity = {
+                    "tenantId": current.tenant_id, "strategyId": current.strategy_id,
+                    "market": current.market, "assetClass": current.asset_class,
+                    "symbol": current.symbol, "side": current.side,
+                    "quantity": current.requested_quantity,
+                    "referencePrice": str(current.reference_price),
+                }
+                if current.instrument_identity is not None:
+                    identity["instrumentIdentity"] = current.instrument_identity
+                if expected != 1 or payload.get("order") != identity:
+                    raise ValueError("oms_identity_projection_mismatch")
+                if "approvedIntent" in payload:
+                    complete = json.loads(canonical_order_intent(order_from_snapshot(payload["approvedIntent"])))
+                    if any(complete.get(key) != value for key, value in identity.items()):
+                        raise ValueError("oms_full_intent_projection_mismatch")
+                    if complete["instrumentIdentity"] != current.instrument_identity:
+                        raise ValueError("oms_full_intent_contract_mismatch")
+                if datetime.fromisoformat(row["at"]) != current.created_at:
+                    raise ValueError("oms_created_at_projection_mismatch")
+            elif kind == "FILL":
+                qty = payload["quantity"]
+                if type(qty) is not int or qty <= 0:
+                    raise ValueError("oms_fill_event_invalid")
+                price = _decimal(payload["price"], "fill_price", positive=True)
+                fill_total += qty
+                weighted += price * qty
+                target = (OrderState.FILLED if fill_total == current.requested_quantity
+                          else OrderState.PARTIALLY_FILLED)
+                if (fill_total > current.requested_quantity
+                        or payload["cumulativeFilled"] != fill_total
+                        or payload["state"] != target.value
+                        or _decimal(payload["averageFillPrice"], "fill_average") != weighted / fill_total):
+                    raise ValueError("oms_fill_event_projection_mismatch")
+                OrderLifecycle(state).transition(target)
+                state = target
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
+                fill_id = payload["fillId"]
+                if "paperRecovery" in payload:
+                    version = self.db.execute("SELECT version FROM oms_meta WHERE id=1").fetchone()
+                    if version is None or version[0] != PAPER_RECOVERY_SCHEMA_VERSION:
+                        raise ValueError("oms_paper_recovery_schema_mismatch")
+                    proof = _paper_recovery_proof(payload["paperRecovery"])
+                    if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='oms_paper_recoveries'").fetchone():
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    audit = self.db.execute(
+                        "SELECT payload,sha256,tenant_id FROM oms_paper_recoveries WHERE client_order_id=?",
+                        (client_order_id,),
+                    ).fetchone()
+                    if audit is None:
+                        raise ValueError("oms_paper_recovery_audit_missing")
+                    record = json.loads(audit[0])
+                    if (_hash(record) != audit[1] or audit[2] != current.tenant_id
+                            or record.get("schema") != proof["schema"]
+                            or record.get("plan_sha256") != proof["plan_sha256"]
+                            or _hash(record.get("plan")) != proof["plan_sha256"]
+                            or record["plan"].get("client_order_id") != client_order_id
+                            or record["plan"].get("tenant_id") != current.tenant_id
+                            or record["plan"].get("paper_order_id") != fill_id
+                            or record["plan"].get("receipt_sha256") != proof["receipt_sha256"]
+                            or record.get("reviewer") != proof["reviewer"]
+                            or record.get("recovered_at") != proof["recovered_at"]
+                            or record.get("after_oms_head") != row["event_hash"]):
+                        raise ValueError("oms_paper_recovery_audit_mismatch")
+                    if "sourceIdentity" in payload or fill_id.startswith("KITE"):
+                        raise ValueError("oms_paper_recovery_external_fill_forbidden")
+                if fill_id.startswith("KITE2:") and "sourceIdentity" not in payload:
+                    raise ValueError("oms_external_fill_source_missing")
+                if "sourceIdentity" in payload:
+                    source = execution_identity(payload["sourceIdentity"])
+                    assert_fill_source(
+                        source, tenant_id=current.tenant_id, broker_order_id=broker,
+                        at=datetime.fromisoformat(row["at"]), binding=evidence_binding,
+                    )
+                    if (external_fill_id(source) != fill_id or source["tenantId"] != current.tenant_id
+                            or source["brokerOrderId"] != broker):
+                        raise ValueError("oms_external_fill_identity_mismatch")
+                if fill_id in expected_fills:
+                    raise ValueError("oms_duplicate_fill_event")
+                expected_fills[fill_id] = (qty, price, row["at"], broker)
+            elif kind == "BROKER_EVIDENCE_BOUND":
+                if evidence_binding is not None or state is OrderState.CREATED:
+                    raise ValueError("oms_broker_evidence_event_invalid")
+                evidence_binding = payload
+                if self.broker_evidence_binding(client_order_id) != payload:
+                    raise ValueError("oms_broker_evidence_projection_mismatch")
+            elif kind == "BROKER_ID_OBSERVED":
+                if payload.get("state") != state.value:
+                    raise ValueError("oms_state_projection_mismatch")
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
+            elif kind == "REPLACED_BY":
+                if state is not OrderState.CANCELLED:
+                    raise ValueError("oms_replacement_without_cancellation")
+                if self.replacement_for(client_order_id) != payload.get("replacementClientOrderId"):
+                    raise ValueError("oms_replacement_projection_mismatch")
+            else:
+                target = OrderState(kind)
+                if payload.get("from") != state.value or payload.get("to") != target.value:
+                    raise ValueError("oms_state_projection_mismatch")
+                OrderLifecycle(state).transition(target)
+                state = target
+                broker = self._broker_identity(broker, payload.get("brokerOrderId"))
+        if len(events) != current.last_event_sequence:
+            raise ValueError("oms_projection_event_sequence_mismatch")
+        if self.broker_evidence_binding(client_order_id) != evidence_binding:
+            raise ValueError("oms_broker_evidence_projection_mismatch")
+        if state is OrderState.FILLED and fill_total != current.requested_quantity:
+            raise ValueError("oms_fill_projection_mismatch")
+        if state != current.state or broker != current.broker_order_id:
+            raise ValueError("oms_state_or_broker_projection_mismatch")
+        projected_average = weighted / fill_total if fill_total else None
+        if fill_total != current.filled_quantity or projected_average != current.average_fill_price:
+            raise ValueError("oms_fill_projection_mismatch")
+        actual_fills = {
+            row["fill_id"]: (row["quantity"], _decimal(row["price"], "fill_price"),
+                             row["at"], row["broker_order_id"])
+            for row in self.db.execute(
+                "SELECT * FROM oms_fills WHERE client_order_id=?", (client_order_id,)
+            ).fetchall()
+        }
+        # A callback may omit a broker ID that was already established on the order.
+        for fill_id, (qty, price, at, fill_broker) in actual_fills.items():
+            expected_row = expected_fills.get(fill_id)
+            if expected_row is None or (qty, price, at) != expected_row[:3]:
+                raise ValueError("oms_fill_history_projection_mismatch")
+            if fill_broker is not None and fill_broker != expected_row[3]:
+                raise ValueError("oms_fill_history_projection_mismatch")
+        if set(actual_fills) != set(expected_fills):
+            raise ValueError("oms_fill_history_projection_mismatch")
+        return {
+            "schema": "pramana.oms_verification.v1",
+            "clientOrderId": client_order_id, "state": current.state.value,
+            "events": len(events), "filledQuantity": fill_total,
+            "pendingQuantity": current.pending_quantity, "headHash": previous,
+            "verified": True,
+        }
+
+    @staticmethod
+    def _decode(row: sqlite3.Row) -> OmsOrder:
+        average = row["average_fill_price"]
+        return OmsOrder(
+            row["client_order_id"], row["tenant_id"], row["strategy_id"],
+            OrderState(row["state"]), row["symbol"], row["market"], row["asset_class"],
+            row["side"], int(row["requested_quantity"]),
+            _decimal(row["reference_price"], "reference_price", positive=True),
+            int(row["filled_quantity"]),
+            None if average is None else _decimal(average, "average_fill_price", positive=True),
+            row["broker_order_id"], datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]), int(row["last_event_sequence"]),
+            stored_identity(row),
+        )

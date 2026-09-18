@@ -24,6 +24,7 @@ from quant_ai.agents.swarm import (
     CommodityYieldAgent,
     GeopoliticalAnalystAgent,
     IndianEquitiesAgent,
+    InstrumentBoundAnalysisRequest,
     TechnicalQuantAgent,
     USEquitiesAgent,
 )
@@ -192,7 +193,11 @@ class SwarmMarketAnalysisPipeline:
         lessons_provider: Callable[[], Sequence[str]] | None = None,
         intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
         headline_scorer: HeadlineSentimentScorer | None = None,
+        bind_order_instruments: bool = False,
     ) -> None:
+        if type(bind_order_instruments) is not bool:
+            raise TypeError("bind_order_instruments_must_be_boolean")
+        self.bind_order_instruments = bind_order_instruments
         if news_window <= timedelta(0):
             raise ValueError("news_window must be positive")
         if intraday_window <= timedelta(0):
@@ -229,6 +234,13 @@ class SwarmMarketAnalysisPipeline:
         self._macro_current_at: datetime | None = None
         self._macro_current: dict[str, Decimal] = {}
         self._macro_previous: dict[str, Decimal] = {}
+
+    def _analysis_request(self, instrument, now, metrics, max_age):
+        request = AgentAnalysisRequest(instrument.symbol, instrument.market,
+                                       instrument.asset_class, now, metrics, max_age)
+        if self.bind_order_instruments:
+            return InstrumentBoundAnalysisRequest(**vars(request), instrument=instrument)
+        return request
 
     def _resolve_quantity(
         self,
@@ -351,15 +363,9 @@ class SwarmMarketAnalysisPipeline:
             required = self._required_freshness(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
+            metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
-                AgentAnalysisRequest(
-                    instrument.symbol,
-                    instrument.market,
-                    instrument.asset_class,
-                    now,
-                    metrics,
-                    max_age,
-                )
+                self._analysis_request(instrument, now, metrics, max_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
@@ -497,15 +503,9 @@ class SwarmMarketAnalysisPipeline:
             required = self._required_freshness(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
+            metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
-                AgentAnalysisRequest(
-                    instrument.symbol,
-                    instrument.market,
-                    instrument.asset_class,
-                    now,
-                    metrics,
-                    max_age,
-                )
+                self._analysis_request(instrument, now, metrics, max_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
@@ -623,18 +623,34 @@ class SwarmMarketAnalysisPipeline:
         return tick
 
     @staticmethod
-    def _required_freshness(agent_id: str, states: PipelineFreshness) -> Decimal:
+    def _freshness_sources(agent_id: str) -> tuple[str, ...]:
         if agent_id == "geopolitical-analyst":
-            return states.news.confidence_multiplier
+            return ("news",)
         if agent_id == "commodity-yield":
-            return states.macro.confidence_multiplier
-        if agent_id in {"indian-equities", "us-equities"}:
-            return min(
-                states.news.confidence_multiplier,
-                states.macro.confidence_multiplier,
-                states.fundamentals.confidence_multiplier,
-            )
-        return states.price.confidence_multiplier
+            return ("macro",)
+        if agent_id == "indian-equities":
+            # This specialist scores valuation/balance-sheet fields plus equity news only.
+            # Requiring macro data here silences a valid India vote when the unrelated macro
+            # provider is unavailable.
+            return ("news", "fundamentals")
+        if agent_id == "us-equities":
+            # US10Y is part of the score, so macro freshness remains a genuine dependency.
+            return ("news", "macro", "fundamentals")
+        return ("price",)
+
+    @classmethod
+    def _required_freshness(cls, agent_id: str, states: PipelineFreshness) -> Decimal:
+        sources = cls._freshness_sources(agent_id)
+        return min(getattr(states, source).confidence_multiplier for source in sources)
+
+    @classmethod
+    def _freshness_diagnostic(cls, agent_id: str, states: PipelineFreshness) -> str:
+        parts = []
+        for source in cls._freshness_sources(agent_id):
+            result = getattr(states, source)
+            age = "unknown" if result.age_seconds is None else str(result.age_seconds)
+            parts.append(f"{source}={result.state.value}(age_seconds={age})")
+        return ",".join(parts)
 
     def _approved_lessons(self) -> tuple[str, ...]:
         """Bounded operator-approved lessons, or nothing.
@@ -712,7 +728,8 @@ class SwarmMarketAnalysisPipeline:
         Headline text is third-party data: it is collapsed to one line and cut to
         ``MAX_HEADLINE_CHARS`` here so the prompt renderer never has to sanitize. Each
         headline arrives paired with the score that was taken for it, so the rendered
-        evidence says which scorer produced the number and why.
+        evidence says which scorer produced the number and why, and carries the alias when
+        an operator's assertion - rather than the headline itself - attached it here.
         ``timeframes`` and ``regime`` arrive already bounded from ``MarketContext``.
         """
         bars = tuple(_evidence_bar(candle) for candle in candles[-max_bars:])
@@ -726,6 +743,7 @@ class SwarmMarketAnalysisPipeline:
                 signal.source,
                 score.scorer,
                 score.rationale,
+                signal.matched_alias or "",
             )
             for signal, score in newest
         )

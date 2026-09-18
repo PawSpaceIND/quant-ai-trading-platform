@@ -153,20 +153,63 @@ def session_close_at(timestamp: datetime, venue: GlobalVenue | None) -> datetime
     )
 
 
+def opens_the_regular_session(bar: Candle, venue: GlobalVenue | None) -> bool:
+    """Whether a session-open-stamped bar starts at the venue's regular open.
+
+    Providers stamp a daily bar at the moment its session began, so this separates the
+    regular session from a special one held on the same date. A venue-less market has no
+    session to be regular, and every bar counts as one.
+    """
+    if venue is None:
+        return True
+    session = SESSIONS[venue]
+    local = _utc(bar.timestamp).astimezone(ZoneInfo(session.timezone))
+    return local.timetz().replace(tzinfo=None) == session.regular_open
+
+
+def session_date(timestamp: datetime, venue: GlobalVenue | None) -> date:
+    """The local trading date a bar belongs to.
+
+    A daily bar is stamped in UTC but belongs to a session held in the venue's own day, and
+    which day that is decides whether two bars are one session or two. Venue-less markets
+    have no local day; theirs is the UTC one.
+    """
+    zone = ZoneInfo(SESSIONS[venue].timezone) if venue is not None else timezone.utc
+    return _utc(timestamp).astimezone(zone).date()
+
+
 def closed_sessions(
     bars: tuple[Candle, ...], now: datetime, venue: GlobalVenue | None
 ) -> tuple[Candle, ...]:
     """Daily bars whose session has closed by ``now``, one per session, oldest first.
 
     A provider that serves the live day alongside history reports a still-forming bar
-    for it; that bar is dropped (the intraday bars cover the current session). When a
-    provider repeats a session, the last row wins.
+    for it; that bar is dropped (the intraday bars cover the current session).
+
+    Two bars can land on one session close, and the two reasons are not the same thing.
+    A provider may *revise* a session and send the row again, and there the later row is
+    the correction. Or the exchange may have held a **second, special session** on that
+    date - NSE's one-hour Diwali Muhurat sitting at 18:15 IST, hours after the regular
+    09:15-15:30 session - which the provider stamps at its own start. Taking the later row
+    there substitutes a ceremonial hour's open, high, low and close for the whole trading
+    day's, and nothing downstream can tell: the count is unchanged, the date is right, and
+    only the prices are wrong.
+
+    So the regular session wins over a special one on the same date, and among bars of
+    equal standing the later row still wins, which keeps the revision case intact.
     """
     limit = _utc(now)
     by_close: dict[datetime, Candle] = {}
     for bar in sorted(bars, key=lambda item: _utc(item.timestamp)):
         close_at = session_close_at(bar.timestamp, venue)
-        if close_at <= limit:
+        if close_at > limit:
+            continue
+        held = by_close.get(close_at)
+        if (
+            held is None
+            or opens_the_regular_session(bar, venue)
+            or not opens_the_regular_session(held, venue)
+        ):
             by_close[close_at] = bar
     return tuple(by_close.values())
 
@@ -220,6 +263,12 @@ class DailyHistoryProvider:
         bars = self._fetch_uncached(instrument, current)
         self._cache[key] = (current.date(), bars)
         return bars
+
+    def cached(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
+        """No I/O: observation for this UTC day, or an explicitly empty cache."""
+        current = _utc(now)
+        cached = self._cache.get((instrument.symbol.upper(), instrument.market.value))
+        return cached[1] if cached is not None and cached[0] == current.date() else ()
 
     def _fetch_uncached(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
         start = now - timedelta(days=self.calendar_days)

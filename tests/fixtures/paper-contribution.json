@@ -18,7 +18,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:40+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     },
     {
       "id": 2,
@@ -34,7 +37,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:41+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     },
     {
       "id": 3,
@@ -50,7 +56,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:42+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     },
     {
       "id": 4,
@@ -66,7 +75,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:43+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     },
     {
       "id": 5,
@@ -82,7 +94,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:44+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     },
     {
       "id": 6,
@@ -98,7 +113,10 @@
       "status": "FILLED",
       "created_at": "2000-01-01T04:00:45+00:00",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "margin_change": null,
+      "margin_provenance": null,
+      "instrument_identity": null
     }
   ],
   "costs": [
@@ -274,7 +292,8 @@
       "quantity": 1,
       "average_price": "80.880",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     },
     {
       "tenant_id": "default",
@@ -284,7 +303,8 @@
       "quantity": 3,
       "average_price": "107.840",
       "stop_price": null,
-      "take_profit_price": null
+      "take_profit_price": null,
+      "instrument_identity": null
     }
   ],
   "valuations": {
@@ -469,6 +489,7 @@
     "ledgerId": 6,
     "fills": 6,
     "costRows": 18,
+    "marginRows": 0,
     "expectedCash": "9644.396260",
     "observedCash": "9644.396260",
     "issueCount": 0,

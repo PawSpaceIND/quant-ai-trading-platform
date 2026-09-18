@@ -7,6 +7,7 @@ from typing import Callable
 
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.domain.models import AssetClass, Instrument, Market, PortfolioSnapshot, Side
+from quant_ai.execution.derivative_margin import MARGINED_FUTURES_ASSET_CLASSES
 from quant_ai.execution.ledger_integrity import finite_amount
 from quant_ai.execution.paper_ledger import PaperBrokerService, PaperLedgerEntry
 from quant_ai.execution.risk_state import RiskStateStore, risk_state_for_broker
@@ -23,6 +24,7 @@ class MarkedPosition:
     current_price: Decimal
     market_value: Decimal
     unrealized_pnl: Decimal
+    reserved_margin: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class PortfolioMetrics:
     total_equity: Decimal
     high_water_mark: Decimal
     drawdown_fraction: Decimal
+    reserved_margin: Decimal = Decimal(0)
 
 
 class PortfolioTracker:
@@ -53,7 +56,8 @@ class PortfolioTracker:
         self.broker = broker
         self.market_feed = market_feed
         self.tenant_id = tenant_id
-        self.instrument_resolver = instrument_resolver or self._default_instrument
+        self._fallback_instrument_resolver = instrument_resolver or self._default_instrument
+        self.instrument_resolver = self._resolve_instrument
         starting_capital = broker.get_starting_capital(tenant_id)
         self.risk_state = risk_state or risk_state_for_broker(
             broker,
@@ -89,8 +93,20 @@ class PortfolioTracker:
             ),
             Decimal(0),
         )
-        market_value = sum((item.market_value for item in positions), Decimal(0))
-        equity = finite_amount(margin.cash_balance + market_value, "invalid_portfolio_equity")
+        # Cash instruments contribute their marked value to equity. Futures contribute
+        # only the cash already reserved as margin plus unrealised P&L; adding their full
+        # notional here would pretend the account owns the underlying commodity outright.
+        reserved_margin = sum((item.reserved_margin for item in positions), Decimal(0))
+        equity_value = sum(
+            (
+                item.reserved_margin + item.unrealized_pnl
+                if item.asset_class in MARGINED_FUTURES_ASSET_CLASSES
+                else item.market_value
+                for item in positions
+            ),
+            Decimal(0),
+        )
+        equity = finite_amount(margin.cash_balance + equity_value, "invalid_portfolio_equity")
         finite_amount(unrealized, "invalid_portfolio_pnl")
         finite_amount(realized, "invalid_portfolio_pnl")
         finite_amount(daily_realized, "invalid_portfolio_pnl")
@@ -119,6 +135,7 @@ class PortfolioTracker:
             equity,
             self._high_water_mark,
             max(Decimal(0), drawdown),
+            reserved_margin,
         )
 
     def get_snapshot(self, now: datetime | None = None) -> PortfolioSnapshot:
@@ -145,6 +162,7 @@ class PortfolioTracker:
             symbol_quantity={item.symbol: item.quantity for item in metrics.positions},
             daily_total_pnl=metrics.daily_total_pnl,
             country_exposure=country_exposure,
+            available_margin=metrics.cash_balance,
         )
 
     def _mark_position(self, position: BrokerPosition) -> MarkedPosition:
@@ -156,6 +174,13 @@ class PortfolioTracker:
         current_price = finite_amount(current_price, "invalid_market_mark", positive=True)
         market_value = current_price * position.quantity
         unrealized = (current_price - position.average_price) * position.quantity
+        reserved_margin = (
+            self.broker.reserved_margin_for(
+                position.symbol, position.market, position.asset_class, self.tenant_id
+            )
+            if position.asset_class in MARGINED_FUTURES_ASSET_CLASSES
+            else Decimal(0)
+        )
         return MarkedPosition(
             position.symbol,
             position.market,
@@ -165,6 +190,7 @@ class PortfolioTracker:
             current_price,
             market_value,
             unrealized,
+            reserved_margin,
         )
 
     @staticmethod
@@ -205,6 +231,17 @@ class PortfolioTracker:
         if market == Market.INDIA:
             return "India"
         return "Global"
+
+    def _resolve_instrument(self, position: BrokerPosition) -> Instrument:
+        # A persisted position's own snapshot wins over a mutable watchlist/catalog.
+        try:
+            instrument = self.broker.bound_instrument_for_position(
+                position.symbol, position.market, position.asset_class, position.tenant_id
+            )
+        except KeyError:
+            # Daemon callers also resolve prospective, not-yet-held cash instruments.
+            instrument = None
+        return instrument if instrument is not None else self._fallback_instrument_resolver(position)
 
     @staticmethod
     def _default_instrument(position: BrokerPosition) -> Instrument:

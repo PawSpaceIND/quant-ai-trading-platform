@@ -5,7 +5,11 @@ import os
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from quant_ai.domain.models import Market, OrderIntent, Side
+from quant_ai.domain.models import AssetClass, Market, OrderIntent, Side
+from quant_ai.execution.derivative_fees import (
+    MCX_DERIVATIVE_ASSET_CLASSES,
+    DerivativeFeeSchedule,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +72,52 @@ class FrictionContext:
             "assumedHalfSpreadFloor": str(self.assumed_half_spread_floor),
             "delivery": "true" if self.delivery else "false",
         }
+
+
+# What the schedules below can actually price, as market -> asset classes. Both of them
+# are cash-market schedules for shares and the ETFs that trade alongside them: STT at the
+# delivery and intraday rates, stamp duty on the buy and the depository charge on a
+# delivery sell in India; the Section 31 fee and the FINRA TAF on a sell in the US.
+#
+# Every one of those lines is charged differently on anything else. A commodity pays CTT
+# rather than STT; an equity future pays its own rate on its own side; neither pays a
+# depository charge, because nothing is delivered. The US Section 31 fee is levied on
+# securities sales and not on futures at all. None of those rates are in this module, and
+# a rate that is not here cannot be guessed from one that is.
+#
+# So an order these schedules cannot price is refused rather than charged the nearest
+# thing they can. The cost of getting it wrong is not a rounding error: over a real
+# 19-year series, friction was the difference between a +832% gross return and a +206%
+# net one. A strategy priced on the wrong schedule is profitable on paper and not in the
+# account, and that is the more expensive failure of the two.
+#
+# A market absent from this mapping prices nothing: Market.GLOBAL used to fall past both
+# branches below and come back with no charges at all, which is the same wrong number
+# wearing a friendlier face.
+PRICED_ASSET_CLASSES: dict[Market, frozenset[AssetClass]] = {
+    # MCX derivative classes are only conditionally priceable: the dynamic guard below
+    # also requires an operator-sourced schedule that reproduced a real contract note.
+    Market.INDIA: frozenset({AssetClass.EQUITY, AssetClass.ETF, *MCX_DERIVATIVE_ASSET_CLASSES}),
+    Market.USA: frozenset({AssetClass.EQUITY, AssetClass.ETF}),
+}
+
+
+def priced_by_the_fee_schedules(
+    order: OrderIntent, derivative_schedule: DerivativeFeeSchedule | None = None
+) -> bool:
+    """Whether a verified statutory schedule exists for this order.
+
+    Cash equities/ETFs are covered by the built-in cash schedule. MCX metals and
+    commodities are deliberately different: being in the supported class map is only
+    structural capability, never permission to invent rates. They become priceable only
+    when an operator-configured derivative schedule has passed contract-note
+    reconciliation.
+    """
+    if order.asset_class not in PRICED_ASSET_CLASSES.get(order.market, frozenset()):
+        return False
+    if order.market == Market.INDIA and order.asset_class in MCX_DERIVATIVE_ASSET_CLASSES:
+        return derivative_schedule is not None and derivative_schedule.verified
+    return True
 
 
 @dataclass(frozen=True)
@@ -250,6 +300,7 @@ class FrictionResult:
     spread_drag: Decimal
     slippage_drag: Decimal
     charges: tuple[FrictionCharge, ...]
+    fee_schedule_provenance: dict[str, object] | None = None
 
     @property
     def cash_charges(self) -> Decimal:
@@ -274,6 +325,7 @@ class MarketFrictionModel:
         *,
         fee_schedule: FeeSchedule | None = None,
         brokerage_schedule: BrokerageSchedule | None = None,
+        derivative_fee_schedule: DerivativeFeeSchedule | None = None,
         gamma: Decimal = Decimal("0.50"),
         spread_atr_multiplier: Decimal = Decimal("0.05"),
         max_slippage_fraction: Decimal = Decimal("0.02"),
@@ -288,6 +340,13 @@ class MarketFrictionModel:
             raise ValueError("max_half_spread_fraction must be within 5%")
         self.fee_schedule = fee_schedule or FeeSchedule.current_2026()
         self.brokerage_schedule = brokerage_schedule or BrokerageSchedule.discount_broker_2026()
+        # No derivative rates are built in. Missing or incomplete env config returns None,
+        # preserving the refusal that existed before MCX support.
+        self.derivative_fee_schedule = (
+            derivative_fee_schedule
+            if derivative_fee_schedule is not None
+            else DerivativeFeeSchedule.from_env()
+        )
         self.gamma = gamma
         self.spread_atr_multiplier = spread_atr_multiplier
         self.max_slippage_fraction = max_slippage_fraction
@@ -338,6 +397,32 @@ class MarketFrictionModel:
     def evaluate(self, order: OrderIntent, context: FrictionContext) -> FrictionResult:
         if order.quantity <= 0 or order.reference_price <= 0:
             raise ValueError("positive quantity and reference_price required")
+        # Before any of it is priced. The spread and impact model would happily quote a
+        # gold future - it reads an ATR and a volume and knows nothing about what it is
+        # pricing - and the result would carry a real-looking drag next to charges taken
+        # from a schedule that does not apply. Refuse the whole fill instead.
+        derivative_order = (
+            order.market == Market.INDIA
+            and order.asset_class in MCX_DERIVATIVE_ASSET_CLASSES
+        )
+        if derivative_order:
+            schedule = self.derivative_fee_schedule
+            if schedule is None:
+                raise ValueError(
+                    f"friction_unpriced_instrument:{order.symbol}:{order.market.value}:"
+                    f"{order.asset_class.value}:mcx_derivative_schedule_missing"
+                )
+            if not schedule.verified:
+                raise ValueError(
+                    f"friction_unpriced_instrument:{order.symbol}:{order.market.value}:"
+                    f"{order.asset_class.value}:mcx_derivative_schedule_unverified"
+                )
+            schedule.assert_supported_order(order)
+        elif not priced_by_the_fee_schedules(order):
+            raise ValueError(
+                f"friction_unpriced_instrument:{order.symbol}:{order.market.value}:"
+                f"{order.asset_class.value}:cash_equity_and_etf_only"
+            )
         sigma = context.atr / order.reference_price
         half_spread_fraction = self.half_spread_fraction(order, context)
         participation = Decimal(order.quantity) / context.average_daily_volume
@@ -353,12 +438,18 @@ class MarketFrictionModel:
         spread_drag = spread_per_unit * order.quantity
         slippage_drag = slippage_per_unit * order.quantity
         charges = self._charges(order, execution_price, context)
+        schedule_provenance = (
+            self.derivative_fee_schedule.provenance(order)
+            if derivative_order and self.derivative_fee_schedule is not None
+            else None
+        )
         return FrictionResult(
             order.reference_price,
             execution_price,
             spread_drag,
             slippage_drag,
             charges,
+            schedule_provenance,
         )
 
     def _charges(
@@ -368,6 +459,14 @@ class MarketFrictionModel:
         schedule = self.fee_schedule
         broker = self.brokerage_schedule
         charges: list[FrictionCharge] = []
+        if order.market == Market.INDIA and order.asset_class in MCX_DERIVATIVE_ASSET_CLASSES:
+            schedule = self.derivative_fee_schedule
+            if schedule is None:
+                raise ValueError("mcx_derivative_schedule_missing")
+            return tuple(
+                FrictionCharge(code, amount)
+                for code, amount in schedule.charges_for(order, notional)
+            )
         if order.market == Market.INDIA:
             brokerage = broker.india_brokerage(notional)
             stt = Decimal(0)

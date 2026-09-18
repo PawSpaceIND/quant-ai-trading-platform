@@ -1,0 +1,129 @@
+{
+  "base": "a6cc723e758246999040b5d9e4fc6a69f7a3cf44",
+  "imported_from": "050a16ae8a87882f14cc477043d7a13f962d6628",
+  "mutations": [
+    {
+      "guard": "findings_block_success",
+      "test": "tests/test_secret_scan_gate.py::test_any_finding_blocks_and_other_scan_still_runs",
+      "exit": 1,
+      "failures": 2,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "both_scan_phases",
+      "test": "tests/test_secret_scan_gate.py::test_both_scans_are_required_for_a_clean_result",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "status_report_agreement",
+      "test": "tests/test_secret_scan_gate.py::test_errors_or_inconsistent_reports_cannot_become_success",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "metadata_only",
+      "test": "tests/test_secret_scan_gate.py::test_any_finding_blocks_and_other_scan_still_runs",
+      "exit": 1,
+      "failures": 2,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "full_redaction_flag",
+      "test": "tests/test_secret_scan_gate.py::test_both_scans_are_required_for_a_clean_result",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "reports_outside_scanned_tree",
+      "test": "tests/test_secret_scan_gate.py::test_reports_cannot_contaminate_the_scanned_tree",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "summary_symlink_refusal",
+      "test": "tests/test_secret_scan_gate.py::test_summary_symlink_cannot_overwrite_an_unrelated_file",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "mandatory_scanner_self_test",
+      "test": "tests/test_secret_scan_gate.py::test_cli_self_test_failure_cannot_reach_repository_scan",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "same_path_sentinel_detection",
+      "test": "tests/test_secret_scan_gate.py::test_actual_scanner_self_test_cannot_accept_a_missing_same_path_detection",
+      "exit": 1,
+      "failures": 6,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "cli_failure_exit",
+      "test": "tests/test_secret_scan_gate.py::test_cli_exit_status_tracks_both_scan_result",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "bounded_metadata",
+      "test": "tests/test_secret_scan_gate.py::test_malformed_metadata_is_not_published_as_a_success",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "valid_line_numbers",
+      "test": "tests/test_secret_scan_gate.py::test_malformed_metadata_is_not_published_as_a_success",
+      "exit": 1,
+      "failures": 2,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "private_summary_permissions",
+      "test": "tests/test_secret_scan_gate.py::test_both_scans_are_required_for_a_clean_result",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "exact_single_historical_exception",
+      "test": "tests/test_secret_scan_gate.py::test_only_one_exact_verified_fingerprint_is_exempted",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    },
+    {
+      "guard": "historical_evidence_preservation",
+      "test": "tests/test_secret_scan_gate.py::test_reformatted_evidence_reconstructs_the_entire_original_document",
+      "exit": 1,
+      "failures": 1,
+      "errors": 0,
+      "caught": true
+    }
+  ],
+  "isolated_source_copies": true,
+  "source_unchanged": true,
+  "source_sha256": "057403ae5fef123096924a86834c3bb21c4d4290096f40d13314ac6ad751e1dd"
+}

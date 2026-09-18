@@ -8,6 +8,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.agents.traded_runtime import build_traded_runtime
@@ -17,9 +18,21 @@ from quant_ai.analytics.metrics import (
     mean_return_significance,
     summarize_performance,
 )
+from quant_ai.backtesting.baselines import (
+    BaselineEvaluator,
+    default_baselines,
+    format_comparison,
+)
+from quant_ai.backtesting.contest import (
+    NOT_THE_AI,
+    contest,
+    format_contest,
+)
 from quant_ai.backtesting.replay import (
+    TRADED_CONFIGURATION_DIFFERENCES,
     HistoricalReplayDataset,
     HistoricalReplayHarness,
+    dataset_instrument,
     load_replay_dataset,
 )
 from quant_ai.backtesting.tearsheet import build_tearsheet
@@ -232,16 +245,61 @@ def _friction_audit(daemon: AutonomousTradingDaemon) -> None:
         print(f"{code.lower()}={totals[code]}")
 
 
-def _backtest(args: argparse.Namespace) -> None:
-    if not args.data:
-        raise SystemExit("backtest requires --data")
-    market = Market.INDIA if (args.market or "us") == "india" else Market.USA
-    instrument = (
-        Instrument("RELIANCE", market, AssetClass.EQUITY, "INR", "NSE")
-        if market == Market.INDIA
-        else Instrument("AAPL", market, AssetClass.EQUITY, "USD", "NASDAQ")
+def _replay_instrument(market: str | None, data: str | None = None) -> Instrument:
+    """What a replay or baseline run is scoring, taken from the dataset wherever it says.
+
+    ``--market`` used to decide this alone, and it resolved an absent flag to the US: an
+    NSE series scored without the flag was priced against the US fee schedule and
+    annualised against the US session length, and every line of the output - the table, the
+    trial-register study, the proof - named AAPL. Nothing said so. Worse, the flag only
+    ever chose between two hardcoded instruments, so a run over ``INFY.json`` was recorded
+    as RELIANCE even when the flag was right.
+
+    A dataset written by ``scripts/fetch_historical_bars.py`` states its own symbol, market,
+    asset class, exchange and currency, and that statement wins. When the dataset declares
+    nothing - a hand-written fixture, a CSV - the flag is used, and is now required rather
+    than defaulted, because guessing a market silently is the failure above. When both
+    exist and disagree, neither is trusted: an operator who has mixed up two files needs to
+    be told, not to be handed one of the two answers.
+    """
+    declared = _declared_instrument(data)
+    if declared is not None:
+        if market is not None and _requested_market(market) != declared.market:
+            raise SystemExit(
+                f"--market {market} contradicts {data}, which declares "
+                f"{declared.symbol} on {declared.market.value}"
+            )
+        return declared
+    if market is None:
+        raise SystemExit(
+            f"--market is required: {data or 'this dataset'} does not declare the "
+            "instrument it holds, and a market cannot be guessed - it selects the "
+            "statutory fee schedule and the session length ratios are annualised against"
+        )
+    resolved = _requested_market(market)
+    return (
+        Instrument("RELIANCE", resolved, AssetClass.EQUITY, "INR", "NSE")
+        if resolved == Market.INDIA
+        else Instrument("AAPL", resolved, AssetClass.EQUITY, "USD", "NASDAQ")
     )
-    dataset = load_replay_dataset(args.data, instrument)
+
+
+def _requested_market(market: str) -> Market:
+    return Market.INDIA if market == "india" else Market.USA
+
+
+def _declared_instrument(data: str | None) -> Instrument | None:
+    """The dataset's own instrument, with a malformed declaration reported as an operator
+    error rather than a traceback."""
+    if not data:
+        return None
+    try:
+        return dataset_instrument(data)
+    except (OSError, ValueError, TypeError) as error:
+        raise SystemExit(f"{data}: cannot read the declared instrument ({error})") from error
+
+
+def _windowed_bars(dataset: HistoricalReplayDataset, args: argparse.Namespace, command: str):
     start_date = datetime.fromisoformat(args.start).date() if args.start else None
     end_date = datetime.fromisoformat(args.end).date() if args.end else None
     bars = tuple(
@@ -250,7 +308,80 @@ def _backtest(args: argparse.Namespace) -> None:
         and (end_date is None or bar.timestamp.date() <= end_date)
     )
     if not bars:
-        raise SystemExit("no bars in requested backtest range")
+        raise SystemExit(f"no bars in requested {command} range")
+    return bars
+
+
+def _baselines(args: argparse.Namespace) -> None:
+    """Score the deterministic, price-only floors the swarm has to beat.
+
+    Nothing here consults a model, a headline or a fundamental: these are the numbers a
+    reader needs before "the AI decided X" can be read as anything. The run is registered
+    as five candidate evaluations for the same reason a replay is - a sweep of windows
+    must not be reportable as one lucky look.
+    """
+    if not args.data:
+        raise SystemExit("baselines requires --data")
+    instrument = _replay_instrument(args.market, args.data)
+    bars = _windowed_bars(load_replay_dataset(args.data, instrument), args, "baselines")
+    strategies = default_baselines()
+    register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    record_trials(
+        register,
+        study=f"baselines:{instrument.symbol}:{instrument.market.value}",
+        candidate_trials=len(strategies),
+        configuration={
+            "baselines": [item.baseline_id for item in strategies],
+            "bars": len(bars),
+            "start": bars[0].timestamp.isoformat(),
+            "end": bars[-1].timestamp.isoformat(),
+            "market": args.market,
+        },
+        data_sha256=_bar_digest(bars),
+    )
+    reports = BaselineEvaluator(instrument=instrument).evaluate(bars, strategies)
+    print(format_comparison(reports))
+    payload = {
+        "schema": "pramana.baseline_comparison.v1",
+        "instrument": {"symbol": instrument.symbol, "market": instrument.market.value},
+        "bars": len(bars),
+        "start": bars[0].timestamp.isoformat(),
+        "end": bars[-1].timestamp.isoformat(),
+        "registeredTrials": register_summary(register),
+        "reports": [item.to_dict() for item in reports],
+    }
+    proof_dir = paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR")
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    document = json.dumps(payload, sort_keys=True, allow_nan=False)
+    (proof_dir / "latest-baselines.json").write_text(document)
+    print(document)
+
+
+def _bar_digest(bars) -> str:
+    return hashlib.sha256(
+        "|".join(
+            f"{bar.timestamp.isoformat()}:{bar.open}:{bar.high}:"
+            f"{bar.low}:{bar.close}:{bar.volume}"
+            for bar in bars
+        ).encode()
+    ).hexdigest()
+
+
+def _replayed(args: argparse.Namespace, command: str):
+    """Run the replay exactly as ``backtest`` does, and hand back everything it produced.
+
+    Shared rather than copied: ``contest`` puts this curve beside the deterministic floors
+    and claims the two faced the same engine. A second wiring of the harness would let the
+    two commands drift - a different capital plan, different directives, a different
+    database - and the sheet would keep printing, comparing two things that were never the
+    same. One builder is the only way that claim stays true.
+    """
+    if not args.data:
+        raise SystemExit(f"{command} requires --data")
+    instrument = _replay_instrument(args.market, args.data)
+    market = instrument.market
+    dataset = load_replay_dataset(args.data, instrument)
+    bars = _windowed_bars(dataset, args, command)
     end_time = bars[-1].timestamp
     dataset = HistoricalReplayDataset(
         bars,
@@ -267,6 +398,9 @@ def _backtest(args: argparse.Namespace) -> None:
     register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
     record_trials(
         register,
+        # Deliberately not keyed on the command: `contest` is another look at the same
+        # data through the same engine, so it counts against the same study. Splitting
+        # them would reset a total whose only job is to make a sweep of windows visible.
         study=f"replay:{instrument.symbol}:{instrument.market.value}",
         candidate_trials=1,
         configuration={
@@ -277,13 +411,7 @@ def _backtest(args: argparse.Namespace) -> None:
             "requested_end": args.end,
             "market": args.market,
         },
-        data_sha256=hashlib.sha256(
-            "|".join(
-                f"{bar.timestamp.isoformat()}:{bar.open}:{bar.high}:"
-                f"{bar.low}:{bar.close}:{bar.volume}"
-                for bar in bars
-            ).encode()
-        ).hexdigest(),
+        data_sha256=_bar_digest(bars),
     )
     database = os.environ.get("QUANT_AI_BACKTEST_DB", "").strip() or ":memory:"
     if database == "shared":
@@ -312,13 +440,58 @@ def _backtest(args: argparse.Namespace) -> None:
         directives=FounderDirectives.from_env() or FounderDirectives(),
         event_calendar=event_calendar_from_env(),
     ).run(dataset)
-    trials = register_summary(register)
+    return SimpleNamespace(
+        instrument=instrument, bars=bars, result=result, broker=broker,
+        tenant=tenant, proof_dir=proof_dir, register=register,
+    )
+
+
+def _backtest(args: argparse.Namespace) -> None:
+    run = _replayed(args, "backtest")
+    trials = register_summary(run.register)
     tearsheet_json = build_tearsheet(
-        result, broker, tenant_id=tenant, trial_register=trials
+        run.result, run.broker, tenant_id=run.tenant, trial_register=trials
     ).to_json()
-    (proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
+    (run.proof_dir / "latest-backtest-tearsheet.json").write_text(tearsheet_json)
     print(tearsheet_json)
-    broker.flush()
+    run.broker.flush()
+
+
+def _contest(args: argparse.Namespace) -> None:
+    """Score the replayed rule engine against the floors it has to beat, on one sheet.
+
+    The floors answer "what would owning it, or one dumb rule, have done". This answers
+    "did our own deterministic engine do better" - the question that has to come out right
+    before the AI's version of it is worth asking, and which no command answered before.
+    """
+    run = _replayed(args, "contest")
+    rows = contest(
+        run.bars,
+        instrument=run.instrument,
+        replay_result=run.result,
+        broker=run.broker,
+        tenant_id=run.tenant,
+    )
+    print(format_contest(rows))
+    payload = {
+        "schema": "pramana.contest.v1",
+        "instrument": {
+            "symbol": run.instrument.symbol,
+            "market": run.instrument.market.value,
+        },
+        "bars": len(run.bars),
+        "start": run.bars[0].timestamp.isoformat(),
+        "end": run.bars[-1].timestamp.isoformat(),
+        "dataSha256": _bar_digest(run.bars),
+        "noneOfTheseIsTheTradedAi": NOT_THE_AI,
+        "tradedConfigurationDifferences": list(TRADED_CONFIGURATION_DIFFERENCES),
+        "registeredTrials": register_summary(run.register),
+        "entrants": [row.to_dict() for row in rows],
+    }
+    document = json.dumps(payload, sort_keys=True, allow_nan=False)
+    (run.proof_dir / "latest-contest.json").write_text(document)
+    print(document)
+    run.broker.flush()
 
 
 def _resume(*, clear_fault_halt: bool, operator: str | None) -> int:
@@ -441,8 +614,8 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "friction-audit", "halt", "resume", "zerodha-login",
-            "decision-quality", "post-mortem",
+            "backtest", "baselines", "contest", "publish-research", "friction-audit", "halt", "resume",
+            "zerodha-login", "decision-quality", "post-mortem",
         ),
     )
     parser.add_argument("--data")
@@ -492,10 +665,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         _backtest(args)
         return 0
+    if args.command == "publish-research":
+        from quant_ai.backtesting.research_publisher import publish_from_args
+
+        return publish_from_args(args)
+    if args.command == "contest":
+        _contest(args)
+        return 0
+    if args.command == "baselines":
+        _baselines(args)
+        return 0
     if args.market is not None:
         raise SystemExit(
             f"--market does not apply to {args.command}: this runtime is a US sandbox. "
-            "Only backtest reads --market; the pilot watchlist is set by founder directives."
+            "Only backtest, baselines and contest read --market; the pilot watchlist is set by "
+            "founder directives."
         )
     daemon = build_runtime()
     if args.command == "run-once":

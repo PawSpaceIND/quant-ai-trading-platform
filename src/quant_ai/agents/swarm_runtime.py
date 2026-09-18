@@ -16,6 +16,7 @@ from quant_ai.execution.paper_ledger import PaperBrokerDatabaseLockedError, Pape
 from quant_ai.intelligence.adversarial import AdversarialStressAgent, StressVerdict
 from quant_ai.operations.idempotency import order_idempotency_key
 from quant_ai.operations.kill_switch import KillSwitch
+from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderLifecycle, OrderState
 from quant_ai.planning.capital import CapitalPlan
 from quant_ai.risk.warden import RiskWarden, WardenDecision
@@ -53,6 +54,7 @@ class SwarmPaperTradingService:
         stress_agent: AdversarialStressAgent | None = None,
         xai_logger: XAITraceLogger | None = None,
         kill_switch: KillSwitch | None = None,
+        oms: DurableOms | None = None,
         *,
         allow_position_scaling: bool = False,
         max_open_positions: int | None = None,
@@ -68,6 +70,9 @@ class SwarmPaperTradingService:
         self.attribution = attribution or AgentAttributionEngine()
         self.stress_agent = stress_agent or AdversarialStressAgent()
         self.xai_logger = xai_logger or XAITraceLogger()
+        # Optional durable order journal. It records this exact paper path but owns no
+        # network transport, so enabling it cannot turn paper execution into a live route.
+        self.oms = oms
         # C5: the daemon now shares the controls that already protected the HTTP path.
         self.kill_switch = kill_switch or KillSwitch()
         # C2: entering a symbol that is already held requires an explicit opt-in.
@@ -230,6 +235,17 @@ class SwarmPaperTradingService:
         ):
             return refuse("re_entry_cooldown_active")
         lifecycle.transition(OrderState.RISK_APPROVED)
+        oms_client_id: str | None = None
+        if self.oms is not None:
+            oms_order = self.oms.create(
+                risk.order, decision_id=proposal.decision_id, now=request.observed_at
+            )
+            # A repeated decision can arrive after a restart or retry. Never submit it a
+            # second time: the durable state must be reconciled/observed instead.
+            if oms_order.state is not OrderState.CREATED:
+                return refuse("duplicate_order")
+            self.oms.approve_risk(oms_order.client_order_id, now=request.observed_at)
+            oms_client_id = oms_order.client_order_id
 
         # Prepare before execution. The canonical trace and replay guard must commit in
         # the same database transaction as the fill, cash, positions and fees.
@@ -242,14 +258,30 @@ class SwarmPaperTradingService:
         key = order_idempotency_key(risk.order, proposal.decision_id)
 
         lifecycle.transition(OrderState.SUBMITTED)
+        if self.oms is not None and oms_client_id is not None:
+            self.oms.submitted(oms_client_id, now=request.observed_at)
         try:
             fill = self.broker.submit_with_evidence(risk.order, fill_evidence, key.value)
-        except PaperBrokerDatabaseLockedError:
-            return refuse("paper_broker_database_locked")
-        except ValueError as error:
-            # C3: a broker-side rejection (insufficient cash/position) is a governed outcome,
-            # not a daemon-killing exception.
-            return refuse("duplicate_order" if str(error) == "duplicate_order" else f"broker_rejected:{error}")
+        except (PaperBrokerDatabaseLockedError, ValueError) as error:
+            if self.oms is not None and oms_client_id is not None:
+                # A wrapper can raise after the paper broker committed. Never relabel an
+                # uncertain outcome as rejection or permit a new submission after restart.
+                reason = "paper_execution_recovery_required"
+                self.oms.submission_uncertain(oms_client_id, reason=type(error).__name__,
+                                              now=request.observed_at)
+                lifecycle.transition(OrderState.SUBMISSION_UNCERTAIN)
+                pending = WardenDecision(False, reason, None)
+                trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, pending)
+                return SwarmExecutionResult(proposal, pending, None, stress, trace, lifecycle.state)
+            if isinstance(error, PaperBrokerDatabaseLockedError):
+                return refuse("paper_broker_database_locked")
+            reason = "duplicate_order" if str(error) == "duplicate_order" else f"broker_rejected:{error}"
+            return refuse(reason)
+        if self.oms is not None and oms_client_id is not None:
+            self.oms.fill(
+                oms_client_id, fill_id=fill.order_id, quantity=fill.filled_quantity,
+                price=fill.average_price, broker_order_id=fill.order_id,
+            )
         lifecycle.transition(OrderState.FILLED)
         trace = replace(trace, order_id=fill.order_id)
         try:

@@ -36,8 +36,12 @@ from quant_ai.execution.session import (
 )
 from quant_ai.governance.directives import FounderDirectives, country_for
 from quant_ai.governance.event_calendar import EventCalendar, event_calendar_from_env
+from quant_ai.governance.runtime_identity import (
+    configure_runtime_identity,
+    validate_identity_storage,
+)
 from quant_ai.intelligence.external.fred import FredMacroProvider
-from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
+from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter, symbol_aliases_from_env
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
 from quant_ai.intelligence.headline_sentiment import (
     HeadlineSentimentScorer,
@@ -67,7 +71,9 @@ from quant_ai.marketdata.ticker_stream import (
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
+from quant_ai.operations.zerodha_renewal import check_runtime_token
 from quant_ai.orchestration.cadence import CadenceMarketReader
+from quant_ai.orders.oms import DurableOms
 from quant_ai.planning.capital import CapitalGoalEngine
 from quant_ai.risk.book_history import DailyCloseHistory
 from quant_ai.risk.overnight import overnight_risk_from_env
@@ -159,6 +165,58 @@ class DaemonRunner:
         self._protection_stop.set()
         self.daemon.request_stop()
 
+    def _warm_required_book_history(self, now: datetime) -> None:
+        """Populate required book-risk history without making telemetry perform I/O.
+
+        Protection telemetry intentionally reads only the history provider's cache so its
+        one-second heartbeat can never block on a network request.  The normal market
+        analysis fills that cache during regular hours, but an off-hours process restart
+        skips the analysis pipeline and otherwise leaves required correlation/ES gates
+        reporting ``history_scope_incomplete`` until the next session.
+
+        Warm the exact provider owned by ``DailyCloseHistory`` at runner startup while
+        independent protection is already active, and again before each cadence. Daily
+        providers already cache by UTC day, so same-day cadence calls are local and the
+        cache naturally refreshes after a day rollover. A provider failure is evidence
+        unavailability, not a runner failure: the gates remain fail-closed and telemetry
+        reports the missing history.
+        """
+        try:
+            runtime = self.daemon.scheduler.pipeline.runtime
+            book_risk = runtime.warden.book_risk
+            required = tuple(getattr(book_risk, "required_symbols", ()) or ())
+            history = getattr(book_risk, "history_provider", None)
+            if not required or not isinstance(history, DailyCloseHistory):
+                return
+            fetch = getattr(history.provider, "fetch", None)
+            if not callable(fetch):
+                self._logger.warning("required_book_history_warmup_unavailable")
+                return
+            for symbol in required:
+                if self._stop_requested:
+                    return
+                instrument = history.instruments.get(symbol.strip().upper())
+                if instrument is None:
+                    self._logger.warning(
+                        "required_book_history_warmup_missing_instrument symbol=%s", symbol
+                    )
+                    continue
+                try:
+                    bars = fetch(instrument, now)
+                except Exception:  # noqa: BLE001 - provider boundary must fail closed and continue
+                    # External exception text can contain provider diagnostics. Keep this
+                    # boundary deliberately redacted while leaving the gates fail-closed.
+                    self._logger.warning(
+                        "required_book_history_warmup_failed symbol=%s", symbol
+                    )
+                    continue
+                if not bars:
+                    self._logger.warning(
+                        "required_book_history_warmup_abstained symbol=%s", symbol
+                    )
+        except Exception:  # noqa: BLE001 - malformed optional wiring must not take runner down
+            self._logger.warning("required_book_history_warmup_unavailable")
+
     def _protect(self) -> None:
         # A dedicated thread keeps protection responsive even when synchronous provider
         # I/O blocks the analysis event loop. Ledger operations share one RLock.
@@ -174,11 +232,19 @@ class DaemonRunner:
             self._protection_stop.wait(self.protection_interval)
 
     async def start(self) -> None:
+        # Protection and market streams must become live before any optional provider I/O.
+        # History warm-up runs off the event loop while telemetry remains fail-closed until
+        # real cached evidence exists.
         protection = Thread(target=self._protect, name="pramana-protection", daemon=True)
         protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
-        cadence_task = asyncio.create_task(self._run_aligned_cadence())
+        cadence_task: asyncio.Task[None] | None = None
         try:
+            if not self._stop_requested:
+                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
+            if self._stop_requested:
+                return
+            cadence_task = asyncio.create_task(self._run_aligned_cadence())
             await cadence_task
         finally:
             self._stop_requested = True
@@ -218,6 +284,14 @@ class DaemonRunner:
                 return
             current = _as_utc(self.clock())
             try:
+                # Refresh once per UTC day through the provider's own cache. This stays
+                # outside every broker lock and keeps off-hours restarts data-ready.
+                await asyncio.to_thread(self._warm_required_book_history, current)
+                if self._stop_requested:
+                    return
+                # Provider I/O can take time. Execution and proof timestamps must reflect
+                # the post-warmup clock rather than the pre-network observation.
+                current = _as_utc(self.clock())
                 await self.daemon.run_once(current)
                 await self._capture_xai_proofs(current)
             except asyncio.CancelledError:
@@ -319,16 +393,26 @@ def build_ghost_runner(
     halt_file: str | Path | None = None,
     directives: FounderDirectives | None = None,
     pilot_mode: bool = False,
+    order_identity_mode: str = "legacy_cash",
+    oms_database: str | Path | None = None,
     decision_quality_report: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
+    require_book_risk_gates: bool = False,
     post_mortem_directory: str | Path | None = None,
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
+    order_identity_mode = validate_identity_storage(order_identity_mode,
+        pilot_mode=pilot_mode, database=database, oms_database=oms_database)
     directives = directives or FounderDirectives()
+    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
+    instruments = directives.instruments_or(instrument)
+    if order_identity_mode == "bound_v1":
+        from quant_ai.governance.pilot import validate_pilot_instruments
+        validate_pilot_instruments(instruments)
     broker = PaperBrokerService(
         database,
         starting_capital=directives.starting_capital,
@@ -336,18 +420,28 @@ def build_ghost_runner(
         # the published schedule for the account actually being shadowed.
         friction_model=MarketFrictionModel(brokerage_schedule=BrokerageSchedule.from_env()),
     )
+    oms = None
+    try:
+        if order_identity_mode == "bound_v1":
+            oms = DurableOms(oms_database)
+        configure_runtime_identity(broker, instruments, tenant_id, order_identity_mode, oms_database, oms=oms)
+    except BaseException:
+        if oms is not None:
+            oms.close()
+        broker.close()
+        raise
     buffer = TickBuffer()
     # Candles and marks come from the websocket ticks themselves, for any market the
     # streams can subscribe to. Nothing in the live runtime touches a synthetic price.
     feed = LiveTickMarketDataFeed(buffer)
-    instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
-    instruments = directives.instruments_or(instrument)
     # Cross-position controls. The group limit arms from the operator's mapping alone;
     # the correlation and expected-shortfall limits need a return history and are armed
     # only when the operator passes one, because once armed an unusable measurement
     # blocks every entry by design. See ``quant_ai.risk.policy.BookRiskFirewall``.
     book_history = (
-        DailyCloseHistory(book_risk_history, instruments) if book_risk_history is not None else None
+        DailyCloseHistory(book_risk_history, instruments,
+                          max_age=timedelta(days=7) if require_book_risk_gates else None)
+        if book_risk_history is not None else None
     )
     # Built here rather than beside the scheduler because the overnight limits are the
     # same calendar read from the entry side: what the warden must know about the close is
@@ -368,6 +462,8 @@ def build_ghost_runner(
         llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
         book_risk_history=book_history,
+        book_risk_required_symbols=(tuple(item.symbol for item in instruments)
+                                    if require_book_risk_gates else ()),
         # The operator's own calendar, holiday overrides included, so the close the
         # overnight limits measure against is the one the scheduler runs to.
         overnight_risk=overnight_risk_from_env(calendar),
@@ -376,12 +472,18 @@ def build_ghost_runner(
         # engine could never learn anything that outlived one session.
         attribution_journal_tenant=tenant_id,
     )
+    runtime.oms = oms
+    if require_book_risk_gates:
+        problem = runtime.warden.book_risk.configuration_problem()
+        if problem:
+            raise ValueError("pilot_risk_gates_unarmed:" + problem)
     pipeline = SwarmMarketAnalysisPipeline(
         feed,
         news_provider or SandboxNewsSentimentProvider(),
         fundamentals_provider or SandboxFundamentalDataProvider(),
         macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
+        bind_order_instruments=order_identity_mode == "bound_v1",
         tick_reader=CadenceMarketReader(buffer),
         history=history_provider,
         lessons_provider=_lessons_provider(database, post_mortem_directory),
@@ -548,8 +650,11 @@ def _env_intelligence_providers() -> tuple[
     registry = ProviderFailoverRegistry()
     client = ResilientHttpClient(UrllibTransport())
     feeds = tuple(item.strip() for item in os.getenv("PRAMANA_NEWS_RSS_URLS", "").split(",") if item.strip())
+    # Read before the feed check on purpose: a malformed alias map stops the boot even when
+    # no feed is configured, rather than waiting for a tick to quietly attribute nothing.
+    aliases = symbol_aliases_from_env()
     if feeds:
-        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds))
+        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds, aliases))
     fred_key = os.getenv("FRED_API_KEY", "").strip()
     if fred_key:
         registry.register(ProviderCategory.MACRO, FredMacroProvider(client, fred_key))
@@ -591,15 +696,22 @@ def _lessons_provider(
 
 
 def _env_daily_history_provider() -> DailyHistoryProvider | None:
-    """Closed daily bars for regime context; ``none`` leaves the regime to intraday bars."""
-    source = os.getenv("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower()
-    if source in {"", "yahoo"}:
-        # Own client so a Yahoo rate-limit opens this circuit only. Construction performs
-        # no I/O; the first cadence tick fetches, at most once per instrument per UTC day.
-        return DailyHistoryProvider(ResilientHttpClient(UrllibTransport()))
-    if source == "none":
-        return None
-    raise RuntimeError(f"unsupported PRAMANA_DAILY_HISTORY_PROVIDER: {source}")
+    """Shared explicit selection; constructing a history reader performs no I/O."""
+    from quant_ai.marketdata.history_selection import daily_history_from_env
+    from quant_ai.marketdata.kite_history import KiteHistoryError
+    try:
+        return daily_history_from_env(yahoo_factory=DailyHistoryProvider)
+    except KiteHistoryError as error:
+        if str(error) == "unsupported_daily_history_provider":
+            raise RuntimeError("unsupported PRAMANA_DAILY_HISTORY_PROVIDER") from None
+        raise
+
+
+def _env_required_book_risk() -> bool:
+    value = os.getenv("PRAMANA_REQUIRE_BOOK_RISK_GATES", "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise ValueError("invalid_required_book_risk_setting")
+    return value == "true"
 
 
 def _env_book_risk_history_provider(
@@ -652,6 +764,14 @@ def _env_notifications() -> TradingNotificationDispatcher:
 def build_ghost_runner_from_env() -> DaemonRunner:
     """Build the headless ghost runner from deployment environment variables."""
     _assert_ghost_mode()
+    # Parse and validate before provider/model construction or any on-disk initialization.
+    order_identity_mode = os.getenv("PRAMANA_ORDER_IDENTITY_MODE", "legacy_cash")
+    oms_database = os.getenv("PRAMANA_OMS_DB") or None
+    pilot_mode = _env_flag("PRAMANA_PILOT_MODE", True)
+    validate_identity_storage(order_identity_mode, pilot_mode=pilot_mode,
+        database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
+    dispatcher = _env_notifications()
+    credentials = check_runtime_token(dispatcher=dispatcher)
     ib_module = import_module("ib_async")
     ib = ib_module.IB()
     contracts = tuple(
@@ -673,17 +793,20 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     budget = budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
-        pilot_mode=_env_flag("PRAMANA_PILOT_MODE", True),
+        pilot_mode=pilot_mode,
+        order_identity_mode=order_identity_mode,
+        oms_database=oms_database,
         news_provider=news,
         fundamentals_provider=fundamentals,
         macro_provider=macro,
         history_provider=daily_history,
         book_risk_history=_env_book_risk_history_provider(daily_history),
+        require_book_risk_gates=_env_required_book_risk(),
         holidays=_env_holidays(),
-        notifications=_env_notifications(),
+        notifications=dispatcher,
         halt_file=paths.halt_file(),
-        zerodha_api_key=_required_env("ZERODHA_API_KEY"),
-        zerodha_access_token=_required_env("ZERODHA_ACCESS_TOKEN"),
+        zerodha_api_key=credentials.api_key,
+        zerodha_access_token=credentials.access_token,
         zerodha_instrument_tokens=tokens,
         zerodha_symbol_by_token=symbols,
         ib_client=ib,

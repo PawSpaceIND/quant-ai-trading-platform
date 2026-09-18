@@ -102,6 +102,24 @@ class TickBuffer:
         with self._lock:
             return self._latest.get(symbol)
 
+    def latest_at_or_before(self, symbol: str, cutoff: datetime) -> LiveTick | None:
+        """Newest retained accepted tick at the caller's event-time cutoff.
+
+        A concurrent stream update must not move an older analysis into the future.
+        The existing bounded deque is the only history; eviction returns None rather
+        than widening the cutoff, changing timestamps or fetching historical prices.
+        This is not proof of receipt-time availability at the cutoff.
+        """
+        current = utc_time(cutoff)
+        with self._lock:
+            latest = self._latest.get(symbol)
+            if latest is None or utc_time(latest.observed_at) <= current:
+                return latest
+            for tick in reversed(self._ticks):
+                if tick.symbol == symbol and utc_time(tick.observed_at) <= current:
+                    return tick
+            return None
+
     def snapshot(self) -> dict[str, LiveTick]:
         with self._lock:
             return dict(self._latest)

@@ -7,7 +7,8 @@ from decimal import Decimal
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, EvidenceContext, Stance
-from quant_ai.domain.models import AssetClass, Market, Side
+from quant_ai.domain.models import AssetClass, Instrument, Market, Side
+from quant_ai.instruments.identity import immutable_instrument_snapshot
 from quant_ai.risk.stops import orient_protective_levels
 
 
@@ -21,6 +22,20 @@ class AgentAnalysisRequest:
     # keys it needs with a typed default and never iterates the whole map.
     metrics: dict[str, Decimal | str]
     source_freshness_seconds: int = 0
+
+
+@dataclass(frozen=True)
+class InstrumentBoundAnalysisRequest(AgentAnalysisRequest):
+    """Opt-in analysis of an exact snapshot; legacy cash requests are unchanged."""
+    instrument: Instrument | None = None
+
+    def __post_init__(self) -> None:
+        instrument = immutable_instrument_snapshot(self.instrument)
+        if (self.subject, self.market, self.asset_class) != (
+            instrument.symbol, instrument.market, instrument.asset_class
+        ):
+            raise ValueError("analysis_request_instrument_identity_mismatch")
+        object.__setattr__(self, "instrument", instrument)
 
 
 # Valuation-driven agents only have an opinion on instruments that carry a balance
@@ -59,6 +74,9 @@ class SwarmAgent(ABC):
         reasons = [rationale]
         if freshness < 1:
             reasons.append(f"freshness_penalty={freshness}")
+            diagnostic = request.metrics.get("freshness_diagnostic")
+            if isinstance(diagnostic, str) and diagnostic:
+                reasons.append(f"freshness_sources={diagnostic}")
         if freshness <= Decimal("0.25"):
             reasons.append("capital_preservation_stale_or_missing_data")
         return AgentEvidence(
@@ -194,6 +212,20 @@ class TradeProposal:
     provenance: dict | None = None
 
 
+@dataclass(frozen=True)
+class InstrumentBoundTradeProposal(TradeProposal):
+    """CIO proposal carrying the same immutable decision-time instrument snapshot."""
+    instrument: Instrument | None = None
+
+    def __post_init__(self) -> None:
+        instrument = immutable_instrument_snapshot(self.instrument)
+        if (self.symbol, self.market, self.asset_class) != (
+            instrument.symbol, instrument.market, instrument.asset_class
+        ):
+            raise ValueError("proposal_instrument_identity_mismatch")
+        object.__setattr__(self, "instrument", instrument)
+
+
 class AtlasCIOAgent:
     """CIO synthesizer. It proposes trades but has no execution capability."""
 
@@ -263,7 +295,7 @@ class AtlasCIOAgent:
         stop_price, take_profit_price = orient_protective_levels(
             side, reference_price, stop_price, take_profit_price
         )
-        return TradeProposal(
+        proposal = TradeProposal(
             decision.cycle_id, request.subject, request.market, country,
             request.asset_class, side, quantity, reference_price, stop_price,
             take_profit_price, decision.confidence,
@@ -271,3 +303,7 @@ class AtlasCIOAgent:
             decision.rationale,
             getattr(decision, "provenance", None),
         )
+        instrument = getattr(request, "instrument", None)
+        if instrument is not None:
+            return InstrumentBoundTradeProposal(**vars(proposal), instrument=instrument)
+        return proposal

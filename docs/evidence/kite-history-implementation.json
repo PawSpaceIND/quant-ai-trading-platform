@@ -1,0 +1,1743 @@
+{
+  "schema": "pramana.kite_history.implementation.v1",
+  "status": "offline_source_verified_real_data_and_host_acceptance_open",
+  "parent_commit": "ccecb17c672761c40949f3e62e454440b1bc1d2c",
+  "owner_main_incorporated": "5bacb52337351c41fe782ac848edf1ae33647614",
+  "recorded_parent": {
+    "ordinary": 2640,
+    "pilot_acceptance": 22,
+    "institutional_acceptance": 17,
+    "rerun_in_this_continuation": false
+  },
+  "full_candidate": {
+    "ordinary": 2938,
+    "acceptance": {
+      "acceptance.test_risk_preflight_input_boundary": 22,
+      "acceptance.test_institutional_edge_authority": 17
+    },
+    "total_passed": 2977,
+    "subtests": 14,
+    "warnings": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "pytest_summary": "2977 passed, 2 warnings, 14 subtests passed in 441.52s (0:07:21)"
+  },
+  "adapter_behavior_cases": 113,
+  "adapter_mutation_cases": 57,
+  "existing_risk_mutation_cases": 51,
+  "existing_paper_exit_cases": 7,
+  "before_repair_boundaries": {
+    "failed": 5,
+    "passed": 2
+  },
+  "donor_focused_before_additional_boundaries": 155,
+  "source_manifest_files": 519,
+  "source_manifest_unchanged": true,
+  "source_sha256": {
+    "scripts/check_pilot_risk_gates.py": "67796086c602e90534d9b2e27d07caa45bd9aaa9de04ddae0b6b13ebb895a8a0",
+    "src/quant_ai/daemon.py": "9af24ae69d1bfe93a96a14a204cf597f1d3c78e383255c2ba294b32aa9c533ff",
+    "src/quant_ai/governance/runtime_manifest.py": "6f1c5698785b32760ff8826340d6fbb1a4bb9fe65c8552aae496b1d360128c44",
+    "src/quant_ai/marketdata/history_selection.py": "b9267f3feafcee22b47e7a75ab4affabb780bd5a47fe8daeaca580020c5f5d2e",
+    "src/quant_ai/marketdata/kite_history.py": "33d7ae61f0619fa852d2b56ad9eac01c6b998e941d9b6a0119601af417ceb006",
+    "src/quant_ai/risk/warden.py": "54988ac01e0fedc099fb36af8ac79110cca9fa34279a25b5b2b5452a34a31936"
+  },
+  "initial_mutation_campaign": {
+    "passed": 53,
+    "failed": 4,
+    "errors": 0,
+    "note": "Four later-validator-masked tests were replaced by explicit boundary tests; original results retained.",
+    "survivors": [
+      "test_kite_history_guard_requires_passing_control_and_failing_mutant[raw_size_bound]",
+      "test_kite_history_guard_requires_passing_control_and_failing_mutant[decompressed_size_bound]",
+      "test_kite_history_guard_requires_passing_control_and_failing_mutant[master_header]",
+      "test_kite_history_guard_requires_passing_control_and_failing_mutant[success_envelope]"
+    ]
+  },
+  "guards": [
+    {
+      "id": "fixed_get_endpoint",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_transport_refuses_orders_other_hosts_and_redirects",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_transport_refuses_orders_other_hosts_and_redirects"
+        }
+      ]
+    },
+    {
+      "id": "no_redirect",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_transport_refuses_orders_other_hosts_and_redirects",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_transport_refuses_orders_other_hosts_and_redirects"
+        }
+      ]
+    },
+    {
+      "id": "transport_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_transport_read_is_bounded_and_does_not_follow_http_redirects",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_transport_read_is_bounded_and_does_not_follow_http_redirects"
+        }
+      ]
+    },
+    {
+      "id": "aware_times",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_invalid_time_windows_refuse_before_provider[naive_start]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_invalid_time_windows_refuse_before_provider[naive_start]"
+        }
+      ]
+    },
+    {
+      "id": "cash_scope",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_out_of_scope_instruments_refuse_before_requests",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 6,
+        "failures": 6,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change0]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change1]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change2]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change3]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change4]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_scope_instruments_refuse_before_requests[change5]"
+        }
+      ]
+    },
+    {
+      "id": "json_duplicate_keys",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 7,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted[{\"status\":\"success\",\"status\":\"success\",\"data\":{\"candles\":[]}}]"
+        }
+      ]
+    },
+    {
+      "id": "numeric_type",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_numeric_parser_rejects_non_json_number_types",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_numeric_parser_rejects_non_json_number_types[True]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_numeric_parser_rejects_non_json_number_types[100]"
+        }
+      ]
+    },
+    {
+      "id": "numeric_finite",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_decimal_nonfinite_guard_has_its_own_regression",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 3,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_decimal_nonfinite_guard_has_its_own_regression[NaN]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_decimal_nonfinite_guard_has_its_own_regression[Infinity]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_decimal_nonfinite_guard_has_its_own_regression[-Infinity]"
+        }
+      ]
+    },
+    {
+      "id": "header_safe_credentials",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_header_unsafe_credentials_never_reach_a_request",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_header_unsafe_credentials_never_reach_a_request[-dummy]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_header_unsafe_credentials_never_reach_a_request[fixture-]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_header_unsafe_credentials_never_reach_a_request[bad\\nkey-dummy]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_header_unsafe_credentials_never_reach_a_request[fixture-bad:token]"
+        }
+      ]
+    },
+    {
+      "id": "one_http_attempt",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_opt_in_selection_is_lazy_and_reuses_real_provider"
+        }
+      ]
+    },
+    {
+      "id": "bounded_http_payload_setting",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_opt_in_selection_is_lazy_and_reuses_real_provider"
+        }
+      ]
+    },
+    {
+      "id": "conservative_request_rate",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_opt_in_selection_is_lazy_and_reuses_real_provider",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_opt_in_selection_is_lazy_and_reuses_real_provider"
+        }
+      ]
+    },
+    {
+      "id": "auth_latch_before_http",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_raw_auth_response_is_also_latched",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_raw_auth_response_is_also_latched[401]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_raw_auth_response_is_also_latched[403]"
+        }
+      ]
+    },
+    {
+      "id": "revoke_evidence_storage",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_direct_feed_rejection_revokes_previously_cached_history[cached]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_direct_feed_rejection_revokes_previously_cached_history[fetch]"
+        }
+      ]
+    },
+    {
+      "id": "auth_error_latch",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_rejected_auth_after_master_load_cannot_retry_on_another_symbol",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_rejected_auth_after_master_load_cannot_retry_on_another_symbol"
+        }
+      ]
+    },
+    {
+      "id": "raw_auth_latch",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_raw_auth_response_is_also_latched",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_raw_auth_response_is_also_latched[401]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_raw_auth_response_is_also_latched[403]"
+        }
+      ]
+    },
+    {
+      "id": "diagnostic_sanitization",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_unexpected_transport_diagnostic_is_sanitized",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_unexpected_transport_diagnostic_is_sanitized"
+        }
+      ]
+    },
+    {
+      "id": "successful_status_required",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_incomplete_success_status_is_refused",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_incomplete_success_status_is_refused"
+        }
+      ]
+    },
+    {
+      "id": "raw_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_response_size_refuses_in_get_before_any_decoder",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_response_size_refuses_in_get_before_any_decoder"
+        }
+      ]
+    },
+    {
+      "id": "daily_master_reuse",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_gzip_master_and_daily_master_reuse",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_gzip_master_and_daily_master_reuse"
+        }
+      ]
+    },
+    {
+      "id": "decompressed_size_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_decompressed_master_size_refuses_before_csv_validation",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_decompressed_master_size_refuses_before_csv_validation"
+        }
+      ]
+    },
+    {
+      "id": "master_header",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_duplicate_master_header_has_an_explicit_schema_refusal",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_duplicate_master_header_has_an_explicit_schema_refusal"
+        }
+      ]
+    },
+    {
+      "id": "master_row_boundary",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bounded_provider_payloads_are_not_silently_truncated[row_count]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bounded_provider_payloads_are_not_silently_truncated[row_count]"
+        }
+      ]
+    },
+    {
+      "id": "master_exchange",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[wrong_exchange]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bad_master_never_reaches_candle_request[wrong_exchange]"
+        }
+      ]
+    },
+    {
+      "id": "master_cash_segment",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_master_shape_and_canonical_identity_refuse_before_candles",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 4,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_master_shape_and_canonical_identity_refuse_before_candles[instrument_token,tradingsymbol,exchange,segment,instrument_type,expiry,lot_size,tick_size\\n101,INFY,NSE,NSE,FUT,,1,0.05\\n202,TCS,NSE,NSE,FUT,,1,0.05\\n]"
+        }
+      ]
+    },
+    {
+      "id": "master_token_expiry",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[expiry]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bad_master_never_reaches_candle_request[expiry]"
+        }
+      ]
+    },
+    {
+      "id": "canonical_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_master_guards_refuse_at_the_master_boundary",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 4,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_master_guards_refuse_at_the_master_boundary[instrument_token,tradingsymbol,exchange,segment,instrument_type,expiry,lot_size,tick_size\\n101, infy ,NSE,NSE,EQ,,1,0.05\\n202,TCS,NSE,NSE,EQ,,1,0.05\\n-master_identity_invalid]"
+        }
+      ]
+    },
+    {
+      "id": "master_lot_tick",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[bad_lot]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bad_master_never_reaches_candle_request[bad_lot]"
+        }
+      ]
+    },
+    {
+      "id": "unique_master_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bad_master_never_reaches_candle_request[duplicate_token]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bad_master_never_reaches_candle_request[duplicate_token]"
+        }
+      ]
+    },
+    {
+      "id": "nonempty_master",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_master_guards_refuse_at_the_master_boundary",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 4,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_master_guards_refuse_at_the_master_boundary[instrument_token,tradingsymbol,exchange,segment,instrument_type,expiry,lot_size,tick_size\\n-master_empty]"
+        }
+      ]
+    },
+    {
+      "id": "exact_request_window",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_window_ceiling_is_exact_not_rounded_down_to_whole_days",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_window_ceiling_is_exact_not_rounded_down_to_whole_days"
+        }
+      ]
+    },
+    {
+      "id": "missing_instrument",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_missing_master_symbol_and_contract_units_have_specific_refusals",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_missing_master_symbol_and_contract_units_have_specific_refusals"
+        }
+      ]
+    },
+    {
+      "id": "matching_instrument_units",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_missing_master_symbol_and_contract_units_have_specific_refusals",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_missing_master_symbol_and_contract_units_have_specific_refusals"
+        }
+      ]
+    },
+    {
+      "id": "decimal_decoder",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_daily_candles_derive_tokens_and_preserve_decimal_and_source",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_daily_candles_derive_tokens_and_preserve_decimal_and_source"
+        }
+      ]
+    },
+    {
+      "id": "strict_json_constants",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_nonfinite_unused_json_field_is_still_invalid_json",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_nonfinite_unused_json_field_is_still_invalid_json"
+        }
+      ]
+    },
+    {
+      "id": "duplicate_decoder_hook",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 7,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted[{\"status\":\"success\",\"status\":\"success\",\"data\":{\"candles\":[]}}]"
+        }
+      ]
+    },
+    {
+      "id": "success_envelope",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_error_envelope_cannot_smuggle_otherwise_valid_candles",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_error_envelope_cannot_smuggle_otherwise_valid_candles"
+        }
+      ]
+    },
+    {
+      "id": "candle_count_bound",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_bounded_provider_payloads_are_not_silently_truncated[candle_count]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_bounded_provider_payloads_are_not_silently_truncated[candle_count]"
+        }
+      ]
+    },
+    {
+      "id": "candle_shape",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_candle_shape_reports_its_own_refusal",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 3,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_candle_shape_reports_its_own_refusal[None]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_candle_shape_reports_its_own_refusal[row1]"
+        },
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_candle_shape_reports_its_own_refusal[row2]"
+        }
+      ]
+    },
+    {
+      "id": "candle_session_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_out_of_order_daily_rows_do_not_get_silently_sorted",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_out_of_order_daily_rows_do_not_get_silently_sorted"
+        }
+      ]
+    },
+    {
+      "id": "whole_volume",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_invalid_candles_refuse_whole_series[fractional_volume]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_invalid_candles_refuse_whole_series[fractional_volume]"
+        }
+      ]
+    },
+    {
+      "id": "closed_session_only",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_live_session_is_not_counted_as_completed_history",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_live_session_is_not_counted_as_completed_history"
+        }
+      ]
+    },
+    {
+      "id": "evidence_source_hash",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_feed_evidence_fingerprints_match_actual_response_bytes",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_feed_evidence_fingerprints_match_actual_response_bytes"
+        }
+      ]
+    },
+    {
+      "id": "evidence_response_hash",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_feed_evidence_fingerprints_match_actual_response_bytes",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_feed_evidence_fingerprints_match_actual_response_bytes"
+        }
+      ]
+    },
+    {
+      "id": "failed_observation_evidence_clear",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_failed_refresh_erases_previous_symbol_evidence",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_failed_refresh_erases_previous_symbol_evidence"
+        }
+      ]
+    },
+    {
+      "id": "nonblocking_evidence_read",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_provider_evidence_read_does_not_wait_behind_network",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_provider_evidence_read_does_not_wait_behind_network"
+        }
+      ]
+    },
+    {
+      "id": "exact_cache_identity",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_metadata_is_part_of_cache_identity",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_metadata_is_part_of_cache_identity"
+        }
+      ]
+    },
+    {
+      "id": "fetch_rejected_auth_cache",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history[fetch]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_direct_feed_rejection_revokes_previously_cached_history[fetch]"
+        }
+      ]
+    },
+    {
+      "id": "post_fetch_rejected_auth",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_auth_failure_during_refresh_discards_the_entire_observation_store",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_auth_failure_during_refresh_discards_the_entire_observation_store"
+        }
+      ]
+    },
+    {
+      "id": "cached_rejected_auth",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_history_boundaries.py::test_direct_feed_rejection_revokes_previously_cached_history[cached]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_history_boundaries",
+          "name": "test_direct_feed_rejection_revokes_previously_cached_history[cached]"
+        }
+      ]
+    },
+    {
+      "id": "fetch_observation_no_future",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_exact_identity_and_observation_time_bound_daily_cache",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_exact_identity_and_observation_time_bound_daily_cache"
+        }
+      ]
+    },
+    {
+      "id": "cached_observation_time",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_exact_identity_and_observation_time_bound_daily_cache",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_exact_identity_and_observation_time_bound_daily_cache"
+        }
+      ]
+    },
+    {
+      "id": "nonblocking_cached_read",
+      "path": "src/quant_ai/marketdata/kite_history.py",
+      "test": "tests/test_kite_daily_history.py::test_protection_cache_read_does_not_wait_on_inflight_network",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_protection_cache_read_does_not_wait_on_inflight_network"
+        }
+      ]
+    },
+    {
+      "id": "paper_only_selection",
+      "path": "src/quant_ai/marketdata/history_selection.py",
+      "test": "tests/test_kite_daily_history.py::test_kite_selection_cannot_acquire_live_authority",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_kite_selection_cannot_acquire_live_authority[true]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_kite_selection_cannot_acquire_live_authority[yes]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_kite_selection_cannot_acquire_live_authority[]"
+        },
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_kite_selection_cannot_acquire_live_authority[FALSEE]"
+        }
+      ]
+    },
+    {
+      "id": "unknown_source_refused",
+      "path": "src/quant_ai/marketdata/history_selection.py",
+      "test": "tests/test_kite_daily_history.py::test_default_yahoo_and_none_remain_unchanged",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_default_yahoo_and_none_remain_unchanged"
+        }
+      ]
+    },
+    {
+      "id": "regime_source_fingerprint",
+      "path": "src/quant_ai/governance/runtime_manifest.py",
+      "test": "tests/test_kite_daily_history.py::test_runtime_fingerprint_changes_on_history_source",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_runtime_fingerprint_changes_on_history_source"
+        }
+      ]
+    },
+    {
+      "id": "risk_source_fingerprint",
+      "path": "src/quant_ai/risk/warden.py",
+      "test": "tests/test_kite_daily_history.py::test_warden_configuration_identity_includes_risk_history_source",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true,
+      "failing_mutant_tests": [
+        {
+          "class": "tests.test_kite_daily_history",
+          "name": "test_warden_configuration_identity_includes_risk_history_source"
+        }
+      ]
+    }
+  ],
+  "real_data_check": {
+    "scope": "development Mac existing local session only",
+    "checkedAt": "2026-09-17T13:39:17.983747+00:00",
+    "status": "session_expired",
+    "providerRequests": 0,
+    "credentialsPrinted": false,
+    "sessionFilesChanged": false
+  },
+  "hostAcceptance": false,
+  "priceBasisQualified": false,
+  "liveMoneyActivated": false,
+  "deploymentPerformed": false
+}

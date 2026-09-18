@@ -1,0 +1,196 @@
+{
+  "item": 1,
+  "parent": "e7bfef043a25651d63b545b8666776a0f1b7d020",
+  "incorporated_owner_main": "58a3d72a6fafbd17df97bccb78943a30be06df48",
+  "prior_recorded_mac_result": "1841 passed, 13 existing deployment portability failures; not rerun as a parent baseline here",
+  "initial_integration_run": "17 failed, 1881 passed, 2 warnings, 1 error, 14 subtests passed in 446.67s (0:07:26)",
+  "initial_problems": [
+    {
+      "kind": "failure",
+      "class": "tests.test_cli_runtime_reporting",
+      "test": "test_learning_already_earned_is_reported_rather_than_rebuilt_as_nothing",
+      "message": "sqlite3.OperationalError: disk I/O error"
+    },
+    {
+      "kind": "error",
+      "class": "tests.test_cli_runtime_reporting",
+      "test": "test_an_account_with_no_closed_trades_still_reports_none",
+      "message": "failed on setup with \"OSError: could not create numbered dir with prefix test_an_account_with_no_closed in /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263 after 10 tries\""
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_cli_runtime_reporting",
+      "test": "test_generated_prices_are_named_as_generated",
+      "message": "sqlite3.OperationalError: disk I/O error"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_force_accepts_the_cost_out_loud_and_deploys_anyway",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_force_accepts_the_cost_ou0/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_force_accepts_the_cost_ou0/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert 2 == 0\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_force_accepts_the_cost_...oy_pilot_host.sh: line 150: declare: -A: invalid option\\"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading0/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading0/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert (2 == 0) is True\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_tradi...oy_pilot_host.sh: line 150: declare: -A: inval"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading3/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading3/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert (2 == 0) is True\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_tradi...oy_pilot_host.sh: line 150: declare: -A: inval"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading4/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading4/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert (2 == 0) is True\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_tradi...oy_pilot_host.sh: line 150: declare: -A: inval"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading5/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_trading5/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert (2 == 0) is True\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_gate_asks_the_tradi...oy_pilot_host.sh: line 150: declare: -A: inval"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_the_stamped_revision_is_the_head_that_was_just_pulled",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_stamped_revision_is_t0/origin\n     04787e3..f563832  main       -> origin/main\n  From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_stamped_revision_is_t0/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_the_stamped_revision_is_t0/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert 2 == 0\n +  where 2 = CompletedProcess(args=['"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_second_deploy_replaces_0/origin\n     837e70f..473021f  main       -> origin/main\n  From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_second_deploy_replaces_0/origin\n   * branch            main       -> FETCH_HEAD\n  sed: 1: \".env\n  \": invalid command code .\n  \nassert 1 == 0\n +  where 1 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_second_deploy_replace...d_deploy_replaces_0/origin\\n * branch            main       -> FETCH_HEAD\\nsed: 1: \"."
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_container_that_keeps_restarting_fails_the_deploy",
+      "message": "AssertionError: assert 'restart loop' in 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_container_that_keeps_re0/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n'\n +  where 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_container_that_keeps_re0/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n' = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeya"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]",
+      "message": "AssertionError: assert 'not running' in 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co0/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n'\n +  where 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co0/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n' = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyan"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]",
+      "message": "AssertionError: assert 'mid-restart' in 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co1/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n'\n +  where 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co1/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n' = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyan"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]",
+      "message": "AssertionError: assert 'unhealthy' in 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co2/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n'\n +  where 'From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_service_that_did_not_co2/origin\\n * branch     ...loy_pilot_host.sh: line 150: declare: -A: invalid option\\ndeclare: usage: declare [-afFirtx] [-p] [name[=value] ...]\\n' = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanpa"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_a_healthy_deploy_reports_every_service_and_the_revision",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_healthy_deploy_reports_0/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_healthy_deploy_reports_0/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert 2 == 0\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_a_healthy_deploy_report...oy_pilot_host.sh: line 150: declare: -A: invalid option\\"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_deploy_pilot_host",
+      "test": "test_nothing_the_deploy_prints_carries_a_value_out_of_env",
+      "message": "AssertionError: From /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_nothing_the_deploy_prints0/origin\n   * branch            main       -> FETCH_HEAD\n  /private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_nothing_the_deploy_prints0/host/scripts/deploy_pilot_host.sh: line 150: declare: -A: invalid option\n  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]\n  \nassert 2 == 0\n +  where 2 = CompletedProcess(args=['bash', '/private/tmp/pytest-of-karthikeyanparamasivam/pytest-2263/test_nothing_the_deploy_prin...oy_pilot_host.sh: line 150: declare: -A: invalid option\\"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_protective_state_telemetry",
+      "test": "test_a_clean_sweep_is_published_as_swept_and_not_as_silence",
+      "message": "AssertionError: assert ([{'symbol': '...15190+00:00'}] == []\n  \n  Left contains one more item: {'symbol': 'INFY', 'unpricedSince': '2026-09-17T10:25:59.415190+00:00'}\n  Use -v to get more diff)"
+    },
+    {
+      "kind": "failure",
+      "class": "tests.test_protective_state_telemetry",
+      "test": "test_a_re_based_quote_names_the_symbol_whose_stop_is_suspended",
+      "message": "AssertionError: assert [] == ['INFY']\n  \n  Right contains one more item: 'INFY'\n  Use -v to get more diff"
+    }
+  ],
+  "definitive_run": "13 failed, 1888 passed, 2 warnings, 14 subtests passed in 356.38s (0:05:56)",
+  "ordinary_passed": 1888,
+  "ordinary_failed": 13,
+  "failure_identities": [
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_container_that_keeps_restarting_fails_the_deploy"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_healthy_deploy_reports_every_service_and_the_revision"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_second_deploy_replaces_the_stamp_instead_of_appending_another"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub0-not running]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub1-mid-restart]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_a_service_that_did_not_come_back_fails_the_deploy[stub2-unhealthy]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_force_accepts_the_cost_out_loud_and_deploys_anyway"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_nothing_the_deploy_prints_carries_a_value_out_of_env"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-12T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-14T10:00:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T09:10:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_gate_asks_the_trading_calendar_and_not_the_clock_face[2026-09-15T15:45:00+05:30-True]"
+    ],
+    [
+      "tests.test_deploy_pilot_host",
+      "test_the_stamped_revision_is_the_head_that_was_just_pulled"
+    ]
+  ],
+  "errors": 0,
+  "skipped": 0,
+  "subtests_passed": 14,
+  "new_to_branch": {
+    "owner_main_cases": 45,
+    "reused_peer_fixture_cases": 2
+  },
+  "fixture_donor": "8bd646f97a8e145c7b2718c0e9d0c798c97131d8",
+  "fixture_file": "tests/test_protective_state_telemetry.py",
+  "delayed_fixture_before_failed": 2,
+  "delayed_fixture_after_passed": 2,
+  "existing_assertions_unchanged": true,
+  "cadence_mutation_cases_passed_as_part_of_full_suite": 19,
+  "portfolio_risk_mutations_run": 0,
+  "selected_manifest_files": 465,
+  "selected_manifest_unchanged": true,
+  "test_isolation": "Fresh dedicated basetemp and TMPDIR; credential settings removed from child environment. Initial filesystem/setup errors are retained, not assigned an unproved cause.",
+  "provider_requests_performed_by_continuation": 0,
+  "real_orders": 0,
+  "owner_main_merges": 0,
+  "deployments": 0,
+  "published_head_ci": "not yet started"
+}

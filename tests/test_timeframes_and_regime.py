@@ -76,6 +76,9 @@ from quant_ai.marketdata.timeframes import (
     DAILY_HISTORY_SESSIONS,
     DailyHistoryProvider,
     aggregate,
+    closed_sessions,
+    opens_the_regular_session,
+    venue_for,
 )
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
@@ -105,6 +108,114 @@ def _minutes(instrument: Instrument, open_at: datetime, count: int, base: Decima
         _minute(instrument, open_at + timedelta(minutes=index + 1), base + Decimal(index))
         for index in range(count)
     )
+
+
+# ------------------------------------------------- one session, one bar
+
+# 24 October 2022: NSE held its regular 09:15-15:30 session and, that evening, the
+# one-hour Diwali Muhurat sitting at 18:15 IST. Yahoo returns both as daily bars, each
+# stamped at its own session's start.
+DIWALI_REGULAR = datetime(2022, 10, 24, 3, 45, tzinfo=timezone.utc)   # 09:15 IST
+DIWALI_MUHURAT = datetime(2022, 10, 24, 12, 45, tzinfo=timezone.utc)  # 18:15 IST
+DAY_AFTER_DIWALI = datetime(2022, 10, 25, 3, 45, tzinfo=timezone.utc)
+AFTERWARDS = datetime(2026, 1, 1, tzinfo=timezone.utc)
+INDIA_VENUE = venue_for(Market.INDIA)
+
+
+def _session_bar(open_at: datetime, close: Decimal) -> Candle:
+    """A daily bar stamped at the moment its session began, as the provider sends it."""
+    return Candle(NIFTY, open_at, close, close + Decimal(5), close - Decimal(5), close,
+                  Decimal(1000))
+
+
+def test_a_ceremonial_session_does_not_overwrite_the_trading_day_it_shares_a_date_with():
+    """The Muhurat substitution, which changed prices and left every count intact.
+
+    Both bars resolve to the same session close, so the day is one entry either way. The
+    rule used to be "last row wins", and the ceremonial bar is the later one: for 24
+    October 2022 the series then carried a one-hour sitting's open, high, low and close in
+    place of the whole trading day's. Nothing downstream could see it - the bar count was
+    right, the date was right, only the prices were another session's.
+
+    Found in a real 19-year INFY series, where it was the only sub-20-hour gap in 4,660
+    bars and was what made ``BaselineEvaluator`` refuse the file.
+    """
+    regular = _session_bar(DIWALI_REGULAR, Decimal(500))
+    muhurat = _session_bar(DIWALI_MUHURAT, Decimal(777))
+    after = _session_bar(DAY_AFTER_DIWALI, Decimal(505))
+
+    kept = closed_sessions((regular, muhurat, after), AFTERWARDS, INDIA_VENUE)
+
+    assert [bar.timestamp for bar in kept] == [DIWALI_REGULAR, DAY_AFTER_DIWALI]
+    assert [bar.close for bar in kept] == [Decimal(500), Decimal(505)]
+    # Order of arrival must not decide it: the provider is free to send them either way.
+    assert closed_sessions((muhurat, regular, after), AFTERWARDS, INDIA_VENUE) == kept
+
+
+def test_the_day_is_spaced_a_full_session_apart_once_the_ceremonial_bar_loses():
+    """Why the substitution surfaced at all, rather than staying silently wrong.
+
+    ``BaselineEvaluator`` requires daily bars at least 20 hours apart, because a tighter
+    spacing means an intraday series and annualising one against 252 is what inflates a
+    Sharpe. Keeping the 18:15 bar left 15 hours to the next 09:15 open and tripped that
+    guard - which is how a wrong price was caught by a check about sampling rate.
+    """
+    bars = closed_sessions(
+        (
+            _session_bar(DIWALI_REGULAR, Decimal(500)),
+            _session_bar(DIWALI_MUHURAT, Decimal(777)),
+            _session_bar(DAY_AFTER_DIWALI, Decimal(505)),
+        ),
+        AFTERWARDS,
+        INDIA_VENUE,
+    )
+    assert bars[1].timestamp - bars[0].timestamp == timedelta(hours=24)
+
+
+def test_a_revised_row_still_wins_because_a_revision_is_not_a_second_session():
+    """The behaviour the old rule existed for, which the fix must not cost.
+
+    A provider that corrects a session resends it at the same stamp, and there the later
+    row is the truth. Only a bar that does not open the regular session loses to one that
+    does, so a revision - which opens it too - still replaces what came before.
+    """
+    first = _session_bar(DIWALI_REGULAR, Decimal(500))
+    revised = _session_bar(DIWALI_REGULAR, Decimal(512))
+
+    kept = closed_sessions((first, revised), AFTERWARDS, INDIA_VENUE)
+
+    assert [bar.close for bar in kept] == [Decimal(512)]
+
+
+def test_a_date_whose_only_sitting_is_ceremonial_keeps_it_rather_than_losing_the_day():
+    """Diwali can fall where the exchange holds the Muhurat session and nothing else.
+
+    Preferring the regular session must not mean discarding a date that never had one:
+    that would delete a real session's prices to avoid preferring the wrong ones.
+    """
+    muhurat = _session_bar(DIWALI_MUHURAT, Decimal(777))
+    after = _session_bar(DAY_AFTER_DIWALI, Decimal(505))
+
+    kept = closed_sessions((muhurat, after), AFTERWARDS, INDIA_VENUE)
+
+    assert [bar.timestamp for bar in kept] == [DIWALI_MUHURAT, DAY_AFTER_DIWALI]
+    assert [bar.close for bar in kept] == [Decimal(777), Decimal(505)]
+
+
+def test_a_venue_less_market_has_no_regular_session_and_keeps_the_last_row():
+    """Metals and crypto have no session in ``SESSIONS`` to be regular against.
+
+    Their day closes at the next UTC midnight and every bar counts as opening it, so the
+    behaviour there is exactly what it was before: the later row wins.
+    """
+    early = Candle(GOLD, datetime(2025, 3, 2, 1, 0, tzinfo=timezone.utc), Decimal(100),
+                   Decimal(105), Decimal(95), Decimal(100), Decimal(10))
+    late = Candle(GOLD, datetime(2025, 3, 2, 20, 0, tzinfo=timezone.utc), Decimal(110),
+                  Decimal(115), Decimal(105), Decimal(110), Decimal(10))
+
+    assert opens_the_regular_session(early, venue_for(Market.GLOBAL)) is True
+    kept = closed_sessions((early, late), AFTERWARDS, venue_for(Market.GLOBAL))
+    assert [bar.close for bar in kept] == [Decimal(110)]
 
 
 # ---------------------------------------------------------------- aggregation

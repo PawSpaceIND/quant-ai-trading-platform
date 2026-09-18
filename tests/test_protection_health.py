@@ -105,18 +105,119 @@ def test_old_storage_and_cli_exit_codes(tmp_path):
 
 
 def test_actual_pilot_telemetry_and_halt_recovery(tmp_path):
+    """Halt and recovery through the real telemetry writer.
+
+    The clock is the live one, as it is in the sibling test above, because the market feed
+    judges a tick's staleness against wall-clock time rather than the timestamp it is
+    handed. Pinned to a fixed past ``NOW`` the published tick was already refused as
+    ``stale_live_tick``, so this ran with a watchlist that reported every instrument stale
+    and nothing noticed - the health check did not read freshness until now.
+    """
     from test_pilot_closure import publish_tick, runner_for
     runner = runner_for(tmp_path)
     broker = runner.daemon.tracker.broker
+    now = datetime.now(timezone.utc)
     try:
-        publish_tick(runner, "100", NOW)
-        runner.daemon.protection_tick(NOW)
-        assert protection_health(tmp_path / "ledger.db", "pilot", now=NOW)["status"] == "observation_ok"
+        publish_tick(runner, "100", now)
+        runner.daemon.protection_tick(now)
+        assert protection_health(tmp_path / "ledger.db", "pilot", now=now)["status"] == "observation_ok"
         runner.daemon.halt_file.write_text("Health drill")
-        runner.daemon.protection_tick(NOW)
-        assert protection_health(tmp_path / "ledger.db", "pilot", now=NOW)["reasons"] == ["engine_halted"]
+        runner.daemon.protection_tick(now)
+        assert protection_health(tmp_path / "ledger.db", "pilot", now=now)["reasons"] == ["engine_halted"]
         runner.daemon.halt_file.unlink()
-        runner.daemon.protection_tick(NOW)
-        assert protection_health(tmp_path / "ledger.db", "pilot", now=NOW)["status"] == "observation_ok"
+        runner.daemon.protection_tick(now)
+        assert protection_health(tmp_path / "ledger.db", "pilot", now=now)["status"] == "observation_ok"
     finally:
         broker._connection.close()
+
+
+# ------------------------------------------------- blind through an open session
+
+OPEN_SESSION = NOW                                            # 11:30 IST, NSE regular hours
+CLOSED_SESSION = datetime(2026, 9, 15, 14, tzinfo=timezone.utc)  # 19:30 IST, exchange shut
+
+
+def entry(symbol: str, *, fresh: bool, market: str = "INDIA") -> dict:
+    return {"symbol": symbol, "market": market, "fresh": fresh,
+            "tickTimestamp": None if not fresh else NOW.isoformat()}
+
+
+def health_for(tmp_path, watchlist, *, now=OPEN_SESSION):
+    database = tmp_path / "ledger"
+    # The payload's own clock has to match the one health is asked about, or the heartbeat
+    # reads stale and the result says nothing about the watchlist.
+    write(database, valid(watchlist=watchlist, updatedAt=now.isoformat()), stamp=now.isoformat())
+    return protection_health(database, "pilot", now=now)
+
+
+def test_a_whole_watchlist_stale_while_the_market_is_open_is_unhealthy(tmp_path):
+    """The failure that ran for a full session while the container reported healthy.
+
+    A dead feed does not stop the pilot. It keeps its heartbeat, keeps deciding, and every
+    cadence records a well-formed abstention because no specialist has anything to say.
+    Six and a quarter hours of that sat in the journal as 180 NEUTRAL rows, indistinguishable
+    from considered restraint, and nothing anywhere said the engine could not see.
+
+    The feed-loss halt already in the engine does not cover this: it fires when an open
+    position cannot be priced, which is the right rule for protecting a position and no
+    rule at all for a book that is flat.
+    """
+    result = health_for(tmp_path, [entry("INFY", fresh=False), entry("TCS", fresh=False)])
+
+    assert "market_data_stale_during_session" in result["reasons"]
+    assert result["status"] == "unhealthy"
+
+
+def test_the_same_staleness_outside_market_hours_is_not_a_fault(tmp_path):
+    """A closed exchange produces no ticks, and that is the normal state every night.
+
+    Reporting it would make the container unhealthy from 15:30 to 09:15 daily, which is
+    how a signal stops being read at all.
+    """
+    result = health_for(
+        tmp_path,
+        [entry("INFY", fresh=False), entry("TCS", fresh=False)],
+        now=CLOSED_SESSION,
+    )
+
+    assert "market_data_stale_during_session" not in result["reasons"]
+    assert result["status"] == "observation_ok"
+
+
+def test_one_stale_symbol_among_fresh_ones_is_a_provider_gap_not_a_dead_feed(tmp_path):
+    """A single symbol going quiet is ordinary; the whole watchlist at once is the feed.
+
+    Alarming on one would fire on every thinly traded instrument and bury the case that
+    matters.
+    """
+    result = health_for(tmp_path, [entry("INFY", fresh=True), entry("TCS", fresh=False)])
+
+    assert "market_data_stale_during_session" not in result["reasons"]
+    assert result["status"] == "observation_ok"
+
+
+def test_a_watchlist_that_is_receiving_ticks_is_healthy(tmp_path):
+    result = health_for(tmp_path, [entry("INFY", fresh=True), entry("TCS", fresh=True)])
+
+    assert result["reasons"] == []
+    assert result["status"] == "observation_ok"
+
+
+@pytest.mark.parametrize("watchlist", [
+    [],                                                   # nothing declared
+    "INFY",                                               # not a list
+    [{"symbol": "INFY", "market": "INDIA"}],              # no freshness reported
+    [{"symbol": "INFY", "market": "ATLANTIS", "fresh": False}],  # market it cannot resolve
+    [{"symbol": "INFY", "market": "X" * 40, "fresh": False}],    # oversized market name
+    ["INFY"],                                             # entry is not an object
+    [{"symbol": "INFY", "market": "INDIA", "fresh": False}] * 65,  # past the bound
+])
+def test_a_payload_it_cannot_read_never_raises_and_never_cries_wolf(tmp_path, watchlist):
+    """The heartbeat is written by another process, so this parses it defensively.
+
+    An unreadable watchlist is not evidence of a dead feed, and a health check that throws
+    is a health check that reports nothing at all.
+    """
+    result = health_for(tmp_path, watchlist)
+
+    assert "market_data_stale_during_session" not in result["reasons"]

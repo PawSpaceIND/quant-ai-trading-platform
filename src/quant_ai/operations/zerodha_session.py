@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -35,7 +35,7 @@ class SessionRecord:
     """Identity of a Kite session; ``issued_at`` is when the access token was generated."""
 
     user_id: str
-    access_token: str
+    access_token: str = field(repr=False)
     issued_at: datetime
     login_time: str | None = None
 
