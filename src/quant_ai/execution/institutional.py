@@ -56,7 +56,11 @@ from quant_ai.execution.shared_risk import (
     SharedRiskReservations,
     selected,
 )
-from quant_ai.execution.shared_risk_binding import pin_account, read_binding, verify_binding_pair
+from quant_ai.execution.shared_risk_binding import (
+    pin_account,
+    position_linked_capacity,
+    read_binding,
+)
 from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
@@ -508,10 +512,14 @@ class InstitutionalPaperCoordinator:
                         if isinstance(self.shared_risk_policy, SharedRiskPolicy) else self.shared_risk_policy)
                     if current_shared != approved_shared_policy:
                         raise SharedRiskError("shared_risk_configuration_changed")
+                    effective_existing = None
                     with self.broker._lock:
                         broker_pin = read_binding(self.broker._connection, request.tenant_id)
                         if broker_pin is not None:
-                            verify_binding_pair(self.broker._connection, self.programs.db, request.tenant_id)
+                            capacity = position_linked_capacity(
+                                self.broker._connection, self.programs.db, request.tenant_id
+                            )
+                            effective_existing = Decimal(capacity["effectiveReservedLoss"])
                     configured = selected(self.programs.db, request.tenant_id)
                     shared = configured or self.shared_risk_policy is not None or broker_pin is not None
                     if shared:
@@ -523,8 +531,14 @@ class InstitutionalPaperCoordinator:
                             empty_ledger=not self.broker.ledger_entries(request.tenant_id))
                     program = self.programs.create(**program_args)
                     if shared:
-                        self.shared_risk.reserve(program, evidence=request.edge_evidence, equity=request.portfolio.equity,
-                            currency=request.currency, at=request.observed_at)
+                        self.shared_risk.reserve(
+                            program,
+                            evidence=request.edge_evidence,
+                            equity=request.portfolio.equity,
+                            currency=request.currency,
+                            at=request.observed_at,
+                            existing_reserved_loss=effective_existing,
+                        )
                         pin_account(self.broker, self.programs.db, request.tenant_id,
                                     allow_create=not configured, program_id=program.program_id)
             except (SharedRiskError, AccountingBindingError) as error:
@@ -554,17 +568,35 @@ class InstitutionalPaperCoordinator:
 
     def _shared_risk_issue(self, program, request, equity) -> str | None:
         try:
-            with self.broker._lock:
-                pin = read_binding(self.broker._connection, request.tenant_id)
-                if pin is not None:
-                    verify_binding_pair(self.broker._connection, self.programs.db, request.tenant_id)
-            if not selected(self.programs.db, request.tenant_id) and self.shared_risk_policy is None and pin is None:
-                return None
-            if request.base_rate != 1:
-                return "shared_risk_single_currency_cash_required"
-            self.shared_risk.check(program, policy=self.shared_risk_policy,
-                ledger_key=self._shared_ledger_key(request.tenant_id), currency=request.currency, equity=equity,
-                evidence=request.edge_evidence)
+            # Keep the selected journal snapshot stable from broker reconciliation
+            # through the capacity check. Lock order matches preparation: journal,
+            # then broker. The nested shared_risk.check uses a savepoint.
+            with self.programs.transaction():
+                effective_reserved = None
+                with self.broker._lock:
+                    pin = read_binding(self.broker._connection, request.tenant_id)
+                    if pin is not None:
+                        capacity = position_linked_capacity(
+                            self.broker._connection, self.programs.db, request.tenant_id
+                        )
+                        effective_reserved = Decimal(capacity["effectiveReservedLoss"])
+                if (
+                    not selected(self.programs.db, request.tenant_id)
+                    and self.shared_risk_policy is None
+                    and pin is None
+                ):
+                    return None
+                if request.base_rate != 1:
+                    return "shared_risk_single_currency_cash_required"
+                self.shared_risk.check(
+                    program,
+                    policy=self.shared_risk_policy,
+                    ledger_key=self._shared_ledger_key(request.tenant_id),
+                    currency=request.currency,
+                    equity=equity,
+                    evidence=request.edge_evidence,
+                    effective_reserved_loss=effective_reserved,
+                )
         except (TypeError, ValueError, ArithmeticError, AttributeError) as error:
             return str(error) if isinstance(error, SharedRiskError) else "shared_risk_measure_unavailable"
         return None

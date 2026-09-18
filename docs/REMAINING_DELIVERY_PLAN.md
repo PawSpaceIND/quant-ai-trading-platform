@@ -154,3 +154,27 @@ independent protection and off-hours behavior without SDK or model network calls
 The immediate component has real daemon-cycle coverage; scheduled lifecycle,
 authenticated rollout, qualified sources and the remaining M03 gates stay open.
 See `INSTITUTIONAL_DAEMON_CYCLE.md` and the exact PR #146 certification.
+
+
+### M01 position-linked effective-capacity continuation
+
+The stacked feat/position-linked-risk-release component keeps every approved
+reservation row as historical evidence while deriving the capacity charge from
+the verified broker/journal pair. Pending or receipt-less DISPATCHING children
+remain fully charged; committed BUY quantity is charged against the internally
+reconciled open paper position. A fully reconciled close can therefore free
+effective capacity without deleting reservation history. Partial closes reduce
+only reconciled exposure, terminal unfilled child quantities no longer consume
+future capacity, and an executed journal child without its broker receipt refuses.
+
+When several entry programmes could own aggregate remaining shares, the derivation
+assigns shares to the highest per-unit reservation first rather than guessing a
+favourable lot allocation. Dispatch holds the execution-journal transaction across
+the broker-derived measure and shared-risk check, preserving the existing
+journal-to-broker lock order. There is no new release store.
+
+This closes the named local position-capacity lifecycle for the selected
+single-currency paper cash path once its PR is reviewed/merged. It does not turn
+internal SQLite reconciliation into external broker-account evidence, add
+distributed fencing, or complete the wider M01 account-authority boundary.
+See POSITION_LINKED_SHARED_RISK.md.
