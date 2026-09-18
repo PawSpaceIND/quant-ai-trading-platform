@@ -126,6 +126,12 @@ jobs:
         working-directory: apps/pramana-ui
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install actual recovery API for disposable browser fixture
+        working-directory: .
+        run: python -m pip install -e '.[dev]'
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

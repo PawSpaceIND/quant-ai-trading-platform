@@ -193,3 +193,14 @@ queued-principal checks across revocation/expiry/rotation. This is not external 
 identity, MFA, secure credential distribution, gateway rollout or off-host credential
 recovery. See `PERSISTENT_OPERATOR_CREDENTIALS.md` for limits and exact test scope.
 The M06 milestone and wider release requirements remain open.
+
+### M06/M09 component — explicit dashboard recovery console
+
+The Activity page now has an opt-in programme inspection, confirmation and recorded
+request-outcome workflow through the existing scoped recovery API. Server-side keys
+are never browser input; tenant/context identity and post-dispatch uncertainty remain
+explicit. Browser tests run the real Python API, persistent credential store, audit
+and paper bridge using disposable state. The read-only OMS panel remains unchanged.
+No deployment, credential issuance, halt clearing, risk release or live order is
+performed. See `OPERATOR_RECOVERY_CONSOLE.md`. Independent human/security/host and
+actor-identity acceptance remain open; the entire M06/M09 milestones are not closed.
