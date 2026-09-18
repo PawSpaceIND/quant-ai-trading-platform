@@ -11,12 +11,14 @@ from pydantic import BaseModel, Field
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
 from quant_ai.agents.health import assess_agent_health
 from quant_ai.agents.runtime import AtlasRuntimeCoordinator
+from quant_ai.api.institutional_recovery import install_recovery_routes
 from quant_ai.briefing.founder import build_founder_brief
 from quant_ai.briefing.models import BriefPeriod, FounderGoals
 from quant_ai.config.runtime import RuntimeMode
 from quant_ai.domain.models import AssetClass, Market, PortfolioSnapshot, Side
 from quant_ai.geography.opportunity import CountryOpportunity
 from quant_ai.integrations.readiness import blockers, readiness_for_mode
+from quant_ai.operations.institutional_operator import InstitutionalRecoveryOperations
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
 from quant_ai.security.api_keys import ApiCredential, ApiKeyRegistry
 from quant_ai.security.rate_limit import SlidingWindowRateLimiter
@@ -121,6 +123,7 @@ class ApiState:
     configured_integrations: set[str]
     atlas_runtimes: dict[str, AtlasRuntimeCoordinator] = field(default_factory=dict)
     latest_evidence: dict[str, tuple[AgentEvidence, ...]] = field(default_factory=dict)
+    institutional_recovery: dict[str, InstitutionalRecoveryOperations] = field(default_factory=dict)
 
 
 def create_app(state: ApiState | None = None) -> FastAPI:
@@ -143,6 +146,8 @@ def create_app(state: ApiState | None = None) -> FastAPI:
         if not runtime.rate_limiter.allow(credential.tenant_id):
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate_limit_exceeded")
         return credential
+
+    install_recovery_routes(app, runtime, authenticated_tenant)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

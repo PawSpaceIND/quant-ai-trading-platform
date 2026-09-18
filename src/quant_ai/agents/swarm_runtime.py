@@ -236,6 +236,19 @@ class SwarmPaperTradingService:
             risk.order, tenant_id, request.observed_at
         ):
             return refuse("re_entry_cooldown_active")
+        return self._dispatch_approved(
+            request, weighted_evidence, proposal, plan, portfolio, stress, risk, lifecycle, tenant_id
+        )
+
+    def _dispatch_approved(self, request, weighted_evidence, proposal, plan, portfolio,
+                           stress, risk, lifecycle, tenant_id):
+        """Default direct-paper transport, reached only after the common admission checks."""
+        def refuse(reason):
+            rejected = self.warden.reject(reason, proposal, tenant_id)
+            lifecycle.transition(OrderState.REJECTED)
+            trace = self.xai_logger.log(request, weighted_evidence, proposal, stress, rejected)
+            return SwarmExecutionResult(proposal, rejected, None, stress, trace, lifecycle.state)
+
         lifecycle.transition(OrderState.RISK_APPROVED)
         oms_client_id: str | None = None
         if self.oms is not None:

@@ -250,9 +250,17 @@ class PaperBrokerService(BrokerAdapter):
                 """
             )
             self._migrate_columns()
+            self._connection.execute("""CREATE TRIGGER IF NOT EXISTS shared_broker_witness_update_blocked
+                BEFORE UPDATE OF shared_risk_binding_sha256 ON paper_accounts
+                WHEN OLD.shared_risk_binding_sha256 IS NOT NULL
+                BEGIN SELECT RAISE(ABORT,'Shared broker witness is immutable'); END""")
+            self._connection.execute("""CREATE TRIGGER IF NOT EXISTS shared_broker_witness_delete_blocked
+                BEFORE DELETE ON paper_accounts WHEN OLD.shared_risk_binding_sha256 IS NOT NULL
+                BEGIN SELECT RAISE(ABORT,'Shared broker witness is immutable'); END""")
 
     _EXPECTED_COLUMNS = (
         ("paper_accounts", "peak_equity", "TEXT"),
+        ("paper_accounts", "shared_risk_binding_sha256", "TEXT"),
         ("paper_positions", "stop_price", "TEXT"),
         ("paper_positions", "take_profit_price", "TEXT"),
         ("paper_positions", "instrument_identity", "TEXT"),
@@ -531,6 +539,8 @@ class PaperBrokerService(BrokerAdapter):
             from quant_ai.governance.runtime_identity import assert_runtime_order_identity
             assert_runtime_order_identity(self, order)
             pilot_order = self._assert_pilot_order(order)
+            from quant_ai.execution.shared_risk_binding import assert_bound_entry
+            shared_binding = assert_bound_entry(self._connection, order, evidence, idempotency_key, now)
             if idempotency_key is not None:
                 inserted = self._connection.execute(
                     "INSERT OR IGNORE INTO paper_idempotency (key,tenant_id,claimed_at) VALUES (?,?,?)",
@@ -750,6 +760,8 @@ class PaperBrokerService(BrokerAdapter):
                         "cash_fees": str(statutory_fees), "status": "FILLED",
                         # What priced this fill: observed market inputs, or an assumption.
                         "friction": self._friction_proof(friction, context)}}
+                if shared_binding is not None:
+                    payload["shared_risk_binding_sha256"] = shared_binding
                 if order_identity is not None:
                     payload["fill"]["instrumentIdentity"] = json.loads(order_identity)
                 if idempotency_key is not None:
@@ -857,6 +869,8 @@ class PaperBrokerService(BrokerAdapter):
             raise ValueError("paper_receipt_unavailable_for_legacy_fill")
         order = order_from_snapshot(receipt["orderIntent"])
         entry = self._decode_ledger_entry(row)
+        from quant_ai.execution.shared_risk_binding import verify_receipt_binding
+        verify_receipt_binding(self._connection, tenant_id, payload, entry.side)
         if (order.tenant_id, order.symbol, order.market, order.asset_class, order.side, order.quantity) != (
             entry.tenant_id, entry.symbol, entry.market, entry.asset_class, entry.side, entry.quantity
         ) or _instrument_identity_for_order(order) != entry.instrument_identity:

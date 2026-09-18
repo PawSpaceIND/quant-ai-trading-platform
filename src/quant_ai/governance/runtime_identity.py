@@ -9,9 +9,10 @@ import hashlib
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
-from quant_ai.domain.models import Side
+from quant_ai.domain.models import OrderIntent, Side
 from quant_ai.instruments.identity import canonical_instrument_identity, instrument_from_identity
 
 SCHEMA = "pramana.runtime_order_identity.v1"
@@ -139,8 +140,16 @@ def assert_runtime_order_identity(broker, order) -> None:
         raise ValueError("runtime_identity_order_out_of_scope")
 
 
-def runtime_identity_entry_issue(daemon) -> str | None:
+@dataclass(frozen=True)
+class InFlightOmsSubmission:
+    """One caller-selected, already-claimed child; not permission to clear uncertainty."""
+    client_order_id: str
+    order: OrderIntent
+
+
+def runtime_identity_entry_issue(daemon, *, in_flight: InFlightOmsSubmission | None = None) -> str | None:
     """Bound-mode entry fence; no order submission and no restriction on protective exits."""
+    from quant_ai.orders.intent import canonical_order_intent
     from quant_ai.orders.oms import DurableOms
     from quant_ai.orders.state import OrderState
     runtime = daemon.scheduler.pipeline.runtime
@@ -156,8 +165,27 @@ def runtime_identity_entry_issue(daemon) -> str | None:
         orders = oms.all_orders(daemon.tenant_id)
         for order in orders:
             oms.verify(order.client_order_id)
-        if oms.open_orders(daemon.tenant_id):
-            return "runtime_identity_oms_recovery_required"
+        open_orders = oms.open_orders(daemon.tenant_id)
+        if in_flight is None:
+            if open_orders:
+                return "runtime_identity_oms_recovery_required"
+        else:
+            # Initial admission and restart still pass no context and refuse all
+            # open orders. Only the final caller's exact freshly submitted child
+            # can coexist with this check; unrelated/uncertain work still blocks.
+            if (type(in_flight) is not InFlightOmsSubmission
+                    or not isinstance(in_flight.order, OrderIntent)
+                    or in_flight.order.tenant_id != daemon.tenant_id
+                    or type(in_flight.client_order_id) is not str
+                    or len(open_orders) != 1):
+                return "runtime_identity_oms_recovery_required"
+            active = open_orders[0]
+            if (active.client_order_id != in_flight.client_order_id
+                    or active.state is not OrderState.SUBMITTED
+                    or active.broker_order_id is not None or active.filled_quantity != 0
+                    or active.average_fill_price is not None
+                    or oms.intent_snapshot(active.client_order_id) != canonical_order_intent(in_flight.order)):
+                return "runtime_identity_oms_recovery_required"
         by_fill = {o.broker_order_id: o for o in orders if o.state is OrderState.FILLED}
         # Detect loss of an OMS file even when a newly empty database uses the same path.
         protected = {row[0] for row in runtime.broker._connection.execute(
