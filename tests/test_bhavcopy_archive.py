@@ -695,3 +695,69 @@ def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_act
         tight, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
     )
     assert reconcile(jumpy.histories).unsignalled_gaps == 1
+
+
+def test_two_companies_that_used_the_same_ticker_do_not_overwrite_each_other():
+    # ISIN keying separates a company that renamed from the name it left behind. This is the
+    # mirror case it does not help with: a ticker released by one company and later taken by
+    # another. Two securities, two ISINs, one symbol - and everything downstream files by
+    # symbol, so the manifest listed the name twice and both wrote to the same dataset file.
+    # Found on a real NSE archive as "SRPL is listed twice on INDIA".
+    days = sessions(200)
+    files = []
+    for index, day in enumerate(days):
+        rows = [nse_row("ANCHOR", day, Decimal(100), Decimal(100), isin="INE030A01011")]
+        if index <= 59:
+            rows.append(nse_row("SRPL", day, Decimal(10), Decimal(10), isin="INE031A01011"))
+        elif index >= 120:
+            rows.append(nse_row("SRPL", day, Decimal(90), Decimal(90), isin="INE032A01011"))
+        files.append(parse_bhavcopy(nse_file(day, rows)))
+
+    result = reconstruct_universe(files, source="NSE bhavcopy archive, test fixture")
+
+    names = sorted(item.symbol for item in result.universe.listings)
+    assert len(names) == len(set(names)), "the manifest must not list a symbol twice"
+    # The current holder keeps the plain ticker; the earlier company is qualified.
+    assert "SRPL" in names
+    qualified = [name for name in names if name.startswith("SRPL~")]
+    assert len(qualified) == 1
+
+    # And it is the *current* holder that keeps it, not whichever sorted first. In this
+    # fixture the second company is still trading at the end and the first ceased at
+    # session 59, so the plain ticker must belong to the one still listed.
+    by_name = {item.symbol: item for item in result.universe.listings}
+    assert by_name["SRPL"].delisted_on is None
+    assert by_name[qualified[0]].delisted_on == days[59] + timedelta(days=1)
+
+    assert any("used by more than one security" in note for note in result.report.caveats)
+
+
+def test_each_security_that_shared_a_ticker_gets_its_own_dataset_file(tmp_path):
+    days = sessions(200)
+    files = []
+    for index, day in enumerate(days):
+        rows = [nse_row("ANCHOR", day, Decimal(100), Decimal(100), isin="INE033A01011")]
+        if index <= 59:
+            rows.append(nse_row("DUP", day, Decimal(10), Decimal(10), isin="INE034A01011"))
+        elif index >= 120:
+            rows.append(nse_row("DUP", day, Decimal(90), Decimal(90), isin="INE035A01011"))
+        files.append(parse_bhavcopy(nse_file(day, rows)))
+    result = reconstruct_universe(files, source="NSE bhavcopy archive, test fixture")
+
+    summary = write_study_inputs(result, tmp_path)
+
+    written = sorted(path.name for path in (tmp_path / "datasets").iterdir())
+    # Three securities, three files. Keyed by symbol alone this was two, with one company's
+    # prices silently replaced by the other's while the count still said three.
+    assert len(written) == 3 == summary["files_written"]
+    assert len(set(written)) == 3
+    universe = load_universe_manifest(summary["manifest"])
+    assert len(universe.listings) == 3
+
+    # And the manifest and the datasets agree on the names, which is what the study joins on.
+    manifest_names = {item.symbol for item in universe.listings}
+    dataset_names = {
+        json.loads((tmp_path / "datasets" / name).read_text())["provenance"]["instrument"]["symbol"]
+        for name in written
+    }
+    assert manifest_names == dataset_names

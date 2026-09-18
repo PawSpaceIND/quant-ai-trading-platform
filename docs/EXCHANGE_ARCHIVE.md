@@ -92,6 +92,13 @@ Three consequences, all reported in `ReconstructionReport.caveats`:
 - **Early listings are left-censored.** A security already trading on the archive's first
   session has a real listing date that is earlier and unknown. Those `listed_on` values
   are not IPO dates.
+- **A ticker can outlive its company.** ISIN keying separates a company that renamed from
+  the name it left behind, but not the mirror case: a ticker released by one company and
+  later taken by another. Two securities, two ISINs, one symbol — and everything downstream
+  files by symbol, so the manifest listed the name twice and both wrote to the same dataset
+  file, one silently overwriting the other. The most recent holder keeps the plain ticker;
+  earlier holders are qualified, so `SRPL~INE...` is an older company that once traded as
+  `SRPL`. Reported in `caveats`.
 - **Identity is by ISIN, not ticker.** A rename moves the ticker, so symbol keying records
   one company dying and another being born on the same day. `test_without_an_isin_the_same_
   rename_fabricates_a_death_and_a_birth` demonstrates that damage directly. Files with no

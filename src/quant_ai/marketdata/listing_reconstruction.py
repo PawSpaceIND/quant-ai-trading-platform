@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
@@ -66,6 +66,10 @@ class InstrumentHistory:
     symbols: tuple
     bars: tuple
     keyed_by_isin: bool
+    #: The name this security is filed under downstream, unique across the archive. Equal to
+    #: :attr:`symbol` unless another security used the same ticker at another time - see
+    #: :func:`_disambiguate`.
+    manifest_symbol: str = ""
 
     @property
     def symbol(self) -> str:
@@ -154,6 +158,41 @@ class ReconstructedUniverse:
         }
 
 
+def _disambiguate(histories: list) -> tuple:
+    """Give every security a name of its own, even when two of them shared a ticker.
+
+    ISIN keying separates a company that renamed from the name it left behind. It does not
+    help with the mirror case: a ticker released by one company and later taken by another.
+    Those are two securities with two ISINs and one symbol, and everything downstream is
+    filed by symbol - so the manifest listed the name twice and, worse, both wrote to the
+    same dataset file and one silently overwrote the other. Found on a real NSE archive as
+    ``SRPL is listed twice on INDIA``.
+
+    The security that held the ticker most recently keeps it, so ordinary reports read
+    naturally. Earlier holders are qualified by the identity that actually distinguishes
+    them. They are returned so the caller can say this happened rather than leave a reader
+    wondering what ``SRPL~INE...`` is.
+    """
+    by_symbol: dict = {}
+    for history in histories:
+        by_symbol.setdefault(history.symbol, []).append(history)
+
+    named: list = []
+    reused: list = []
+    for symbol, sharing in by_symbol.items():
+        if len(sharing) == 1:
+            named.append(replace(sharing[0], manifest_symbol=symbol))
+            continue
+        # Most recent first: the current holder of the ticker is the one a reader means.
+        sharing.sort(key=lambda item: item.last_day, reverse=True)
+        named.append(replace(sharing[0], manifest_symbol=symbol))
+        for older in sharing[1:]:
+            named.append(replace(older, manifest_symbol=f"{symbol}~{older.key}"))
+        reused.append((symbol, tuple(item.key for item in sharing)))
+    named.sort(key=lambda item: item.manifest_symbol)
+    return named, tuple(reused)
+
+
 def _rows(files: Iterable) -> list:
     collected: list = []
     for item in files:
@@ -223,20 +262,28 @@ def reconstruct_universe(
         for bar in deduped:
             if not symbols or symbols[-1] != bar.symbol:
                 symbols.append(bar.symbol)
-        history = InstrumentHistory(
-            key=key,
-            isin=deduped[-1].isin,
-            exchange=deduped[-1].exchange,
-            symbols=tuple(symbols),
-            bars=tuple(deduped),
-            keyed_by_isin=bool(deduped[-1].isin),
+        histories.append(
+            InstrumentHistory(
+                key=key,
+                isin=deduped[-1].isin,
+                exchange=deduped[-1].exchange,
+                symbols=tuple(symbols),
+                bars=tuple(deduped),
+                keyed_by_isin=bool(deduped[-1].isin),
+            )
         )
-        histories.append(history)
 
+    if not histories:
+        raise ValueError(
+            f"no security traded for at least {minimum_sessions} sessions in this archive"
+        )
+
+    histories, reused = _disambiguate(histories)
+    for history in histories:
         ceased = history.last_day < active_from
         listings.append(
             Listing(
-                symbol=history.symbol,
+                symbol=history.manifest_symbol,
                 market=market,
                 listed_on=history.first_day,
                 # +1 day so the final session it traded on is still tradeable:
@@ -244,11 +291,6 @@ def reconstruct_universe(
                 delisted_on=history.last_day + timedelta(days=1) if ceased else None,
                 delisting_reason=CEASED_REASON if ceased else "",
             )
-        )
-
-    if not listings:
-        raise ValueError(
-            f"no security traded for at least {minimum_sessions} sessions in this archive"
         )
 
     left_censored = sum(1 for item in histories if item.first_day == coverage_from)
@@ -264,6 +306,15 @@ def reconstruct_universe(
             f"{left_censored} securities were already trading on the first session in the "
             "archive, so their real listing dates are earlier and unknown here. Studies must "
             "not read those listed_on values as IPO dates."
+        )
+    if reused:
+        caveats.append(
+            f"{len(reused)} tickers were used by more than one security at different times "
+            "and would otherwise have collided in the manifest and overwritten each other's "
+            "datasets. The most recent holder keeps the plain symbol; earlier ones are "
+            "qualified by their identity, so a name like SYMBOL~INE... is an older company "
+            f"that once traded under SYMBOL: {', '.join(symbol for symbol, _ in reused[:5])}"
+            + (f" and {len(reused) - 5} more" if len(reused) > 5 else "")
         )
     without_isin = sum(1 for item in histories if not item.keyed_by_isin)
     if without_isin:
@@ -322,7 +373,7 @@ def _dataset_payload(history: InstrumentHistory, market: str) -> dict:
     return {
         "provenance": {
             "instrument": {
-                "symbol": history.symbol,
+                "symbol": history.manifest_symbol,
                 "market": market,
                 "asset_class": AssetClass.EQUITY.value,
                 "currency": "INR",
@@ -367,7 +418,7 @@ def write_study_inputs(
     for history in reconstructed.histories:
         safe = "".join(
             character if character.isalnum() or character in "-_" else "_"
-            for character in f"{history.exchange}_{history.symbol}"
+            for character in f"{history.exchange}_{history.manifest_symbol}"
         )
         path = datasets / f"{safe}.json"
         path.write_text(
