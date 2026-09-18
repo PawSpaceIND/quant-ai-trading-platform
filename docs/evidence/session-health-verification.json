@@ -1,0 +1,193 @@
+{
+  "base": "bf3812088e4308eb5372203669d9e07cd8e74562",
+  "scope": "Synthetic persisted health-observation verification only; not target-host or live-trading acceptance",
+  "new_cases": {
+    "test_health_session_alignment": 43,
+    "test_health_session_guards": 8
+  },
+  "focused": {
+    "passed": 218,
+    "failed": 0,
+    "seconds": 6.89
+  },
+  "guard_pairs": [
+    {
+      "id": "partial_feed_not_wholly_blind",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_one_stale_among_fresh_open_instruments_stays_partial_not_blind",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "closed_market_exclusion",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_closed_usa_entry_cannot_hide_a_dead_open_india_feed[True]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "exchange_session_selection",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_evening_commodity_session_uses_its_existing_exchange_clock",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "watchlist_loop_bound",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_watchlist_loop_bound_and_unknown_state_are_explicit",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 3,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "default_holiday_calendar",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_default_equity_holiday_does_not_report_a_dead_feed",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "unknown_not_fresh",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_unresolvable_entry_is_unknown_not_a_crash_or_fresh_claim",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 6,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "calendar_invalid_availability",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_invalid_calendar_configuration_returns_fixed_unhealthy_reason",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 7,
+        "failures": 7,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "configured_calendar_override",
+      "path": "src/quant_ai/operations/health.py",
+      "test": "tests/test_health_session_alignment.py::test_environment_holidays_match_the_existing_daemon_parser",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    }
+  ],
+  "liveExecutionEnabled": false,
+  "productionDeploymentPerformed": false
+}

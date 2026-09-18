@@ -1,0 +1,215 @@
+{
+  "base": "bf3812088e4308eb5372203669d9e07cd8e74562",
+  "scope": "synthetic approval/readiness boundary verification; not live acceptance",
+  "unchanged_main_new_behavior_cases": {
+    "failed": 62,
+    "passed": 9
+  },
+  "focused": {
+    "passed": 98,
+    "additional_subtests": 14,
+    "seconds": 5.18
+  },
+  "guard_pairs": [
+    {
+      "id": "hard_live_routing_refusal",
+      "path": "src/quant_ai/brokers/router.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_both_sides_remain_live_disabled_even_with_true_approvals",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "order_scope_binding",
+      "path": "src/quant_ai/brokers/router.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_bad_scope_does_not_consume_an_actual_paper_order_id",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "both_live_approvals",
+      "path": "src/quant_ai/compliance/gates.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_typed_false_approvals_never_pass_live_compliance",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 3,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "strict_readiness_status",
+      "path": "src/quant_ai/operations/readiness.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_readiness_does_not_accept_truthy_status_coercion[false]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "typed_execution_scope",
+      "path": "src/quant_ai/compliance/gates.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_unknown_or_untyped_modes_refuse[PAPER]",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "snapshot_inventory",
+      "path": "src/quant_ai/operations/readiness.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_caller_list_cannot_change_a_frozen_report",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "unique_check_names",
+      "path": "src/quant_ai/operations/readiness.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_duplicate_readiness_names_refuse_instead_of_overwriting_meaning",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "boolean_approval_boundary",
+      "path": "src/quant_ai/compliance/gates.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_malformed_approval_also_refuses_paper_dispatch",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    },
+    {
+      "id": "canonical_check_names",
+      "path": "src/quant_ai/operations/readiness.py",
+      "test": "tests/test_approval_readiness_boundaries.py::test_readiness_names_are_nonempty_canonical_strings",
+      "certified": true,
+      "control": {
+        "exit": 0,
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "mutant": {
+        "exit": 1,
+        "tests": 6,
+        "failures": 6,
+        "errors": 0,
+        "skipped": 0
+      },
+      "copy_restored": true,
+      "checkout_unchanged": true
+    }
+  ],
+  "liveExecutionEnabled": false,
+  "productionDeploymentPerformed": false
+}
