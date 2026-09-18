@@ -40,6 +40,56 @@ nothing is refused rather than defaulted, because guessing produces a report, a 
 entry and a proof that all name one security while the prices inside belong to another, with
 nothing in the output saying so.
 
+## Studying a universe rather than one name
+
+`run_universe_study` takes a directory of datasets and a universe manifest, and is the only
+arrangement in which a green light is reachable.
+
+```json
+{
+  "schema": "pramana.universe_manifest.v1",
+  "source": "NSE equity listing history, exchange archive 2016-2020",
+  "coverage_from": "2016-01-01",
+  "coverage_to": "2020-06-01",
+  "listings": [
+    {"symbol": "INFY", "market": "INDIA", "listed_on": "2016-01-01"},
+    {"symbol": "XYZ", "market": "INDIA", "listed_on": "2016-01-01",
+     "delisted_on": "2018-06-01", "delisting_reason": "insolvency"}
+  ]
+}
+```
+
+`PointInTimeUniverse` could always express a universe that remembers its failures. Nothing
+could build one from anything but a Python literal, so every study in practice ran on
+whatever instruments had files on disk — today's survivors. The manifest is the seam through
+which real listing history enters, and it is a plain file rather than a vendor client: the
+delisting record is the scarce thing, and it can come from an exchange archive, a broker
+instrument master or a paid vendor without this repository depending on which.
+
+A manifest must name its source. A universe with no stated provenance cannot be told from one
+assembled from memory.
+
+### What it enforces
+
+**Bars after a delisting are dropped and counted.** A name delisted in 2018 contributes its
+real history and then stops. The count is reported, because bars priced after a delisting are
+a data-integrity problem and a study that silently trades them is the survivorship the
+universe exists to stop.
+
+**A dataset outside the manifest is skipped and recorded as skipped**, never studied.
+Otherwise survivorship arrives by the back door as a file nobody declared.
+
+**The search is charged per feature and per name.** Five instruments and twenty-four features
+is 120 trials, not 24, and every per-name study in the report carries that number. Reporting
+the best of fifty names is fifty chances to find something; without this, adding instruments
+would manufacture the result that adding features is already prevented from manufacturing.
+
+### The counter-test
+
+`test_the_same_data_without_delisting_records_is_blocked` runs identical bars through two
+manifests — one recording the delisting, one not. Same prices, same statistics. The honest
+one passes; the flattering one is refused as `survivor_only`.
+
 ## What it is not
 
 A feature study over one instrument's daily bars. No position sizing, no cost model, no
