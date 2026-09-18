@@ -15,6 +15,13 @@ from pathlib import Path
 from random import Random
 
 from quant_ai.config import paths
+from quant_ai.validation.deflated_sharpe import (
+    deflated_sharpe_ratio,
+    expected_maximum_sharpe,
+    minimum_track_record_length,
+    sharpe_ratio,
+)
+from quant_ai.validation.harness import trial_sharpe_variance
 from quant_ai.validation.trial_register import record_trials, register_summary
 from quant_ai.validation.walk_forward import walk_forward_splits
 
@@ -87,7 +94,8 @@ def evaluate(prices: list[float], *, train: int = 60, test: int = 20,
         forward.extend(values)
         folds.append({"train": [split.train_start, split.train_end], "test": [split.test_start, split.test_end],
                       "selected_window": selected, "training_scores": scores, "test_metrics": path_metrics(values)})
-    final_scores = {w: path_metrics(strategy_returns(prices, max(windows), cutoff, w, cost_bps))["net_return"] for w in windows}
+    final_returns = {w: strategy_returns(prices, max(windows), cutoff, w, cost_bps) for w in windows}
+    final_scores = {w: path_metrics(final_returns[w])["net_return"] for w in windows}
     chosen = max(windows, key=lambda w: (final_scores[w], -w))
     held_out = strategy_returns(prices, cutoff, len(prices), chosen, cost_bps)
     baseline = [prices[t] / prices[t - 1] - 1 for t in range(cutoff, len(prices))]
@@ -99,11 +107,75 @@ def evaluate(prices: list[float], *, train: int = 60, test: int = 20,
             "candidate_trials": len(windows) * (len(folds) + 1), "folds": folds,
             "walk_forward": path_metrics(forward), "holdout": {"range": [cutoff, len(prices)], "selected_window": chosen, **path_metrics(held_out)},
             "buy_and_hold": path_metrics(baseline), "cash_baseline": {"net_return": 0},
+            # Retained so the selection bias can be measured after the register is updated:
+            # the holdout path itself, and the Sharpe of every candidate the search evaluated
+            # rather than only the one it kept. Dropping the losers shrinks the measured spread
+            # and therefore lowers the bar, which is the same mistake as not counting them.
+            "holdout_returns": held_out,
+            "candidate_sharpes": {str(w): _safe_sharpe(final_returns[w]) for w in windows},
             "path_stress": block_paths(held_out), "promotion_approved": False,
             "limitations": ["Cost estimate is a configurable all-in turnover assumption, not a broker fill model.",
                             "Input must be licensed, point-in-time and corporate-action-consistent.",
-                            "Trying another configuration reuses the holdout; every run is appended to the trial register and no reported statistic here is corrected for that multiplicity.",
+                            "Trying another configuration reuses the holdout; every run is appended to the trial register and `selection_corrected` deflates the holdout Sharpe against the cumulative candidate count. Path, cost and regime statistics remain uncorrected.",
                             "This baseline does not validate AI decisions, intrabar fills or future profits."]}
+
+
+def _safe_sharpe(returns: list[float]) -> float | None:
+    """None when a candidate has no dispersion to measure, rather than a fabricated zero."""
+    try:
+        return sharpe_ratio(returns)
+    except ValueError:
+        return None
+
+
+def selection_corrected(report: dict, cumulative_trials: int) -> dict:
+    """Grade the holdout against the whole search, not against this one run.
+
+    The count that matters is the register's CUMULATIVE total, not this report's
+    ``candidate_trials``. Re-running the study over another window reuses the same holdout,
+    so the tenth run of four configurations has looked at that holdout forty times, and a
+    statistic corrected only for the four is still wrong. The register exists precisely to
+    remember that, and this is the first thing that reads it back.
+    """
+    returns = [float(value) for value in report.get("holdout_returns", [])]
+    spread = [value for value in report.get("candidate_sharpes", {}).values() if value is not None]
+    if len(returns) < 2 or len(spread) < 2:
+        return {
+            "corrected": False,
+            "reason": "too few holdout observations or evaluated candidates to measure selection bias",
+        }
+    try:
+        variance = trial_sharpe_variance(spread)
+        observed = sharpe_ratio(returns)
+        benchmark = expected_maximum_sharpe(cumulative_trials, variance)
+        deflated = deflated_sharpe_ratio(
+            returns, trials=cumulative_trials, trial_sharpe_variance=variance
+        )
+        needed = minimum_track_record_length(returns, benchmark_sharpe=benchmark)
+    except ValueError as error:
+        return {"corrected": False, "reason": str(error)}
+    return {
+        "corrected": True,
+        "cumulative_candidate_trials": cumulative_trials,
+        "observed_sharpe": observed,
+        "selection_benchmark_sharpe": benchmark,
+        "deflated_sharpe": deflated,
+        "minimum_track_record": needed,
+        "observations": len(returns),
+        # The gate is the deflated Sharpe alone. An earlier draft also required
+        # len(returns) >= minimum_track_record, which reads like a second check and is the
+        # same inequality rearranged: PSR >= 0.95 at a benchmark is algebraically identical
+        # to n >= MinTRL at that benchmark and 95% confidence. Two names for one condition
+        # invite a later edit that changes one and not the other. The number is still
+        # reported because "you need N observations" is actionable in a way a probability
+        # is not.
+        "clears_statistical_gate": deflated >= 0.95,
+        "limitation": (
+            "Corrects the holdout Sharpe for the number of candidates the register has seen. "
+            "It does not correct for candidates evaluated outside the register, nor for "
+            "survivorship in the input series."
+        ),
+    }
 
 
 def load_prices(source: Path) -> list[float]:
@@ -144,6 +216,9 @@ def main() -> None:
         data_sha256=report["data_sha256"],
     )
     report["trial_register"] = register_summary(register, study=STUDY)
+    report["selection_corrected"] = selection_corrected(
+        report, int(report["trial_register"]["candidate_trials"])
+    )
     report["report_sha256"] = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x") as file:
@@ -153,6 +228,8 @@ def main() -> None:
         "promotion_approved": False,
         "trial_register": str(register),
         "cumulative_candidate_trials": report["trial_register"]["candidate_trials"],
+        "deflated_sharpe": report["selection_corrected"].get("deflated_sharpe"),
+        "clears_statistical_gate": report["selection_corrected"].get("clears_statistical_gate", False),
     }))
 
 

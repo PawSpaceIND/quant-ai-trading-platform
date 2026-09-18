@@ -96,6 +96,45 @@ The escape hatch is `PromotionPolicy(require_selection_correction=False)`, for a
 pre-registered single hypothesis. It has to be stated in the policy, where it is visible in
 the signed record, rather than being the default.
 
+## The baseline study corrects itself
+
+`validation/experiment.py` was already the study runner and already registered every run in
+the trial register. Its own report listed the gap: "no reported statistic here is corrected
+for that multiplicity". The register was counting and nothing read the count back.
+
+`selection_corrected` now deflates the holdout Sharpe against the register's **cumulative**
+candidate count, not this run's. That distinction is the point: re-running the study with
+another configuration reuses the same holdout, so the tenth run of four configurations has
+looked at it forty times, and a statistic corrected only for the four is still wrong.
+
+The same study on a pure random walk, re-run against one holdout:
+
+| cumulative trials | bar the search sets | deflated Sharpe |
+| ---: | ---: | ---: |
+| 64 | 0.0539 | 0.495 |
+| 128 | 0.0628 | 0.461 |
+| 192 | 0.0714 | 0.421 |
+| 256 | 0.0836 | 0.361 |
+| 320 | 0.0961 | 0.305 |
+
+The first run reported a +1.9% holdout return. The bar a 64-candidate search sets is higher
+than the Sharpe it achieved, so the gate refuses it — correctly, because no edge exists in
+the input by construction.
+
+`candidate_sharpes` keeps every candidate the search evaluated, including the losers.
+Dropping them shrinks the measured spread and therefore lowers the bar, which is the same
+mistake as not counting the trials.
+
+## One condition, not two
+
+The gate is the deflated Sharpe alone. An earlier draft also required
+`observations >= minimum_track_record`, which reads like a second check and is the same
+inequality rearranged: PSR ≥ 0.95 at a benchmark is algebraically identical to n ≥ MinTRL at
+that benchmark and 95% confidence. Two names for one condition invite a later edit that
+changes one and not the other. The track record length is still reported, because "you need
+N observations" is actionable in a way a probability is not, and a test asserts the
+equivalence so the second check is not added back.
+
 ## What clearing it does not mean
 
 Nothing here approves anything. A cleared statistical gate means a result is not obviously
