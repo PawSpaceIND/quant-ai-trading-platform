@@ -50,9 +50,10 @@ def test_the_shipped_directives_are_what_the_pilot_would_trade(monkeypatch):
     # survived - and the ETF restriction quietly explained the two missing instruments.
     module = load_module(monkeypatch)
 
-    payload, symbols = module.load_directives()
+    payload, instruments = module.load_directives()
 
-    assert symbols == ("INFY", "TCS", "RELIANCE", "GOLDBEES", "SILVERBEES")
+    assert instruments == (("NSE", "INFY"), ("NSE", "TCS"), ("NSE", "RELIANCE"),
+                           ("NSE", "GOLDBEES"), ("NSE", "SILVERBEES"))
     assert payload["max_open_positions"] == 5
     assert set(payload["allowed_asset_classes"]) == {"EQUITY", "ETF"}
     assert payload["starting_capital"] == 100000
@@ -65,12 +66,15 @@ def test_changing_the_directives_changes_the_universe(monkeypatch, tmp_path):
     path = write(tmp_path, directives([("TCS", "EQUITY"), ("ITC", "EQUITY")]))
     module = load_module(monkeypatch, path)
 
-    _, symbols = module.load_directives()
+    _, instruments = module.load_directives()
 
-    assert symbols == ("TCS", "ITC")
+    assert instruments == (("NSE", "TCS"), ("NSE", "ITC"))
 
 
-def test_a_non_nse_instrument_is_not_subscribed_through_the_nse_quote_path(monkeypatch, tmp_path):
+def test_a_commodity_reaches_the_pilot_on_its_own_exchange(monkeypatch, tmp_path):
+    """The launcher used to drop every non-NSE line before the engine saw it, so an MCX
+    metal - live for eight hours after the cash market shuts - was judged by the NSE clock
+    and simply never looked at. The calendar downstream already keeps MCX hours."""
     payload = directives([("TCS", "EQUITY")])
     payload["watchlist"].append(
         {"symbol": "GOLD", "market": "INDIA", "asset_class": "COMMODITY",
@@ -78,9 +82,37 @@ def test_a_non_nse_instrument_is_not_subscribed_through_the_nse_quote_path(monke
     )
     module = load_module(monkeypatch, write(tmp_path, payload))
 
-    _, symbols = module.load_directives()
+    _, instruments = module.load_directives()
 
-    assert symbols == ("TCS",)
+    assert instruments == (("NSE", "TCS"), ("MCX", "GOLD"))
+
+
+def test_an_exchange_with_no_published_session_stops_the_launcher(monkeypatch, tmp_path):
+    """An unknown code falls back to the venue session, which is the NSE cash clock. That
+    is the silent mis-timing this launcher exists to prevent, so refuse rather than guess."""
+    payload = directives([("TCS", "EQUITY")])
+    payload["watchlist"].append(
+        {"symbol": "XAUUSD", "market": "INDIA", "asset_class": "COMMODITY",
+         "currency": "INR", "exchange": "COMEX"}
+    )
+    module = load_module(monkeypatch, write(tmp_path, payload))
+
+    with pytest.raises(RuntimeError, match="no published session"):
+        module.load_directives()
+
+
+def test_a_symbol_on_two_exchanges_stops_the_launcher(monkeypatch, tmp_path):
+    """The calendar maps symbol to exchange, so the same symbol twice would leave part of
+    the book judged by the wrong clock however the duplicate was spelled."""
+    payload = directives([("TCS", "EQUITY")])
+    payload["watchlist"].append(
+        {"symbol": "TCS", "market": "INDIA", "asset_class": "EQUITY",
+         "currency": "INR", "exchange": "BSE"}
+    )
+    module = load_module(monkeypatch, write(tmp_path, payload))
+
+    with pytest.raises(RuntimeError, match="twice"):
+        module.load_directives()
 
 
 def test_an_unreadable_directives_file_stops_the_launcher(monkeypatch, tmp_path):
@@ -92,10 +124,10 @@ def test_an_unreadable_directives_file_stops_the_launcher(monkeypatch, tmp_path)
         module.load_directives()
 
 
-def test_directives_naming_no_nse_instruments_stop_the_launcher(monkeypatch, tmp_path):
+def test_directives_naming_no_instruments_stop_the_launcher(monkeypatch, tmp_path):
     module = load_module(monkeypatch, write(tmp_path, directives([])))
 
-    with pytest.raises(RuntimeError, match="no NSE instruments"):
+    with pytest.raises(RuntimeError, match="no instruments"):
         module.load_directives()
 
 
@@ -126,3 +158,5 @@ def test_the_launcher_no_longer_carries_its_own_universe():
     assert '"max_open_positions": 3' not in source
     assert '"allowed_asset_classes": ["EQUITY"]' not in source
     assert "json.dumps(directives)" in source
+    # The quote and token map are keyed by the operator's exchange, not a compiled-in one.
+    assert '"NSE:" + symbol' not in source
