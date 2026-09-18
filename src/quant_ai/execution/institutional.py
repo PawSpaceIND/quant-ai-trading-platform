@@ -9,17 +9,24 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 
 from quant_ai.accounting.protective import ProtectiveAccountingReport, ProtectiveExitAccounting
 from quant_ai.accounting.trading import TradingAccounting
 from quant_ai.agents.swarm import TradeProposal
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.decision.edge import CalibratedEdgeGate, EdgeDecision, EdgeEvidence
-from quant_ai.domain.models import OrderIntent, PortfolioSnapshot, Side
+from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
+from quant_ai.execution.accounting_binding import (
+    AccountingBindingError,
+    select_binding,
+    verify_binding,
+)
 from quant_ai.execution.derivative_margin import MARGINED_FUTURES_ASSET_CLASSES
 from quant_ai.execution.paper_ledger import PaperBrokerDatabaseLockedError, PaperBrokerService
 from quant_ai.execution.planner import (
@@ -35,7 +42,26 @@ from quant_ai.execution.program import (
     ProgramState,
     SliceState,
 )
-from quant_ai.orders.intent import bound_identity, canonical_order_intent
+from quant_ai.execution.request_context import ExecutionContextError, decode_context, encode_context
+from quant_ai.execution.risk_authority import (
+    authority_digest,
+    bound_policy,
+    build_authority,
+    parse_authority,
+    policy_values,
+)
+from quant_ai.execution.shared_risk import (
+    SharedRiskError,
+    SharedRiskPolicy,
+    SharedRiskReservations,
+    selected,
+)
+from quant_ai.execution.shared_risk_binding import (
+    pin_account,
+    position_linked_capacity,
+    read_binding,
+)
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -270,11 +296,23 @@ class InstitutionalPaperCoordinator:
         edge_gate: CalibratedEdgeGate | None = None,
         optimizer: StrategyPortfolioOptimizer | None = None,
         execution_planner: ExecutionPlanner | None = None,
+        shared_risk_policy: SharedRiskPolicy | None = None,
     ) -> None:
         self.broker = broker
         self.oms = oms
         self.programs = programs
         self.accounting = accounting
+        if (not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or not accounting.tenant_id or accounting.tenant_id != accounting.tenant_id.strip()):
+            raise ValueError("institutional_accounting_scope_invalid")
+        # This coordinator owns one explicitly selected accounting namespace/store.
+        # These local identities are not external broker or operator authentication.
+        self._accounting_tenant_id = accounting.tenant_id
+        self._accounting_journal = accounting.journal
+        self._accounting_connection = accounting.journal.db
+        self._accounting_base_currency = accounting.journal.base_currency
+        self._accounting_binding: str | None = None
         self.warden = warden
         self.snapshot_provider = snapshot_provider
         self.factor_position_provider = factor_position_provider
@@ -283,21 +321,88 @@ class InstitutionalPaperCoordinator:
         self.edge_gate = edge_gate or CalibratedEdgeGate()
         self.optimizer = optimizer or StrategyPortfolioOptimizer()
         self.execution_planner = execution_planner or ExecutionPlanner()
+        self.shared_risk_policy = shared_risk_policy
+        self.shared_risk = SharedRiskReservations(programs)
         self._requests: dict[str, InstitutionalTradeRequest] = {}
         self._orders: dict[str, OrderIntent] = {}
+        self._source_requests: dict[str, InstitutionalTradeRequest] = {}
+
+    def _assert_accounting_scope(self, tenant_id: str) -> None:
+        accounting = self.accounting
+        if (type(tenant_id) is not str or tenant_id != self._accounting_tenant_id
+                or not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or accounting.tenant_id != self._accounting_tenant_id
+                or accounting.journal is not self._accounting_journal
+                or accounting.journal.db is not self._accounting_connection
+                or accounting.journal.base_currency != self._accounting_base_currency):
+            raise ValueError("institutional_accounting_scope_mismatch")
+        if self._accounting_binding is not None:
+            verify_binding(self._accounting_binding, self._accounting_journal, tenant_id)
+
+    def _check_retained_accounting(self, tenant_id: str) -> str | None:
+        scopes = self.programs.accounting_scopes(tenant_id)
+        if len(scopes) > 1:
+            raise AccountingBindingError("institutional_accounting_binding_mismatch")
+        if scopes:
+            verify_binding(scopes[0], self._accounting_journal, tenant_id)
+            self._accounting_binding = scopes[0]
+            return scopes[0]
+        return None
+
+    def _prepare_accounting_binding(self, tenant_id: str) -> str:
+        # Caller holds the programme writer transaction. Competing coordinators
+        # must see the first committed selection before preparing another parent.
+        self._assert_accounting_scope(tenant_id)
+        scope = self._check_retained_accounting(tenant_id)
+        if scope is None:
+            scope = select_binding(self._accounting_journal, tenant_id)
+        self._accounting_binding = scope
+        return scope
+
+    def _match_program_accounting(self, program) -> None:
+        if program.tenant_id != self._accounting_tenant_id:
+            raise ValueError("execution_program_runtime_context_mismatch")
+        raw = program.accounting_scope_payload
+        if raw is not None:
+            verify_binding(raw, self._accounting_journal, program.tenant_id)
+            self._accounting_binding = raw
 
     def prepare(self, request: InstitutionalTradeRequest) -> InstitutionalPreparation:
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+            self._check_retained_accounting(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
+        original_request = request
+        initial_request_digest = request_fingerprint(request)
         proposal = request.proposal
         held = request.portfolio.symbol_quantity.get(proposal.symbol, 0)
         de_risking = (
             proposal.side is Side.SELL and held > 0 and proposal.quantity <= held
         )
+        approved_policy = None
         edge: EdgeDecision | None = None
         allocation: PortfolioOptimizationResult | None = None
+        approved_shared_policy = None
         if not de_risking:
+            try:
+                if self.shared_risk_policy is not None:
+                    if not isinstance(self.shared_risk_policy, SharedRiskPolicy):
+                        raise SharedRiskError("shared_risk_configuration_required")
+                    approved_shared_policy = replace(self.shared_risk_policy)
+            except (TypeError, ValueError, ArithmeticError):
+                return self._reject(InstitutionalStage.RISK, "shared_risk_configuration_invalid")
             if request.edge_evidence is None:
                 return self._reject(InstitutionalStage.EDGE, "edge_evidence_required")
-            edge = self.edge_gate.evaluate(request.edge_evidence)
+            try:
+                values = policy_values(self.edge_gate.policy)
+                approved_policy = replace(self.edge_gate.policy)
+                if values != policy_values(approved_policy):
+                    raise ValueError("execution_risk_policy_changed")
+            except (TypeError, ValueError, ArithmeticError, AttributeError):
+                return self._reject(InstitutionalStage.EDGE, "execution_risk_policy_unavailable")
+            edge = CalibratedEdgeGate(approved_policy).evaluate(request.edge_evidence)
             if not edge.approved:
                 return InstitutionalPreparation(
                     False, InstitutionalStage.EDGE, ";".join(edge.reasons), edge=edge
@@ -360,16 +465,85 @@ class InstitutionalPaperCoordinator:
             f"{request.tenant_id}|{proposal.decision_id}|{plan.algorithm.value}".encode()
         ).hexdigest()[:32]
         parent_order = replace(risk.order, strategy_id=request.strategy_id)
-        program = self.programs.create(
-            program_id=program_id,
-            tenant_id=request.tenant_id,
-            decision_id=proposal.decision_id,
-            symbol=proposal.symbol,
-            plan=plan,
-            runtime_context_sha256=request_fingerprint(request),
-            created_at=request.observed_at,
-            parent_order_payload=canonical_order_intent(parent_order),
-        )
+        if not de_risking:
+            try:
+                changed = policy_values(self.edge_gate.policy) != policy_values(approved_policy)
+            except (TypeError, ValueError, ArithmeticError, AttributeError):
+                changed = True
+            if changed:
+                return self._reject(InstitutionalStage.EDGE, "execution_risk_policy_changed")
+        parent_payload = canonical_order_intent(parent_order)
+        authority = build_authority(program_id=program_id, tenant_id=request.tenant_id,
+            request_sha256=request_fingerprint(request), parent_payload=parent_payload,
+            policy=approved_policy)
+        if request_fingerprint(request) != initial_request_digest:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, "execution_context_request_changed")
+        try:
+            context_payload = encode_context(request, plan)
+            # Separate both caller-owned and returned objects from the inputs bound
+            # in memory. The persisted payload is immutable and can be decoded afresh.
+            saved = decode_context(context_payload)
+            request = saved.request
+        except ExecutionContextError as error:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, str(error))
+        # Providers/planners can run between admission and durable preparation.
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
+        program_args = {"program_id": program_id, "tenant_id": request.tenant_id,
+            "decision_id": proposal.decision_id, "symbol": proposal.symbol, "plan": plan,
+            "runtime_context_sha256": authority_digest(authority), "created_at": request.observed_at,
+            "parent_order_payload": parent_payload, "risk_authority_payload": authority,
+            "context_payload": context_payload}
+        if de_risking:
+            try:
+                with self.programs.transaction():
+                    program_args["accounting_scope_payload"] = self._prepare_accounting_binding(request.tenant_id)
+                    program = self.programs.create(**program_args)
+            except AccountingBindingError as error:
+                return self._reject(InstitutionalStage.RISK, str(error))
+        else:
+            try:
+                # Capacity and the parent/slices commit together in this one journal.
+                with self.programs.transaction():
+                    program_args["accounting_scope_payload"] = self._prepare_accounting_binding(request.tenant_id)
+                    current_shared = (replace(self.shared_risk_policy)
+                        if isinstance(self.shared_risk_policy, SharedRiskPolicy) else self.shared_risk_policy)
+                    if current_shared != approved_shared_policy:
+                        raise SharedRiskError("shared_risk_configuration_changed")
+                    effective_existing = None
+                    with self.broker._lock:
+                        broker_pin = read_binding(self.broker._connection, request.tenant_id)
+                        if broker_pin is not None:
+                            capacity = position_linked_capacity(
+                                self.broker._connection, self.programs.db, request.tenant_id
+                            )
+                            effective_existing = Decimal(capacity["effectiveReservedLoss"])
+                    configured = selected(self.programs.db, request.tenant_id)
+                    shared = configured or self.shared_risk_policy is not None or broker_pin is not None
+                    if shared:
+                        if (request.currency not in {"INR", "USD"} or request.base_rate != 1
+                                or proposal.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}):
+                            raise SharedRiskError("shared_risk_single_currency_cash_required")
+                        self.shared_risk.bind(self.shared_risk_policy, tenant_id=request.tenant_id,
+                            ledger_key=self._shared_ledger_key(request.tenant_id),
+                            empty_ledger=not self.broker.ledger_entries(request.tenant_id))
+                    program = self.programs.create(**program_args)
+                    if shared:
+                        self.shared_risk.reserve(
+                            program,
+                            evidence=request.edge_evidence,
+                            equity=request.portfolio.equity,
+                            currency=request.currency,
+                            at=request.observed_at,
+                            existing_reserved_loss=effective_existing,
+                        )
+                        pin_account(self.broker, self.programs.db, request.tenant_id,
+                                    allow_create=not configured, program_id=program.program_id)
+            except (SharedRiskError, AccountingBindingError) as error:
+                return self._reject(InstitutionalStage.RISK, str(error))
+        self._source_requests[program.program_id] = original_request
         self._requests[program.program_id] = request
         self._orders[program.program_id] = parent_order
         return InstitutionalPreparation(
@@ -383,6 +557,70 @@ class InstitutionalPaperCoordinator:
             approved_order=self._orders[program.program_id],
         )
 
+    def _shared_ledger_key(self, tenant_id: str) -> str:
+        with self.broker._lock:
+            files = self.broker._connection.execute("PRAGMA database_list").fetchall()
+        filename = next((row[2] for row in files if row[1] == "main"), "")
+        if not filename or str(self.programs.path) == ":memory:":
+            raise SharedRiskError("shared_risk_durable_storage_required")
+        return hashlib.sha256(json.dumps([str(Path(filename).resolve()),
+            str(self.programs.path.resolve()), tenant_id]).encode()).hexdigest()
+
+    def _shared_risk_issue(self, program, request, equity) -> str | None:
+        try:
+            # Keep the selected journal snapshot stable from broker reconciliation
+            # through the capacity check. Lock order matches preparation: journal,
+            # then broker. The nested shared_risk.check uses a savepoint.
+            with self.programs.transaction():
+                effective_reserved = None
+                with self.broker._lock:
+                    pin = read_binding(self.broker._connection, request.tenant_id)
+                    if pin is not None:
+                        capacity = position_linked_capacity(
+                            self.broker._connection, self.programs.db, request.tenant_id
+                        )
+                        effective_reserved = Decimal(capacity["effectiveReservedLoss"])
+                if (
+                    not selected(self.programs.db, request.tenant_id)
+                    and self.shared_risk_policy is None
+                    and pin is None
+                ):
+                    return None
+                if request.base_rate != 1:
+                    return "shared_risk_single_currency_cash_required"
+                self.shared_risk.check(
+                    program,
+                    policy=self.shared_risk_policy,
+                    ledger_key=self._shared_ledger_key(request.tenant_id),
+                    currency=request.currency,
+                    equity=equity,
+                    evidence=request.edge_evidence,
+                    effective_reserved_loss=effective_reserved,
+                )
+        except (TypeError, ValueError, ArithmeticError, AttributeError) as error:
+            return str(error) if isinstance(error, SharedRiskError) else "shared_risk_measure_unavailable"
+        return None
+
+    def _policy_issue(self, program, parent) -> str | None:
+        # Covered sales retain normal Warden checks without acquiring entry-only authority.
+        if parent.side is Side.SELL:
+            return None
+        if program.risk_authority_version != 1:
+            return "execution_risk_policy_binding_missing"
+        try:
+            saved = bound_policy(program.risk_authority_payload)
+            if saved is None or policy_values(saved) != policy_values(self.edge_gate.policy):
+                return "execution_risk_policy_changed"
+        except (TypeError, ValueError, ArithmeticError, AttributeError):
+            return "execution_risk_policy_unavailable"
+        return None
+
+    @staticmethod
+    def _bound_request_digest(program) -> str:
+        if program.risk_authority_version == 1:
+            return parse_authority(program.risk_authority_payload)["requestSha256"]
+        return program.runtime_context_sha256
+
     def _strategy_exposure(self, strategy_id: str) -> Decimal | None:
         try:
             value = self.strategy_exposure_provider(strategy_id)
@@ -394,7 +632,23 @@ class InstitutionalPaperCoordinator:
     def _reject(stage: InstitutionalStage, reason: str) -> InstitutionalPreparation:
         return InstitutionalPreparation(False, stage, reason)
 
-    def execute_due(self, program_id: str, *, now: datetime) -> InstitutionalExecutionResult:
+    def execute_due(
+        self, program_id: str, *, now: datetime,
+        pre_submit_check: Callable[[OrderIntent], str | None] | None = None,
+        decision_trace: Mapping | None = None,
+    ) -> InstitutionalExecutionResult:
+        # Optional bridge evidence is data only. It cannot replace coordinator-owned
+        # identities, policy authority, receipt fields or accounting controls.
+        trace_payload = {}
+        if decision_trace is not None:
+            from dataclasses import fields
+
+            from quant_ai.execution.audit import XAITrace
+            allowed = {field.name for field in fields(XAITrace)}
+            if (not isinstance(decision_trace, Mapping) or set(decision_trace) - allowed
+                    or len(json.dumps(dict(decision_trace), allow_nan=False).encode()) > 250_000):
+                raise ValueError("institutional_decision_trace_invalid")
+            trace_payload = json.loads(json.dumps(dict(decision_trace), allow_nan=False))
         request = self._requests.get(program_id)
         parent = self._orders.get(program_id)
         if request is None or parent is None:
@@ -402,11 +656,20 @@ class InstitutionalPaperCoordinator:
         executed: list[int] = []
         program = self.programs.get(program_id)
         self._assert_runtime_intent(program, request, parent)
+        if trace_payload and (
+                trace_payload.get("decision_id") != request.proposal.decision_id
+                or trace_payload.get("subject") != parent.symbol
+                or trace_payload.get("order_id") is not None
+                or trace_payload != (request.proposal.provenance or {}).get("institutional_source_trace")):
+            raise ValueError("institutional_decision_trace_identity_mismatch")
         if program.state in {ProgramState.FAILED, ProgramState.CANCELLED}:
             return InstitutionalExecutionResult(InstitutionalStage.FAILED, program, (), "program_terminal")
         if self.programs.recovery_required(request.tenant_id):
             return self._recovery_result(program_id, (), "pending_execution_or_accounting_recovery")
         for slice_ in self.programs.due(program_id, now):
+            policy_issue = self._policy_issue(program, parent)
+            if policy_issue:
+                return self._recovery_result(program_id, tuple(executed), policy_issue)
             accounting_status = self.reconcile_protective_accounting(currency=request.currency)
             if accounting_status.status not in {"matched", "not_required"}:
                 return self._recovery_result(program_id, tuple(executed), accounting_status.reason)
@@ -421,10 +684,22 @@ class InstitutionalPaperCoordinator:
             held = current_snapshot.symbol_quantity.get(child.symbol, 0)
             de_risking = child.side is Side.SELL and held > 0 and child.quantity <= held
             if not de_risking:
+                shared_issue = self._shared_risk_issue(program, request, current_snapshot.equity)
+                if shared_issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, shared_issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), shared_issue)
                 if request.edge_evidence is None:
                     edge_issue = "edge_evidence_required_at_slice"
                 else:
-                    edge = self.edge_gate.evaluate(request.edge_evidence)
+                    saved_policy = (bound_policy(program.risk_authority_payload)
+                                    if program.risk_authority_version == 1 else None)
+                    if saved_policy is None:
+                        reason = "execution_risk_policy_binding_missing"
+                        self.programs.mark_failed(program_id, slice_.sequence, reason)
+                        return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                            self.programs.get(program_id), tuple(executed), reason)
+                    edge = CalibratedEdgeGate(saved_policy).evaluate(request.edge_evidence)
                     edge_issue = ("edge_recheck_failed:" + ";".join(edge.reasons)
                                   if not edge.approved else
                                   _parent_edge_risk_issue(parent, request.edge_evidence, edge,
@@ -509,7 +784,19 @@ class InstitutionalPaperCoordinator:
                 self.programs.mark_failed(program_id, slice_.sequence, reason)
                 return InstitutionalExecutionResult(InstitutionalStage.FAILED,
                     self.programs.get(program_id), tuple(executed), reason)
+            self._assert_runtime_intent(self.programs.get(program_id), request, parent)
+            policy_issue = self._policy_issue(program, parent)
+            if policy_issue:
+                self.programs.mark_failed(program_id, slice_.sequence, policy_issue)
+                return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                    self.programs.get(program_id), tuple(executed), policy_issue)
             child = approved_child
+            if not de_risking:
+                shared_issue = self._shared_risk_issue(program, request, current_snapshot.equity)
+                if shared_issue:
+                    self.programs.mark_failed(program_id, slice_.sequence, shared_issue)
+                    return InstitutionalExecutionResult(InstitutionalStage.FAILED,
+                        self.programs.get(program_id), tuple(executed), shared_issue)
             before = self._position(child)
             decision_id = f"{request.proposal.decision_id}:slice:{slice_.sequence}"
             oms_row = self.oms.create(child, decision_id=decision_id, now=now)
@@ -518,17 +805,34 @@ class InstitutionalPaperCoordinator:
             self.oms.approve_risk(oms_row.client_order_id, now=now)
             self.oms.submitted(oms_row.client_order_id, now=now)
             evidence = {
+                **trace_payload,
                 "schema": "pramana.swarm_fill.v1",
                 "event_type": "swarm_fill",
                 "institutional_program": program_id,
                 "institutional_slice": slice_.sequence,
+                "institutional_risk_authority_sha256": (program.runtime_context_sha256
+                    if program.risk_authority_version == 1 else None),
                 "order_intent_sha256": hashlib.sha256(canonical_order_intent(child).encode()).hexdigest(),
                 "instrument_identity": bound_identity(child),
             }
+            if trace_payload:
+                from quant_ai.execution.audit import XAITraceLogger
+                evidence["approved_order"] = XAITraceLogger._normalize(asdict(child))
             try:
-                fill = self.broker.submit_with_evidence(
-                    child, evidence, f"{program_id}:{slice_.sequence}"
-                )
+                # The optional operating-path guard runs after OMS callbacks under
+                # the broker lock, immediately before the atomic paper submission.
+                # Default callers retain their prior lock scope and behavior.
+                with self.broker._lock if pre_submit_check is not None else nullcontext():
+                    self._assert_accounting_scope(request.tenant_id)
+                    if pre_submit_check is not None:
+                        veto = pre_submit_check(child)
+                        if veto is not None:
+                            if not isinstance(veto, str) or not veto.strip() or len(veto) > 500:
+                                veto = "institutional_pre_submit_guard_invalid"
+                            return self._recovery_result(program_id, tuple(executed), veto)
+                    fill = self.broker.submit_with_evidence(
+                        child, evidence, f"{program_id}:{slice_.sequence}"
+                    )
             except (PaperBrokerDatabaseLockedError, ValueError) as error:
                 # An exception from the submit call is not proof that no commit occurred.
                 # Keep the durable claim: reconciliation must inspect the exact receipt.
@@ -586,6 +890,10 @@ class InstitutionalPaperCoordinator:
         if receipt is None:
             return None
         payload = receipt.evidence
+        program = self.programs.get(program_id)
+        if program.risk_authority_version == 1 and payload.get(
+                "institutional_risk_authority_sha256") != program.runtime_context_sha256:
+            raise ValueError("accounting_recovery_risk_authority_mismatch")
         expected_intent = canonical_order_intent(child)
         if (canonical_order_intent(receipt.order) != expected_intent
                 or payload.get("institutional_program") != program_id
@@ -593,6 +901,17 @@ class InstitutionalPaperCoordinator:
                 or payload.get("order_intent_sha256") != hashlib.sha256(expected_intent.encode()).hexdigest()
                 or payload.get("instrument_identity") != bound_identity(child)):
             raise ValueError("accounting_recovery_receipt_attribution_mismatch")
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=child.tenant_id)
+            source = (stored.request.proposal.provenance or {}).get("institutional_source_trace")
+            if source is not None:
+                if not isinstance(source, dict) or source.get("order_id") is not None:
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
+                expected_trace = {**source, "order_id": receipt.entry.order_id}
+                recorded_trace = {key: payload.get(key) for key in expected_trace}
+                if json.dumps(recorded_trace, sort_keys=True, allow_nan=False) != json.dumps(
+                        expected_trace, sort_keys=True, allow_nan=False):
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
         return receipt
 
     @staticmethod
@@ -644,6 +963,20 @@ class InstitutionalPaperCoordinator:
                 pre_fill_average_price=None if receipt.prior_average is None else str(receipt.prior_average))
         return unresolved
 
+    def restore_runtime_context(self, program_id: str, *, tenant_id: str):
+        """Bind saved data explicitly; execution still requires its normal fresh gates.
+
+        Not an authenticated operator endpoint or an automatic restart policy. No
+        provider, broker submit, accounting repair, halt change or risk release runs.
+        """
+        stored = self.programs.load_context(program_id, tenant_id=tenant_id)
+        self._assert_accounting_scope(tenant_id)
+        program = self.programs.get(program_id)
+        self.bind_runtime_context(program_id, request=stored.request,
+                                  parent_order=order_from_snapshot(program.parent_order_payload))
+        # Do not expose the coordinator's mutable nested objects to the caller.
+        return self.programs.load_context(program_id, tenant_id=tenant_id)
+
     def bind_runtime_context(
         self,
         program_id: str,
@@ -652,7 +985,9 @@ class InstitutionalPaperCoordinator:
         parent_order: OrderIntent,
     ) -> None:
         """Rebind exact runtime inputs after restart without resubmitting any slice."""
+        self._assert_accounting_scope(request.tenant_id)
         program = self.programs.get(program_id)
+        self._match_program_accounting(program)
         if (
             program.tenant_id != request.tenant_id
             or program.decision_id != request.proposal.decision_id
@@ -660,25 +995,43 @@ class InstitutionalPaperCoordinator:
             or program.parent_quantity != parent_order.quantity
             or parent_order.tenant_id != request.tenant_id
             or parent_order.symbol != program.symbol
-            or request_fingerprint(request) != program.runtime_context_sha256
+            or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)
             or program.parent_order_payload is None
             or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
             raise ValueError("execution_program_runtime_context_mismatch")
+        original_request = request
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=request.tenant_id)
+            if request_fingerprint(stored.request) != request_fingerprint(request):
+                raise ValueError("execution_program_runtime_context_mismatch")
+            request = stored.request
+            parent_order = order_from_snapshot(program.parent_order_payload)
+        self._source_requests[program_id] = original_request
         self._requests[program_id] = request
         self._orders[program_id] = parent_order
 
-    @staticmethod
-    def _assert_runtime_intent(program, request, parent) -> None:
+    def _assert_runtime_intent(self, program, request, parent) -> None:
+        self._assert_accounting_scope(request.tenant_id)
+        self._match_program_accounting(program)
+        original = self._source_requests.get(program.program_id)
+        if original is not None and request_fingerprint(original) != request_fingerprint(request):
+            raise ValueError("execution_program_runtime_context_mismatch")
         if (program.parent_order_payload is None
                 or canonical_order_intent(parent) != program.parent_order_payload
-                or request_fingerprint(request) != program.runtime_context_sha256):
+                or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)):
             raise ValueError("execution_program_runtime_context_mismatch")
 
     def reconcile_protective_accounting(self, *, currency: str) -> ProtectiveAccountingReport:
         """Mirror committed exits outside the independent protection/execution path."""
         try:
-            return ProtectiveExitAccounting(self.broker, self.accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            # A stable tenant wrapper prevents mutable adapter selection from
+            # redirecting this historical mirror. Independent exits are unchanged.
+            accounting = TradingAccounting(self._accounting_journal, self._accounting_tenant_id)
+            result = ProtectiveExitAccounting(self.broker, accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            return result
         except (TypeError, ValueError) as error:
             return ProtectiveAccountingReport("unavailable", (), str(error))
 
@@ -775,6 +1128,27 @@ class InstitutionalPaperCoordinator:
         before: BrokerPosition | None,
         request: InstitutionalTradeRequest,
     ) -> None:
+        self._assert_accounting_scope(request.tenant_id)
+        if order.tenant_id != request.tenant_id:
+            raise ValueError("institutional_accounting_scope_mismatch")
+        accounting = self.accounting
+        # A committed paper fill remains FILLED_UNACCOUNTED on posting failure.
+        # All trade/cost postings in this journal roll back together if the
+        # selected namespace changes inside a posting callback.
+        with self._accounting_journal.atomic():
+            self._assert_accounting_scope(request.tenant_id)
+            self._post_accounting_records(accounting, order, broker_order_id, fill_price, before, request)
+            self._assert_accounting_scope(request.tenant_id)
+
+    def _post_accounting_records(
+        self,
+        accounting: TradingAccounting,
+        order: OrderIntent,
+        broker_order_id: str,
+        fill_price: Decimal,
+        before: BrokerPosition | None,
+        request: InstitutionalTradeRequest,
+    ) -> None:
         ledger = next(
             item for item in self.broker.ledger_entries(order.tenant_id)
             if item.order_id == broker_order_id
@@ -785,14 +1159,14 @@ class InstitutionalPaperCoordinator:
             if ledger.margin_change is None:
                 raise ValueError("derivative_fill_missing_margin_change")
             if ledger.margin_change > 0:
-                self.accounting.reserve_margin(
+                accounting.reserve_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=ledger.margin_change, base_amount=ledger.margin_change * rate,
                     reference=reference, at=ledger.created_at,
                 )
             elif ledger.margin_change < 0:
                 released = -ledger.margin_change
-                self.accounting.release_margin(
+                accounting.release_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=released, base_amount=released * rate,
                     reference=reference, at=ledger.created_at,
@@ -802,7 +1176,7 @@ class InstitutionalPaperCoordinator:
                     raise ValueError("derivative_close_cost_basis_unavailable")
                 pnl = (fill_price - before.average_price) * Decimal(order.quantity)
                 if pnl != 0:
-                    self.accounting.realize_pnl(
+                    accounting.realize_pnl(
                         f"pnl:{broker_order_id}", currency=request.currency,
                         pnl=pnl, base_pnl=pnl * rate, reference=reference,
                         at=ledger.created_at,
@@ -810,7 +1184,7 @@ class InstitutionalPaperCoordinator:
         else:
             notional = fill_price * Decimal(order.quantity)
             if order.side is Side.BUY:
-                self.accounting.buy_security(
+                accounting.buy_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     notional=notional, base_notional=notional * rate,
                     reference=reference, at=ledger.created_at,
@@ -819,7 +1193,7 @@ class InstitutionalPaperCoordinator:
                 if before is None or before.quantity < order.quantity:
                     raise ValueError("security_sale_cost_basis_unavailable")
                 released = before.average_price * Decimal(order.quantity)
-                self.accounting.sell_security(
+                accounting.sell_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     proceeds=notional, released_cost=released,
                     base_proceeds=notional * rate, base_released_cost=released * rate,
@@ -828,7 +1202,7 @@ class InstitutionalPaperCoordinator:
         for cost in self.broker.cost_entries(order.tenant_id):
             if cost.order_id != broker_order_id or not cost.cash_debit or cost.amount == 0:
                 continue
-            self.accounting.cash_fee(
+            accounting.cash_fee(
                 f"cost:{broker_order_id}:{cost.code}", currency=request.currency,
                 amount=cost.amount, base_amount=cost.amount * rate,
                 reference=f"{reference} cost {cost.code}", tax=cost.code in TAX_CODES,
