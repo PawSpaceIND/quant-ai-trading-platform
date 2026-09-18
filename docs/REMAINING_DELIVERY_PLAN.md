@@ -172,3 +172,13 @@ independent security/human acceptance remain open. M01 risk-capacity release and
 scheduled execution are unchanged. No running account or deployment was modified.
 See `AUTHENTICATED_INSTITUTIONAL_RECOVERY.md` for endpoints, tested failure cases and
 explicit exclusions. Exact final evidence is recorded in the scoped follow-up PR.
+
+### M07 operator-audit retention component
+
+An explicitly selected operator recovery audit now travels in schema-6 stopped-writer
+bundles with its ledger/OMS/accounting/programmes. Offline validation checks full audit
+history, exact saved contexts, source traces and returned receipt references; unknown
+outcomes stay unknown and no request is replayed. Schema 1-5 and selected AI/research
+coverage remain compatible. Unselected audit state is not claimed as captured.
+Automatic scheduling, independent audit-selection pins, authenticated off-host retention
+and actual restoration acceptance remain open. See `OPERATOR_AUDIT_BACKUP.md`.
