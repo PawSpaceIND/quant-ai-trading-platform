@@ -666,6 +666,22 @@ def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_act
 
     # The same move between genuinely adjacent sessions is still caught, so the detector is
     # gated on adjacency rather than switched off.
+    # A month-long suspension is the common case and pins the window far more tightly than
+    # a two-year one: a window wide enough to swallow this would let ordinary suspensions
+    # back in as corporate actions.
+    month = [
+        parse_bhavcopy(nse_file(date(2020, 1, 6), [
+            nse_row("PAUSED", date(2020, 1, 6), Decimal("0.05"), Decimal("0.05"),
+                    isin="INE019A01011")])),
+        parse_bhavcopy(nse_file(date(2020, 2, 10), [
+            nse_row("PAUSED", date(2020, 2, 10), Decimal("1.05"), Decimal("0.05"),
+                    isin="INE019A01011")])),
+    ]
+    paused = reconstruct_universe(
+        month, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+    assert reconcile(paused.histories).unsignalled_gaps == 0
+
     adjacent = sessions(2, start=date(2020, 1, 6))
     tight = [
         parse_bhavcopy(nse_file(adjacent[0], [
