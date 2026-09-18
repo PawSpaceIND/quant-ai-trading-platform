@@ -120,3 +120,37 @@ This extends the earlier process-local accounting guard across restart for expli
 bound programmes. Older unbound rows remain reported unverified. No position-risk
 capacity is released, no daemon is activated and no full milestone is marked complete.
 See `DURABLE_ACCOUNTING_SELECTION.md` for the local identity and rollback limits.
+
+### M03 immediate operating-path bridge (partial)
+
+An explicitly selected `InstitutionalRuntimeInputs` configuration now connects the
+existing synchronous/asynchronous swarm route and actual runner factory to the
+institutional coordinator, programme journal, shared-risk admission and accounting.
+It requires bound NSE cash, immediate execution and supplied institutional inputs;
+missing inputs cannot fall back to direct submission. Default deployment selection
+is unchanged. Trace provenance and final daemon operating checks are retained.
+Automatic scheduled execution/recovery, source qualification, M01 capacity release
+and target-host acceptance remain open. See `INSTITUTIONAL_SWARM_BRIDGE.md`; no whole
+milestone is marked complete by the synthetic bridge tests.
+
+### M03 immediate-bridge recovery component
+
+The selected immediate institutional swarm service now has an explicit historical
+reconciliation API. It reconstructs saved bridge inputs, verifies original decision
+trace/receipt identity and completed trade/fee postings, and uses existing OMS and
+accounting recovery without new orders or current market providers. Missing receipts
+retain uncertainty; independent exits and reserved risk are unchanged. This is not
+authenticated operator review, unattended recovery or scheduled programme service.
+M03 and M01 remain partial. See `INSTITUTIONAL_BRIDGE_RECOVERY.md` and PR #146.
+
+### M03 actual immediate daemon-cycle acceptance
+
+Actual build_ghost_runner/run_once testing exposed and repaired a final-preflight
+self-block: the daemon had mistaken its own freshly submitted institutional child
+for unrelated unresolved OMS work. The final phase now validates that exact claimed
+child while initial admission/restart retain the full unresolved-order fence.
+Synthetic cycles exercise required book-risk gates, accounting failure/recovery,
+independent protection and off-hours behavior without SDK or model network calls.
+The immediate component has real daemon-cycle coverage; scheduled lifecycle,
+authenticated rollout, qualified sources and the remaining M03 gates stay open.
+See `INSTITUTIONAL_DAEMON_CYCLE.md` and the exact PR #146 certification.

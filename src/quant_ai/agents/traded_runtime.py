@@ -14,6 +14,10 @@ from __future__ import annotations
 import logging
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent
+from quant_ai.agents.institutional_runtime import (
+    InstitutionalRuntimeInputs,
+    InstitutionalSwarmPaperTradingService,
+)
 from quant_ai.agents.swarm import AtlasCIOAgent
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.analytics.attribution import restore_from_journal
@@ -22,6 +26,7 @@ from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.governance.directives import FounderDirectives
 from quant_ai.governance.runtime_manifest import describe
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
+from quant_ai.orders.oms import DurableOms
 from quant_ai.risk.book_history import sector_map_from_env
 from quant_ai.risk.overnight import OvernightExposureFirewall, overnight_risk_from_env
 from quant_ai.risk.policy import BookRiskFirewall
@@ -86,6 +91,8 @@ def build_traded_runtime(
     book_risk_required_symbols: tuple[str, ...] = (),
     overnight_risk: OvernightExposureFirewall | None = None,
     attribution_journal_tenant: str | None = None,
+    institutional_inputs: InstitutionalRuntimeInputs | None = None,
+    oms: DurableOms | None = None,
 ) -> SwarmPaperTradingService:
     """The sanctioned execution runtime under one set of founder directives.
 
@@ -99,7 +106,12 @@ def build_traded_runtime(
     it unset rather than import a future.
     """
     directives = directives or FounderDirectives()
-    runtime = SwarmPaperTradingService(
+    runtime_type = (SwarmPaperTradingService if institutional_inputs is None
+                    else InstitutionalSwarmPaperTradingService)
+    route_args = {} if institutional_inputs is None else {"institutional_inputs": institutional_inputs}
+    runtime = runtime_type(
+        **route_args,
+        oms=oms,
         cio=AtlasCIOAgent(
             AtlasInvestmentAgent(
                 llm_client=llm_client, founder_instructions=directives.instructions

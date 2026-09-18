@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
+from quant_ai.agents.institutional_runtime import InstitutionalRuntimeInputs
 from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
@@ -402,9 +403,15 @@ def build_ghost_runner(
     post_mortem_directory: str | Path | None = None,
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
+    institutional_inputs: InstitutionalRuntimeInputs | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
+    if institutional_inputs is not None and (
+            type(institutional_inputs) is not InstitutionalRuntimeInputs or not pilot_mode
+            or order_identity_mode != "bound_v1"
+            or institutional_inputs.accounting.tenant_id != tenant_id):
+        raise ValueError("institutional_runner_bound_pilot_required")
     order_identity_mode = validate_identity_storage(order_identity_mode,
         pilot_mode=pilot_mode, database=database, oms_database=oms_database)
     directives = directives or FounderDirectives()
@@ -471,6 +478,7 @@ def build_ghost_runner(
         # daily token restart would otherwise reset every score each morning, so the
         # engine could never learn anything that outlived one session.
         attribution_journal_tenant=tenant_id,
+        institutional_inputs=institutional_inputs, oms=oms,
     )
     runtime.oms = oms
     if require_book_risk_gates:

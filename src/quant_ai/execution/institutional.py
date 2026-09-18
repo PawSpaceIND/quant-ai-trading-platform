@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -599,7 +600,23 @@ class InstitutionalPaperCoordinator:
     def _reject(stage: InstitutionalStage, reason: str) -> InstitutionalPreparation:
         return InstitutionalPreparation(False, stage, reason)
 
-    def execute_due(self, program_id: str, *, now: datetime) -> InstitutionalExecutionResult:
+    def execute_due(
+        self, program_id: str, *, now: datetime,
+        pre_submit_check: Callable[[OrderIntent], str | None] | None = None,
+        decision_trace: Mapping | None = None,
+    ) -> InstitutionalExecutionResult:
+        # Optional bridge evidence is data only. It cannot replace coordinator-owned
+        # identities, policy authority, receipt fields or accounting controls.
+        trace_payload = {}
+        if decision_trace is not None:
+            from dataclasses import fields
+
+            from quant_ai.execution.audit import XAITrace
+            allowed = {field.name for field in fields(XAITrace)}
+            if (not isinstance(decision_trace, Mapping) or set(decision_trace) - allowed
+                    or len(json.dumps(dict(decision_trace), allow_nan=False).encode()) > 250_000):
+                raise ValueError("institutional_decision_trace_invalid")
+            trace_payload = json.loads(json.dumps(dict(decision_trace), allow_nan=False))
         request = self._requests.get(program_id)
         parent = self._orders.get(program_id)
         if request is None or parent is None:
@@ -607,6 +624,12 @@ class InstitutionalPaperCoordinator:
         executed: list[int] = []
         program = self.programs.get(program_id)
         self._assert_runtime_intent(program, request, parent)
+        if trace_payload and (
+                trace_payload.get("decision_id") != request.proposal.decision_id
+                or trace_payload.get("subject") != parent.symbol
+                or trace_payload.get("order_id") is not None
+                or trace_payload != (request.proposal.provenance or {}).get("institutional_source_trace")):
+            raise ValueError("institutional_decision_trace_identity_mismatch")
         if program.state in {ProgramState.FAILED, ProgramState.CANCELLED}:
             return InstitutionalExecutionResult(InstitutionalStage.FAILED, program, (), "program_terminal")
         if self.programs.recovery_required(request.tenant_id):
@@ -750,6 +773,7 @@ class InstitutionalPaperCoordinator:
             self.oms.approve_risk(oms_row.client_order_id, now=now)
             self.oms.submitted(oms_row.client_order_id, now=now)
             evidence = {
+                **trace_payload,
                 "schema": "pramana.swarm_fill.v1",
                 "event_type": "swarm_fill",
                 "institutional_program": program_id,
@@ -759,12 +783,24 @@ class InstitutionalPaperCoordinator:
                 "order_intent_sha256": hashlib.sha256(canonical_order_intent(child).encode()).hexdigest(),
                 "instrument_identity": bound_identity(child),
             }
+            if trace_payload:
+                from quant_ai.execution.audit import XAITraceLogger
+                evidence["approved_order"] = XAITraceLogger._normalize(asdict(child))
             try:
-                # Recheck after position/OMS callbacks, immediately before dispatch.
-                self._assert_accounting_scope(request.tenant_id)
-                fill = self.broker.submit_with_evidence(
-                    child, evidence, f"{program_id}:{slice_.sequence}"
-                )
+                # The optional operating-path guard runs after OMS callbacks under
+                # the broker lock, immediately before the atomic paper submission.
+                # Default callers retain their prior lock scope and behavior.
+                with self.broker._lock if pre_submit_check is not None else nullcontext():
+                    self._assert_accounting_scope(request.tenant_id)
+                    if pre_submit_check is not None:
+                        veto = pre_submit_check(child)
+                        if veto is not None:
+                            if not isinstance(veto, str) or not veto.strip() or len(veto) > 500:
+                                veto = "institutional_pre_submit_guard_invalid"
+                            return self._recovery_result(program_id, tuple(executed), veto)
+                    fill = self.broker.submit_with_evidence(
+                        child, evidence, f"{program_id}:{slice_.sequence}"
+                    )
             except (PaperBrokerDatabaseLockedError, ValueError) as error:
                 # An exception from the submit call is not proof that no commit occurred.
                 # Keep the durable claim: reconciliation must inspect the exact receipt.
@@ -833,6 +869,17 @@ class InstitutionalPaperCoordinator:
                 or payload.get("order_intent_sha256") != hashlib.sha256(expected_intent.encode()).hexdigest()
                 or payload.get("instrument_identity") != bound_identity(child)):
             raise ValueError("accounting_recovery_receipt_attribution_mismatch")
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=child.tenant_id)
+            source = (stored.request.proposal.provenance or {}).get("institutional_source_trace")
+            if source is not None:
+                if not isinstance(source, dict) or source.get("order_id") is not None:
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
+                expected_trace = {**source, "order_id": receipt.entry.order_id}
+                recorded_trace = {key: payload.get(key) for key in expected_trace}
+                if json.dumps(recorded_trace, sort_keys=True, allow_nan=False) != json.dumps(
+                        expected_trace, sort_keys=True, allow_nan=False):
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
         return receipt
 
     @staticmethod
