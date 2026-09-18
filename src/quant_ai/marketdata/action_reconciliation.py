@@ -45,11 +45,18 @@ SCHEMA = "pramana.action_reconciliation.v1"
 #: them from a dividend record rather than from here.
 DEFAULT_TOLERANCE = Decimal("0.001")
 
-#: Indian equities trade under circuit limits of 2, 5, 10 or 20 percent, so an overnight
-#: move beyond 20% in a normally-traded name is far more often a corporate action than a
-#: price move. Used only by the fallback detector, for venues or vintages where the stated
-#: previous close is not restated.
-DEFAULT_GAP_THRESHOLD = Decimal("0.20")
+#: Indian equities trade under circuit limits of 2, 5, 10 or 20 percent, so a large
+#: overnight move is more often a corporate action than a price move. The threshold sits
+#: *above* the widest band rather than on it, which matters more than it looks: a stock
+#: that closes at its 20% circuit has moved exactly 0.20, so a detector firing at ``>= 0.20``
+#: reports every circuit day in the market as an unexplained corporate action. Measured on
+#: a real NSE archive that mistake accounted for thousands of false positives and would
+#: have argued for buying vendor data nobody needs.
+#:
+#: The cost of the wider band is small. Unsignalled actions worth correcting are large by
+#: nature - a 1:10 split moves -90%, a 1:1 bonus -50% - and anything under 25% is already
+#: beneath what would change a study's conclusion.
+DEFAULT_GAP_THRESHOLD = Decimal("0.25")
 
 #: An action whose implied factor exceeds this is not credible as a split or bonus and
 #: points at a data error — a misplaced decimal, or two securities merged under one key.

@@ -598,3 +598,43 @@ def test_a_row_whose_close_sits_below_its_low_is_refused_not_clamped():
     assert parsed.rows[0].close == Decimal("818.75")
     assert [item.symbol for item in parsed.rejected] == ["SBIN"]
     assert "close outside" in parsed.rejected[0].reason
+
+
+def test_a_stock_closing_at_its_circuit_limit_is_not_called_a_corporate_action():
+    # Indian circuit bands are 2/5/10/20 percent. A stock that closes at the widest band has
+    # moved exactly 0.20, so a detector firing at ">= 0.20" reports every circuit day in the
+    # market as an unexplained action. Measured on a real NSE archive, that was thousands of
+    # false positives arguing for vendor data nobody needs.
+    days = sessions(3)
+    rows = [
+        parse_bhavcopy(nse_file(days[0], [
+            nse_row("CIRCUIT", days[0], Decimal("100.00"), Decimal("100.00"),
+                    isin="INE015A01011")])),
+        parse_bhavcopy(nse_file(days[1], [
+            nse_row("CIRCUIT", days[1], Decimal("120.00"), Decimal("100.00"),
+                    isin="INE015A01011")])),
+        parse_bhavcopy(nse_file(days[2], [
+            nse_row("CIRCUIT", days[2], Decimal("120.00"), Decimal("120.00"),
+                    isin="INE015A01011")])),
+    ]
+    result = reconstruct_universe(rows, source="NSE bhavcopy archive, test fixture")
+
+    report = reconcile(result.histories)
+
+    assert report.unsignalled_gaps == 0
+    assert report.detected == 0
+
+    # A move genuinely past the band still registers, so the detector is not simply blind.
+    wider = [
+        parse_bhavcopy(nse_file(days[0], [
+            nse_row("BROKEN", days[0], Decimal("100.00"), Decimal("100.00"),
+                    isin="INE016A01011")])),
+        parse_bhavcopy(nse_file(days[1], [
+            nse_row("BROKEN", days[1], Decimal("60.00"), Decimal("100.00"),
+                    isin="INE016A01011")])),
+        parse_bhavcopy(nse_file(days[2], [
+            nse_row("BROKEN", days[2], Decimal("60.00"), Decimal("60.00"),
+                    isin="INE016A01011")])),
+    ]
+    broken = reconstruct_universe(wider, source="NSE bhavcopy archive, test fixture")
+    assert reconcile(broken.histories).unsignalled_gaps == 1
