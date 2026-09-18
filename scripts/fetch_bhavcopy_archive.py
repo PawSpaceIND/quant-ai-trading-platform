@@ -235,10 +235,13 @@ def main(argv=None) -> int:
                 # line carries the day reached and the elapsed time so a stall is obvious
                 # from the log rather than only from counting files on disk.
                 elapsed = time.monotonic() - started_at
-                rate = saved / elapsed if elapsed > 0 else 0.0
+                # Rate over days examined, not days saved. Measuring saved reads as zero
+                # while a resumed run sweeps through what it already has, which makes a
+                # download that is working look like one that is stuck.
+                rate = considered / elapsed if elapsed > 0 else 0.0
                 print(
-                    f"  {day.isoformat()}: saved {saved}, absent {missing}, failed {failed}"
-                    f" ({rate * 60:.0f}/min)",
+                    f"  {day.isoformat()}: saved {saved}, had {cached}, absent {missing}, "
+                    f"failed {failed} ({rate * 60:.0f} days/min)",
                     file=sys.stderr, flush=True,
                 )
             day += timedelta(days=1)
