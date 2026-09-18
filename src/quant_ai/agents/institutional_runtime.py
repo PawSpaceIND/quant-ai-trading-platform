@@ -13,15 +13,17 @@ import os
 import sqlite3
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from threading import RLock
 
+from quant_ai.accounting.protective import ProtectiveExitAccounting
 from quant_ai.accounting.trading import TradingAccounting
 from quant_ai.agents.swarm import AgentAnalysisRequest, InstrumentBoundTradeProposal, TradeProposal
 from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradingService
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.decision.edge import CalibratedEdgeGate, EdgePolicy
 from quant_ai.domain.models import AssetClass, Market, PortfolioSnapshot, Side
+from quant_ai.execution.audit import XAITrace
 from quant_ai.execution.institutional import (
     FactorPositionProvider,
     InstitutionalPaperCoordinator,
@@ -31,10 +33,10 @@ from quant_ai.execution.institutional import (
     StrategyExposureProvider,
 )
 from quant_ai.execution.planner import ExecutionAlgorithm
-from quant_ai.execution.program import ExecutionProgramJournal
+from quant_ai.execution.program import ExecutionProgramJournal, SliceState
 from quant_ai.execution.shared_risk import SharedRiskPolicy
 from quant_ai.governance.runtime_manifest import stable
-from quant_ai.orders.intent import canonical_order_intent
+from quant_ai.orders.intent import canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -81,6 +83,23 @@ class InstitutionalRuntimeInputs:
             raise ValueError("institutional_runtime_inputs_invalid")
         if str(self.programs.path) == ":memory:" or str(self.accounting.journal.path) == ":memory:":
             raise ValueError("institutional_runtime_durable_stores_required")
+
+
+@dataclass(frozen=True)
+class InstitutionalRecoveryReport:
+    """Historical reconciliation, never a new fill event or trading permission."""
+    program_id: str
+    tenant_id: str
+    program_state: str
+    recovery_stage: str
+    reason: str
+    committed_order_ids: tuple[str, ...]
+    recovered_sequences: tuple[int, ...]
+    source_revision: str
+
+    @property
+    def execution_authorized(self) -> bool:
+        return False
 
 
 class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
@@ -136,7 +155,7 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
             raise ValueError("institutional_runtime_snapshot_invalid")
         return result
 
-    def _assert_wiring(self):
+    def _assert_wiring(self, *, require_preflight: bool = True):
         if (self._coordinator.broker is not self.broker or self._coordinator.oms is not self.oms
                 or self._coordinator.warden is not self.warden
                 or self._coordinator.programs is not self._inputs.programs
@@ -145,8 +164,94 @@ class InstitutionalSwarmPaperTradingService(SwarmPaperTradingService):
                 or self._coordinator.strategy_exposure_provider is not self._inputs.strategy_exposure_provider
                 or self._coordinator.slice_volume_provider is not self._inputs.slice_volume_provider):
             raise ValueError("institutional_runtime_wiring_changed")
-        if not callable(self.pre_submit_check):
+        if require_preflight and not callable(self.pre_submit_check):
             raise TypeError("institutional_runtime_preflight_unavailable")
+
+    def reconcile_program(self, program_id: str, *, tenant_id: str) -> InstitutionalRecoveryReport:
+        """Explicitly reconcile recorded immediate execution after an interruption.
+
+        No current market/calibration provider, preflight, order transport or risk
+        release is invoked. Missing receipts retain existing uncertainty. This is a
+        local component API, not an authenticated operator endpoint or auto-resume.
+        """
+        with self._route_lock:
+            self._assert_wiring(require_preflight=False)
+            stored = self._inputs.programs.load_context(program_id, tenant_id=tenant_id)
+            program = self._inputs.programs.get(program_id)
+            provenance = stored.request.proposal.provenance or {}
+            source = provenance.get("institutional_source_trace")
+            revision = provenance.get("institutional_input_source")
+            instrument = getattr(stored.request.proposal, "instrument", None)
+            if (type(source) is not dict or set(source) != {f.name for f in fields(XAITrace)}
+                    or source.get("decision_id") != program.decision_id
+                    or source.get("subject") != program.symbol or source.get("order_id") is not None
+                    or type(revision) is not str or not revision.strip()
+                    or revision != revision.strip() or len(revision) > 180
+                    or not isinstance(stored.request.proposal, InstrumentBoundTradeProposal)
+                    or instrument is None or instrument.market is not Market.INDIA
+                    or instrument.exchange != "NSE" or instrument.currency != "INR"
+                    or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
+                    or stored.plan.algorithm is not ExecutionAlgorithm.IMMEDIATE
+                    or len(stored.plan.slices) != 1 or len(stored.request.volume_buckets) != 1
+                    or stored.plan.slices[0].at != stored.request.observed_at):
+                raise ValueError("institutional_bridge_recovery_context_required")
+            self._coordinator._assert_accounting_scope(tenant_id)
+            parent = order_from_snapshot(program.parent_order_payload)
+            # Validate every extant receipt before any OMS/accounting reconstruction,
+            # including a programme already marked complete. Broker reads end before
+            # another store's writer lock is acquired.
+            for part in program.slices:
+                self._coordinator._receipt_for_child(
+                    program_id, part, replace(parent, quantity=part.quantity))
+            self._verify_recovered_postings(program)
+            self._coordinator.restore_runtime_context(program_id, tenant_id=tenant_id)
+            result = self._coordinator.reconcile_accounting(program_id)
+            self._verify_recovered_postings(result.program)
+            receipts = []
+            for part in result.program.slices:
+                receipt = self._coordinator._receipt_for_child(
+                    program_id, part, replace(parent, quantity=part.quantity))
+                if receipt is not None:
+                    receipts.append(receipt.entry.order_id)
+            return InstitutionalRecoveryReport(
+                program_id, tenant_id, result.program.state.value, result.stage.value,
+                result.reason, tuple(receipts), result.executed_sequences, revision)
+
+    def _verify_recovered_postings(self, program):
+        """Check existing EXECUTED postings against ledger-derived cash economics.
+
+        This is read-only, selected-programme validation. Reuse the independently
+        replay-derived posting model, including earlier holdings for sale cost basis.
+        It does not certify every account balance or invent an omitted posting.
+        """
+        if (program.state.value == "COMPLETE") != all(
+                part.state is SliceState.EXECUTED for part in program.slices):
+            raise ValueError("institutional_bridge_recovery_state_mismatch")
+        ids = {part.broker_order_id for part in program.slices if part.state is SliceState.EXECUTED}
+        if not ids:
+            return
+        self._coordinator._assert_accounting_scope(program.tenant_id)
+        with self.broker.accounting_read_snapshot():
+            entries = self.broker.ledger_entries(program.tenant_id)
+            costs = self.broker.cost_entries(program.tenant_id)
+        if None in ids or not ids <= {entry.order_id for entry in entries}:
+            raise ValueError("institutional_bridge_recovery_accounting_mismatch")
+        batches = ProtectiveExitAccounting(
+            self.broker, self._inputs.accounting, currency="INR")._batches(entries, costs)
+        journal = self._inputs.accounting.journal
+        with journal._lock:
+            journal.verify(program.tenant_id)
+            for item in batches:
+                if item.order_id not in ids:
+                    continue
+                try:
+                    saved = journal.transaction(item.transaction_id)
+                except KeyError as error:
+                    raise ValueError("institutional_bridge_recovery_accounting_mismatch") from error
+                if (saved.tenant_id, saved.kind, saved.reference, saved.at, saved.postings) != (
+                        program.tenant_id, item.kind, item.reference, item.at, item.postings):
+                    raise ValueError("institutional_bridge_recovery_accounting_mismatch")
+        self._coordinator._assert_accounting_scope(program.tenant_id)
 
     def _execute_proposal(self, request, weighted_evidence, proposal, plan, portfolio,
                           country_exposure, tenant_id):

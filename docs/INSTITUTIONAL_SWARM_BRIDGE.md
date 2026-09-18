@@ -82,3 +82,12 @@ No local test is evidence of genuine feeds, a qualified calibration model, effec
 strategy performance, a target-host burn-in or production activation. Scheduled
 programmes, authenticated operations, full lineage, shared-risk release, distributed
 fencing and broader segment/settlement coverage remain in the delivery plan.
+
+## Explicit recovery continuation
+
+The public bridge now exposes `reconcile_program(program_id, tenant_id=...)` for
+historical immediate-programme reconciliation without consulting current trading
+providers or submitting another order. It returns original committed references,
+not a new execution event or permission to trade. Source-trace correspondence and
+completed-accounting postconditions are checked. See `INSTITUTIONAL_BRIDGE_RECOVERY.md`
+for the tested scope, missing-receipt holds and remaining operational boundaries.

@@ -869,6 +869,17 @@ class InstitutionalPaperCoordinator:
                 or payload.get("order_intent_sha256") != hashlib.sha256(expected_intent.encode()).hexdigest()
                 or payload.get("instrument_identity") != bound_identity(child)):
             raise ValueError("accounting_recovery_receipt_attribution_mismatch")
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=child.tenant_id)
+            source = (stored.request.proposal.provenance or {}).get("institutional_source_trace")
+            if source is not None:
+                if not isinstance(source, dict) or source.get("order_id") is not None:
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
+                expected_trace = {**source, "order_id": receipt.entry.order_id}
+                recorded_trace = {key: payload.get(key) for key in expected_trace}
+                if json.dumps(recorded_trace, sort_keys=True, allow_nan=False) != json.dumps(
+                        expected_trace, sort_keys=True, allow_nan=False):
+                    raise ValueError("accounting_recovery_decision_trace_mismatch")
         return receipt
 
     @staticmethod

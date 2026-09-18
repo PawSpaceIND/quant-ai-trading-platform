@@ -132,3 +132,13 @@ is unchanged. Trace provenance and final daemon operating checks are retained.
 Automatic scheduled execution/recovery, source qualification, M01 capacity release
 and target-host acceptance remain open. See `INSTITUTIONAL_SWARM_BRIDGE.md`; no whole
 milestone is marked complete by the synthetic bridge tests.
+
+### M03 immediate-bridge recovery component
+
+The selected immediate institutional swarm service now has an explicit historical
+reconciliation API. It reconstructs saved bridge inputs, verifies original decision
+trace/receipt identity and completed trade/fee postings, and uses existing OMS and
+accounting recovery without new orders or current market providers. Missing receipts
+retain uncertainty; independent exits and reserved risk are unchanged. This is not
+authenticated operator review, unattended recovery or scheduled programme service.
+M03 and M01 remain partial. See `INSTITUTIONAL_BRIDGE_RECOVERY.md` and PR #146.
