@@ -200,14 +200,21 @@ class SqliteAIBudget:
         *,
         token_reservation: int = 0,
     ) -> None:
-        """Record valid provider usage and release the matching reservation."""
+        """Record valid provider usage, including prompt-cache input, and release the reservation."""
         if (
             isinstance(token_reservation, bool)
             or not isinstance(token_reservation, int)
             or token_reservation < 0
         ):
             raise ValueError("token_reservation must be a non-negative integer")
-        input_tokens = _token_count(usage, "input_tokens")
+        input_tokens = sum(
+            _token_count(usage, key)
+            for key in (
+                "input_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+        )
         output_tokens = _token_count(usage, "output_tokens")
         # Unknown usage stays reserved. A timeout or malformed provider response must not
         # silently reopen account-wide headroom.
