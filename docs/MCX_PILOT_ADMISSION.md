@@ -107,3 +107,26 @@ identity, existing-position migration, lot size, and expiry checks.
 
 Owner review and a fresh exact-head full suite/CI are required before merge. The
 owner, not this development lane, decides whether and when to deploy.
+
+## Corrected normal-session seasonal close
+
+The inherited session table had its seasonal closes reversed: it used 23:55 IST
+in US daylight saving and 23:30 in standard time. The exchange's Trade Timings
+specify 09:00–23:30, extended to 23:55 typically November–March. The table now
+uses 23:30 during US DST and 23:55 in standard time; there is no MCX post-market
+trading window. Regular close is exclusive, including on equivalent UTC inputs.
+
+Primary source checked for this repair:
+https://www.mcxindia.com/market-operations/trading-surveillance (Trade Timings).
+
+The existing fixed standard-time annualisation convention consequently uses
+895 normal-session minutes, not the previously incorrect 870. This is not a
+count of actual historical sessions; reports still need real interval/calendar
+metadata. No performance threshold, trading limit or statistical floor changed.
+The original session tests incorrectly encoded the old reversal; their affected
+expected results and inside-closing-window fixture now follow the exchange rule.
+
+Normal weekday boundary and overnight-firewall tests cover winter and summer.
+This does not qualify special/holiday half-days, agricultural contract sessions,
+future exchange-circular changes or actual evening-feed/protection operation.
+Do not enable MCX on a running account solely because these tests pass.

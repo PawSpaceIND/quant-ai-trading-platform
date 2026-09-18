@@ -107,7 +107,7 @@ def test_the_overnight_firewall_no_longer_refuses_every_evening_entry_as_out_of_
 
 
 def test_the_closing_window_is_measured_against_the_close_the_instrument_actually_has():
-    """A window anchored to 15:30 for a book that shuts at 23:55 is never in force.
+    """A window anchored to 15:30 for a book that shuts at 23:30 is never in force.
 
     The window refuses entries in the final minutes before the close, so that a position
     is not opened with no time left to manage it. Anchored to the wrong close it either
@@ -121,8 +121,8 @@ def test_the_closing_window_is_measured_against_the_close_the_instrument_actuall
     firewall = OvernightExposureFirewall(policy, calendar=book_calendar())
     portfolio = PortfolioSnapshot(EQUITY, Decimal(0), Decimal(0), EQUITY)
 
-    # 23:40 IST, inside MCX's final half hour under the DST close of 23:55.
-    late = datetime(2026, 9, 16, 23, 40, tzinfo=IST).astimezone(timezone.utc)
+    # 23:20 IST, inside MCX's final half hour under the DST close of 23:30.
+    late = datetime(2026, 9, 16, 23, 20, tzinfo=IST).astimezone(timezone.utc)
     assert firewall.evaluate(order("GOLD"), portfolio, late).reason == "overnight_closing_window"
     # 20:00 is mid-session for the metal, so the window must not be in force.
     assert firewall.evaluate(order("GOLD"), portfolio, EVENING).approved
