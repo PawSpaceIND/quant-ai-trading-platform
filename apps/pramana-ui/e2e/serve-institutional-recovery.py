@@ -58,16 +58,12 @@ def main():
     if marker["schema"] != "synthetic-browser-recovery.v1":
         raise ValueError("Synthetic fixture marker required")
     import uvicorn
-    from quant_ai.api.app import ApiState, create_app
-    from quant_ai.security.rate_limit import SlidingWindowRateLimiter
-    from quant_ai.service.portfolio_service import TenantPortfolioStore
-    from quant_ai.service.trading_service import TradingService
+    from quant_ai.api.recovery_app import create_recovery_app
     h = BridgeHarness(root)
     h.runtime.kill_switch.engage("synthetic browser test halt")
     keys = PersistentApiKeyRegistry(root / "credentials.sqlite")
     operations = InstitutionalRecoveryOperations(h.runtime, root / "operator-audit.sqlite")
-    app = create_app(ApiState(keys, SlidingWindowRateLimiter(500, timedelta(minutes=1)),
-        TradingService(), TenantPortfolioStore(), {"paper_broker"}, institutional_recovery={"tenant":operations}))
+    app = create_recovery_app(keys=keys, operations={"tenant": operations}, rate_limit_per_minute=500)
     @app.get("/fixture/observations")
     def observations():
         return {"brokerOrders":len(h.broker.ledger_entries("tenant")),
