@@ -1,0 +1,16 @@
+{
+  "schema": "pramana.nse_watchlist_selection_recipe.v1",
+  "status": "source_inputs_required_not_deployable",
+  "targetCount": 50,
+  "retainedSymbols": ["INFY", "TCS", "RELIANCE", "GOLDBEES", "SILVERBEES"],
+  "equitySelection": "48 from a qualified supplied Nifty 50 constituent CSV",
+  "omissionRule": "Two non-retained names from largest industry groups; industry/symbol tie break",
+  "sectorSource": "CSV Industry field; retained metal ETFs preserve PRECIOUS_METALS",
+  "minimumGroups": 5,
+  "maximumNamesPerGroup": 12,
+  "requiredInputs": ["actual five-name directives", "qualified constituent CSV", "current Kite NSE master CSV", "aware observation timestamps", "current budget limits"],
+  "hostAcceptance": false,
+  "budgetChanges": false,
+  "pilotCapChanges": false,
+  "healthCapChanges": false
+}

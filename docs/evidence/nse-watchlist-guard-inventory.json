@@ -1,0 +1,369 @@
+{
+  "schema": "pramana.nse_watchlist_guards.v1",
+  "mutations": [
+    {
+      "id": "aware_timestamp_required",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(isinstance(value, datetime) and value.utcoffset() is not None,\n             \"watchlist_aware_timestamp_required\")",
+      "new": "_require(True, 'watchlist_aware_timestamp_required')",
+      "test": "tests/test_nse_watchlist.py::test_source_clock_must_be_aware[now]"
+    },
+    {
+      "id": "source_stale_or_future",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(timedelta(0) <= age <= maximum_age, \"watchlist_source_stale_or_future\")",
+      "new": "_require(True, 'watchlist_source_stale_or_future')",
+      "test": "tests/test_nse_watchlist.py::test_source_age_refusal"
+    },
+    {
+      "id": "source_size_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(isinstance(payload, bytes) and 0 < len(payload) <= max_bytes,\n             \"watchlist_source_size_invalid\")",
+      "new": "_require(True, 'watchlist_source_size_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[oversize-source_size_invalid]"
+    },
+    {
+      "id": "source_empty",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(bool(rows), \"watchlist_source_empty\")",
+      "new": "_require(True, 'watchlist_source_empty')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[no_rows-source_empty]"
+    },
+    {
+      "id": "symbol_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(isinstance(value, str) and SYMBOL.fullmatch(value) is not None,\n             \"watchlist_symbol_invalid\")",
+      "new": "_require(True, 'watchlist_symbol_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[symbol-symbol_invalid]"
+    },
+    {
+      "id": "constituent_count_not_fifty",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(rows) == 50, \"watchlist_constituent_count_not_fifty\")",
+      "new": "_require(True, 'watchlist_constituent_count_not_fifty')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[missing_row-constituent_count_not_fifty]"
+    },
+    {
+      "id": "retained_equity_missing",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(RETAINED_EQUITIES <= sectors.keys(), \"watchlist_retained_equity_missing\")",
+      "new": "_require(True, 'watchlist_retained_equity_missing')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[retained-retained_equity_missing]"
+    },
+    {
+      "id": "constituent_etf_conflict",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(not RETAINED_ETFS.intersection(sectors), \"watchlist_constituent_etf_conflict\")",
+      "new": "_require(True, 'watchlist_constituent_etf_conflict')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[etf-constituent_etf_conflict]"
+    },
+    {
+      "id": "selection_scope_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(selected) == 50 and RETAINED_EQUITIES <= selected,\n             \"watchlist_selection_scope_invalid\")",
+      "new": "_require(True, 'watchlist_selection_scope_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_selection_rejects_missing_retained_or_unique_groups"
+    },
+    {
+      "id": "master_tick_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(parsed.is_finite() and parsed > 0, \"watchlist_master_tick_invalid\")",
+      "new": "_require(True, 'watchlist_master_tick_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_master_row_refusals[tick_size-NaN-master_tick_invalid]"
+    },
+    {
+      "id": "master_token_invalid_lexical",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(isinstance(value, str) and re.fullmatch(r\"[1-9][0-9]{0,9}\", value) is not None,\n             \"watchlist_master_token_invalid\")",
+      "new": "_require(True, 'watchlist_master_token_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_master_row_refusals[instrument_token-010-master_token_invalid]"
+    },
+    {
+      "id": "master_token_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(result <= 4_294_967_295, \"watchlist_master_token_invalid\")",
+      "new": "_require(True, 'watchlist_master_token_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_master_row_refusals[instrument_token-4294967296-master_token_invalid]"
+    },
+    {
+      "id": "master_scope_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(bool(wanted) and len(wanted) == len(symbols), \"watchlist_master_scope_invalid\")",
+      "new": "_require(True, 'watchlist_master_scope_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_master_requires_nonempty_unique_scope"
+    },
+    {
+      "id": "symbol_without_master_token",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(set(candidates) == wanted, \"watchlist_symbol_without_master_token\")",
+      "new": "_require(True, 'watchlist_symbol_without_master_token')",
+      "test": "tests/test_nse_watchlist.py::test_master_scope_refusals[missing-symbol_without_master_token]"
+    },
+    {
+      "id": "master_token_alias",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(all(counts[token] == 1 for token in selected_tokens),\n             \"watchlist_master_token_alias\")",
+      "new": "_require(True, 'watchlist_master_token_alias')",
+      "test": "tests/test_nse_watchlist.py::test_master_scope_refusals[token_alias-master_token_alias]"
+    },
+    {
+      "id": "subscription_token_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(all(type(t) is int and 0 < t <= 4_294_967_295 for t in tokens),\n             \"watchlist_subscription_token_invalid\")",
+      "new": "_require(True, 'watchlist_subscription_token_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[token_type-subscription_token_invalid]"
+    },
+    {
+      "id": "subscription_duplicate_token",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(set(tokens)) == len(tokens), \"watchlist_subscription_duplicate_token\")",
+      "new": "_require(True, 'watchlist_subscription_duplicate_token')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[duplicate_token-subscription_duplicate_token]"
+    },
+    {
+      "id": "subscription_key_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(all(type(t) is int and 0 < t <= 4_294_967_295 for t in mapping),\n             \"watchlist_subscription_key_invalid\")",
+      "new": "_require(True, 'watchlist_subscription_key_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[key_type-subscription_key_invalid]"
+    },
+    {
+      "id": "token_without_symbol_mapping",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(set(tokens) == set(mapping), \"watchlist_token_without_symbol_mapping\")",
+      "new": "_require(True, 'watchlist_token_without_symbol_mapping')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[extra_token-token_without_symbol_mapping]"
+    },
+    {
+      "id": "subscription_symbol_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(all(isinstance(s, str) and SYMBOL.fullmatch(s) for s in mapping.values()),\n             \"watchlist_subscription_symbol_invalid\")",
+      "new": "_require(True, 'watchlist_subscription_symbol_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[symbol_type-subscription_symbol_invalid]"
+    },
+    {
+      "id": "subscription_duplicate_symbol",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(set(mapping.values())) == len(mapping), \"watchlist_subscription_duplicate_symbol\")",
+      "new": "_require(True, 'watchlist_subscription_duplicate_symbol')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[duplicate_symbol-subscription_duplicate_symbol]"
+    },
+    {
+      "id": "symbol_without_subscription_token",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(set(mapping.values()) == {i.symbol for i in instruments},\n             \"watchlist_symbol_without_subscription_token\")",
+      "new": "_require(True, 'watchlist_symbol_without_subscription_token')",
+      "test": "tests/test_nse_watchlist.py::test_subscription_bijection_refuses[missing_symbol-symbol_without_subscription_token]"
+    },
+    {
+      "id": "sector_scope_incomplete",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(set(normalized) == set(symbols), \"watchlist_sector_scope_incomplete\")",
+      "new": "_require(True, 'watchlist_sector_scope_incomplete')",
+      "test": "tests/test_nse_watchlist.py::test_sector_spread_refused[missing-sector_scope_incomplete]"
+    },
+    {
+      "id": "sector_spread_insufficient",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(counts) >= MIN_GROUPS and max(counts.values()) <= MAX_GROUP_NAMES,\n             \"watchlist_sector_spread_insufficient\")",
+      "new": "_require(True, 'watchlist_sector_spread_insufficient')",
+      "test": "tests/test_nse_watchlist.py::test_sector_spread_refused[one_sector-sector_spread_insufficient]"
+    },
+    {
+      "id": "workload_day_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(type(day) is date, \"watchlist_workload_day_invalid\")",
+      "new": "_require(True, 'watchlist_workload_day_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_workload_day_must_not_include_time"
+    },
+    {
+      "id": "ai_budget_must_remain_enabled",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(type(daily_call_limit) is int and daily_call_limit > 0\n             and type(daily_token_limit) is int and daily_token_limit > 0,\n             \"watchlist_ai_budget_must_remain_enabled\")",
+      "new": "_require(True, 'watchlist_ai_budget_must_remain_enabled')",
+      "test": "tests/test_nse_watchlist.py::test_disabled_or_ambiguous_budget_refuses"
+    },
+    {
+      "id": "expected_five_name_base",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(tuple(i.symbol for i in before.watchlist) == BASE_SYMBOLS,\n             \"watchlist_expected_five_name_base\")",
+      "new": "_require(True, 'watchlist_expected_five_name_base')",
+      "test": "tests/test_nse_watchlist.py::test_base_identity_is_not_silently_changed[base-expected_five_name_base]"
+    },
+    {
+      "id": "base_asset_class_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(all(i.asset_class.value == (\"ETF\" if i.symbol in RETAINED_ETFS else \"EQUITY\")\n                 for i in before.watchlist), \"watchlist_base_asset_class_invalid\")",
+      "new": "_require(True, 'watchlist_base_asset_class_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_base_identity_is_not_silently_changed[asset-base_asset_class_invalid]"
+    },
+    {
+      "id": "expansion_not_fifty",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(actual.watchlist) == 50, \"watchlist_expansion_not_fifty\")",
+      "new": "_require(True, 'watchlist_expansion_not_fifty')",
+      "test": "tests/test_nse_watchlist.py::test_final_count_checked_independently"
+    },
+    {
+      "id": "source_header_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(reader.fieldnames == list(columns), \"watchlist_source_header_invalid\")",
+      "new": "_require(True, 'watchlist_source_header_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[header-source_header_invalid]"
+    },
+    {
+      "id": "constituent_not_cash_equity",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(row[\"Series\"] == \"EQ\" and bool(row[\"Company Name\"].strip()),\n                 \"watchlist_constituent_not_cash_equity\")",
+      "new": "_require(True, 'watchlist_constituent_not_cash_equity')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[series-constituent_not_cash_equity]"
+    },
+    {
+      "id": "sector_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(bool(group) and len(group) <= 100 and group.isprintable(),\n                 \"watchlist_sector_invalid\")",
+      "new": "_require(True, 'watchlist_sector_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[sector-sector_invalid]"
+    },
+    {
+      "id": "isin_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(re.fullmatch(r\"IN[A-Z0-9]{10}\", isin) is not None,\n                 \"watchlist_isin_invalid\")",
+      "new": "_require(True, 'watchlist_isin_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[isin-isin_invalid]"
+    },
+    {
+      "id": "constituent_duplicate",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(symbol not in sectors and isin not in isins,\n                 \"watchlist_constituent_duplicate\")",
+      "new": "_require(True, 'watchlist_constituent_duplicate')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[duplicate-constituent_duplicate]"
+    },
+    {
+      "id": "selection_cannot_preserve_groups",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(bool(eligible), \"watchlist_selection_cannot_preserve_groups\")",
+      "new": "_require(True, 'watchlist_selection_cannot_preserve_groups')",
+      "test": "tests/test_nse_watchlist.py::test_selection_rejects_missing_retained_or_unique_groups"
+    },
+    {
+      "id": "master_ambiguous_symbol",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(symbol not in candidates, \"watchlist_master_ambiguous_symbol\")",
+      "new": "_require(True, 'watchlist_master_ambiguous_symbol')",
+      "test": "tests/test_nse_watchlist.py::test_master_scope_refusals[ambiguous-master_ambiguous_symbol]"
+    },
+    {
+      "id": "master_not_cash",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(row[\"segment\"] == \"NSE\" and row[\"instrument_type\"] == \"EQ\"\n                 and not row[\"expiry\"] and row[\"strike\"] in {\"\", \"0\", \"0.0\"},\n                 \"watchlist_master_not_cash\")",
+      "new": "_require(True, 'watchlist_master_not_cash')",
+      "test": "tests/test_nse_watchlist.py::test_master_row_refusals[segment-NFO-master_not_cash]"
+    },
+    {
+      "id": "master_cash_lot_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(row[\"lot_size\"] == \"1\", \"watchlist_master_cash_lot_invalid\")",
+      "new": "_require(True, 'watchlist_master_cash_lot_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_master_row_refusals[lot_size-2-master_cash_lot_invalid]"
+    },
+    {
+      "id": "master_duplicate_token",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(token not in selected_tokens, \"watchlist_master_duplicate_token\")",
+      "new": "_require(True, 'watchlist_master_duplicate_token')",
+      "test": "tests/test_nse_watchlist.py::test_master_scope_refusals[duplicate_token-master_duplicate_token]"
+    },
+    {
+      "id": "master_normalization_mismatch",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(normalized is not None and normalized[\"symbol\"] == symbol\n                 and normalized[\"exchange\"] == \"NSE\" and normalized[\"currency\"] == \"INR\"\n                 and normalized[\"providerInstrumentId\"] == str(token),\n                 \"watchlist_master_normalization_mismatch\")",
+      "new": "_require(True, 'watchlist_master_normalization_mismatch')",
+      "test": "tests/test_nse_watchlist.py::test_existing_normalizer_reused_and_identity_conflict_refuses"
+    },
+    {
+      "id": "existing_lot_conflict",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(item.get(\"lot_size\") in (None, identities[symbol][\"lotSize\"]),\n                 \"watchlist_existing_lot_conflict\")",
+      "new": "_require(True, 'watchlist_existing_lot_conflict')",
+      "test": "tests/test_nse_watchlist.py::test_base_identity_is_not_silently_changed[lot-existing_lot_conflict]"
+    },
+    {
+      "id": "source_row_limit",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(len(rows) < max_rows, \"watchlist_source_row_limit\")",
+      "new": "_require(True, 'watchlist_source_row_limit')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[extra_row-source_row_limit]"
+    },
+    {
+      "id": "source_row_invalid",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(None not in row and all(isinstance(v, str) for v in row.values()),\n                     \"watchlist_source_row_invalid\")",
+      "new": "_require(True, 'watchlist_source_row_invalid')",
+      "test": "tests/test_nse_watchlist.py::test_constituent_refusals[missing_cell-source_row_invalid]"
+    },
+    {
+      "id": "existing_tick_conflict",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "_require(Decimal(str(item[\"tick_size\"])) == Decimal(identities[symbol][\"tickSize\"]),\n                     \"watchlist_existing_tick_conflict\")",
+      "new": "_require(True, 'watchlist_existing_tick_conflict')",
+      "test": "tests/test_nse_watchlist.py::test_base_identity_is_not_silently_changed[tick-existing_tick_conflict]"
+    },
+    {
+      "id": "unchanged_pilot_cap",
+      "path": "src/quant_ai/governance/pilot.py",
+      "old": "if len(instruments) > 50:",
+      "new": "if False:",
+      "test": "tests/test_nse_watchlist.py::test_fifty_first_name_refused_by_unchanged_pilot_cap"
+    },
+    {
+      "id": "expanded_boot_wiring",
+      "path": "src/quant_ai/daemon.py",
+      "old": "if pilot_mode and len(instruments) > 5:",
+      "new": "if False:",
+      "test": "tests/test_nse_watchlist.py::test_expanded_boot_mapping_refusal_precedes_any_broker_write"
+    },
+    {
+      "id": "cli_read_bound",
+      "path": "scripts/prepare_nse_watchlist.py",
+      "old": "if len(value) > limit:",
+      "new": "if False:",
+      "test": "tests/test_nse_watchlist.py::test_cli_bounded_reader_and_duplicate_json_guard"
+    },
+    {
+      "id": "cli_duplicate_keys",
+      "path": "scripts/prepare_nse_watchlist.py",
+      "old": "if key in result:",
+      "new": "if False:",
+      "test": "tests/test_nse_watchlist.py::test_cli_bounded_reader_and_duplicate_json_guard"
+    },
+    {
+      "id": "no_existing_output_overwrite",
+      "path": "scripts/prepare_nse_watchlist.py",
+      "old": "exist_ok=False",
+      "new": "exist_ok=True",
+      "test": "tests/test_nse_watchlist.py::test_cli_refuses_existing_empty_output_directory"
+    },
+    {
+      "id": "actual_sector_firewall",
+      "path": "src/quant_ai/risk/policy.py",
+      "old": "if group is not None:",
+      "new": "if False:",
+      "test": "tests/test_nse_watchlist.py::test_actual_item_two_firewall_refuses_a_concentrated_book"
+    },
+    {
+      "id": "canonical_tokens_across_master",
+      "path": "src/quant_ai/governance/nse_watchlist.py",
+      "old": "Counter(_token(row[\"instrument_token\"]) for row in rows)",
+      "new": "Counter(int(row[\"instrument_token\"]) for row in rows)",
+      "test": "tests/test_nse_watchlist.py::test_master_refuses_noncanonical_unselected_token_alias"
+    },
+    {
+      "id": "private_directory_mode",
+      "path": "scripts/prepare_nse_watchlist.py",
+      "old": "destination.chmod(0o700)",
+      "new": "pass",
+      "test": "tests/test_nse_watchlist.py::test_cli_removes_inherited_setgid_from_new_private_directory"
+    }
+  ]
+}

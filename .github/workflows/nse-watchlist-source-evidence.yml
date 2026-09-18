@@ -1,0 +1,39 @@
+name: NSE watchlist preparation verification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nse-watchlist-source-evidence.yml'
+      - 'src/quant_ai/governance/nse_watchlist.py'
+      - 'scripts/prepare_nse_watchlist.py'
+      - 'scripts/inspect_watchlist_budget.py'
+      - 'tests/test_nse_watchlist*.py'
+      - 'docs/evidence/nse-watchlist-guard-inventory.json'
+      - 'docs/evidence/nse-watchlist-budget-guard-inventory.json'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-preparation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[dev]'
+      - name: Verify preparation and deliberate guard removal with synthetic sources
+        run: python -B -m pytest -q tests/test_nse_watchlist.py tests/test_nse_watchlist_mutations.py tests/test_nse_watchlist_budget.py tests/test_nse_watchlist_budget_mutations.py --junitxml=watchlist-verification.xml
+      - name: Preserve verification result, including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nse-watchlist-preparation-verification
+          path: watchlist-verification.xml
+          retention-days: 14
+          if-no-files-found: error
