@@ -15,6 +15,8 @@ from quant_ai.marketdata.action_reconciliation import (
     reconcile,
 )
 from quant_ai.marketdata.bhavcopy import (
+    NSE_NORMAL_SERIES,
+    NSE_SAME_DAY_SETTLEMENT_SERIES,
     BhavcopyFormatError,
     parse_bhavcopy,
     read_bhavcopy,
@@ -560,3 +562,39 @@ def test_the_newer_udiff_format_reconstructs_a_universe_as_the_legacy_one_does()
     listings = {item.symbol: item for item in result.universe.listings}
     assert listings["ULIVE"].delisted_on is None
     assert listings["UGONE"].delisted_on == days[59] + timedelta(days=1)
+
+
+def test_the_same_day_settlement_series_is_not_kept_by_default():
+    # T0 repeats a security that is already in EQ under the same ISIN, and NSE stamps its
+    # close with the regular segment's price while its high and low describe whatever tiny
+    # volume traded in T0. Keeping it would put duplicate security-days into the
+    # reconstruction for no gain.
+    assert "T0" in NSE_SAME_DAY_SETTLEMENT_SERIES
+    assert "T0" not in NSE_NORMAL_SERIES
+
+
+def test_a_row_whose_close_sits_below_its_low_is_refused_not_clamped():
+    # The shape of the real NSE T0 row for SBIN on 2024-09-05: one trade at 820.00, so the
+    # range is a point, while the close carries the regular segment's 818.75.
+    day = date(2024, 9, 5)
+    text = "\n".join([
+        UDIFF_HEADER,
+        (
+            f"{day.isoformat()},{day.isoformat()},CM,NSE,STK,23256,INE062A01020,SBIN,T0,"
+            ",,,,STATE BANK OF INDIA,820.00,820.00,820.00,818.75,820.00,816.50,,818.75,"
+            ",,1,820.00,1,F1,1,,,,,"
+        ),
+        (
+            f"{day.isoformat()},{day.isoformat()},CM,NSE,STK,3045,INE062A01020,SBIN,EQ,"
+            ",,,,STATE BANK OF INDIA,818.35,822.15,814.40,818.75,818.00,816.50,,818.75,"
+            ",,8395074,6878027979.75,146739,F1,1,,,,,"
+        ),
+    ]) + "\n"
+
+    parsed = parse_bhavcopy(text)
+
+    assert parsed.usable == 1
+    assert parsed.rows[0].series == "EQ"
+    assert parsed.rows[0].close == Decimal("818.75")
+    assert [item.symbol for item in parsed.rejected] == ["SBIN"]
+    assert "close outside" in parsed.rejected[0].reason

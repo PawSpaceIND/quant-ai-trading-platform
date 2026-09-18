@@ -138,7 +138,12 @@ Inspect `worst_unexplained` in `archive_report.json` before paying anyone.
 ## Series filtering
 
 NSE `EQ` and BSE groups `A`/`B` — normal rolling settlement — are kept by default, because
-the friction and impact models elsewhere in this repository assume it. `BE`/`BZ` and `T`/`Z`
+the friction and impact models elsewhere in this repository assume it. NSE's `T0`
+same-day-settlement segment is excluded for a different reason: it is the *same security
+again* under the same ISIN, so keeping it would put duplicate security-days into the
+reconstruction. Its OHLC is also not internally consistent — on SBIN, 2024-09-05, the T0
+row had one trade of one share at 820.00 while its close carried the regular segment's
+818.75, putting the close below the low. `BE`/`BZ` and `T`/`Z`
 are trade-to-trade and surveillance: real equities, different microstructure, wrong cost
 model. SME series are thinner than the square-root impact model describes. All are
 parseable via `--series` when a study explicitly wants them.

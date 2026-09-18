@@ -56,6 +56,20 @@ NSE_NORMAL_SERIES = ("EQ",)
 NSE_RESTRICTED_SERIES = ("BE", "BZ")
 #: NSE SME platform. Thin books; the square-root impact model does not describe them.
 NSE_SME_SERIES = ("SM", "ST")
+#: NSE's same-day-settlement segment, introduced in 2024. Excluded by default for two
+#: reasons found in real data rather than assumed.
+#:
+#: It is *the same security again*: a T0 row carries the same ISIN as the EQ row, so
+#: keeping both yields two rows for one security on one day. Reconstruction dedupes those,
+#: keeps the first and reports the rest as ``rejected_rows`` — correct, but arbitrary about
+#: which survives, and there is no reason to put it in that position.
+#:
+#: Its OHLC is also not internally consistent. Observed on SBIN, 2024-09-05: the T0 row had
+#: a single trade of one share at 820.00, so open, high and low were all 820.00, while
+#: ``ClsPric`` carried 818.75 — the regular segment's close, identical to the settlement
+#: price. A close below the day's low is refused by ``BhavRow``, which is the right
+#: outcome: the row does not describe a session anything actually traded through.
+NSE_SAME_DAY_SETTLEMENT_SERIES = ("T0",)
 
 #: BSE ``SC_TYPE`` for equity. Bonds (``B``), debentures (``D``) and preference shares
 #: share the file and are not equities.
