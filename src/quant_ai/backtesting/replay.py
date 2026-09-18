@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import csv
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - annotation only
@@ -31,9 +28,7 @@ from quant_ai.backtesting.datasets import (
 )
 from quant_ai.backtesting.intrabar import IntrabarWindow, first_breach
 from quant_ai.domain.models import (
-    AssetClass,
     Instrument,
-    Market,
     OrderIntent,
     PortfolioSnapshot,
     Side,
