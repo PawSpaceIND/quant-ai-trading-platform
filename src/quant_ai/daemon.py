@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
+from quant_ai.agents.institutional_runtime import InstitutionalRuntimeInputs
 from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
@@ -155,6 +156,21 @@ class DaemonRunner:
         self._proof_count = 0
         self._consecutive_failures = 0
         self._logger = logging.getLogger("quant_ai.ghost_runner")
+        self._recovery_service = None
+        self._start_entered = False
+        self._recovery_stop = asyncio.Event()
+        self._runner_loop = None
+
+    def attach_recovery_service(self, service) -> None:
+        """Explicitly cohost recovery for this exact runtime; default remains absent."""
+        from quant_ai.operations.recovery_service import RecoveryServiceHost
+        if (type(service) is not RecoveryServiceHost or service.daemon is not self.daemon
+                or self._start_entered or self._stop_requested or self._recovery_service is not None
+                or service.status != "not_started"):
+            raise ValueError("runner_recovery_service_selection_invalid")
+        service._assert_selection()
+        self._recovery_service = service
+
 
     @property
     def consecutive_failures(self) -> int:
@@ -162,7 +178,10 @@ class DaemonRunner:
 
     def request_stop(self) -> None:
         self._stop_requested = True
-        self._protection_stop.set()
+        if self._recovery_service is None:
+            self._protection_stop.set()
+        elif self._runner_loop is not None and not self._runner_loop.is_closed():
+            self._runner_loop.call_soon_threadsafe(self._recovery_stop.set)
         self.daemon.request_stop()
 
     def _warm_required_book_history(self, now: datetime) -> None:
@@ -232,6 +251,8 @@ class DaemonRunner:
             self._protection_stop.wait(self.protection_interval)
 
     async def start(self) -> None:
+        self._start_entered = True
+        self._runner_loop = asyncio.get_running_loop()
         # Protection and market streams must become live before any optional provider I/O.
         # History warm-up runs off the event loop while telemetry remains fail-closed until
         # real cached evidence exists.
@@ -240,6 +261,8 @@ class DaemonRunner:
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
         cadence_task: asyncio.Task[None] | None = None
         try:
+            if self._recovery_service is not None and not self._stop_requested:
+                await self._recovery_service.start()
             if not self._stop_requested:
                 await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
             if self._stop_requested:
@@ -247,13 +270,17 @@ class DaemonRunner:
             cadence_task = asyncio.create_task(self._run_aligned_cadence())
             await cadence_task
         finally:
-            self._stop_requested = True
-            self._protection_stop.set()
-            protection.join(timeout=10)
-            for task in supervisors:
-                task.cancel()
-            await asyncio.gather(*supervisors, return_exceptions=True)
-            await self._stop_streams()
+            try:
+                if self._recovery_service is not None:
+                    await self._recovery_service.stop()
+            finally:
+                self._stop_requested = True
+                self._protection_stop.set()
+                protection.join(timeout=10)
+                for task in supervisors:
+                    task.cancel()
+                await asyncio.gather(*supervisors, return_exceptions=True)
+                await self._stop_streams()
 
     async def _supervise_stream(self, stream: AbstractTickerStream) -> None:
         delay = self.reconnect.initial_delay_seconds
@@ -275,11 +302,27 @@ class DaemonRunner:
                 await self.sleeper(delay)
                 delay = min(self.reconnect.max_delay_seconds, delay * self.reconnect.multiplier)
 
+    async def _wait_for_cadence(self, seconds: float) -> None:
+        if self._recovery_service is None:
+            await self.sleeper(seconds)
+            return
+        sleeper = asyncio.ensure_future(self.sleeper(seconds))
+        stopping = asyncio.create_task(self._recovery_stop.wait())
+        try:
+            await asyncio.wait((sleeper, stopping), return_when=asyncio.FIRST_COMPLETED)
+            if sleeper.done():
+                await sleeper
+        finally:
+            for task in (sleeper, stopping):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(sleeper, stopping, return_exceptions=True)
+
     async def _run_aligned_cadence(self) -> None:
         while not self._stop_requested:
             now = _as_utc(self.clock())
             boundary = _next_boundary(now, self.cadence)
-            await self.sleeper(max(0.0, (boundary - now).total_seconds()))
+            await self._wait_for_cadence(max(0.0, (boundary - now).total_seconds()))
             if self._stop_requested:
                 return
             current = _as_utc(self.clock())
@@ -402,9 +445,15 @@ def build_ghost_runner(
     post_mortem_directory: str | Path | None = None,
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
+    institutional_inputs: InstitutionalRuntimeInputs | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
+    if institutional_inputs is not None and (
+            type(institutional_inputs) is not InstitutionalRuntimeInputs or not pilot_mode
+            or order_identity_mode != "bound_v1"
+            or institutional_inputs.accounting.tenant_id != tenant_id):
+        raise ValueError("institutional_runner_bound_pilot_required")
     order_identity_mode = validate_identity_storage(order_identity_mode,
         pilot_mode=pilot_mode, database=database, oms_database=oms_database)
     directives = directives or FounderDirectives()
@@ -471,6 +520,7 @@ def build_ghost_runner(
         # daily token restart would otherwise reset every score each morning, so the
         # engine could never learn anything that outlived one session.
         attribution_journal_tenant=tenant_id,
+        institutional_inputs=institutional_inputs, oms=oms,
     )
     runtime.oms = oms
     if require_book_risk_gates:

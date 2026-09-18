@@ -10,7 +10,7 @@ export function proxy(req: NextRequest) {
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !validOrigin(req))
     return NextResponse.json(
       { error: "Invalid request origin" },
-      { status: 403 },
+      { status: 403, headers: {"Cache-Control":"no-store"} },
     );
   if (route === "/login" || route === "/api/session")
     return NextResponse.next();
@@ -18,12 +18,12 @@ export function proxy(req: NextRequest) {
     return route.startsWith("/api/")
       ? NextResponse.json(
           { error: "Dashboard secret is not configured" },
-          { status: 503 },
+          { status: 503, headers: {"Cache-Control":"no-store"} },
         )
       : NextResponse.redirect(new URL("/login", req.url));
   if (!validSession(req.cookies.get(SESSION_COOKIE)?.value))
     return route.startsWith("/api/")
-      ? NextResponse.json({ error: "Sign in required" }, { status: 401 })
+      ? NextResponse.json({ error: "Sign in required" }, { status: 401, headers: {"Cache-Control":"no-store"} })
       : NextResponse.redirect(new URL("/login", req.url));
   const response = NextResponse.next();
   response.headers.set("Cache-Control", "no-store");

@@ -130,6 +130,9 @@ class AutonomousTradingDaemon:
         runtime = self.scheduler.pipeline.runtime
         runtime.snapshot_provider = lambda: self.tracker.get_snapshot(self.clock())
         runtime.pre_submit_check = self._pilot_pre_submit
+        from quant_ai.agents.institutional_runtime import InstitutionalSwarmPaperTradingService
+        if isinstance(runtime, InstitutionalSwarmPaperTradingService):
+            runtime.bind_inflight_preflight(self._pilot_inflight_pre_submit)
         self.tracker.broker.get_starting_capital(self.tenant_id)
         self.check_protection_coverage(self.clock())
         self._reconcile_pilot()
@@ -152,7 +155,11 @@ class AutonomousTradingDaemon:
             self.trade_evidence = build_trade_evidence(self.tracker.broker._connection, self.tenant_id)
         return True
 
-    def _pilot_pre_submit(self, proposal) -> str | None:
+    def _pilot_inflight_pre_submit(self, proposal, in_flight) -> str | None:
+        """Recheck all operating gates while recognizing only this claimed child."""
+        return self._pilot_pre_submit(proposal, in_flight=in_flight)
+
+    def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
         self.apply_operator_halt()
         if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
             return "pilot_protection_incomplete"
@@ -163,7 +170,7 @@ class AutonomousTradingDaemon:
                 return 'pilot_strategy_manifest_unverified'
         if proposal.side != Side.SELL:
             from quant_ai.governance.runtime_identity import runtime_identity_entry_issue
-            issue = runtime_identity_entry_issue(self)
+            issue = runtime_identity_entry_issue(self, in_flight=in_flight)
             if issue is not None:
                 self.engage_kill_switch(issue)
                 return issue
@@ -527,9 +534,9 @@ class AutonomousTradingDaemon:
                 traces = self.scheduler.pipeline.runtime.xai_logger.traces()
                 if traces:
                     agent_ids = tuple(row["agent_id"] for row in traces[-1].input_matrix)
-                    # Intra-session scoring only. At the next boot the journal replaces
-                    # this with the more accurate version: the agents that argued for the
-                    # entry, in the regime that entry was made in.
+                    # Bound live attribution ignores these latest-trace IDs and delta.
+                    # Its callback refreshes exact resolved entry evidence instead;
+                    # unbound offline engines retain the explicit record API.
                     self.scheduler.pipeline.runtime.attribution.record(
                         agent_ids, realized_delta, getattr(traces[-1], "regime", None)
                     )
@@ -608,12 +615,44 @@ class AutonomousTradingDaemon:
             from quant_ai.analytics.decision_quality import build_report, write_report
 
             report = build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            from quant_ai.analytics.learning_monitor import enrich_learning_report
+
+            observed_at = self.clock()
+            self.scheduler.pipeline.runtime.attribution._refresh_bound(observed_at)
+            drift = enrich_learning_report(
+                report, self.scheduler.pipeline.runtime.attribution,
+                config_path=self.decision_quality_report_path.parent / "learning-monitor.json",
+                tenant_id=self.tenant_id, now=observed_at,
+            )
             budget = self._ai_budget_status()
             if budget is not None:
                 report["ai_budget"] = budget
             write_report(self.decision_quality_report_path, report)
+            self._notify_learning_evidence(drift, observed_at)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_quality_report_failed")
+
+    def _notify_learning_evidence(self, drift: dict, timestamp: datetime) -> None:
+        """Observation alert only; never halt protection or approve a candidate."""
+        from quant_ai.analytics.decision_quality import IST
+        from quant_ai.notifications.trading import AlertPriority
+
+        signature = (
+            timestamp.astimezone(IST).date().isoformat(), drift.get("status"), drift.get("candidate_id"),
+            tuple(drift.get("reasons", ())),
+        )
+        if drift.get("status") not in {"degraded", "refused"}:
+            self._learning_alert_signature = None
+            return
+        if signature == getattr(self, "_learning_alert_signature", None):
+            return
+        self.notifications.dispatch(
+            TradingAlertCode.LEARNING_EVIDENCE_DEGRADED,
+            "Learning evidence needs review; no model or risk setting was changed.",
+            tenant_id=self.tenant_id, priority=AlertPriority.HIGH,
+            metadata={"status": drift["status"], "reasons": ",".join(drift["reasons"])},
+        )
+        self._learning_alert_signature = signature
 
     def _ai_budget_status(self) -> dict | None:
         """Today's consensus spend headroom, or None when no budget is configured.

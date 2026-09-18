@@ -38,6 +38,7 @@ def closed_trade(broker, decision_id, *, pnl, regime, agents=None, minutes=0, te
         "reason": None, "order_id": decision_id,
         "agents": json.dumps(AGENTS if agents is None else agents),
         "realized_net_pnl": str(pnl),
+        "exit_at": (SESSION + timedelta(minutes=minutes + 1)).isoformat(),
     })
 
 
