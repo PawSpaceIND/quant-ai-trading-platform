@@ -154,3 +154,21 @@ independent protection and off-hours behavior without SDK or model network calls
 The immediate component has real daemon-cycle coverage; scheduled lifecycle,
 authenticated rollout, qualified sources and the remaining M03 gates stay open.
 See `INSTITUTIONAL_DAEMON_CYCLE.md` and the exact PR #146 certification.
+
+### M06 scoped authenticated bookkeeping-recovery component
+
+A separate opt-in API component now wraps the immediate bridge's existing historical
+reconciliation. It requires explicitly issued recovery permissions, tenant-derived
+server selection, the saved context digest and an exact confirmation. A durable
+REQUESTED audit event precedes any bookkeeping; returned/failed outcomes and request
+idempotency retain uncertainty across interruption. Queued credential revocation is
+rechecked. Ordinary existing credentials gain no recovery permissions.
+
+This closes a component gap, not the entire operations milestone. Credentials remain
+in-memory possession keys, not persistent identity/MFA or independent approval. The
+new audit store still needs coordinated backup/restore inclusion. Front-end operator
+review, production provisioning, TLS/gateway validation, cross-host recovery and
+independent security/human acceptance remain open. M01 risk-capacity release and M03
+scheduled execution are unchanged. No running account or deployment was modified.
+See `AUTHENTICATED_INSTITUTIONAL_RECOVERY.md` for endpoints, tested failure cases and
+explicit exclusions. Exact final evidence is recorded in the scoped follow-up PR.
