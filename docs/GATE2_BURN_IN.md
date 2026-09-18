@@ -14,7 +14,7 @@ controls that exist today.
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` through the production failover registry | Configured does not mean retrieved. Missing configuration or provider failure returns no headlines, never sandbox constants. |
 | Macro (US10Y, INDIA10Y, BRENT, GOLD, USD_BROAD) | `FRED_API_KEY` and the declared FRED series map | Missing configuration or provider failure returns an empty snapshot. `USD_BROAD` is the configured FRED broad-dollar index; it must not be described as ICE DXY. Returned series, dates, semantics and freshness still require qualification. |
 | Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
-| Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real |
+| Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real only when the XAI trace for the current cadence records `mode=llm`; malformed tool payloads fail closed. The prompt explicitly requires `rationale` as a string array and mandatory `xai_proof`. |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
 The production `build_ghost_runner_from_env()` path passes explicit failover wrappers
@@ -237,6 +237,12 @@ with a `copilot.budget_exhausted` audit row; `GET /api/copilot` reports
 
 ## What to watch (first 24–48h of session hours)
 
+**LLM validity** — do not treat an Anthropic key or a completed API call as proof that
+the model influenced the decision. The current-cadence XAI trace must record
+`mode=llm`; `llm_invalid_schema`, `output_truncated`, `budget_exhausted` or any
+fallback mode is a NO-GO for the Monday LLM evidence gate. The system prompt now states
+the required field shapes explicitly, while the strict parser remains fail-closed.
+
 **Data path** — a proof every 10 minutes in `pramana-proofs/`; `price=FRESH` in the
 provider status. `Missing Market Data` / `Stale Market Data` as the veto reason means
 the token→symbol map does not match the watchlist. Outside session hours the mode is
@@ -273,12 +279,14 @@ positions and cooldowns must survive; no duplicate fill on the next tick.
 
 ## Monday paper-pilot close policy
 
-The standalone India paper launcher uses the five-name NSE cash/ETF watchlist
-(INFY, TCS, RELIANCE, GOLDBEES, SILVERBEES), passes the ₹100,000 founder starting
-capital into the paper broker, enables required Kite daily/book-risk history and bounded
-Kite minute warmup, and arms `PRAMANA_SESSION_FLATTEN_MINUTES=10`.
+The standalone India paper launcher reads exchange+symbol pairs directly from the founder directives.
+The shipped Monday directives remain the five-name NSE cash/ETF watchlist
+(INFY, TCS, RELIANCE, GOLDBEES, SILVERBEES), pass the ₹100,000 founder starting
+capital into the paper broker, enable required Kite daily/book-risk history and bounded
+Kite minute warmup, and arm both `PRAMANA_SESSION_FLATTEN_MINUTES=15` and
+`PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES=15`.
 
-Inside that final ten-minute NSE regular-session window the independent protection
+Inside that final fifteen-minute regular-session window the independent protection
 heartbeat submits covered paper SELL exits for any remaining configured positions. This
 session flatten is deterministic and independent of an AI vote. It still requires a
 fresh observable mark; an unavailable/failed protective exit latches the existing
