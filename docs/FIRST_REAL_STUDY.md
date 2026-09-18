@@ -21,8 +21,23 @@ straight into the study, so the two shapes are known to match rather than assume
 
 ## 2. Write the universe manifest
 
-This is the part no script can do for you, and it is the part that decides whether the
-answer means anything.
+This is the part that decides whether the answer means anything.
+
+> **There is now a script for this.** `docs/EXCHANGE_ARCHIVE.md` describes building the
+> manifest *and* the datasets directly from NSE and BSE bhavcopy archives, which are
+> point-in-time by construction and free. That path supersedes steps 1 and 2 here for
+> Indian equities and is the recommended one:
+>
+> ```bash
+> python scripts/fetch_bhavcopy_archive.py --exchange NSE \
+>     --from 2015-01-01 --to 2025-01-01 --out-dir var/bhavcopy/nse
+> python scripts/build_universe_from_archive.py \
+>     --archive var/bhavcopy/nse --out-dir var/study-inputs \
+>     --source "NSE bhavcopy archive 2015-2025"
+> ```
+>
+> The hand-written manifest below remains the contract, and is still the way in for any
+> venue without a published archive.
 
 ```json
 {
@@ -44,8 +59,11 @@ is the single most important thing this pipeline does. Yahoo Finance cannot supp
 names, so a Yahoo-only universe cannot pass this gate, and a study that appears to pass one
 is reporting on a universe with the failures already removed.
 
-The delisting records have to come from somewhere that keeps them: an exchange archive, a
-broker instrument master with expiry history, or a paid vendor. That is founder input item 1.
+The delisting records have to come from somewhere that keeps them. For NSE and BSE that
+is the exchange archive, it is free, and `scripts/build_universe_from_archive.py` now
+derives the records from it — see `docs/EXCHANGE_ARCHIVE.md`. A paid vendor is needed only
+if the corporate-action reconciliation reports a large `unsignalled_gaps` count, and then
+only for the corporate-action table rather than for prices.
 
 ## 3. Study
 
