@@ -21,7 +21,7 @@ from quant_ai.learning.contracts import (
 )
 from quant_ai.learning.knowledge import KnowledgeAccessController
 from quant_ai.learning.training import execute_training
-from quant_ai.validation.promotion import StrategyEvidence
+from quant_ai.validation.promotion import SelectionEvidence, StrategyEvidence
 
 NOW = datetime(2026, 9, 16, 10, tzinfo=timezone.utc)
 H = "a" * 64
@@ -90,15 +90,20 @@ def evaluation(*, brier="0.18", baseline="0.25", expectancy="10", resolved=120):
     )
 
 
+def selection() -> SelectionEvidence:
+    """A search that was counted, on a universe that records its failures."""
+    return SelectionEvidence(candidate_trials=12, deflated_sharpe=0.97, universe_verdict="plausible")
+
+
 def strategy():
     return StrategyEvidence(120, Decimal(10), Decimal("0.06"), Decimal("1.4"), 3, 35)
 
 
 def test_candidate_requires_after_cost_edge_and_probability_skill_but_never_live_approves():
-    good = assess_candidate(evaluation(), strategy())
+    good = assess_candidate(evaluation(), strategy(), selection=selection())
     assert good.shadow_ready and good.paper_ready
     assert not good.live_ready
-    bad = assess_candidate(evaluation(brier="0.30", baseline="0.25"), strategy())
+    bad = assess_candidate(evaluation(brier="0.30", baseline="0.25"), strategy(), selection=selection())
     assert not bad.paper_ready
     assert "candidate_probability_skill_not_better_than_baseline" in bad.reasons
 
@@ -116,7 +121,9 @@ def test_candidate_registry_is_hash_chained_and_requires_review_for_paper_approv
     # a named reviewer and arbitrary digest alone no longer qualify an approval.
     candidate_evaluation, strategy_evidence = evaluation(), strategy()
     transition_candidate(path, candidate_id="candidate-1", target=CandidateStage.PAPER_APPROVED,
-                         evidence_sha256=candidate_assessment_sha256(candidate_evaluation, strategy_evidence),
+                         evidence_sha256=candidate_assessment_sha256(candidate_evaluation, strategy_evidence,
+                                                        None, selection()),
                          evaluation=candidate_evaluation, strategy_evidence=strategy_evidence,
+                         selection=selection(),
                          reviewer="founder-review", now=NOW + timedelta(seconds=2))
     assert candidate_stages(path)["candidate-1"] is CandidateStage.PAPER_APPROVED

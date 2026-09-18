@@ -47,3 +47,48 @@ def test_strategy_review_requires_bound_forward_and_quality_evidence():
     artifact={"schema":"pramana.strategy.review.v1","tenant_id":"pilot","release_revision":"a"*40,"strategy_id":"synthetic-test-only","strategy_config_sha256":"b"*64,"strategy_evidence_sha256":"c"*64,"evidence_references":["synthetic-unit-fixture"],"holdout_reviewed":True,"costs_reviewed":True,"trial_register_reviewed":True,"ai_calibration_reviewed":True,"forward_paper_reviewed":True,"execution_stress_reviewed":True,"sample_trades":100,"expectancy":"1","max_drawdown":"0.05","profit_factor":"1.5","profitable_regimes":2,"paper_days":30}
     with pytest.raises(ValueError,match="holdout evidence digest"):
         review(artifact,"strategy",tenant="pilot",revision="a"*40)
+
+
+def test_strategy_review_requires_the_statistical_gate_result():
+    """The register's candidate count was loaded and discarded before this existed.
+
+    _selection_evidence is what turns it into a promotion input, so the study has to type
+    its deflated sharpe and universe verdict alongside the performance figures.
+    """
+    from quant_ai.governance.pilot_review import _selection_evidence
+
+    trials = {"candidate_trials": 47}
+    # Absent returns None so evaluate_promotion reports selection_bias_uncorrected alongside
+    # any other defect, instead of masking it with a different error raised earlier.
+    assert _selection_evidence({}, trials) is None
+    assert _selection_evidence({"deflated_sharpe": 0.97}, trials) is None
+    # A field that is present but malformed is still a hard artifact error.
+    with pytest.raises(ValueError, match="must be a number"):
+        _selection_evidence({"deflated_sharpe": "not-a-number", "universe_verdict": "plausible"}, trials)
+    with pytest.raises(ValueError, match=r"probability and must lie in \[0, 1\]"):
+        _selection_evidence({"deflated_sharpe": 1.4, "universe_verdict": "plausible"}, trials)
+
+    selection = _selection_evidence(
+        {"deflated_sharpe": "0.97", "universe_verdict": "plausible"}, trials
+    )
+    # The count comes from the retained register, never from the artifact the operator typed.
+    assert selection.candidate_trials == 47
+    assert selection.deflated_sharpe == 0.97
+    assert selection.universe_verdict == "plausible"
+
+
+def test_the_reviewer_actually_passes_selection_to_the_promotion_gate():
+    """Structural, because every other test in this file stops at an earlier rejection.
+
+    Without this, removing `selection=` from the promotion call in _review_strategy leaves
+    the whole suite green while silently restoring approval on uncorrected statistics.
+    """
+    from pathlib import Path
+
+    source = Path(__import__("quant_ai.governance.pilot_review", fromlist=["x"]).__file__).read_text()
+    assert "evaluate_promotion(evidence, selection=_selection_evidence(artifact, trials))" in source, (
+        "pilot_review no longer threads selection evidence into evaluate_promotion"
+    )
+    assert "require_selection_correction=False" not in source, (
+        "pilot_review disables the selection correction it is supposed to enforce"
+    )

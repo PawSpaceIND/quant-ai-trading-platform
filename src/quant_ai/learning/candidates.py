@@ -19,6 +19,7 @@ from quant_ai.operations.evidence_log import append_record, verify_chain
 from quant_ai.validation.promotion import (
     PromotionDecision,
     PromotionPolicy,
+    SelectionEvidence,
     StrategyEvidence,
     evaluate_promotion,
 )
@@ -59,11 +60,13 @@ def assess_candidate(
     evaluation: CandidateEvaluation,
     strategy_evidence: StrategyEvidence,
     policy: PromotionPolicy | None = None,
+    *,
+    selection: SelectionEvidence | None = None,
 ) -> CandidateAssessment:
-    """Demand both trading evidence and probability skill; never approve live money."""
+    """Demand trading evidence, probability skill and a corrected search; never approve live money."""
     chosen = policy if policy is not None else PromotionPolicy()
     _validate_assessment_inputs(evaluation, strategy_evidence, chosen)
-    strategy = evaluate_promotion(strategy_evidence, chosen)
+    strategy = evaluate_promotion(strategy_evidence, chosen, selection=selection)
     reasons = list(strategy.reasons)
     if evaluation.after_cost_expectancy <= 0:
         reasons.append("candidate_after_cost_expectancy_not_positive")
@@ -125,7 +128,13 @@ def _validate_assessment_inputs(evaluation, evidence, policy):
                 raise ValueError(f"candidate_{label}_{name}_invalid")
         for field in fields(obj):
             value = getattr(obj, field.name)
-            if field.name in integer_fields or field.name.endswith("sha256") or field.name == "candidate_id":
+            # require_selection_correction is the one boolean on a policy otherwise made of
+            # Decimal thresholds; it is checked for type below rather than as an amount.
+            if (
+                field.name in integer_fields
+                or field.name.endswith("sha256")
+                or field.name in {"candidate_id", "require_selection_correction"}
+            ):
                 continue
             if not isinstance(value, Decimal) or not value.is_finite():
                 raise ValueError(f"candidate_{label}_{field.name}_invalid")
@@ -135,6 +144,10 @@ def _validate_assessment_inputs(evaluation, evidence, policy):
         raise ValueError("candidate_evaluation_drawdown_invalid")
     if evidence.profit_factor < 0 or policy.min_profit_factor < 0 or policy.min_trades < 1:
         raise ValueError("candidate_strategy_or_policy_invalid")
+    if type(policy.require_selection_correction) is not bool:
+        raise ValueError("candidate_policy_require_selection_correction_invalid")
+    if not 0 <= policy.min_deflated_sharpe <= 1:
+        raise ValueError("candidate_policy_min_deflated_sharpe_invalid")
     for field in fields(evaluation):
         if field.name.endswith("sha256"):
             _digest(getattr(evaluation, field.name))
@@ -144,13 +157,18 @@ def _serialize(obj):
     return {name: str(value) if isinstance(value, Decimal) else value for name, value in asdict(obj).items()}
 
 
-def _assessment_payload(evaluation, strategy_evidence, policy=None):
+def _assessment_payload(evaluation, strategy_evidence, policy=None, selection=None):
     chosen = policy if policy is not None else PromotionPolicy()
-    result = assess_candidate(evaluation, strategy_evidence, chosen)
+    result = assess_candidate(evaluation, strategy_evidence, chosen, selection=selection)
     return {
         "schema": ASSESSMENT_SCHEMA,
         "evaluation": _serialize(evaluation), "strategy_evidence": _serialize(strategy_evidence),
-        "policy": _serialize(chosen), "paper_ready": result.paper_ready,
+        "policy": _serialize(chosen),
+        # The correction for how hard the search looked is part of the signed record, not a
+        # side input: an approval has to carry the evidence it relied on, and a later reader
+        # must be able to see that the search was counted rather than assume it.
+        "selection": _serialize(selection) if selection is not None else None,
+        "paper_ready": result.paper_ready,
         "live_ready": result.live_ready, "reasons": list(result.reasons),
         "strategy_approved": result.strategy_decision.approved,
     }
@@ -159,9 +177,10 @@ def _assessment_payload(evaluation, strategy_evidence, policy=None):
 def candidate_assessment_sha256(
     evaluation: CandidateEvaluation, strategy_evidence: StrategyEvidence,
     policy: PromotionPolicy | None = None,
+    selection: SelectionEvidence | None = None,
 ) -> str:
     """Digest the complete declared assessment, not authenticated market/model evidence."""
-    return _hash(_assessment_payload(evaluation, strategy_evidence, policy))
+    return _hash(_assessment_payload(evaluation, strategy_evidence, policy, selection))
 
 
 def _restore_dataclass(cls, payload, decimal_fields):
@@ -192,8 +211,13 @@ def _check_approval(candidate_id, assessment, evidence_sha256):
     evidence = _restore_dataclass(StrategyEvidence, assessment.get("strategy_evidence"),
         {"expectancy", "max_drawdown", "profit_factor"})
     policy = _restore_dataclass(PromotionPolicy, assessment.get("policy"),
-        {"min_expectancy", "max_drawdown", "min_profit_factor"})
-    recomputed = _assessment_payload(evaluation, evidence, policy)
+        {"min_expectancy", "max_drawdown", "min_profit_factor", "min_deflated_sharpe"})
+    raw_selection = assessment.get("selection")
+    selection = (
+        None if raw_selection is None
+        else _restore_dataclass(SelectionEvidence, raw_selection, set())
+    )
+    recomputed = _assessment_payload(evaluation, evidence, policy, selection)
     if evaluation.candidate_id != candidate_id:
         raise ValueError("candidate_approval_candidate_mismatch")
     # Compare canonical encodings as well as hashes: True must not equal integer 1.
@@ -332,6 +356,7 @@ def transition_candidate(
     evaluation: CandidateEvaluation | None = None,
     strategy_evidence: StrategyEvidence | None = None,
     policy: PromotionPolicy | None = None,
+    selection: SelectionEvidence | None = None,
 ) -> dict:
     _text(candidate_id, "identity")
     _digest(evidence_sha256)
@@ -345,9 +370,9 @@ def transition_candidate(
     if target is CandidateStage.PAPER_APPROVED:
         if evaluation is None or strategy_evidence is None:
             raise ValueError("candidate_approval_assessment_required")
-        assessment = _assessment_payload(evaluation, strategy_evidence, policy)
+        assessment = _assessment_payload(evaluation, strategy_evidence, policy, selection)
         _check_approval(candidate_id, assessment, evidence_sha256)
-    elif any(value is not None for value in (evaluation, strategy_evidence, policy)):
+    elif any(value is not None for value in (evaluation, strategy_evidence, policy, selection)):
         raise ValueError("candidate_assessment_only_for_approval")
     with _registry_lock(path, writing=True) as target_path:
         stages, previous_time = _replay(_read_registry_records(target_path))
