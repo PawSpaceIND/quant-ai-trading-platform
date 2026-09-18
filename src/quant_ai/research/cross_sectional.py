@@ -17,6 +17,15 @@ anything is scored, trials are registered before the verdict is computed and cha
 cumulatively, costs come from the platform's own friction model rather than an assumption,
 and nothing here approves anything.
 
+The first run of this study charged six trials and cleared nothing, but not by much: twelve-
+month momentum held a quarter earned an annualised Sharpe of 0.79 against a deflated bar of
+0.95, and every one of the three signals did better at 63 sessions than at 21 - three for
+three in the same direction. Two things about that run were weak, and both are fixed here.
+Its returns were measured against zero, which credits a long-only book for the market's own
+decade; they are now measured as excess over an equal-weighted hold of the same eligible
+names. And it rebalanced on a fixed clock, which caps a ten-year archive at nine annual
+observations; tranches now overlap, so a year-held strategy still reports monthly.
+
 Two floors exist because the archive taught us they must. A sub-rupee security moves 100% on
 a single paise tick, so return-ranked signals fill their top decile with tick noise; and a
 book of a lakh cannot be most of a day's turnover in a name that trades a few thousand rupees.
@@ -25,7 +34,6 @@ Both are exclusions at selection time, not adjustments afterwards.
 
 from __future__ import annotations
 
-import bisect
 import hashlib
 import json
 import math
@@ -65,10 +73,17 @@ MINIMUM_PRICE = Decimal(5)
 MINIMUM_TURNOVER = Decimal(1_000_000)
 LIQUIDITY_WINDOW = 60
 TRADING_SESSIONS_A_YEAR = 252
-MINIMUM_REBALANCES = 24
-# Rebalance frequencies in sessions: monthly and quarterly. Daily bars do not support
-# anything faster honestly - the close-to-close return is all this archive holds.
-DEFAULT_HORIZONS: tuple[int, ...] = (21, 63)
+MINIMUM_OBSERVATIONS = 36
+# A tranche is formed every month and held for the full horizon, so at any moment the book
+# carries ``horizon / FORMATION_SESSIONS`` overlapping tranches. This is the Jegadeesh-Titman
+# construction, and it exists because the alternative does not survive contact with ten years
+# of data: rebalancing once a year over 2,469 sessions yields nine observations, which grades
+# nothing. Overlapping tranches give a monthly observation of an annually-held strategy.
+FORMATION_SESSIONS = 21
+# Holding periods in sessions: quarterly, half-yearly, yearly. The first search found every
+# signal did better at 63 than at 21, without exception, so this one looks further out rather
+# than repeating the short end.
+DEFAULT_HORIZONS: tuple[int, ...] = (63, 126, 252)
 
 
 @dataclass(frozen=True)
@@ -77,7 +92,7 @@ class CrossSectionalSignal:
 
     name: str
     lookback: int
-    score: Callable[[Sequence[Any]], float | None]
+    score: Callable[[Sequence[float], Sequence[float]], float | None]
     rationale: str
 
 
@@ -89,7 +104,7 @@ def _returns(closes: Sequence[float]) -> list[float]:
     ]
 
 
-def _momentum_12_1(closes: Sequence[float]) -> float | None:
+def _momentum_12_1(closes: Sequence[float], volumes: Sequence[float] = ()) -> float | None:
     """Twelve-month return, skipping the most recent month.
 
     The skip is not decoration. Raw twelve-month momentum contains last month's return, which
@@ -103,7 +118,7 @@ def _momentum_12_1(closes: Sequence[float]) -> float | None:
     return end / start - 1.0
 
 
-def _low_volatility(closes: Sequence[float]) -> float | None:
+def _low_volatility(closes: Sequence[float], volumes: Sequence[float] = ()) -> float | None:
     """Negated realised volatility, so that a higher score is a calmer name."""
     if len(closes) < 120:
         return None
@@ -116,11 +131,69 @@ def _low_volatility(closes: Sequence[float]) -> float | None:
     return -spread
 
 
-def _short_term_reversal(closes: Sequence[float]) -> float | None:
+def _short_term_reversal(closes: Sequence[float], volumes: Sequence[float] = ()) -> float | None:
     """Negated one-month return: the classic counterpart to momentum, tested alongside it."""
     if len(closes) < 22:
         return None
     start, end = closes[-22], closes[-1]
+    if start <= 0:
+        return None
+    return -(end / start - 1.0)
+
+
+def _volatility_scaled_momentum(closes: Sequence[float], volumes: Sequence[float] = ()) -> float | None:
+    """Momentum divided by the volatility it was earned through.
+
+    Two names up thirty percent are not the same bet if one got there smoothly. Scaling by
+    realised volatility is the standard correction, and it is a different hypothesis from
+    either momentum or low volatility alone rather than a blend of the two.
+    """
+    if len(closes) < 252:
+        return None
+    raw = _momentum_12_1(closes, volumes)
+    if raw is None:
+        return None
+    moves = _returns(closes[-252:-21])
+    if len(moves) < 120:
+        return None
+    spread = statistics.pstdev(moves)
+    if spread <= 0:
+        return None
+    return raw / spread
+
+
+def _illiquidity(closes: Sequence[float], volumes: Sequence[float]) -> float | None:
+    """Amihud: average absolute return per rupee traded. Higher means thinner.
+
+    The illiquidity premium is one of the better-evidenced effects, and it is the one most
+    likely to be an artefact of costs rather than a return - which is precisely why it is
+    worth testing here, where costs are priced from each name's own bars and the turnover
+    floor has already removed the untradeable tail.
+    """
+    window = 120
+    if len(closes) < window + 1:
+        return None
+    prices, traded = closes[-window:], volumes[-window:]
+    moves = _returns(prices)
+    ratios = [
+        abs(move) / (prices[index + 1] * traded[index + 1])
+        for index, move in enumerate(moves)
+        if prices[index + 1] * traded[index + 1] > 0
+    ]
+    if len(ratios) < 60:
+        return None
+    return statistics.fmean(ratios) * 1e9
+
+
+def _long_term_reversal(closes: Sequence[float], volumes: Sequence[float] = ()) -> float | None:
+    """Negated return from five years ago to one year ago: De Bondt and Thaler's horizon.
+
+    Deliberately disjoint from momentum's window, so the two are testing different claims
+    about the same prices rather than the same claim twice.
+    """
+    if len(closes) < 1260:
+        return None
+    start, end = closes[-1260], closes[-252]
     if start <= 0:
         return None
     return -(end / start - 1.0)
@@ -138,6 +211,18 @@ CLOSE_SIGNALS: tuple[CrossSectionalSignal, ...] = (
     CrossSectionalSignal(
         "short_term_reversal", 22, _short_term_reversal,
         "negated one-month return; tested because it is momentum's opposite over a short window",
+    ),
+    CrossSectionalSignal(
+        "volatility_scaled_momentum", 252, _volatility_scaled_momentum,
+        "twelve-month momentum divided by the volatility it was earned through",
+    ),
+    CrossSectionalSignal(
+        "illiquidity", 121, _illiquidity,
+        "Amihud average absolute return per rupee traded; the illiquidity premium",
+    ),
+    CrossSectionalSignal(
+        "long_term_reversal", 1260, _long_term_reversal,
+        "negated five-to-one-year return; De Bondt and Thaler's reversal horizon",
     ),
 )
 
@@ -166,20 +251,24 @@ class Series:
         turnover = sum(self.closes[i] * self.volumes[i] for i in window) / len(window)
         return Decimal(str(turnover)) >= MINIMUM_TURNOVER
 
-    def forward(self, cut: int, horizon: int) -> tuple[float, bool]:
-        """Return from the close at ``cut - 1`` to ``horizon`` sessions later.
+    def month_return(self, opening: date, closing: date) -> tuple[float, bool] | None:
+        """Return across a window, and whether the series died inside it.
 
-        When the series ends inside the window the position is exited at the last close the
-        archive holds and the caller is told, because a delisting that silently pays the
-        entry price back is the survivorship this whole stack exists to refuse.
+        Taken from dates rather than from index arithmetic, because the two disagree the
+        moment a name stops trading: its cut stops advancing while the calendar does not.
+        A holding whose bars end mid-window is exited at the last close the archive holds and
+        reported as such. Paying the entry price back would be the survivorship this stack
+        exists to refuse, and dropping the window silently would be the same thing wearing a
+        different face.
         """
-        entry = self.closes[cut - 1]
-        target = cut - 1 + horizon
+        entered = self.upto(opening)
+        if entered < 1:
+            return None
+        entry = self.closes[entered - 1]
         if entry <= 0:
-            return 0.0, False
-        if target < len(self.closes):
-            return self.closes[target] / entry - 1.0, False
-        return self.closes[-1] / entry - 1.0, True
+            return None
+        exited = self.upto(closing)
+        return self.closes[exited - 1] / entry - 1.0, self.days[-1] < closing
 
 
 def _load(datasets: Path, universe: PointInTimeUniverse) -> tuple[list[Series], list[dict[str, str]], list[str]]:
@@ -229,6 +318,27 @@ def _cost_fraction(bars: Sequence[Any]) -> float | None:
         return None
 
 
+def _eligible_at(
+    series: Sequence[Series], universe: PointInTimeUniverse, day: date, lookback: int
+) -> list[tuple[Series, int]]:
+    """Every name this study may rank on ``day``, judged only on what was known by then."""
+    out: list[tuple[Series, int]] = []
+    for item in series:
+        cut = item.upto(day)
+        if cut == 0 or cut < lookback:
+            continue
+        try:
+            if not universe.was_tradeable(item.symbol, day):
+                continue
+        except ValueError:
+            # Outside the manifest's coverage: unknown, not assumed tradeable.
+            continue
+        if not item.eligible(cut):
+            continue
+        out.append((item, cut))
+    return out
+
+
 def backtest_signal(
     series: Sequence[Series],
     universe: PointInTimeUniverse,
@@ -236,74 +346,108 @@ def backtest_signal(
     horizon: int,
     calendar: Sequence[date],
 ) -> dict[str, Any]:
-    """Equal-weight the top decile by ``signal``, rebalanced every ``horizon`` sessions.
+    """Overlapping tranches, measured as excess over the universe the names came from.
 
-    Returns are net of a round trip priced by the platform's own friction model on each held
-    name's own bars, charged once per rebalance because the book turns over once per period.
+    Two things separate this from the naive construction. A tranche is formed every month and
+    held for ``horizon``, so the book carries several overlapping tranches and a year-held
+    strategy still produces a monthly observation - without this, ten years of data yields
+    nine annual rebalances and grades nothing.
+
+    And the return reported is *excess* over an equal-weighted hold of every eligible name.
+    A long-only decile of Indian equities between 2015 and 2025 earns a positive Sharpe by
+    being long, and a benchmark of zero would credit the signal for the market's own return.
+    The question is whether ranking beat not ranking.
+
+    Cost is charged on the fraction of the book that actually turns: one tranche in
+    ``horizon / FORMATION_SESSIONS`` each month, which is the real economic advantage of
+    holding longer and is why it must not be charged per-month in full.
     """
-    periods: list[float] = []
-    gross: list[float] = []
-    dates: list[str] = []
-    widths: list[int] = []
+    tranches = max(1, horizon // FORMATION_SESSIONS)
+    bounds = list(range(0, len(calendar), FORMATION_SESSIONS))
+    selections: dict[int, tuple[list[tuple[Series, int]], float]] = {}
     delisting_exits = 0
     unpriceable = 0
 
-    start = bisect.bisect_left(calendar, calendar[0])
-    for index in range(start, len(calendar) - 1, horizon):
-        day = calendar[index]
+    for month, index in enumerate(bounds[:-1]):
+        picks = _eligible_at(series, universe, calendar[index], signal.lookback)
         ranked: list[tuple[float, Series, int]] = []
-        for item in series:
-            cut = item.upto(day)
-            if cut == 0 or cut < signal.lookback:
-                continue
-            try:
-                if not universe.was_tradeable(item.symbol, day):
-                    continue
-            except ValueError:
-                # Outside the manifest's coverage: unknown, not assumed tradeable.
-                continue
-            if not item.eligible(cut):
-                continue
-            value = signal.score(item.closes[:cut])
+        for item, cut in picks:
+            value = signal.score(item.closes[:cut], item.volumes[:cut])
             if value is None or not math.isfinite(value):
                 continue
             ranked.append((value, item, cut))
-
         if len(ranked) < MINIMUM_NAMES:
             continue
         ranked.sort(key=lambda row: row[0], reverse=True)
         width = max(MINIMUM_NAMES, int(len(ranked) * SELECTION_FRACTION))
-        held = ranked[:width]
-
-        realised: list[float] = []
-        costs: list[float] = []
-        for _, item, cut in held:
-            move, exited = item.forward(cut, horizon)
+        held, costs = [], []
+        for _, item, cut in ranked[:width]:
             cost = _cost_fraction(item.bars[:cut])
             if cost is None:
                 unpriceable += 1
                 continue
-            realised.append(move)
+            held.append((item, cut))
             costs.append(cost)
-            delisting_exits += 1 if exited else 0
-        if len(realised) < MINIMUM_NAMES:
+        if len(held) < MINIMUM_NAMES:
+            continue
+        selections[month] = (held, statistics.fmean(costs))
+
+    excess: list[float] = []
+    portfolio: list[float] = []
+    market: list[float] = []
+    dates: list[str] = []
+    widths: list[int] = []
+
+    for month in range(1, len(bounds) - 1):
+        active = [selections[m] for m in range(max(0, month - tranches + 1), month + 1)
+                  if m in selections]
+        if not active:
+            continue
+        opening, closing = bounds[month], bounds[month + 1]
+
+        legs: list[float] = []
+        for held, _ in active:
+            names: list[float] = []
+            for item, _cut in held:
+                moved = item.month_return(calendar[opening], calendar[closing])
+                if moved is None:
+                    continue
+                names.append(moved[0])
+                delisting_exits += 1 if moved[1] else 0
+            if names:
+                legs.append(statistics.fmean(names))
+        if not legs:
             continue
 
-        raw = statistics.fmean(realised)
-        charge = statistics.fmean(costs)
-        gross.append(raw)
-        periods.append(raw - charge)
-        dates.append(day.isoformat())
-        widths.append(len(realised))
+        # Every eligible name, equally weighted: the return of not ranking at all.
+        benchmark: list[float] = []
+        for item, _cut in _eligible_at(series, universe, calendar[opening], LIQUIDITY_WINDOW):
+            moved = item.month_return(calendar[opening], calendar[closing])
+            if moved is not None:
+                benchmark.append(moved[0])
+        if len(benchmark) < MINIMUM_NAMES:
+            continue
+
+        # One tranche in ``tranches`` turns over this month, and only that part pays.
+        charge = statistics.fmean([cost for _, cost in active]) / tranches
+        gross = statistics.fmean(legs)
+        passive = statistics.fmean(benchmark)
+        portfolio.append(gross - charge)
+        market.append(passive)
+        excess.append(gross - charge - passive)
+        dates.append(calendar[opening].isoformat())
+        widths.append(sum(len(held) for held, _ in active))
 
     return {
         "signal": signal.name,
         "rationale": signal.rationale,
         "horizon_sessions": horizon,
-        "rebalances": len(periods),
-        "returns": periods,
-        "gross_returns": gross,
-        "rebalance_dates": dates,
+        "overlapping_tranches": tranches,
+        "observations": len(excess),
+        "returns": excess,
+        "portfolio_returns": portfolio,
+        "universe_returns": market,
+        "observation_dates": dates,
         "median_book_width": statistics.median(widths) if widths else 0,
         "positions_exited_on_delisting": delisting_exits,
         "positions_dropped_unpriceable": unpriceable,
@@ -312,11 +456,12 @@ def backtest_signal(
 
 def _grade(candidate: dict[str, Any], trials: int, variance: float) -> dict[str, Any]:
     returns = candidate["returns"]
-    periods_a_year = TRADING_SESSIONS_A_YEAR / candidate["horizon_sessions"]
-    if len(returns) < MINIMUM_REBALANCES:
+    # Observations are monthly whatever the holding period, because tranches overlap.
+    periods_a_year = TRADING_SESSIONS_A_YEAR / FORMATION_SESSIONS
+    if len(returns) < MINIMUM_OBSERVATIONS:
         return {
             "gradeable": False,
-            "reason": f"{len(returns)} rebalances is below the {MINIMUM_REBALANCES} this grades",
+            "reason": f"{len(returns)} observations is below the {MINIMUM_OBSERVATIONS} this grades",
         }
     observed = sharpe_ratio(returns)
     deflated = deflated_sharpe_ratio(returns, trials=trials, trial_sharpe_variance=variance)
@@ -328,8 +473,10 @@ def _grade(candidate: dict[str, Any], trials: int, variance: float) -> dict[str,
         "deflated_sharpe": deflated,
         "minimum_track_record_length": None if math.isinf(needed) else needed,
         "periods_a_year": periods_a_year,
-        "mean_net_return": statistics.fmean(returns),
-        "mean_gross_return": statistics.fmean(candidate["gross_returns"]),
+        "mean_excess_return": statistics.fmean(returns),
+        "mean_portfolio_return": statistics.fmean(candidate["portfolio_returns"]),
+        "mean_universe_return": statistics.fmean(candidate["universe_returns"]),
+        "universe_sharpe": sharpe_ratio(candidate["universe_returns"]),
     }
 
 
@@ -384,7 +531,7 @@ def run_cross_sectional_study(
         for horizon in horizons
     ]
 
-    graded = [item for item in candidates if len(item["returns"]) >= MINIMUM_REBALANCES]
+    graded = [item for item in candidates if len(item["returns"]) >= MINIMUM_OBSERVATIONS]
     spread = [sharpe_ratio(item["returns"]) for item in graded]
     variance = 0.0 if len(spread) < 2 else trial_sharpe_variance(spread)
     for item in candidates:
@@ -395,12 +542,17 @@ def run_cross_sectional_study(
 
     # Overfitting is a property of the selection, so it is measured across the candidates that
     # were compared, on the periods every one of them covers.
+    # Overfitting is a property of the selection, so it is measured across the candidates that
+    # were actually compared, on observations every one of them covers. Same holding period
+    # only: return series of different lengths are not the same experiment. The first search
+    # could put just three columns here, which is a thin basis for a probability; the wider
+    # signal set exists partly so this number has something to stand on.
     overfitting: float | None = None
     comparable = [item for item in scored if item["horizon_sessions"] == (best or {}).get("horizon_sessions")]
     if best is not None and len(comparable) >= 2:
         width = min(len(item["returns"]) for item in comparable)
-        if width >= 8:
-            matrix = [[item["returns"][row] for item in comparable] for row in range(width)]
+        if width >= 16:
+            matrix = [[item["returns"][-width + row] for item in comparable] for row in range(width)]
             overfitting = probability_of_backtest_overfitting(matrix, chunks=8).probability
 
     blockers: list[str] = []
@@ -438,11 +590,19 @@ def run_cross_sectional_study(
         "clears_every_gate": not blockers,
         "blockers": blockers,
         "promotion_approved": False,
+        "benchmark": (
+            "Excess over an equal-weighted hold of every eligible name. The universe's own "
+            "Sharpe is reported per candidate so the market's contribution is visible rather "
+            "than absorbed."
+        ),
         "limitation": (
-            "Equal-weighted long-only top decile, rebalanced on a fixed session count, with a "
-            "round trip charged per rebalance from each name's own bars. It carries no short "
-            "side, no capacity model beyond the turnover floor, no sector or factor neutrality "
-            "and no financing cost, and it never approves promotion or live trading."
+            "Equal-weighted long-only top decile in monthly overlapping tranches, with a round "
+            "trip charged on the one tranche that turns each month, priced from each name's own "
+            "bars. It carries no short side, no capacity model beyond the turnover floor, no "
+            "sector or factor neutrality and no financing cost. Excess over an equal-weighted "
+            "universe is not the same as risk-adjusted alpha: the decile's beta is not "
+            "estimated, so a signal that simply selects higher-beta names would show excess in "
+            "a rising market. It never approves promotion or live trading."
         ),
     }
 
