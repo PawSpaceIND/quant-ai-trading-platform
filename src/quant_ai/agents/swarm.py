@@ -115,7 +115,7 @@ class CommodityYieldAgent(SwarmAgent):
         crude = request.metrics.get("brent_change", Decimal(0))
         gold = request.metrics.get("gold_change", Decimal(0))
         yields = request.metrics.get("yield_change", Decimal(0))
-        dxy = request.metrics.get("dxy_change", Decimal(0))
+        usd_broad = request.metrics.get("usd_broad_change", Decimal(0))
         inflation_headwind = max(Decimal(0), crude) + max(Decimal(0), yields)
         # Sign corrected: a rising gold price is a risk-off bid, not support for the equity
         # being analysed. Capital rotating into the metal is capital leaving equity risk, so
@@ -123,8 +123,8 @@ class CommodityYieldAgent(SwarmAgent):
         # risk-on tailwind. The term previously added a flight to safety to the score, which
         # read every risk-off day as a reason to buy the stock.
         risk_off_bid = gold / Decimal(2)
-        score = -risk_off_bid - inflation_headwind - max(Decimal(0), dxy) / Decimal(2)
-        return self._evidence(request, score, Decimal("0.74"), "crude_gold_yield_and_dollar_regime")
+        score = -risk_off_bid - inflation_headwind - max(Decimal(0), usd_broad) / Decimal(2)
+        return self._evidence(request, score, Decimal("0.74"), "crude_gold_yield_and_broad_dollar_regime")
 
 
 class IndianEquitiesAgent(SwarmAgent):

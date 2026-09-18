@@ -16,7 +16,7 @@ class FredMacroProvider:
         "INDIA10Y": "IRLTLT01INM156N",
         "BRENT": "DCOILBRENTEU",
         "GOLD": "GOLDAMGBD228NLBM",
-        "DXY": "DTWEXBGS",
+        "USD_BROAD": "DTWEXBGS",
     }
 
     def __init__(self, client: ResilientHttpClient, api_key: str) -> None:
