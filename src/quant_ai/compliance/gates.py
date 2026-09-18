@@ -22,6 +22,18 @@ class ComplianceContext:
 
 
 def execution_allowed(context: ComplianceContext) -> bool:
+    # Type annotations do not validate values arriving at this boundary. Never
+    # interpret a nonempty string (including "false") as an approval, or allow an
+    # unknown execution mode to fall through to the live-approval expression.
+    if type(context) is not ComplianceContext:
+        return False
+    if (type(context.execution_mode) is not ExecutionMode
+            or type(context.market) is not Market
+            or type(context.asset_class) is not AssetClass):
+        return False
+    if type(context.live_approved) is not bool or type(context.jurisdiction_approved) is not bool:
+        return False
     if context.execution_mode in {ExecutionMode.RESEARCH, ExecutionMode.PAPER}:
         return True
-    return context.live_approved and context.jurisdiction_approved
+    return (context.execution_mode is ExecutionMode.LIVE
+            and context.live_approved is True and context.jurisdiction_approved is True)
