@@ -63,6 +63,7 @@ class FeatureStudy:
     horizon: int
     observations: int
     hypotheses: int
+    """Candidates charged for. The library size, or the register's cumulative count."""
     scores: tuple[FeatureScore, ...]
     selected: str | None
     fold_winners: tuple[str, ...]
@@ -206,11 +207,22 @@ def run_feature_study(
     horizon: int = 5,
     splits: int = 5,
     embargo: float = 0.01,
+    charged_trials: int | None = None,
     minimum_deflated_sharpe: float = 0.95,
     maximum_overfitting_probability: float = 0.10,
 ) -> FeatureStudy:
+    """``charged_trials`` overrides the library size when the search is larger than one run.
+
+    A caller that has run this study before has looked at the same data before, and the
+    register knows how many times. Passing the cumulative count charges for the whole search
+    rather than for this invocation; leaving it out charges for the library alone, which is
+    correct only for the first run.
+    """
     if horizon < 1:
         raise ValueError("horizon must be at least one observation")
+    trials = library.hypothesis_count if charged_trials is None else int(charged_trials)
+    if trials < 1:
+        raise ValueError("a search evaluates at least one candidate")
     rows, labels = _observations(history, library, horizon)
     names = library.names()
     reasons: list[str] = []
@@ -218,11 +230,11 @@ def run_feature_study(
     needed = max(MINIMUM_OBSERVATIONS, splits * MINIMUM_PER_FOLD)
     if len(rows) < needed:
         return FeatureStudy(
-            horizon, len(rows), library.hypothesis_count, (), None, (), None, None, None, False,
+            horizon, len(rows), trials, (), None, (), None, None, None, False,
             (
                 (
                     f"{len(rows)} usable observations is too few: {needed} are needed before a "
-                    f"{library.hypothesis_count}-hypothesis search over {splits} purged folds "
+                    f"{trials}-hypothesis search over {splits} purged folds "
                     "can produce a statistic worth reading"
                 ),
             ),
@@ -294,7 +306,7 @@ def run_feature_study(
     if len(realised) < 2:
         reasons.append("no feature was selected often enough to measure out of sample")
         return FeatureStudy(
-            horizon, len(rows), library.hypothesis_count, tuple(scores), None, tuple(winners),
+            horizon, len(rows), trials, tuple(scores), None, tuple(winners),
             None, None, None, False, tuple(reasons),
         )
 
@@ -307,10 +319,10 @@ def run_feature_study(
         # no selection bias to measure and no spread to measure it from. That case gets a
         # benchmark of zero, which is the honest easy bar rather than no answer at all.
         # Anything larger must supply the spread of what the search actually produced.
-        variance = 0.0 if library.hypothesis_count == 1 else trial_sharpe_variance(spread)
+        variance = 0.0 if trials == 1 else trial_sharpe_variance(spread)
         deflated = deflated_sharpe_ratio(
             realised,
-            trials=library.hypothesis_count,
+            trials=trials,
             trial_sharpe_variance=variance,
         )
     except ValueError as error:
@@ -337,8 +349,8 @@ def run_feature_study(
     if deflated is None or deflated < minimum_deflated_sharpe:
         reasons.append(
             f"deflated sharpe {deflated if deflated is None else round(deflated, 3)} is below "
-            f"{minimum_deflated_sharpe}; a search of {library.hypothesis_count} hypotheses sets "
-            "the bar this has to clear"
+            f"{minimum_deflated_sharpe}; a search of {trials} hypotheses sets the bar this "
+            "has to clear"
         )
     if overfitting is None or overfitting > maximum_overfitting_probability:
         reasons.append(
@@ -349,7 +361,7 @@ def run_feature_study(
     return FeatureStudy(
         horizon=horizon,
         observations=len(rows),
-        hypotheses=library.hypothesis_count,
+        hypotheses=trials,
         scores=tuple(scores),
         selected=chosen,
         fold_winners=tuple(winners),
