@@ -88,26 +88,35 @@ def test_reserve_counts_calls_and_refuses_at_the_call_limit(tmp_path) -> None:
     assert status["day"] == "2026-09-15"
     assert status["calls"] == 3 and status["remaining_calls"] == 0 and status["exhausted"]
     assert status["daily_call_limit"] == 3 and status["daily_token_limit"] == 1_000
-    # Scopes are independent counters.
-    assert budget.reserve("other") is True
-    assert budget.status("other")["calls"] == 1
+    # The same configured call ceiling is also an account-wide aggregate ceiling.
+    assert budget.reserve("other") is False
+    assert budget.status("other")["calls"] == 0
+    assert budget.status("consensus")["aggregate"]["calls"] == 3
 
 
-def test_token_limit_refuses_further_calls_and_ignores_malformed_usage(tmp_path) -> None:
+def test_token_reservation_refuses_before_overshoot_and_unknown_usage_stays_reserved(
+    tmp_path,
+) -> None:
     budget = _budget(tmp_path, calls=10, tokens=100)
-    assert budget.reserve("consensus") is True
-    budget.record("consensus", None)
-    budget.record("consensus", {"input_tokens": None, "output_tokens": "12"})
-    budget.record("consensus", {"input_tokens": -5, "output_tokens": True})
-    assert budget.status("consensus")["tokens"] == 0
-    budget.record("consensus", {"input_tokens": 60, "output_tokens": 39})
-    assert budget.reserve("consensus") is True
-    budget.record("consensus", {"input_tokens": 1})
-    status = budget.status("consensus")
-    assert status["input_tokens"] == 61 and status["output_tokens"] == 39
-    assert status["remaining_tokens"] == 0 and status["remaining_calls"] == 8
-    assert budget.reserve("consensus") is False
-
+    assert budget.reserve("consensus", 40) is True
+    budget.record(
+        "consensus",
+        {"input_tokens": 60, "output_tokens": 39},
+        token_reservation=40,
+    )
+    state = budget.status("consensus")
+    assert state["tokens"] == 99
+    assert state["reserved_tokens"] == 0
+    assert state["aggregate"]["tokens"] == 99
+    assert budget.reserve("consensus", 2) is False
+    assert budget.reserve("consensus", 1) is True
+    # Missing usage must not release unknown spend headroom.
+    budget.record("consensus", None, token_reservation=1)
+    state = budget.status("consensus")
+    assert state["reserved_tokens"] == 1
+    assert state["aggregate"]["reserved_tokens"] == 1
+    assert state["remaining_tokens"] == 0
+    assert not budget.reserve("consensus", 1)
 
 def test_counters_reset_on_the_utc_day_rollover(tmp_path) -> None:
     clock = _Clock(datetime(2026, 9, 15, 23, 59, tzinfo=timezone.utc))
@@ -207,8 +216,8 @@ def test_exhausted_budget_degrades_the_atlas_decision_to_neutral(tmp_path) -> No
     assert "xai_summary=Consensus Skipped: AI budget exhausted" in decision.rationale
 
 
-def test_usage_is_recorded_after_a_completed_call(tmp_path) -> None:
-    budget = _budget(tmp_path, calls=5, tokens=200)
+def test_client_pre_reserves_then_reconciles_reported_usage(tmp_path) -> None:
+    budget = _budget(tmp_path, calls=5, tokens=100_000)
     sdk = _sdk(input_tokens=120, output_tokens=40)
     client = AnthropicSwarmClient(client=sdk, budget=budget)
 
@@ -216,17 +225,24 @@ def test_usage_is_recorded_after_a_completed_call(tmp_path) -> None:
     assert first.provenance["status"] == "completed"
     assert first.provenance["usage"]["input_tokens"] == 120
     status = budget.status("consensus")
-    assert status["calls"] == 1 and status["input_tokens"] == 120 and status["output_tokens"] == 40
+    assert status["calls"] == 1
+    assert status["input_tokens"] == 120 and status["output_tokens"] == 40
+    assert status["reserved_tokens"] == 0
+    assert status["aggregate"]["calls"] == 1
+    assert status["aggregate"]["tokens"] == 160
+    assert status["aggregate"]["reserved_tokens"] == 0
 
-    second = asyncio.run(client.generate_trading_consensus("INFY market context"))
-    assert second.provenance["status"] == "completed"
-    assert budget.status("consensus")["tokens"] == 320
-    # 320 tokens exceed the 200-token cap, so the third call never reaches the SDK.
-    third = asyncio.run(client.generate_trading_consensus("INFY market context"))
-    assert third.provenance["status"] == "budget_exhausted"
-    assert sdk.messages.create.await_count == 2
-    assert budget.status("consensus")["calls"] == 2
 
+def test_client_refuses_before_sdk_when_request_allowance_exceeds_headroom(tmp_path) -> None:
+    budget = _budget(tmp_path, calls=5, tokens=1_000)
+    sdk = _sealed_sdk()
+    client = AnthropicSwarmClient(client=sdk, budget=budget)
+
+    result = asyncio.run(client.generate_trading_consensus("INFY market context"))
+
+    assert result.provenance["status"] == "budget_exhausted"
+    sdk.messages.create.assert_not_awaited()
+    assert budget.status("consensus")["aggregate"]["calls"] == 0
 
 def test_client_without_budget_is_unbounded(tmp_path) -> None:
     sdk = _sdk()

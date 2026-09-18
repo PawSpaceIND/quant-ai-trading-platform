@@ -63,6 +63,38 @@ def test_scopes_are_separate_and_real_limits_are_reused(tmp_path):
     assert report["deploymentApproved"] is report["budgetChanged"] is False
 
 
+def test_aggregate_enabled_database_reports_shared_headroom_and_reservations(tmp_path):
+    from quant_ai.llm.budget import SqliteAIBudget
+
+    path = tmp_path / "aggregate.sqlite"
+    ledger = SqliteAIBudget(
+        path, daily_call_limit=500, daily_token_limit=2_000_000, clock=lambda: NOW
+    )
+    try:
+        assert ledger.reserve("consensus", 200)
+        ledger.record(
+            "consensus",
+            {"input_tokens": 100, "output_tokens": 50},
+            token_reservation=200,
+        )
+        assert ledger.reserve("headline_sentiment", 75)
+    finally:
+        ledger.close()
+
+    report = observe(path)
+    assert report["aggregateEnforcementAvailable"] is True
+    assert report["limitsAccountWidePerUTCDate"] == report["limitsPerScopePerUTCDate"]
+    aggregate = next(
+        row for row in report["aggregateUsage"] if row["dayUTC"] == "2026-09-18"
+    )
+    assert aggregate["reservedLogicalCalls"] == 2
+    assert aggregate["recordedTokens"] == 150
+    assert aggregate["reservedTokens"] == 75
+    assert aggregate["remainingCallsAtSnapshot"] == 498
+    assert aggregate["remainingTokenHeadroomAtSnapshot"] == 1_999_775
+    assert "Aggregate ledger is active" in report["limitations"][0]
+
+
 def test_existing_environment_parser_semantics_and_no_limit_change(tmp_path):
     env = {**ENV, "PRAMANA_AI_DAILY_CALL_LIMIT": "+0100", "PRAMANA_AI_DAILY_TOKEN_LIMIT": " 1000 "}
     original = dict(env)
