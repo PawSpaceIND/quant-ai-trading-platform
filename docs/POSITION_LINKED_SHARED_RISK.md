@@ -28,7 +28,9 @@ For each retained BUY reservation:
   uncertain submission cannot fill;
 - a DISPATCHING, FILLED_UNACCOUNTED or EXECUTED child with the existing verified
   broker receipt contributes committed quantity;
-- a FAILED or CANCELLED child with no broker fill contributes no future quantity;
+- a FAILED child contributes no future quantity only with consistent parent failure,
+  a nonblank saved reason and no broker-fill reference; cancellation requires the
+  existing verified never-claimed release record;
 - a journal slice labelled filled/executed without its broker BUY receipt refuses.
 
 The original reservation amount is linear in parent quantity under the existing
@@ -102,3 +104,16 @@ of remaining ambiguous shares to the highest-risk recorded parent first.
 The original reservation is retained. No balance, fee, price, margin or risk-policy
 constant is supplied by these tests; all fixture numbers are synthetic. Software
 checks are not proof of actual host/source qualification or strategy effectiveness.
+
+## Terminal-state evidence
+
+A bare `FAILED` or `CANCELLED` label is not enough to erase a pending charge.
+For a non-filled failed child the saved parent must also be failed, the child
+must retain a nonblank failure reason, and no broker-fill reference may be present.
+Unclaimed cancellation still requires the existing validated release record.
+Missing or contradictory terminal metadata refuses capacity calculation.
+
+Six malformed-state tests reproduced the former unsupported release. The repair
+preserves valid pre-submit failure behaviour and the existing cancellation path.
+These are local journal consistency checks, not authenticated external proof of
+order cancellation. Coordinated privileged rewriting remains outside their scope.

@@ -59,7 +59,7 @@ def test_external_slice_change_after_binding_is_not_adopted_in_capacity(tmp_path
         def interleave(ledger, journal, tenant, **kwargs):
             result = original(ledger, journal, tenant, **kwargs)
             with other:
-                other.execute("UPDATE execution_program_slices SET state='FAILED' WHERE program_id=?",
+                other.execute("UPDATE execution_program_slices SET state='FAILED',failure_reason='synthetic_pre_submit_refusal' WHERE program_id=?",
                               (prepared.program.program_id,))
                 other.execute("UPDATE execution_programs SET state='FAILED' WHERE program_id=?",
                               (prepared.program.program_id,))
@@ -164,3 +164,28 @@ def test_two_independent_coordinators_cannot_spend_same_released_capacity(tmp_pa
     finally:
         for peer in peers:
             peer.close()
+
+
+@pytest.mark.parametrize('child,parent,reason,broker_id', [
+    ('FAILED', 'FAILED', None, None),
+    ('CANCELLED', 'CANCELLED', None, None),
+    ('FAILED', 'ACTIVE', 'pre_submit_refused', None),
+    ('FAILED', 'FAILED', '  ', None),
+    ('FAILED', 'FAILED', 'pre_submit_refused', 'PAPER-no-receipt'),
+    ('CANCELLED', 'FAILED', 'pre_submit_refused', None),
+], ids=['missing_failure', 'missing_release', 'active_parent', 'blank_failure', 'missing_broker_receipt', 'cancelled_child'])
+def test_unsubstantiated_terminal_label_does_not_free_capacity(tmp_path, child, parent, reason, broker_id):
+    h = Harness(tmp_path)
+    try:
+        enable(h)
+        prepared = h.coordinator.prepare(make_request(h.broker))
+        assert prepared.approved
+        pid = prepared.program.program_id
+        with h.programs.db:
+            h.programs.db.execute('UPDATE execution_programs SET state=? WHERE program_id=?', (parent, pid))
+            h.programs.db.execute('UPDATE execution_program_slices SET state=?,failure_reason=?,broker_order_id=? WHERE program_id=?',
+                                 (child, reason, broker_id, pid))
+        with pytest.raises(SharedRiskError, match='position_capacity'):
+            capacity(h)
+    finally:
+        h.close()

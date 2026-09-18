@@ -311,7 +311,7 @@ def position_linked_capacity(ledger, journal, tenant, *, check_paths=True):
             per_unit = amount / Decimal(parent.quantity)
             slices = _rows(
                 journal,
-                """SELECT sequence,quantity,state FROM execution_program_slices
+                """SELECT sequence,quantity,state,failure_reason,broker_order_id FROM execution_program_slices
                    WHERE program_id=? ORDER BY sequence""",
                 (pid,),
             )
@@ -328,7 +328,11 @@ def position_linked_capacity(ledger, journal, tenant, *, check_paths=True):
                     pending += slice_["quantity"]
                 else:
                     _check(
-                        state in {"FAILED", "CANCELLED"},
+                        state == "FAILED"
+                        and program["state"] == "FAILED"
+                        and isinstance(slice_["failure_reason"], str)
+                        and bool(slice_["failure_reason"].strip())
+                        and slice_["broker_order_id"] is None,
                         "position_capacity_unrecorded_fill_state_invalid",
                     )
             pending_risk += per_unit * Decimal(pending)

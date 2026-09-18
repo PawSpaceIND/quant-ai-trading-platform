@@ -100,6 +100,24 @@ CASES += [
 ]
 
 
+TERMINAL_TEST = SNAPSHOT_TEST + "test_unsubstantiated_terminal_label_does_not_free_capacity"
+CASES += [
+    {"id": "terminal_failure_record", "path": BINDING,
+     "old": 'isinstance(slice_["failure_reason"], str)\n                        and bool(slice_["failure_reason"].strip())',
+     "new": "True", "test": TERMINAL_TEST + "[missing_failure]"},
+    {"id": "terminal_parent_state", "path": BINDING,
+     "old": 'and program["state"] == "FAILED"',
+     "new": "and True", "test": TERMINAL_TEST + "[active_parent]"},
+    {"id": "terminal_child_state", "path": BINDING,
+     "old": 'state == "FAILED"',
+     "new": "True", "test": TERMINAL_TEST + "[cancelled_child]"},
+    {"id": "terminal_broker_reference", "path": BINDING,
+     "old": 'and slice_["broker_order_id"] is None,\n                        "position_capacity_unrecorded_fill_state_invalid",',
+     "new": 'and True,\n                        "position_capacity_unrecorded_fill_state_invalid",',
+     "test": TERMINAL_TEST + "[missing_broker_receipt]"},
+]
+
+
 @pytest.mark.parametrize("case", CASES, ids=[row["id"] for row in CASES])
 def test_position_capacity_guard_needs_control_and_named_failure(tmp_path, case):
     protected = {
