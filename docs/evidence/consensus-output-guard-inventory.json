@@ -186,14 +186,14 @@
     {
       "id": "budget_before_request",
       "path": "src/quant_ai/llm/anthropic_client.py",
-      "old": "if self.budget is not None and not self.budget.reserve(BUDGET_SCOPE):",
+      "old": "if self.budget is not None and not self.budget.reserve(\n            BUDGET_SCOPE, budget_reservation\n        ):",
       "new": "if False:",
       "test": "tests/test_consensus_output_limit.py::test_exhausted_daily_budget_prevents_all_sdk_requests"
     },
     {
       "id": "account_usage_before_rejection",
       "path": "src/quant_ai/llm/anthropic_client.py",
-      "old": "self.budget.record(BUDGET_SCOPE, provenance[\"usage\"])",
+      "old": "self.budget.record(\n                BUDGET_SCOPE, provenance[\"usage\"], token_reservation=budget_reservation\n            )",
       "new": "pass",
       "test": "tests/test_consensus_output_limit.py::test_spend_is_recorded_before_truncated_reply_and_no_budget_bypass"
     }

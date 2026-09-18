@@ -193,7 +193,7 @@ def test_compose_exposes_opt_in_limit_without_raising_daily_budgets():
 
 
 def test_spend_is_recorded_before_truncated_reply_and_no_budget_bypass(tmp_path):
-    budget = SqliteAIBudget(tmp_path / "budget.sqlite", daily_call_limit=1, daily_token_limit=5000)
+    budget = SqliteAIBudget(tmp_path / "budget.sqlite", daily_call_limit=1, daily_token_limit=50000)
     try:
         client, create = make(cap=4096, stop="max_tokens", output=4096, budget=budget)
         with pytest.raises(adapter.ConsensusSchemaError):
@@ -218,7 +218,7 @@ def test_original_numeric_schema_remains_strict_with_larger_cap():
 
 
 def test_exhausted_daily_budget_prevents_all_sdk_requests(tmp_path):
-    budget = SqliteAIBudget(tmp_path / "spent.sqlite", daily_call_limit=1, daily_token_limit=5000)
+    budget = SqliteAIBudget(tmp_path / "spent.sqlite", daily_call_limit=1, daily_token_limit=50000)
     try:
         assert budget.reserve("consensus")
         client, create = make(cap=4096, budget=budget)
