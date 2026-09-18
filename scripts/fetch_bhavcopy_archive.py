@@ -201,27 +201,39 @@ def main(argv=None) -> int:
     saved = cached = missing = failed = 0
     failures = []
     day = start
-    while day <= end:
-        if day.weekday() >= 5:  # The exchanges do not settle at weekends.
+    interrupted = None
+    try:
+        while day <= end:
+            if day.weekday() >= 5:  # The exchanges do not settle at weekends.
+                day += timedelta(days=1)
+                continue
+            status, detail = fetch_day(opener, args.exchange, day, args.out_dir, args.timeout)
+            if status == "saved":
+                saved += 1
+                if delay:
+                    time.sleep(delay)
+            elif status == "cached":
+                cached += 1
+            elif status == "missing":
+                missing += 1
+            else:
+                failed += 1
+                failures.append((day, detail))
+                if delay:
+                    time.sleep(delay)
             day += timedelta(days=1)
-            continue
-        status, detail = fetch_day(opener, args.exchange, day, args.out_dir, args.timeout)
-        if status == "saved":
-            saved += 1
-            if delay:
-                time.sleep(delay)
-        elif status == "cached":
-            cached += 1
-        elif status == "missing":
-            missing += 1
-        else:
-            failed += 1
-            failures.append((day, detail))
-            if delay:
-                time.sleep(delay)
-        day += timedelta(days=1)
+    except KeyboardInterrupt:
+        # Stopping a download that takes hours is a normal thing to do, not a crash. The
+        # counts so far and how to resume are what the person needs; a stack trace through
+        # the socket layer is not.
+        interrupted = day
 
     print(f"saved {saved}, already had {cached}, absent {missing}, failed {failed}")
+    if interrupted is not None:
+        print(
+            f"\nstopped at {interrupted}. Nothing is lost - every completed day is on disk "
+            "and the same command resumes from here.", file=sys.stderr
+        )
     if failed and any("CERTIFICATE_VERIFY" in why for _, why in failures):
         print(
             "\nThese are certificate failures, not exchange refusals: this Python has no "
@@ -234,6 +246,8 @@ def main(argv=None) -> int:
               "out of date, not the market closed for years", file=sys.stderr)
     for when, why in failures[:20]:
         print(f"  failed {when}: {why}", file=sys.stderr)
+    if interrupted is not None:
+        return 130
     if failed:
         print(f"{failed} days failed to download. Re-run to retry them; do NOT build a "
               "universe until this is zero, because missing days at the end of the archive "
