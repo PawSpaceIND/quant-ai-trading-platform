@@ -342,12 +342,32 @@ class PaperBrokerService(BrokerAdapter):
     def configure_pilot(self, instruments, tenant_id: str) -> None:
         from quant_ai.governance.pilot import validate_pilot_instruments
         instruments = tuple(instruments)
-        validate_pilot_instruments(instruments)
         symbols = {item.symbol: item.asset_class.value for item in instruments}
         identities = {
             item.symbol: json.loads(canonical_instrument_identity(item))
             for item in instruments
         }
+        if any(identity.get("exchange") == "MCX" for identity in identities.values()):
+            from quant_ai.governance.runtime_identity import runtime_identity_configuration
+            bound = runtime_identity_configuration(self, tenant_id)
+            expected = {
+                symbol: canonical_instrument_identity(item)
+                for symbol, item in ((item.symbol, item) for item in instruments)
+            }
+            if (
+                bound is None
+                or bound.get("mode") != "bound_v1"
+                or bound.get("instruments") != expected
+            ):
+                raise ValueError("pilot_derivative_requires_bound_identity")
+        validate_pilot_instruments(
+            instruments,
+            derivative_fee_schedule=getattr(
+                self.friction_model, "derivative_fee_schedule", None
+            ),
+            margin_source=self.margin_source,
+            now=self._execution_time or datetime.now(timezone.utc),
+        )
         with self._lock, self._connection:
             self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
                 tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
@@ -366,7 +386,12 @@ class PaperBrokerService(BrokerAdapter):
                 raise ValueError("pilot_existing_positions_out_of_scope")
             for position in positions:
                 raw = position["instrument_identity"]
-                if raw is not None and json.loads(raw) != identities[position["symbol"]]:
+                configured = identities[position["symbol"]]
+                if configured.get("exchange") == "MCX" and raw is None:
+                    raise ValueError(
+                        "pilot_existing_derivative_contract_identity_missing"
+                    )
+                if raw is not None and json.loads(raw) != configured:
                     raise ValueError("pilot_existing_position_contract_mismatch")
             previous = self._connection.execute(
                 "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
@@ -403,15 +428,31 @@ class PaperBrokerService(BrokerAdapter):
             else {}
         )
         order_identity = _instrument_identity_for_order(order)
-        configured_identity = identities.get(order.symbol) if isinstance(identities, dict) else None
+        configured_identity = (
+            identities.get(order.symbol) if isinstance(identities, dict) else None
+        )
+        configured_instrument = (
+            instrument_from_identity(configured_identity)
+            if isinstance(configured_identity, dict)
+            else None
+        )
         if scope and (
             order.market.value != scope["market"]
-            or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
             or order.symbol not in symbols
             or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)
             or (
+                configured_instrument is not None
+                and (
+                    configured_instrument.market is not order.market
+                    or configured_instrument.asset_class is not order.asset_class
+                )
+            )
+            or (
                 order_identity is not None
-                and (configured_identity is None or json.loads(order_identity) != configured_identity)
+                and (
+                    configured_identity is None
+                    or json.loads(order_identity) != configured_identity
+                )
             )
         ):
             raise ValueError("pilot_order_out_of_scope")

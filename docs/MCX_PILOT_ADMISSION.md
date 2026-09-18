@@ -1,0 +1,109 @@
+# MCX paper-pilot admission
+
+This change opens one previously hard-closed pilot gate. It does **not** invent a
+fee, margin, contract, token, or production commodity watchlist.
+
+The private pilot may include an Indian MCX instrument only when the instrument is
+an INR `METAL` or `COMMODITY` dated contract and all existing contract, fee,
+margin, and bound-identity controls are satisfied. NSE cash equity/ETF behavior is
+unchanged. NFO/BFO futures, options, currency derivatives, NCDEX, MSEI, IFSC, and
+non-INR instruments remain outside this admission.
+
+## Reused controls
+
+The implementation deliberately reuses the existing components rather than
+building parallel derivative rules:
+
+- `Instrument` and `instruments.identity` carry and persist expiry, lot size,
+  tick size, underlying, exchange, currency, metadata, and exact contract identity.
+- `assert_contract_tradable` refuses new risk during rollover and after expiry.
+- `assert_order_fits_contract` refuses non-lot quantities and off-tick prices.
+- `DerivativeFeeSchedule` contains no built-in MCX numbers. Admission requires a
+  schedule that reconciled to an operator-supplied contract note.
+- `DerivativeMarginSource` contains exact broker-sourced per-contract collateral,
+  with an operator-selected maximum age. Missing, stale, future, or mismatched
+  evidence refuses new derivative risk.
+- `MarketFrictionModel` and `PaperBrokerService` retain fee, collateral, and exact
+  contract evidence on the paper fill.
+- `InstrumentBoundOrderIntent` is mandatory for admitted MCX risk. A legacy
+  unbound order cannot use an MCX pilot scope.
+- The existing exchange calendar continues to determine MCX session hours,
+  including its US-DST-sensitive evening close. This PR does not change hours.
+
+## Admission versus execution
+
+Admission is a precondition, not a permanent authorization. At pilot
+configuration time the selected contract must be LIVE, the fee schedule verified,
+and the exact margin snapshot usable. At execution time the broker checks the
+contract again. A contract configured earlier but expired later cannot fill.
+
+The pilot scope stores the full canonical instrument identity. A different expiry,
+lot, tick, underlying, metadata, market, or asset class under the same symbol is
+not silently adopted. Existing MCX positions without a bound identity are not
+migrated into pilot scope.
+
+A valid fee schedule and margin source do not certify a market data subscription,
+instrument token, strategy edge, liquidity, or exchange entitlement. Those are
+separate deployment and acceptance gates.
+## Runtime identity requirement
+
+Any watchlist containing MCX requires `PRAMANA_ORDER_IDENTITY_MODE=bound_v1`.
+The daemon refuses MCX before constructing the broker when legacy cash identity is
+selected. This prevents an old `OrderIntent` from bypassing contract expiry/lot/tick
+checks simply because a symbol appears in the pilot watchlist.
+
+The runtime uses the same `DerivativeFeeSchedule.from_env()` and
+`DerivativeMarginSource.from_env()` instances for admission and the paper broker;
+there is no second set of rates or collateral assumptions.
+
+## Configuration boundaries
+
+The fee schedule uses the existing `PRAMANA_MCX_FEE_*` fields. Do not copy the
+synthetic values from tests. The schedule is admitted only after its supplied
+contract-note reconciliation matches under the supplied tolerance.
+
+The margin source uses the existing `PRAMANA_DERIVATIVE_MARGIN_FILE` or
+`PRAMANA_DERIVATIVE_MARGIN_JSON`. Do not configure both. Each record must identify
+the exact symbol, market, asset class, lot size, SPAN amount, exposure amount,
+source, observation time, and maximum evidence age.
+
+This PR contains no production fee schedule, margin amount, contract token, or
+tradable MCX symbol. That is intentional. If authoritative evidence is not
+available, the correct operating state is refusal.
+## Required acceptance before any MCX deployment
+
+Repository tests alone do not admit a real contract. Before an owner changes the
+production watchlist, verify all of the following on the target host:
+
+1. Paper-only mode remains active and `bound_v1` is selected.
+2. The exact MCX contract came from the current licensed instrument master and its
+   token/symbol mapping matches the live feed.
+3. The fee schedule is operator-reviewed and reconciles to an applicable real
+   contract note.
+4. The margin record is for that exact contract/lot and is within its declared age.
+5. The contract is outside rollover and not expired.
+6. The current MCX holiday/special-session configuration is correct for that day.
+7. Live quotes are fresh during MCX hours and protection continues after NSE cash
+   closes.
+8. A paper lot-sized entry and covered exit reconcile fees, collateral, position
+   identity, accounting, and protection without any live-money path.
+9. Restart with the position open preserves the exact contract and reserved
+   collateral; a substitute expiry is refused.
+10. Independently verify alerts and restore evidence before expanding the operating
+    scope further.
+
+No step above authorizes options, currencies, other exchanges, or live money.
+## Verification
+
+`tests/test_mcx_pilot_admission.py` checks positive and refusal behavior using
+synthetic contracts and synthetic fee/margin evidence. These numbers are fixtures,
+not operational recommendations.
+
+`tests/test_mcx_pilot_guards.py` deliberately removes named protections on disposable
+source copies. Each unchanged control must pass and each mutant must produce a
+specific assertion failure. The campaign includes verified fees, current/matching
+margin, contract identity/lifecycle, exchange/currency scope, bound runtime/order
+identity, existing-position migration, lot size, and expiry checks.
+
+Owner review and a fresh exact-head full suite/CI are required before merge. The
+owner, not this development lane, decides whether and when to deploy.

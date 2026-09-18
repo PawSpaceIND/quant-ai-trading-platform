@@ -143,18 +143,16 @@ def test_an_unmapped_calendar_still_refuses_the_evening_so_the_map_is_what_opens
     assert decision.reason == "overnight_entry_outside_session"
 
 
-def test_teaching_the_calendar_about_mcx_does_not_let_mcx_into_the_pilot():
-    """The boundary this change deliberately leaves where it is.
+def test_teaching_calendar_about_mcx_alone_does_not_admit_it_to_pilot():
+    """MCX hours are not admission without verified fee and margin evidence.
 
-    ``validate_pilot_instruments`` restricts the pilot watchlist to NSE cash equity and
-    ETFs in INR. Knowing MCX hours is a prerequisite for ever trading a metal; it is not
-    permission to, and the two must not be confused because one of them is a risk control
-    covering currency, lot size, margin and settlement that none of this touches. Pinned
-    so that a later reading of "we support MCX now" cannot quietly become true.
+    The pilot can now admit a fully bound MCX contract, but the session map alone is never
+    permission. This fixture supplies no verified derivative economics, so admission still
+    refuses it.
     """
     from quant_ai.governance.pilot import validate_pilot_instruments
 
-    with pytest.raises(ValueError, match="not_supported"):
+    with pytest.raises(ValueError, match="pilot_mcx_fee_schedule_unverified"):
         validate_pilot_instruments((GOLD,))
     with pytest.raises(ValueError, match="not_supported"):
         validate_pilot_instruments((NIFTY,))  # an index is not cash equity either
