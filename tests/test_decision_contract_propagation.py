@@ -284,8 +284,11 @@ def test_legacy_program_without_parent_snapshot_cannot_rebind_by_symbol(tmp_path
         request = make_request(h.broker)
         create = h.programs.create
         def legacy_create(**kwargs):
-            # Model an older writer at INSERT time. New approved snapshots are immutable.
+            # Model the complete older INSERT shape, before parent/policy snapshots.
+            from quant_ai.execution.institutional import request_fingerprint
             kwargs["parent_order_payload"] = None
+            kwargs.pop("risk_authority_payload", None)
+            kwargs["runtime_context_sha256"] = request_fingerprint(request)
             return create(**kwargs)
         monkeypatch.setattr(h.programs, "create", legacy_create)
         prepared = h.coordinator.prepare(request)
