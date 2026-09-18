@@ -18,6 +18,8 @@ from pathlib import Path
 
 from quant_ai.accounting.journal import CANONICAL_ACCOUNTS, Account, AccountType, TransactionKind
 from quant_ai.domain.models import Side
+from quant_ai.execution.accounting_binding import verify_connection
+from quant_ai.execution.request_context import validate_context
 from quant_ai.execution.risk_authority import validate_authority
 from quant_ai.execution.shared_risk import TABLES as SHARED_RISK_TABLES
 from quant_ai.execution.shared_risk import verify_shared_risk
@@ -290,6 +292,9 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
     receipts = _receipts(ledger, tenant)
     matched, claimed_clients, claimed_fills, snapshot = set(), set(), set(), []
     counts = {"programs": 0, "slices": 0, "unresolvedSlices": 0, "failedOrCancelledPrograms": 0, "receipts": len(receipts)}
+    counts.update({"verifiedStoredContexts": 0, "legacyMissingContexts": 0})
+    counts["verifiedAccountingBindings"] = 0
+    counts["legacyMissingAccountingBindings"] = 0
     for program in _rows(db, "SELECT * FROM execution_programs WHERE tenant_id=? ORDER BY program_id", (tenant,)):
         for field in ("program_id", "decision_id", "symbol"):
             _check(isinstance(program[field], str) and _ID.fullmatch(program[field]), "program identity invalid")
@@ -306,6 +311,11 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
         _instant(program["created_at"])
         pid = program["program_id"]
         program_columns = set(program.keys())
+        accounting_scope = program["accounting_scope_payload"] if "accounting_scope_payload" in program_columns else None
+        if verify_connection(accounting_scope, accounting_db, tenant, check_paths=False):
+            counts["verifiedAccountingBindings"] += 1
+        else:
+            counts["legacyMissingAccountingBindings"] += 1
         version = program["risk_authority_version"] if "risk_authority_version" in program_columns else 0
         raw = program["risk_authority_payload"] if "risk_authority_payload" in program_columns else None
         try:
@@ -374,6 +384,16 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
             if state == "EXECUTED":
                 posted = accounting_db.execute("SELECT 1 FROM trading_transactions WHERE tenant_id=? AND transaction_id=?", (tenant, "trade:" + item["broker_order_id"])).fetchone()
                 _check(posted is not None, "executed slice accounting missing")
+        stored = validate_context(
+            program["context_version"] if "context_version" in program_columns else 0,
+            program["context_payload"] if "context_payload" in program_columns else None,
+            program_id=pid, tenant_id=tenant, parent_payload=program["parent_order_payload"],
+            authority_payload=raw, runtime_digest=program["runtime_context_sha256"],
+            plan_digest=program["plan_sha256"],
+            slices=[(s["sequence"], _instant(s["scheduled_at"]), s["quantity"]) for s in slices],
+            decision_id=program["decision_id"], created_at=_instant(program["created_at"]),
+            payload_sha256=program["context_sha256"] if "context_sha256" in program_columns else None)
+        counts["verifiedStoredContexts" if stored is not None else "legacyMissingContexts"] += 1
         actual_state = program["state"]
         _check(actual_state in {"PLANNED", "ACTIVE", "COMPLETE", "FAILED", "CANCELLED"}, "program state invalid")
         _check((actual_state == "COMPLETE") == all(s == "EXECUTED" for s in states), "program completion mismatch")
@@ -392,6 +412,7 @@ def _programs(db, ledger, oms, tenant, binding, entries, prior, fees, accounting
         snapshot.append({"program": dict(program), "slices": [dict(s) for s in slices]})
     _check(matched == set(receipts), "orphan institutional receipt")
     counts.update({"snapshotSha256": _sha(snapshot), "receiptInventorySha256": _sha({str(k): _sha(v) for k, v in receipts.items()})})
+    counts["storedRequestAndPlanVerified"] = bool(counts["programs"]) and counts["legacyMissingContexts"] == 0
     counts["sharedRisk"] = verify_shared_risk(db, tenant)
     pin = verify_binding_pair(ledger, db, tenant, check_paths=False)
     if pin is not None:
@@ -417,4 +438,4 @@ def inspect(ledger: Path, oms_path: Path, accounting: Path, programs: Path, tena
             "status": "discrepancy" if discrepancy else "captured_state_consistent",
             "accounting": accounting_result, "programs": program_result,
             "activationAuthorized": False, "runtimeContextVerified": False, "planEvidenceVerified": False,
-            "scope": "Selected local INR cash postings, saved parent/slice state and receipt/OMS correspondence only; no risk-context reconstruction, automatic resume, accounting repair or market authenticity"}
+            "scope": "Selected local INR cash postings, saved parent/slice state and receipt/OMS correspondence; separately reported declared request/plan reconstruction where retained; no runtime authorization, automatic resume, accounting repair or market authenticity"}

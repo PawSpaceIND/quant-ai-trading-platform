@@ -21,6 +21,11 @@ from quant_ai.agents.swarm import TradeProposal
 from quant_ai.brokers.adapter import BrokerPosition
 from quant_ai.decision.edge import CalibratedEdgeGate, EdgeDecision, EdgeEvidence
 from quant_ai.domain.models import AssetClass, OrderIntent, PortfolioSnapshot, Side
+from quant_ai.execution.accounting_binding import (
+    AccountingBindingError,
+    select_binding,
+    verify_binding,
+)
 from quant_ai.execution.derivative_margin import MARGINED_FUTURES_ASSET_CLASSES
 from quant_ai.execution.paper_ledger import PaperBrokerDatabaseLockedError, PaperBrokerService
 from quant_ai.execution.planner import (
@@ -36,6 +41,7 @@ from quant_ai.execution.program import (
     ProgramState,
     SliceState,
 )
+from quant_ai.execution.request_context import ExecutionContextError, decode_context, encode_context
 from quant_ai.execution.risk_authority import (
     authority_digest,
     bound_policy,
@@ -50,7 +56,7 @@ from quant_ai.execution.shared_risk import (
     selected,
 )
 from quant_ai.execution.shared_risk_binding import pin_account, read_binding, verify_binding_pair
-from quant_ai.orders.intent import bound_identity, canonical_order_intent
+from quant_ai.orders.intent import bound_identity, canonical_order_intent, order_from_snapshot
 from quant_ai.orders.oms import DurableOms
 from quant_ai.orders.state import OrderState
 from quant_ai.planning.capital import CapitalPlan
@@ -291,6 +297,17 @@ class InstitutionalPaperCoordinator:
         self.oms = oms
         self.programs = programs
         self.accounting = accounting
+        if (not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or not accounting.tenant_id or accounting.tenant_id != accounting.tenant_id.strip()):
+            raise ValueError("institutional_accounting_scope_invalid")
+        # This coordinator owns one explicitly selected accounting namespace/store.
+        # These local identities are not external broker or operator authentication.
+        self._accounting_tenant_id = accounting.tenant_id
+        self._accounting_journal = accounting.journal
+        self._accounting_connection = accounting.journal.db
+        self._accounting_base_currency = accounting.journal.base_currency
+        self._accounting_binding: str | None = None
         self.warden = warden
         self.snapshot_provider = snapshot_provider
         self.factor_position_provider = factor_position_provider
@@ -303,8 +320,57 @@ class InstitutionalPaperCoordinator:
         self.shared_risk = SharedRiskReservations(programs)
         self._requests: dict[str, InstitutionalTradeRequest] = {}
         self._orders: dict[str, OrderIntent] = {}
+        self._source_requests: dict[str, InstitutionalTradeRequest] = {}
+
+    def _assert_accounting_scope(self, tenant_id: str) -> None:
+        accounting = self.accounting
+        if (type(tenant_id) is not str or tenant_id != self._accounting_tenant_id
+                or not isinstance(accounting, TradingAccounting)
+                or type(accounting.tenant_id) is not str
+                or accounting.tenant_id != self._accounting_tenant_id
+                or accounting.journal is not self._accounting_journal
+                or accounting.journal.db is not self._accounting_connection
+                or accounting.journal.base_currency != self._accounting_base_currency):
+            raise ValueError("institutional_accounting_scope_mismatch")
+        if self._accounting_binding is not None:
+            verify_binding(self._accounting_binding, self._accounting_journal, tenant_id)
+
+    def _check_retained_accounting(self, tenant_id: str) -> str | None:
+        scopes = self.programs.accounting_scopes(tenant_id)
+        if len(scopes) > 1:
+            raise AccountingBindingError("institutional_accounting_binding_mismatch")
+        if scopes:
+            verify_binding(scopes[0], self._accounting_journal, tenant_id)
+            self._accounting_binding = scopes[0]
+            return scopes[0]
+        return None
+
+    def _prepare_accounting_binding(self, tenant_id: str) -> str:
+        # Caller holds the programme writer transaction. Competing coordinators
+        # must see the first committed selection before preparing another parent.
+        self._assert_accounting_scope(tenant_id)
+        scope = self._check_retained_accounting(tenant_id)
+        if scope is None:
+            scope = select_binding(self._accounting_journal, tenant_id)
+        self._accounting_binding = scope
+        return scope
+
+    def _match_program_accounting(self, program) -> None:
+        if program.tenant_id != self._accounting_tenant_id:
+            raise ValueError("execution_program_runtime_context_mismatch")
+        raw = program.accounting_scope_payload
+        if raw is not None:
+            verify_binding(raw, self._accounting_journal, program.tenant_id)
+            self._accounting_binding = raw
 
     def prepare(self, request: InstitutionalTradeRequest) -> InstitutionalPreparation:
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+            self._check_retained_accounting(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
+        original_request = request
+        initial_request_digest = request_fingerprint(request)
         proposal = request.proposal
         held = request.portfolio.symbol_quantity.get(proposal.symbol, 0)
         de_risking = (
@@ -405,16 +471,38 @@ class InstitutionalPaperCoordinator:
         authority = build_authority(program_id=program_id, tenant_id=request.tenant_id,
             request_sha256=request_fingerprint(request), parent_payload=parent_payload,
             policy=approved_policy)
+        if request_fingerprint(request) != initial_request_digest:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, "execution_context_request_changed")
+        try:
+            context_payload = encode_context(request, plan)
+            # Separate both caller-owned and returned objects from the inputs bound
+            # in memory. The persisted payload is immutable and can be decoded afresh.
+            saved = decode_context(context_payload)
+            request = saved.request
+        except ExecutionContextError as error:
+            return self._reject(InstitutionalStage.EXECUTION_PLAN, str(error))
+        # Providers/planners can run between admission and durable preparation.
+        try:
+            self._assert_accounting_scope(request.tenant_id)
+        except ValueError as error:
+            return self._reject(InstitutionalStage.RISK, str(error))
         program_args = {"program_id": program_id, "tenant_id": request.tenant_id,
             "decision_id": proposal.decision_id, "symbol": proposal.symbol, "plan": plan,
             "runtime_context_sha256": authority_digest(authority), "created_at": request.observed_at,
-            "parent_order_payload": parent_payload, "risk_authority_payload": authority}
+            "parent_order_payload": parent_payload, "risk_authority_payload": authority,
+            "context_payload": context_payload}
         if de_risking:
-            program = self.programs.create(**program_args)
+            try:
+                with self.programs.transaction():
+                    program_args["accounting_scope_payload"] = self._prepare_accounting_binding(request.tenant_id)
+                    program = self.programs.create(**program_args)
+            except AccountingBindingError as error:
+                return self._reject(InstitutionalStage.RISK, str(error))
         else:
             try:
                 # Capacity and the parent/slices commit together in this one journal.
                 with self.programs.transaction():
+                    program_args["accounting_scope_payload"] = self._prepare_accounting_binding(request.tenant_id)
                     current_shared = (replace(self.shared_risk_policy)
                         if isinstance(self.shared_risk_policy, SharedRiskPolicy) else self.shared_risk_policy)
                     if current_shared != approved_shared_policy:
@@ -438,8 +526,9 @@ class InstitutionalPaperCoordinator:
                             currency=request.currency, at=request.observed_at)
                         pin_account(self.broker, self.programs.db, request.tenant_id,
                                     allow_create=not configured, program_id=program.program_id)
-            except SharedRiskError as error:
+            except (SharedRiskError, AccountingBindingError) as error:
                 return self._reject(InstitutionalStage.RISK, str(error))
+        self._source_requests[program.program_id] = original_request
         self._requests[program.program_id] = request
         self._orders[program.program_id] = parent_order
         return InstitutionalPreparation(
@@ -671,6 +760,8 @@ class InstitutionalPaperCoordinator:
                 "instrument_identity": bound_identity(child),
             }
             try:
+                # Recheck after position/OMS callbacks, immediately before dispatch.
+                self._assert_accounting_scope(request.tenant_id)
                 fill = self.broker.submit_with_evidence(
                     child, evidence, f"{program_id}:{slice_.sequence}"
                 )
@@ -793,6 +884,20 @@ class InstitutionalPaperCoordinator:
                 pre_fill_average_price=None if receipt.prior_average is None else str(receipt.prior_average))
         return unresolved
 
+    def restore_runtime_context(self, program_id: str, *, tenant_id: str):
+        """Bind saved data explicitly; execution still requires its normal fresh gates.
+
+        Not an authenticated operator endpoint or an automatic restart policy. No
+        provider, broker submit, accounting repair, halt change or risk release runs.
+        """
+        stored = self.programs.load_context(program_id, tenant_id=tenant_id)
+        self._assert_accounting_scope(tenant_id)
+        program = self.programs.get(program_id)
+        self.bind_runtime_context(program_id, request=stored.request,
+                                  parent_order=order_from_snapshot(program.parent_order_payload))
+        # Do not expose the coordinator's mutable nested objects to the caller.
+        return self.programs.load_context(program_id, tenant_id=tenant_id)
+
     def bind_runtime_context(
         self,
         program_id: str,
@@ -801,7 +906,9 @@ class InstitutionalPaperCoordinator:
         parent_order: OrderIntent,
     ) -> None:
         """Rebind exact runtime inputs after restart without resubmitting any slice."""
+        self._assert_accounting_scope(request.tenant_id)
         program = self.programs.get(program_id)
+        self._match_program_accounting(program)
         if (
             program.tenant_id != request.tenant_id
             or program.decision_id != request.proposal.decision_id
@@ -814,11 +921,23 @@ class InstitutionalPaperCoordinator:
             or canonical_order_intent(parent_order) != program.parent_order_payload
         ):
             raise ValueError("execution_program_runtime_context_mismatch")
+        original_request = request
+        if program.context_version == 1:
+            stored = self.programs.load_context(program_id, tenant_id=request.tenant_id)
+            if request_fingerprint(stored.request) != request_fingerprint(request):
+                raise ValueError("execution_program_runtime_context_mismatch")
+            request = stored.request
+            parent_order = order_from_snapshot(program.parent_order_payload)
+        self._source_requests[program_id] = original_request
         self._requests[program_id] = request
         self._orders[program_id] = parent_order
 
-    @staticmethod
-    def _assert_runtime_intent(program, request, parent) -> None:
+    def _assert_runtime_intent(self, program, request, parent) -> None:
+        self._assert_accounting_scope(request.tenant_id)
+        self._match_program_accounting(program)
+        original = self._source_requests.get(program.program_id)
+        if original is not None and request_fingerprint(original) != request_fingerprint(request):
+            raise ValueError("execution_program_runtime_context_mismatch")
         if (program.parent_order_payload is None
                 or canonical_order_intent(parent) != program.parent_order_payload
                 or request_fingerprint(request) != InstitutionalPaperCoordinator._bound_request_digest(program)):
@@ -827,7 +946,13 @@ class InstitutionalPaperCoordinator:
     def reconcile_protective_accounting(self, *, currency: str) -> ProtectiveAccountingReport:
         """Mirror committed exits outside the independent protection/execution path."""
         try:
-            return ProtectiveExitAccounting(self.broker, self.accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            # A stable tenant wrapper prevents mutable adapter selection from
+            # redirecting this historical mirror. Independent exits are unchanged.
+            accounting = TradingAccounting(self._accounting_journal, self._accounting_tenant_id)
+            result = ProtectiveExitAccounting(self.broker, accounting, currency=currency).reconcile()
+            self._assert_accounting_scope(self._accounting_tenant_id)
+            return result
         except (TypeError, ValueError) as error:
             return ProtectiveAccountingReport("unavailable", (), str(error))
 
@@ -924,6 +1049,27 @@ class InstitutionalPaperCoordinator:
         before: BrokerPosition | None,
         request: InstitutionalTradeRequest,
     ) -> None:
+        self._assert_accounting_scope(request.tenant_id)
+        if order.tenant_id != request.tenant_id:
+            raise ValueError("institutional_accounting_scope_mismatch")
+        accounting = self.accounting
+        # A committed paper fill remains FILLED_UNACCOUNTED on posting failure.
+        # All trade/cost postings in this journal roll back together if the
+        # selected namespace changes inside a posting callback.
+        with self._accounting_journal.atomic():
+            self._assert_accounting_scope(request.tenant_id)
+            self._post_accounting_records(accounting, order, broker_order_id, fill_price, before, request)
+            self._assert_accounting_scope(request.tenant_id)
+
+    def _post_accounting_records(
+        self,
+        accounting: TradingAccounting,
+        order: OrderIntent,
+        broker_order_id: str,
+        fill_price: Decimal,
+        before: BrokerPosition | None,
+        request: InstitutionalTradeRequest,
+    ) -> None:
         ledger = next(
             item for item in self.broker.ledger_entries(order.tenant_id)
             if item.order_id == broker_order_id
@@ -934,14 +1080,14 @@ class InstitutionalPaperCoordinator:
             if ledger.margin_change is None:
                 raise ValueError("derivative_fill_missing_margin_change")
             if ledger.margin_change > 0:
-                self.accounting.reserve_margin(
+                accounting.reserve_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=ledger.margin_change, base_amount=ledger.margin_change * rate,
                     reference=reference, at=ledger.created_at,
                 )
             elif ledger.margin_change < 0:
                 released = -ledger.margin_change
-                self.accounting.release_margin(
+                accounting.release_margin(
                     f"margin:{broker_order_id}", currency=request.currency,
                     amount=released, base_amount=released * rate,
                     reference=reference, at=ledger.created_at,
@@ -951,7 +1097,7 @@ class InstitutionalPaperCoordinator:
                     raise ValueError("derivative_close_cost_basis_unavailable")
                 pnl = (fill_price - before.average_price) * Decimal(order.quantity)
                 if pnl != 0:
-                    self.accounting.realize_pnl(
+                    accounting.realize_pnl(
                         f"pnl:{broker_order_id}", currency=request.currency,
                         pnl=pnl, base_pnl=pnl * rate, reference=reference,
                         at=ledger.created_at,
@@ -959,7 +1105,7 @@ class InstitutionalPaperCoordinator:
         else:
             notional = fill_price * Decimal(order.quantity)
             if order.side is Side.BUY:
-                self.accounting.buy_security(
+                accounting.buy_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     notional=notional, base_notional=notional * rate,
                     reference=reference, at=ledger.created_at,
@@ -968,7 +1114,7 @@ class InstitutionalPaperCoordinator:
                 if before is None or before.quantity < order.quantity:
                     raise ValueError("security_sale_cost_basis_unavailable")
                 released = before.average_price * Decimal(order.quantity)
-                self.accounting.sell_security(
+                accounting.sell_security(
                     f"trade:{broker_order_id}", currency=request.currency,
                     proceeds=notional, released_cost=released,
                     base_proceeds=notional * rate, base_released_cost=released * rate,
@@ -977,7 +1123,7 @@ class InstitutionalPaperCoordinator:
         for cost in self.broker.cost_entries(order.tenant_id):
             if cost.order_id != broker_order_id or not cost.cash_debit or cost.amount == 0:
                 continue
-            self.accounting.cash_fee(
+            accounting.cash_fee(
                 f"cost:{broker_order_id}:{cost.code}", currency=request.currency,
                 amount=cost.amount, base_amount=cost.amount * rate,
                 reference=f"{reference} cost {cost.code}", tax=cost.code in TAX_CODES,
