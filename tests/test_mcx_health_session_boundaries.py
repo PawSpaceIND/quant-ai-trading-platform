@@ -35,4 +35,3 @@ def test_persisted_health_honors_mcx_exclusive_close(
         assert result["status"] == ("unhealthy" if offset < 0 else "observation_ok")
         assert ("market_data_stale_during_session" in result["reasons"]) is (offset < 0)
         assert database.read_bytes() == before
-
