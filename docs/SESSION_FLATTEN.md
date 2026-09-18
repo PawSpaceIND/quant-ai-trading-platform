@@ -55,6 +55,36 @@ leaves room for a retry on an order that does not fill.
 | Position with no mark | Named in `unpriceable`, plan is `incomplete`. Pricing it at a guess would invent the trade's own execution reference. |
 | Anything left open | `halt_required`. That is an unplanned overnight exposure — halt and alert, do not record the session as closed. |
 
+## Running it supervised
+
+For the first session, plan and submit with a human in the loop. `scripts/session_flatten.py`
+reads a small JSON of the book, prints the decision, and **submits nothing** — it takes no
+database path and no broker credentials, because a tool that only needs to read a small file
+should not be able to trade.
+
+```bash
+python3 scripts/session_flatten.py plan   --book book.json   # at 15:15
+# review the orders, submit them through the normal OMS
+python3 scripts/session_flatten.py verify --book book.json   # after they work
+```
+
+```json
+{
+  "as_of": "2026-09-21T15:15:00+05:30",
+  "equity": "100000",
+  "positions": {"INFY": 10, "TCS": -5},
+  "marks": {"INFY": "1500.50", "TCS": "3200.00"},
+  "working_orders": []
+}
+```
+
+`positions` are signed held units; negative is short. Exit codes are meant for a runbook:
+`0` when the plan covers the book or the book is already flat, `1` when the plan is
+incomplete or `verify` finds anything still open.
+
+`as_of` must carry an offset. A naive instant is refused rather than assumed, because where
+the book sits relative to the close is the whole question.
+
 ## Verification
 
 `tests/test_session_flatten.py` — 15 tests. Sabotage-verified: letting a missing calendar
