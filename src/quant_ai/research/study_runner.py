@@ -29,7 +29,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_ai.backtesting.replay import dataset_instrument, load_replay_dataset
+from quant_ai.backtesting.datasets import dataset_instrument, load_replay_dataset
 from quant_ai.config import paths
 from quant_ai.features.library import CORE_LIBRARY, FeatureLibrary
 from quant_ai.marketdata.point_in_time import Listing, PointInTimeUniverse
