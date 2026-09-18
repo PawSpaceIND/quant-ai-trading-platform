@@ -59,6 +59,7 @@ from quant_ai.intelligence.regime import (
     classify,
     primary_regime,
 )
+from quant_ai.intelligence.regime_observation import RegimeObservationStore
 from quant_ai.marketdata.feed import MarketDataFeed
 from quant_ai.marketdata.models import Candle
 from quant_ai.marketdata.ticker_stream import LiveTick
@@ -137,6 +138,13 @@ class MarketContext:
         """The regime facts the deterministic specialists receive with the other metrics."""
         return {
             "regime_label": self.primary.label,
+            "regime_timeframe": self.primary.timeframe,
+            "regime_daily_label": self.daily.label,
+            "regime_daily_bars_used": Decimal(self.daily.bars_used),
+            "regime_daily_bars_available": Decimal(len(self.daily_bars)),
+            "regime_intraday_label": self.intraday.label,
+            "regime_intraday_bars_used": Decimal(self.intraday.bars_used),
+            "regime_intraday_bars_available": Decimal(len(self.intraday_bars)),
             "regime_trend_strength": self.primary.trend_strength,
             "regime_volatility_ratio": self.primary.volatility_ratio,
         }
@@ -224,6 +232,7 @@ class SwarmMarketAnalysisPipeline:
         self.tick_reader = tick_reader
         self.sizer = sizer or PositionSizer()
         self.cache = IntelligenceDataCache()
+        self.regime_observations = RegimeObservationStore()
         self.agents = (
             GeopoliticalAnalystAgent(),
             CommodityYieldAgent(),
@@ -571,9 +580,11 @@ class SwarmMarketAnalysisPipeline:
         daily_bars = self._daily_history(instrument, now)
         intraday = classify(intraday_bars, timeframe=INTRADAY_TIMEFRAME)
         daily = classify(daily_bars, timeframe=DAILY_TIMEFRAME)
-        return MarketContext(
+        context = MarketContext(
             intraday_bars, daily_bars, intraday, daily, primary_regime(daily, intraday)
         )
+        self.regime_observations.record(instrument, now, len(candles), context)
+        return context
 
     def _intraday_history(
         self, instrument: Instrument, candles: tuple[Candle, ...], now: datetime
