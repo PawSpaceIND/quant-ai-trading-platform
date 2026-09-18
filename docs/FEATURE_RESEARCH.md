@@ -50,6 +50,36 @@ series. Features are centred on a training-set median, and the sign of the relat
 learned in-sample so a reversal feature is traded as reversal rather than counted as a
 failure. Both the centre and the direction come from the training half only.
 
+## Costs come from the engine, not from an assumption
+
+The study prices a round trip through `execution/friction.py` — the same schedules the paper
+ledger uses, with GST on brokerage, exchange, SEBI and depository charges but never on STT or
+stamp duty. The ATR and average daily volume come from the instrument's own bars, so a thin
+name costs more than a liquid one and a small ticket pays a larger fraction than a big one,
+because brokerage carries a flat per-order cap. A research loop that prices costs differently
+from the engine that would trade them is measuring a strategy nobody can run.
+
+Each fold's test block starts and ends flat, so entering and exiting are both paid for. A
+signal that flips every few bars pays the round trip every few bars, and that is usually what
+separates an information coefficient from a strategy. `gross_sharpe` is reported alongside the
+net figure so the gap is visible; the **net** number is what gets deflated.
+
+The calibration above is net of roughly 48 bps a round trip on a liquid name at a one-lakh
+ticket.
+
+## A stronger edge can score worse, and that is not a bug
+
+`expected_maximum_sharpe` estimates the bar from the spread of the candidates actually
+evaluated, because the true null is not observable. When many features detect the same real
+effect, that spread widens and the bar rises with it — so a broadly-detected edge partly
+raises its own hurdle. This is documented behaviour of the deflated Sharpe rather than a
+defect here.
+
+The practical consequence is worth stating: **a narrow, pre-registered hypothesis set gets a
+result through where a wide search cannot.** Twenty-four features across five names is 120
+trials, and at that width a modest edge will not clear however real it is. That is the
+correction working as intended, not an argument for turning it off.
+
 ## What it is not
 
 Purged cross-validation, not a walk-forward simulation: a fold's training set includes

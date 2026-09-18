@@ -48,7 +48,7 @@ def series(count: int, *, seed: int = 3, pull: float = 0.0) -> tuple[Candle, ...
         candles.append(Candle(
             INFY, START + timedelta(days=index),
             open=close, high=close + span, low=close - span, close=close,
-            volume=Decimal(rng.randint(800, 4000)),
+            volume=Decimal(rng.randint(500_000, 2_000_000)),
         ))
     return tuple(candles)
 
@@ -251,3 +251,100 @@ def test_the_folds_are_purged_by_the_label_span_and_embargoed(monkeypatch) -> No
     assert captured["label_span"] == 7, "folds must be purged by the horizon the label spans"
     assert captured["embargo"] == 0.02
     assert captured["splits"] == 4
+
+
+# ------------------------------------------------------------------------------- costs
+
+
+def test_costs_are_real_and_the_net_result_is_lower_than_the_gross_one() -> None:
+    """Zero-cost research is the most common way a study lies about a tradeable edge."""
+    study = run_feature_study(series(1400, pull=0.20), CORE_LIBRARY, horizon=5)
+    assert study.cost is not None
+    assert study.cost.round_trip_bps > 1.0, "a round trip that costs nothing is not priced"
+    assert study.gross_sharpe is not None and study.out_of_sample_sharpe is not None
+    assert study.out_of_sample_sharpe < study.gross_sharpe, (
+        "a signal that turns over must pay for turning over"
+    )
+
+
+def test_the_round_trip_is_priced_from_this_instruments_own_liquidity() -> None:
+    """Not a constant: a thin name costs more to trade than a liquid one, and should."""
+    from quant_ai.research.feature_study import round_trip_cost
+
+    liquid = round_trip_cost(series(400))
+    thin = tuple(
+        Candle(c.instrument, c.timestamp, open=c.open, high=c.high, low=c.low, close=c.close,
+               volume=c.volume / Decimal(500))
+        for c in series(400)
+    )
+    assert round_trip_cost(thin).round_trip_bps > liquid.round_trip_bps * 1.5
+    assert liquid.average_daily_volume > 0
+
+
+def test_a_bigger_ticket_pays_a_smaller_fraction_because_brokerage_is_capped() -> None:
+    from quant_ai.research.feature_study import round_trip_cost
+
+    small = round_trip_cost(series(400), trade_notional=Decimal(20_000))
+    large = round_trip_cost(series(400), trade_notional=Decimal(500_000))
+    assert small.round_trip_bps > large.round_trip_bps
+
+
+def test_the_candidate_spread_is_measured_net_like_the_winner() -> None:
+    """A net result graded against a gross reference distribution is compared to the wrong one.
+
+    Every candidate looks better than it is, the expected maximum rises with them, and the
+    winner is refused for failing to clear a bar nobody actually had to clear.
+    """
+    from quant_ai.research.feature_study import _signal_returns
+
+    column = [float(v) for v in (1, -1, 1, -1, 1, -1, 1, -1, 1, -1)]
+    labels = [0.01, -0.01] * 5
+    gross = _signal_returns(column, labels, 0.0)
+    net = _signal_returns(column, labels, 0.002)
+    assert sum(net) < sum(gross), "the descriptive spread must pay the same costs"
+
+
+def test_a_constant_feature_cannot_be_tested_for_overfitting() -> None:
+    """CSCV ranks candidates by performance across splits; a constant column has none.
+
+    Left in, it drags the in-sample winner's relative rank around for reasons that have
+    nothing to do with overfitting, which showed up as a probability of exactly 1.0.
+    """
+    library = FeatureLibrary([reversion_feature()] + [noise_feature(i) for i in range(5)])
+    study = run_feature_study(series(1400, pull=0.20), library, horizon=5)
+    assert study.overfitting_probability is None
+    assert any("more than one position" in reason for reason in study.reasons)
+
+
+def test_the_cost_model_reaches_the_evidence_record() -> None:
+    evidence = run_feature_study(series(1400), CORE_LIBRARY, horizon=5).as_evidence()
+    assert evidence["cost"]["source"] == "execution.friction.MarketFrictionModel"
+    assert evidence["cost"]["round_trip_bps"] > 0
+    assert evidence["gross_sharpe"] is not None
+
+
+def test_the_study_threads_the_real_cost_into_the_candidate_spread(monkeypatch) -> None:
+    """Asserting the call, because testing _signal_returns directly passes either way.
+
+    The unit test above proves the function charges when told to. This proves the study
+    tells it to — the sabotage that survived the first pass was the caller quietly passing
+    zero while the graded path paid full costs.
+    """
+    from quant_ai.research import feature_study
+
+    seen: list[float] = []
+    original = feature_study._signal_returns
+
+    def spy(column, labels, half_round_trip=0.0):
+        seen.append(half_round_trip)
+        return original(column, labels, half_round_trip)
+
+    monkeypatch.setattr(feature_study, "_signal_returns", spy)
+    study = run_feature_study(series(1400), CORE_LIBRARY, horizon=5)
+
+    assert seen, "_signal_returns was never called"
+    assert all(value > 0 for value in seen), (
+        "the candidate spread was measured gross while the graded path paid costs"
+    )
+    assert study.cost is not None
+    assert seen[0] == pytest.approx(study.cost.round_trip_fraction / 2.0)

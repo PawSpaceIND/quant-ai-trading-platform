@@ -50,7 +50,7 @@ def bars(instrument: Instrument, *, seed: int, pull: float) -> tuple[Candle, ...
         out.append(Candle(
             instrument, day.replace(hour=10),
             open=close, high=close + span, low=close - span, close=close,
-            volume=Decimal(rng.randint(800, 4000)),
+            volume=Decimal(rng.randint(500_000, 2_000_000)),
         ))
     return tuple(out)
 
