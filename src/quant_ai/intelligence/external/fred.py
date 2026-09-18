@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import date, datetime, time, timezone
+from decimal import Decimal, InvalidOperation
 from typing import ClassVar
 
 from quant_ai.intelligence.providers import MacroSnapshot
@@ -26,6 +26,9 @@ class FredMacroProvider:
         self.api_key = api_key
 
     def fetch(self, indicators: tuple[str, ...], now: datetime) -> MacroSnapshot:
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("fred_clock_must_be_aware")
+        now = now.astimezone(timezone.utc)
         values: dict[str, Decimal] = {}
         observed: list[datetime] = []
         for indicator in indicators:
@@ -50,7 +53,26 @@ class FredMacroProvider:
             for item in observations:
                 if not isinstance(item, dict) or item.get("value") in {None, "."}:
                     continue
-                values[indicator] = Decimal(str(item["value"]))
-                observed.append(datetime.fromisoformat(str(item["date"])).replace(tzinfo=timezone.utc))
+                try:
+                    value = Decimal(str(item["value"]))
+                except InvalidOperation:
+                    raise ValueError("fred_invalid_observation_value") from None
+                if not value.is_finite():
+                    raise ValueError("fred_nonfinite_observation")
+                try:
+                    raw_date = item["date"]
+                    day = date.fromisoformat(raw_date)
+                    if raw_date != day.isoformat():
+                        raise ValueError("noncanonical observation date")
+                except (KeyError, TypeError, ValueError):
+                    raise ValueError("fred_observation_date_invalid") from None
+                stamp = datetime.combine(day, time.min, tzinfo=timezone.utc)
+                if stamp > now:
+                    raise ValueError("fred_future_observation")
+                values[indicator] = value
+                observed.append(stamp)
                 break
-        return MacroSnapshot(values, max(observed, default=now))
+        # The shared snapshot timestamp must not make an old indicator look as fresh
+        # as the newest series. This is an observation-date floor, not a receipt,
+        # release-time or point-in-time availability assertion.
+        return MacroSnapshot(values, min(observed, default=now))

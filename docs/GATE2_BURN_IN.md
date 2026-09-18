@@ -11,14 +11,18 @@ controls that exist today.
 | Prices, candles, marks | Zerodha / IBKR websocket ticks → `LiveTickMarketDataFeed` | **Real**, any market the streams carry |
 | Protective stops / targets | Persisted on fill, swept at the top of every cadence tick against the live tick | **Real** (latency ≤ cadence, 10 min) |
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
-| News sentiment | `PRAMANA_NEWS_RSS_URLS` (keyword sentiment) | Real if set, else sandbox constants |
-| Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY) | `FRED_API_KEY` | Real if set, else sandbox constants |
+| News sentiment | `PRAMANA_NEWS_RSS_URLS` through the production failover registry | Configured does not mean retrieved. Missing configuration or provider failure returns no headlines, never sandbox constants. |
+| Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY aliases) | `FRED_API_KEY` and the declared FRED series map | Missing configuration or provider failure returns an empty snapshot. Returned series, dates, semantics and freshness still require qualification. |
 | Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
 | Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
-A burn-in with news and macro left on sandbox tests the price path, sizing, stops and
-governance faithfully; it does **not** test the intelligence layer's judgement.
+The production `build_ghost_runner_from_env()` path passes explicit failover wrappers
+from `_env_intelligence_providers()`. Its missing inputs are empty, not synthetic.
+The lower-level `build_ghost_runner()` and demo CLI retain explicit sandbox defaults
+for tests; they are not the environment-selected production path. A healthy price
+feed, a configured key or a current heartbeat does not verify the other inputs.
+See [intelligence input verification](INTELLIGENCE_INPUT_VERIFICATION.md).
 
 ## Prerequisites
 
@@ -42,7 +46,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]' kiteconnect ib_async      # ib_async is imported at boot even if IBKR is off
 cp .env.example .env && chmod 600 .env
 cp deploy/founder-directives.example.json founder-directives.json
-rm -f pramana_ledger.sqlite*                      # start the burn-in on a fresh ledger
+# Never delete or reset an existing pilot ledger. Use a separate reviewed test workspace.
 ```
 
 Edit `.env`: credentials, `PRAMANA_ZERODHA_TOKENS_JSON` / `PRAMANA_ZERODHA_SYMBOLS_JSON`
