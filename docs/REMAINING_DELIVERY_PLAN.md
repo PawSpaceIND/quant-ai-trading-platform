@@ -178,3 +178,76 @@ single-currency paper cash path once its PR is reviewed/merged. It does not turn
 internal SQLite reconciliation into external broker-account evidence, add
 distributed fencing, or complete the wider M01 account-authority boundary.
 See POSITION_LINKED_SHARED_RISK.md.
+
+### M06 scoped authenticated bookkeeping-recovery component
+
+A separate opt-in API component now wraps the immediate bridge's existing historical
+reconciliation. It requires explicitly issued recovery permissions, tenant-derived
+server selection, the saved context digest and an exact confirmation. A durable
+REQUESTED audit event precedes any bookkeeping; returned/failed outcomes and request
+idempotency retain uncertainty across interruption. Queued credential revocation is
+rechecked. Ordinary existing credentials gain no recovery permissions.
+
+This closes a component gap, not the entire operations milestone. Credentials remain
+in-memory possession keys, not persistent identity/MFA or independent approval. The
+new audit store still needs coordinated backup/restore inclusion. Front-end operator
+review, production provisioning, TLS/gateway validation, cross-host recovery and
+independent security/human acceptance remain open. M01 risk-capacity release and M03
+scheduled execution are unchanged. No running account or deployment was modified.
+See `AUTHENTICATED_INSTITUTIONAL_RECOVERY.md` for endpoints, tested failure cases and
+explicit exclusions. Exact final evidence is recorded in the scoped follow-up PR.
+
+### M07 operator-audit retention component
+
+An explicitly selected operator recovery audit now travels in schema-6 stopped-writer
+bundles with its ledger/OMS/accounting/programmes. Offline validation checks full audit
+history, exact saved contexts, source traces and returned receipt references; unknown
+outcomes stay unknown and no request is replayed. Schema 1-5 and selected AI/research
+coverage remain compatible. Unselected audit state is not claimed as captured.
+Automatic scheduling, independent audit-selection pins, authenticated off-host retention
+and actual restoration acceptance remain open. See `OPERATOR_AUDIT_BACKUP.md`.
+
+### M06 durable operator-credential component
+
+An explicitly selected PersistentApiKeyRegistry now supports local persistent
+possession-key grants, bounded aware expiry, irreversible revocation and atomic
+same-permission rotation. Existing API defaults remain in memory; deployed accounts
+are not changed. The real recovery handlers can use the durable registry and retain
+queued-principal checks across revocation/expiry/rotation. This is not external human
+identity, MFA, secure credential distribution, gateway rollout or off-host credential
+recovery. See `PERSISTENT_OPERATOR_CREDENTIALS.md` for limits and exact test scope.
+The M06 milestone and wider release requirements remain open.
+
+### M06/M09 component — explicit dashboard recovery console
+
+The Activity page now has an opt-in programme inspection, confirmation and recorded
+request-outcome workflow through the existing scoped recovery API. Server-side keys
+are never browser input; tenant/context identity and post-dispatch uncertainty remain
+explicit. Browser tests run the real Python API, persistent credential store, audit
+and paper bridge using disposable state. The read-only OMS panel remains unchanged.
+No deployment, credential issuance, halt clearing, risk release or live order is
+performed. See `OPERATOR_RECOVERY_CONSOLE.md`. Independent human/security/host and
+actor-identity acceptance remain open; the entire M06/M09 milestones are not closed.
+
+### M06/M08 recovery-only application surface
+
+The dedicated create_recovery_app factory reuses the existing scoped recovery API,
+but installs only health and its three bookkeeping routes. It requires explicitly
+selected durable credentials and existing tenant runtimes, freezes that mapping,
+and bounds incoming recovery bodies. General trading/model endpoints are absent;
+no constructors, accounts or providers are inferred. The actual dashboard browser
+fixture now uses this factory. Host provisioning, independent identity/TLS and target
+host acceptance remain open; this is not a rollout or completion of M06/M08. See
+RECOVERY_ONLY_SERVICE.md and the scoped follow-up to #154.
+
+
+### Explicit recovery-listener lifecycle with the existing daemon
+
+An optional loopback RecoveryServiceHost can now be attached before DaemonRunner.start
+using that exact daemon/runtime, selected persistent keys and existing recovery operations.
+Protection starts first; listener failures latch entry holds without stopping protection.
+Shutdown wakes the cadence and drains admitted recovery before protection/stream teardown.
+The host does not provision credentials, rebuild the trading runtime or close borrowed stores.
+See `COHOSTED_RECOVERY_SERVICE.md` for socket/drain limits and acceptance evidence.
+Environment-only rollout, real host/security/load acceptance and the full M06/M08 milestones
+remain open. Position-linked risk work is in the separate #158 lane, not modified here.
