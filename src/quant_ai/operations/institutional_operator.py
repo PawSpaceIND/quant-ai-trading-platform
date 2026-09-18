@@ -64,6 +64,66 @@ def _unique(pairs):
     return result
 
 
+def validate_audit_result(result, program_id, tenant_id):
+    _audit_check(set(result) == {"program_id", "tenant_id", "program_state", "recovery_stage",
+                "committed_order_ids", "recovered_sequences", "source_revision_sha256",
+                "reason_code", "execution_authorized"}
+        and result["execution_authorized"] is False
+        and result["program_id"] == program_id and result["tenant_id"] == tenant_id
+        and result["program_state"] in {"PLANNED", "ACTIVE", "COMPLETE", "FAILED", "CANCELLED"}
+        and result["recovery_stage"] in {"READY", "COMPLETE", "FAILED", "RECOVERY_REQUIRED"}
+        and result["reason_code"] in {"recorded_complete", "review_required"}
+        and type(result["source_revision_sha256"]) is str
+        and SHA.fullmatch(result["source_revision_sha256"])
+        and isinstance(result["committed_order_ids"], (list, tuple))
+        and len(result["committed_order_ids"]) <= 1
+        and all(type(v) is str and IDENTIFIER.fullmatch(v) for v in result["committed_order_ids"])
+        and isinstance(result["recovered_sequences"], (list, tuple))
+        and len(result["recovered_sequences"]) <= 1
+        and all(type(v) is int and v == 1 for v in result["recovered_sequences"]))
+
+
+def read_audit_records(db, tenant_id):
+    """Replay the bounded persisted audit without a runtime or any writes."""
+    rows = db.execute("SELECT sequence,payload,sha256 FROM institutional_operator_events ORDER BY sequence LIMIT ?",
+                           (MAX_EVENTS + 1,)).fetchall()
+    _audit_check(len(rows) <= MAX_EVENTS)
+    records, requests, previous = [], {}, "GENESIS"
+    for number, row in enumerate(rows, 1):
+        _audit_check(type(row[0]) is int and row[0] == number and len(row[1].encode()) <= MAX_EVENT_BYTES)
+        value = json.loads(row[1], object_pairs_hook=_unique)
+        _audit_check(type(value) is dict and set(value) == {
+            "schema", "sequence", "tenant", "request_id", "actor_key_id", "program_id",
+            "context_sha256", "status", "recorded_at", "result", "previous_sha256"})
+        _audit_check(_raw(value) == row[1] and _sha(row[1]) == row[2]
+                     and value["schema"] == SCHEMA and type(value["sequence"]) is int
+                     and value["sequence"] == number and value["tenant"] == tenant_id
+                     and value["previous_sha256"] == previous)
+        for field in ("request_id", "actor_key_id", "program_id"):
+            _audit_check(type(value[field]) is str and IDENTIFIER.fullmatch(value[field]))
+        _audit_check(type(value["context_sha256"]) is str and SHA.fullmatch(value["context_sha256"]))
+        instant = datetime.fromisoformat(value["recorded_at"])
+        _audit_check(instant.tzinfo is not None and instant.utcoffset() is not None)
+        key = value["request_id"]
+        older = requests.get(key)
+        if value["status"] == "REQUESTED":
+            _audit_check(older is None and value["result"] is None)
+        else:
+            _audit_check(older is not None and older["status"] == "REQUESTED"
+                         and value["status"] in {"RETURNED", "FAILED"}
+                         and all(value[k] == older[k] for k in (
+                             "actor_key_id", "program_id", "context_sha256")))
+            _audit_check(type(value["result"]) is dict)
+            if value["status"] == "RETURNED":
+                validate_audit_result(value["result"], value["program_id"], tenant_id)
+            else:
+                _audit_check(value["result"] == {"code": "institutional_reconciliation_requires_review"})
+        records.append(value)
+        requests[key] = value
+        previous = row[2]
+    return records
+
+
 class InstitutionalRecoveryOperations:
     """Internal authenticated-handler component; not an order or automatic recovery service."""
 
@@ -160,43 +220,7 @@ class InstitutionalRecoveryOperations:
 
     def _records(self):
         self._check_storage()
-        rows = self.db.execute("SELECT sequence,payload,sha256 FROM institutional_operator_events ORDER BY sequence LIMIT ?",
-                               (MAX_EVENTS + 1,)).fetchall()
-        _audit_check(len(rows) <= MAX_EVENTS)
-        records, requests, previous = [], {}, "GENESIS"
-        for number, row in enumerate(rows, 1):
-            _audit_check(type(row[0]) is int and row[0] == number and len(row[1].encode()) <= MAX_EVENT_BYTES)
-            value = json.loads(row[1], object_pairs_hook=_unique)
-            _audit_check(type(value) is dict and set(value) == {
-                "schema", "sequence", "tenant", "request_id", "actor_key_id", "program_id",
-                "context_sha256", "status", "recorded_at", "result", "previous_sha256"})
-            _audit_check(_raw(value) == row[1] and _sha(row[1]) == row[2]
-                         and value["schema"] == SCHEMA and type(value["sequence"]) is int
-                         and value["sequence"] == number and value["tenant"] == self.tenant_id
-                         and value["previous_sha256"] == previous)
-            for field in ("request_id", "actor_key_id", "program_id"):
-                _audit_check(type(value[field]) is str and IDENTIFIER.fullmatch(value[field]))
-            _audit_check(type(value["context_sha256"]) is str and SHA.fullmatch(value["context_sha256"]))
-            instant = datetime.fromisoformat(value["recorded_at"])
-            _audit_check(instant.tzinfo is not None and instant.utcoffset() is not None)
-            key = value["request_id"]
-            older = requests.get(key)
-            if value["status"] == "REQUESTED":
-                _audit_check(older is None and value["result"] is None)
-            else:
-                _audit_check(older is not None and older["status"] == "REQUESTED"
-                             and value["status"] in {"RETURNED", "FAILED"}
-                             and all(value[k] == older[k] for k in (
-                                 "actor_key_id", "program_id", "context_sha256")))
-                _audit_check(type(value["result"]) is dict)
-                if value["status"] == "RETURNED":
-                    self._validate_result(value["result"], value["program_id"])
-                else:
-                    _audit_check(value["result"] == {"code": "institutional_reconciliation_requires_review"})
-            records.append(value)
-            requests[key] = value
-            previous = row[2]
-        return records
+        return read_audit_records(self.db, self.tenant_id)
 
     def _append(self, records, *, request_id, actor_key_id, program_id, context_sha256, status, result):
         _audit_check(len(records) < MAX_EVENTS)
@@ -212,22 +236,7 @@ class InstitutionalRecoveryOperations:
         return value
 
     def _validate_result(self, result, program_id):
-        _audit_check(set(result) == {"program_id", "tenant_id", "program_state", "recovery_stage",
-                    "committed_order_ids", "recovered_sequences", "source_revision_sha256",
-                    "reason_code", "execution_authorized"}
-            and result["execution_authorized"] is False
-            and result["program_id"] == program_id and result["tenant_id"] == self.tenant_id
-            and result["program_state"] in {"PLANNED", "ACTIVE", "COMPLETE", "FAILED", "CANCELLED"}
-            and result["recovery_stage"] in {"READY", "COMPLETE", "FAILED", "RECOVERY_REQUIRED"}
-            and result["reason_code"] in {"recorded_complete", "review_required"}
-            and type(result["source_revision_sha256"]) is str
-            and SHA.fullmatch(result["source_revision_sha256"])
-            and isinstance(result["committed_order_ids"], (list, tuple))
-            and len(result["committed_order_ids"]) <= 1
-            and all(type(v) is str and IDENTIFIER.fullmatch(v) for v in result["committed_order_ids"])
-            and isinstance(result["recovered_sequences"], (list, tuple))
-            and len(result["recovered_sequences"]) <= 1
-            and all(type(v) is int and v == 1 for v in result["recovered_sequences"]))
+        return validate_audit_result(result, program_id, self.tenant_id)
 
     def _safe_result(self, report, program_id):
         _audit_check(type(report) is InstitutionalRecoveryReport
