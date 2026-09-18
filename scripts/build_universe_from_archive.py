@@ -46,6 +46,9 @@ from quant_ai.marketdata.listing_reconstruction import (
 
 DEFAULT_MAX_SESSION_GAP_DAYS = 12
 
+#: Files between progress lines while reading the archive.
+PROGRESS_EVERY = 250
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -79,11 +82,27 @@ def main(argv=None) -> int:
         parser.error(f"no bhavcopy files in {args.archive}")
 
     files, unreadable = [], []
-    for path in paths:
-        try:
-            files.append(read_bhavcopy(path, exchange=args.exchange))
-        except (BhavcopyFormatError, OSError, ValueError) as error:
-            unreadable.append((path.name, str(error)))
+    try:
+        for index, path in enumerate(paths, start=1):
+            try:
+                files.append(read_bhavcopy(path, exchange=args.exchange))
+            except (BhavcopyFormatError, OSError, ValueError) as error:
+                unreadable.append((path.name, str(error)))
+            if index % PROGRESS_EVERY == 0:
+                # Reading 2,500 files takes minutes with nothing on screen, which is
+                # indistinguishable from a hang. It also makes the point at which someone
+                # interrupts legible afterwards.
+                print(f"  read {index}/{len(paths)} files", file=sys.stderr, flush=True)
+    except KeyboardInterrupt:
+        # Stopping a multi-minute read is a normal thing to do, not a crash. A traceback
+        # through the CSV parser says nothing; the count reached and the fact that nothing
+        # was written do.
+        print(
+            f"\nstopped after reading {len(files)} of {len(paths)} files. Nothing was "
+            "written, so no partial universe was left behind - re-run to start again.",
+            file=sys.stderr,
+        )
+        return 130
     if unreadable:
         for name, why in unreadable[:20]:
             print(f"  unreadable {name}: {why}", file=sys.stderr)
