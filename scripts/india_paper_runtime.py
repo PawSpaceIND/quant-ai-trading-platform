@@ -124,6 +124,15 @@ def configure():
         "PRAMANA_GHOST_LOG": str(RUNTIME / "events.jsonl"),
         "PRAMANA_TARGET_SYMBOL": instruments[0][1], "PRAMANA_TARGET_MARKET": "INDIA",
         "PRAMANA_TARGET_CURRENCY": "INR", "PRAMANA_TARGET_EXCHANGE": instruments[0][0],
+        # Monday paper-pilot safety controls. Universe and exchange still come only from
+        # the operator directives above; these arm history, book risk and deterministic close.
+        "PRAMANA_DAILY_HISTORY_PROVIDER": "kite",
+        "PRAMANA_INTRADAY_WARMUP_PROVIDER": "kite",
+        "PRAMANA_BOOK_RISK_HISTORY": "daily",
+        "PRAMANA_REQUIRE_BOOK_RISK_GATES": "true",
+        "PRAMANA_SESSION_FLATTEN_MINUTES": "15",
+        "PRAMANA_OVERNIGHT_GROSS_CAP": "0.25",
+        "PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES": "15",
         # Passed through unchanged. Rewriting any field here is how the launcher and the
         # operator's mandate came to disagree in the first place.
         "PRAMANA_FOUNDER_DIRECTIVES_JSON": json.dumps(directives),

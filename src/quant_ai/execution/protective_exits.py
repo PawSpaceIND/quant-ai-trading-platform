@@ -42,6 +42,7 @@ MarkResolver = Callable[[BrokerPosition], Decimal | None]
 class ExitTrigger(str, Enum):
     STOP_LOSS = "STOP_LOSS"
     TAKE_PROFIT = "TAKE_PROFIT"
+    SESSION_FLATTEN = "SESSION_FLATTEN"
 
 
 @dataclass(frozen=True)
@@ -175,6 +176,40 @@ class ProtectiveExitEngine:
             # it; an exit that failed to fill is still held and still escalates.
             closed = {item.symbol for item in exits if item.filled}
             self.gap_monitor.forget(tuple(item for item in held if item not in closed))
+        return tuple(exits)
+
+    def flatten_session(
+        self, now: datetime, *, symbols: set[str] | None = None
+    ) -> tuple[ProtectiveExit, ...]:
+        """Liquidate selected open positions for a deterministic session-close policy.
+
+        This path is independent of AI votes and uses the same observed-mark, atomic paper
+        fill, evidence, friction and reconciliation machinery as stop/target exits. A mark
+        that cannot be observed produces a failed exit so the daemon can halt rather than
+        silently carry exposure overnight.
+        """
+        self._sweep_at = now
+        exits: list[ProtectiveExit] = []
+        selected = {item.upper() for item in symbols} if symbols is not None else None
+        for position in self.broker.get_protection_positions(self.tenant_id):
+            if selected is not None and position.symbol.upper() not in selected:
+                continue
+            mark = self._mark(position)
+            if mark is None:
+                exits.append(
+                    ProtectiveExit(
+                        position.symbol, position.market, position.asset_class,
+                        position.quantity, ExitTrigger.SESSION_FLATTEN,
+                        position.average_price, position.average_price,
+                        position.average_price, False, None, "mark_unavailable",
+                    )
+                )
+                continue
+            exits.append(
+                self._liquidate(
+                    position, ExitTrigger.SESSION_FLATTEN, mark, mark, now
+                )
+            )
         return tuple(exits)
 
     def _breach(
@@ -340,9 +375,15 @@ class ProtectiveExitEngine:
             "generated_at": now.isoformat(), "trigger": trigger.value, "threshold": str(threshold),
             "mark_observation": observation,
             "proposal": {"side": "SELL", "quantity": str(position.quantity), "reference_price": str(mark)},
-            "declared_rationales": [f"Deterministic {trigger.value}: observed mark {mark} crossed stored threshold {threshold}.",
+            "declared_rationales": [
+                (
+                    f"Deterministic session flatten at observed mark {mark}."
+                    if trigger == ExitTrigger.SESSION_FLATTEN
+                    else f"Deterministic {trigger.value}: observed mark {mark} crossed stored threshold {threshold}."
+                ),
                 f"Price source: {observation.get('source')}; source timestamp: {observation.get('source_timestamp') or 'unavailable'}.",
-                "Covered paper liquidation independent of AI votes. Fill includes broker friction; stop price is not guaranteed."],
+                "Covered paper liquidation independent of AI votes. Fill includes broker friction; stop price is not guaranteed.",
+            ],
             "risk_verdict": {"approved": "true", "reason": "covered_protective_liquidation"},
             "stress_verdict": {"passed": "not_applicable", "reason": "risk_reducing_exit; no AI stress vote"},
         }
@@ -386,11 +427,12 @@ class ProtectiveExitEngine:
         filled: bool,
         detail: str,
     ) -> None:
-        code = (
-            TradingAlertCode.STOP_LOSS_TRIGGERED
-            if trigger == ExitTrigger.STOP_LOSS
-            else TradingAlertCode.TAKE_PROFIT_TRIGGERED
-        )
+        if trigger == ExitTrigger.STOP_LOSS:
+            code = TradingAlertCode.STOP_LOSS_TRIGGERED
+        elif trigger == ExitTrigger.TAKE_PROFIT:
+            code = TradingAlertCode.TAKE_PROFIT_TRIGGERED
+        else:
+            code = TradingAlertCode.SESSION_FLATTENED
         verb = "liquidated" if filled else "FAILED to liquidate"
         self.dispatcher.dispatch(
             code,
