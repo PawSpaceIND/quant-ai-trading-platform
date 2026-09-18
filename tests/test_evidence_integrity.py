@@ -160,6 +160,10 @@ def _evidence_directory(root: Path) -> dict[str, object]:
         "profit_factor": str(EXPECTED_PROFIT_FACTOR),
         "profitable_regimes": EXPECTED_REGIMES,
         "paper_days": SESSIONS,
+        # The statistical gate result the study published, now a promotion input rather
+        # than a number the reviewer reads and discards.
+        "deflated_sharpe": "0.97",
+        "universe_verdict": "plausible",
     }
     for name, members in files.items():
         artifact[name] = evidence_bundle_digest(list(members), root)

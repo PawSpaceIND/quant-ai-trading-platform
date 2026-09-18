@@ -4,7 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from test_ai_learning_governance import NOW, H, evaluation, strategy
+from test_ai_learning_governance import NOW, H, evaluation, selection, strategy
 
 from quant_ai.learning import candidates as registry
 from quant_ai.learning.candidates import CandidateStage as Stage
@@ -20,10 +20,14 @@ def staged(path):
 def approval_args(**changes):
     value = evaluation()
     evidence = strategy()
+    # An approval now has to carry the correction for how hard the search looked; without it
+    # the assessment is not paper-ready and the transition is refused.
+    chosen = selection()
     args = {"candidate_id": value.candidate_id, "target": Stage.PAPER_APPROVED,
-            "evidence_sha256": registry.candidate_assessment_sha256(value, evidence),
+            "evidence_sha256": registry.candidate_assessment_sha256(value, evidence, None, chosen),
             "reviewer": "synthetic-reviewer", "evaluation": value,
-            "strategy_evidence": evidence, "now": NOW + timedelta(seconds=2)}
+            "strategy_evidence": evidence, "selection": chosen,
+            "now": NOW + timedelta(seconds=2)}
     args.update(changes)
     return args
 
@@ -131,10 +135,12 @@ def test_approval_evidence_mismatch_or_failed_assessment_never_appends(tmp_path,
         args["evidence_sha256"] = "b" * 64
     elif defect == "failed_probability":
         args["evaluation"] = evaluation(brier="0.4")
-        args["evidence_sha256"] = registry.candidate_assessment_sha256(args["evaluation"], args["strategy_evidence"])
+        args["evidence_sha256"] = registry.candidate_assessment_sha256(
+            args["evaluation"], args["strategy_evidence"], None, args["selection"])
     else:
         args["strategy_evidence"] = replace(args["strategy_evidence"], paper_days=0)
-        args["evidence_sha256"] = registry.candidate_assessment_sha256(args["evaluation"], args["strategy_evidence"])
+        args["evidence_sha256"] = registry.candidate_assessment_sha256(
+            args["evaluation"], args["strategy_evidence"], None, args["selection"])
     before = path.read_bytes()
     with pytest.raises(ValueError, match="candidate_approval"):
         registry.transition_candidate(path, **args)
@@ -211,6 +217,11 @@ def test_assessment_digest_changes_with_policy_and_evidence_contract():
     assert original != registry.candidate_assessment_sha256(replace(value, holdout_sha256="b"*64), evidence)
     assert original != registry.candidate_assessment_sha256(value, replace(evidence, paper_days=36))
     assert original != registry.candidate_assessment_sha256(value, evidence, PromotionPolicy(min_paper_days=31))
+    # The selection correction is inside the signed record, so changing it changes the digest.
+    assert original != registry.candidate_assessment_sha256(value, evidence, None, selection())
+    assert (registry.candidate_assessment_sha256(value, evidence, None, selection())
+            != registry.candidate_assessment_sha256(
+                value, evidence, None, replace(selection(), candidate_trials=999)))
 
 
 def test_missing_registry_is_read_only_and_private_file_is_created_on_write(tmp_path):

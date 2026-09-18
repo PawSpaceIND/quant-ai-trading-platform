@@ -8,17 +8,57 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-import certifi
-from kiteconnect import KiteConnect
-
 from quant_ai.operations.zerodha_session import is_expired, read_session
 
 CONFIG = Path.home() / ".config/pramana"
 RUNTIME = Path(os.environ.get("PRAMANA_PILOT_RUNTIME", str(CONFIG / "india-paper")))
-SYMBOLS = ("INFY", "RELIANCE", "TCS")
+DEFAULT_DIRECTIVES = Path(__file__).resolve().parents[1] / "deploy" / "founder-directives.example.json"
+DIRECTIVES_PATH = Path(os.environ.get("PRAMANA_PILOT_DIRECTIVES") or DEFAULT_DIRECTIVES)
+
+
+def load_directives() -> tuple[dict, tuple[str, ...]]:
+    """The pilot mandate and the symbols it names, read rather than restated here.
+
+    This launcher used to carry its own copy: three equities, three open positions and
+    EQUITY only, while the operator's directives named five instruments, five positions and
+    EQUITY plus ETF. Both were internally consistent, which is what made the disagreement
+    survive - the restated copy kept working while describing a different portfolio than
+    the one the operator had configured, and the ETF restriction quietly explained why two
+    of their five instruments were absent.
+
+    Fails closed. A directives file that cannot be read stops the launcher rather than
+    starting the pilot on whatever list happened to be compiled into it.
+    """
+    try:
+        directives = json.loads(DIRECTIVES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Founder directives unreadable at {DIRECTIVES_PATH}: {error}") from error
+    if not isinstance(directives, dict):
+        # RuntimeError, not TypeError: every refusal in this launcher is a RuntimeError the
+        # caller prints as a startup failure, and one odd type here would break that contract
+        # for no gain to the operator reading it.
+        raise RuntimeError(  # noqa: TRY004
+            f"Founder directives must be a JSON object: {DIRECTIVES_PATH}"
+        )
+    watchlist = directives.get("watchlist") or []
+    symbols = tuple(
+        str(item["symbol"]) for item in watchlist
+        if isinstance(item, dict) and item.get("exchange") == "NSE" and item.get("symbol")
+    )
+    if not symbols:
+        raise RuntimeError(f"Founder directives name no NSE instruments: {DIRECTIVES_PATH}")
+    if len(set(symbols)) != len(symbols):
+        raise RuntimeError(f"Founder directives list a symbol twice: {DIRECTIVES_PATH}")
+    return directives, symbols
 
 
 def configure():
+    # Imported here rather than at module scope. Both are broker-side dependencies from the
+    # optional ``pilot`` extra, and requiring them to merely read the pilot's own
+    # configuration made that configuration untestable without a broker SDK installed.
+    import certifi
+    from kiteconnect import KiteConnect
+
     if os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").lower() in {"true", "1", "yes", "on"}:
         raise RuntimeError("This launcher supports paper trading only")
     RUNTIME.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -35,8 +75,10 @@ def configure():
     profile = kite.profile()
     if profile["user_id"] != session.user_id or "NSE" not in profile.get("exchanges", []):
         raise RuntimeError("Account validation failed")
-    quotes = kite.quote(["NSE:" + symbol for symbol in SYMBOLS])
-    mappings = {str(quotes["NSE:" + symbol]["instrument_token"]): symbol for symbol in SYMBOLS}
+    directives, symbols = load_directives()
+    print(f"pilot universe from {DIRECTIVES_PATH}: {', '.join(symbols)}")
+    quotes = kite.quote(["NSE:" + symbol for symbol in symbols])
+    mappings = {str(quotes["NSE:" + symbol]["instrument_token"]): symbol for symbol in symbols}
     # Optional real providers are taken from the process environment only; nothing is hardcoded.
     passthrough = {name: os.environ[name] for name in ("FRED_API_KEY", "PRAMANA_FUNDAMENTALS_PROVIDER")
                    if os.environ.get(name, "").strip()}
@@ -53,15 +95,11 @@ def configure():
         "PRAMANA_TENANT_ID": "india-paper",
         "PRAMANA_HALT_FILE": str(RUNTIME / "HALT"),
         "PRAMANA_GHOST_LOG": str(RUNTIME / "events.jsonl"),
-        "PRAMANA_TARGET_SYMBOL": "INFY", "PRAMANA_TARGET_MARKET": "INDIA",
+        "PRAMANA_TARGET_SYMBOL": symbols[0], "PRAMANA_TARGET_MARKET": "INDIA",
         "PRAMANA_TARGET_CURRENCY": "INR", "PRAMANA_TARGET_EXCHANGE": "NSE",
-        "PRAMANA_FOUNDER_DIRECTIVES_JSON": json.dumps({
-            "starting_capital": 100000, "allowed_markets": ["INDIA"],
-            "allowed_asset_classes": ["EQUITY"], "max_open_positions": 3,
-            "watchlist": [{"symbol": symbol, "market": "INDIA", "asset_class": "EQUITY",
-                           "currency": "INR", "exchange": "NSE"} for symbol in SYMBOLS],
-            "instructions": "Paper validation only. Abstain when required evidence is unavailable or stale."
-        }),
+        # Passed through unchanged. Rewriting any field here is how the launcher and the
+        # operator's mandate came to disagree in the first place.
+        "PRAMANA_FOUNDER_DIRECTIVES_JSON": json.dumps(directives),
         **passthrough,
     })
     # External messaging is intentionally not part of this local runtime.
@@ -78,6 +116,22 @@ def provider_status():
                       else "Unavailable; FRED_API_KEY not configured"),
             "Fundamentals": (f"{fundamentals} configured (PRAMANA_FUNDAMENTALS_PROVIDER)" if fundamentals
                              else "Unavailable; affected agents abstain")}
+
+
+def running_watchlist() -> tuple:
+    """What this process is actually subscribed to, read from its own environment.
+
+    Reporting a module constant here would let the status file keep naming a universe the
+    engine had stopped watching. The token map is what the feed subscribes with, so it is
+    the truest available statement of what is being observed.
+    """
+    try:
+        mappings = json.loads(os.environ.get("PRAMANA_ZERODHA_SYMBOLS_JSON", "{}"))
+    except ValueError:
+        return ()
+    if not isinstance(mappings, dict):
+        return ()
+    return tuple(sorted(str(symbol) for symbol in mappings.values()))
 
 
 def save_status(payload):
@@ -101,7 +155,7 @@ async def run():
         while not task.done() and not runner.daemon.heartbeat().stopping:
             beat = asdict(runner.daemon.heartbeat())
             save_status({"status": "running", "updatedAt": datetime.now(timezone.utc).isoformat(),
-                         "mode": "paper", "watchlist": SYMBOLS, "heartbeat": beat,
+                         "mode": "paper", "watchlist": running_watchlist(), "heartbeat": beat,
                          "cadenceFailures": runner.consecutive_failures,
                          "halted": (RUNTIME / "HALT").exists(),
                          "providers": provider_status()})

@@ -25,7 +25,11 @@ from pathlib import Path
 
 from quant_ai.governance.derived_evidence import derive_strategy_evidence
 from quant_ai.operations.pilot_gate import evidence_bundle_digest
-from quant_ai.validation.promotion import StrategyEvidence, evaluate_promotion
+from quant_ai.validation.promotion import (
+    SelectionEvidence,
+    StrategyEvidence,
+    evaluate_promotion,
+)
 from quant_ai.validation.trial_register import register_summary
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -109,6 +113,43 @@ def _resolve_evidence(artifact: dict, evidence_root: Path) -> dict[str, list[str
     return resolved
 
 
+def _selection_evidence(artifact: dict, trials: dict) -> SelectionEvidence | None:
+    """The correction for how hard the search looked, and what it looked at.
+
+    The register's cumulative candidate count was already being loaded here and then
+    discarded: only ``runs >= 1`` was checked, so a strategy chosen as the best of five
+    hundred variants reached promotion on statistics that had never been corrected for the
+    search that found it. That is exactly the multiplicity trial_register.py documents
+    itself as not correcting for.
+
+    The study's own statistical gate result has to be typed into the artifact alongside the
+    performance figures, and it is missing rather than assumed when absent.
+    """
+    missing = sorted(
+        key for key in ("deflated_sharpe", "universe_verdict") if artifact.get(key) is None
+    )
+    if missing:
+        # Absent returns None rather than raising, so evaluate_promotion reports
+        # selection_bias_uncorrected ALONGSIDE whatever else is wrong with the submission.
+        # Raising here ran before the promotion decision and before the ledger comparison
+        # that follows it, so a review with an unrelated defect - too few trades, figures
+        # disagreeing with the retained ledger - reported the missing gate result instead of
+        # the defect. A governance error that hides a different governance error is worse
+        # than the gap it was added to close.
+        return None
+    try:
+        deflated = float(artifact["deflated_sharpe"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("deflated_sharpe must be a number") from exc
+    if not 0.0 <= deflated <= 1.0:
+        raise ValueError("deflated_sharpe is a probability and must lie in [0, 1]")
+    return SelectionEvidence(
+        candidate_trials=int(trials["candidate_trials"]),
+        deflated_sharpe=deflated,
+        universe_verdict=str(artifact["universe_verdict"]),
+    )
+
+
 def _review_strategy(artifact: dict, *, tenant: str, evidence_root: Path | None) -> dict:
     if artifact.get("schema") != "pramana.strategy.review.v1" or not artifact.get("strategy_id"):
         raise ValueError("AI strategy-specific reviewed evidence required; a baseline is not sufficient")
@@ -138,7 +179,7 @@ def _review_strategy(artifact: dict, *, tenant: str, evidence_root: Path | None)
     trials = register_summary(register)
     if trials["runs"] < 1:
         raise ValueError("The retained trial register records no research trials")
-    decision = evaluate_promotion(evidence)
+    decision = evaluate_promotion(evidence, selection=_selection_evidence(artifact, trials))
     if not decision.approved:
         raise ValueError("Strategy policy rejected: " + ",".join(decision.reasons))
     disagreements = [
