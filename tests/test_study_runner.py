@@ -34,7 +34,7 @@ def dataset(path: Path, *, count: int = 1400, pull: float = 0.20, seed: int = 3)
             "timestamp": (START + timedelta(days=index)).isoformat(),
             "open": str(close), "high": str(round(close + span, 4)),
             "low": str(round(close - span, 4)), "close": str(close),
-            "volume": str(rng.randint(800, 4000)),
+            "volume": str(rng.randint(500_000, 2_000_000)),
         })
     path.write_text(json.dumps({"bars": bars, "provenance": PROVENANCE}))
     return path

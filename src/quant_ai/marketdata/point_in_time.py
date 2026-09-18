@@ -78,6 +78,9 @@ class SurvivorshipAudit:
             "coverage_years": round(self.coverage_years, 3),
             "annual_delisting_rate": round(self.annual_delisting_rate, 5),
             "verdict": self.verdict,
+            # Stated outright rather than left to a reader who would otherwise have to know
+            # which verdict strings are acceptable.
+            "usable_for_research": self.usable_for_research,
             "reasons": list(self.reasons),
             "limitation": (
                 "A plausible delisting rate means the universe is not obviously survivor-only. "
