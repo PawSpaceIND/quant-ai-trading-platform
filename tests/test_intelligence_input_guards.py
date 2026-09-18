@@ -36,6 +36,12 @@ def cases():
     assert {row["id"] for row in result}==set(TARGETS)
     fred="src/quant_ai/intelligence/external/fred.py"
     entries=[
+        ('macro_snapshot_clock', 'src/quant_ai/intelligence/providers.py', 'raise ValueError("macro_snapshot_clock_invalid")', 'pass', 'test_macro_snapshot_clock_contract_rejects_misleading_metadata[both_naive]'),
+        ('macro_snapshot_order', 'src/quant_ai/intelligence/providers.py', 'raise ValueError("macro_snapshot_oldest_after_latest")', 'pass', 'test_macro_snapshot_clock_contract_rejects_misleading_metadata[order]'),
+        ('macro_freshness_clock', 'src/quant_ai/intelligence/providers.py', 'return self.observed_at if self.oldest_observed_at is None else self.oldest_observed_at', 'return self.observed_at', 'test_real_pipeline_uses_oldest_freshness_not_latest_change_clock[False]'),
+        ('macro_latest_version', 'src/quant_ai/intelligence/external/fred.py', 'max(observed, default=now)', 'min(observed, default=now)', 'test_macro_changes_keep_latest_clock_when_oldest_series_does_not_move'),
+        ('macro_evidence_clock', 'src/quant_ai/intelligence/pipeline.py', '(("macro_oldest_observed_at", macro.freshness_observed_at.isoformat()),)', '()', 'test_macro_evidence_preserves_latest_time_and_names_oldest_separately'),
+
         ("macro_numeric_error",fred,"except InvalidOperation:","except OverflowError:","test_invalid_numeric_macro_record_refuses_as_provider_failure[garbled]"),
         ("macro_oldest_time",fred,"min(observed, default=now)","max(observed, default=now)","test_fred_mixed_age_cannot_refresh_an_older_indicator"),
         ("macro_clock",fred,'raise ValueError("fred_clock_must_be_aware")','pass',"test_fred_clock_must_be_aware_before_transport"),

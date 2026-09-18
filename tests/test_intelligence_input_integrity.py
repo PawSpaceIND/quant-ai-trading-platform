@@ -33,8 +33,9 @@ def test_fred_mixed_age_cannot_refresh_an_older_indicator():
                      "IRLTLT01INM156N": [{"date": "2026-08-01", "value": "6"}]})
     result = item.fetch(("US10Y", "INDIA10Y"), NOW)
     assert result.indicators == {"US10Y": Decimal(4), "INDIA10Y": Decimal(6)}
-    assert result.observed_at == datetime(2026, 8, 1, tzinfo=timezone.utc)
-    assert FreshnessValidator().validate(DataCategory.MACRO, result.observed_at, NOW).state == FreshnessState.STALE
+    assert result.observed_at == datetime(2026, 9, 18, tzinfo=timezone.utc)
+    assert result.freshness_observed_at == datetime(2026, 8, 1, tzinfo=timezone.utc)
+    assert FreshnessValidator().validate(DataCategory.MACRO, result.freshness_observed_at, NOW).state == FreshnessState.STALE
 
 
 @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
@@ -245,3 +246,87 @@ def test_invalid_numeric_macro_record_refuses_as_provider_failure(value):
     registry=ProviderFailoverRegistry()
     registry.register(ProviderCategory.MACRO,item)
     assert FailoverMacroProvider(registry).fetch(("US10Y",),NOW).indicators=={}
+
+
+def test_macro_changes_keep_latest_clock_when_oldest_series_does_not_move():
+    from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
+    pipeline=object.__new__(SwarmMarketAnalysisPipeline)
+    pipeline._macro_current_at=None
+    pipeline._macro_current={}
+    pipeline._macro_previous={}
+    first=provider({"DGS10":[{"date":"2026-09-17","value":"4"}],
+                    "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+    second=provider({"DGS10":[{"date":"2026-09-18","value":"5"}],
+                     "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+    assert pipeline._macro_metrics(first)["yield_change"]==0
+    assert pipeline._macro_metrics(second)["yield_change"]==Decimal("0.25")
+
+
+@pytest.mark.parametrize('kind', ['naive', 'type', 'order', 'both_naive'])
+def test_macro_snapshot_clock_contract_rejects_misleading_metadata(kind):
+    from datetime import timedelta
+
+    from quant_ai.intelligence.providers import MacroSnapshot
+    latest = NOW.replace(tzinfo=None) if kind == 'both_naive' else NOW
+    oldest = NOW.replace(tzinfo=None) if kind in ('naive','both_naive') else 'bad' if kind == 'type' else NOW + timedelta(seconds=1)
+    reason = 'macro_snapshot_oldest_after_latest' if kind == 'order' else 'macro_snapshot_clock_invalid'
+    with pytest.raises(ValueError, match=reason):
+        MacroSnapshot({'US10Y': Decimal(4)}, latest, oldest)
+
+
+def test_legacy_macro_snapshot_keeps_its_existing_clock():
+    from quant_ai.intelligence.providers import MacroSnapshot
+    snapshot = MacroSnapshot({'US10Y': Decimal(4)}, NOW)
+    assert snapshot.oldest_observed_at is None
+    assert snapshot.freshness_observed_at == snapshot.observed_at == NOW
+
+
+def complete_mixed_macro():
+    return provider({series: [{'date': '2026-08-01' if name == 'INDIA10Y' else '2026-09-18',
+                              'value': '6' if name == 'INDIA10Y' else '4'}]
+                     for name, series in FredMacroProvider.series.items()})
+
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_real_pipeline_uses_oldest_freshness_not_latest_change_clock(tmp_path, asynchronous):
+    import asyncio
+
+    from test_intelligence_pipeline import instrument, plan, portfolio
+
+    from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
+    from quant_ai.execution.paper_ledger import PaperBrokerService
+    from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
+    from quant_ai.intelligence.sandbox import (
+        SandboxFundamentalDataProvider,
+        SandboxNewsSentimentProvider,
+    )
+    from quant_ai.marketdata.feed import UsaSandboxMarketDataFeed
+    broker = PaperBrokerService(tmp_path/'clock.db', starting_capital=Decimal(100000))
+    pipeline = SwarmMarketAnalysisPipeline(UsaSandboxMarketDataFeed(), SandboxNewsSentimentProvider(),
+        SandboxFundamentalDataProvider(), complete_mixed_macro(),
+        runtime=SwarmPaperTradingService(broker=broker))
+    args = (instrument(), NOW, plan(), portfolio())
+    kwargs = {'quantity': 0, 'country': 'USA', 'tenant_id': 'clock-test'}
+    result = asyncio.run(pipeline.run_async(*args, **kwargs)) if asynchronous else pipeline.run(*args, **kwargs)
+    assert result.freshness.macro.state == FreshnessState.STALE
+    assert result.freshness.macro.age_seconds == int((NOW-datetime(2026,8,1,tzinfo=timezone.utc)).total_seconds())
+    cached, freshness_time = pipeline.cache.get('macro:core')
+    assert freshness_time == cached.oldest_observed_at
+    assert cached.observed_at == datetime(2026,9,18,tzinfo=timezone.utc)
+    assert result.execution.fill is None
+
+
+def test_macro_evidence_preserves_latest_time_and_names_oldest_separately():
+    from quant_ai.intelligence.pipeline import PipelineFreshness, SwarmMarketAnalysisPipeline
+    from quant_ai.intelligence.providers import FundamentalSnapshot
+    macro=complete_mixed_macro().fetch(tuple(FredMacroProvider.series),NOW)
+    validator=FreshnessValidator()
+    fresh=validator.validate(DataCategory.PRICE,NOW,NOW)
+    stale=validator.validate(DataCategory.MACRO,macro.freshness_observed_at,NOW)
+    context=SwarmMarketAnalysisPipeline._evidence_context((),{},(),macro,
+        FundamentalSnapshot('TEST',{},NOW),PipelineFreshness(fresh,fresh,stale,fresh))
+    fields=dict(context.freshness)
+    assert context.macro_observed_at==macro.observed_at.isoformat()
+    assert 'macro_oldest_observed_at' in fields
+    assert fields['macro_oldest_observed_at']==macro.oldest_observed_at.isoformat()
+    assert fields['macro'].startswith('STALE(')

@@ -72,7 +72,7 @@ class FredMacroProvider:
                 values[indicator] = value
                 observed.append(stamp)
                 break
-        # The shared snapshot timestamp must not make an old indicator look as fresh
-        # as the newest series. This is an observation-date floor, not a receipt,
-        # release-time or point-in-time availability assertion.
-        return MacroSnapshot(values, min(observed, default=now))
+        # Change/version time and conservative freshness are distinct clocks.
+        # Neither observation date authenticates release, receipt or vintage time.
+        return MacroSnapshot(values, max(observed, default=now),
+                             oldest_observed_at=min(observed, default=now))
