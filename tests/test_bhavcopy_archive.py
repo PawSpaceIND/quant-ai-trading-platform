@@ -769,7 +769,7 @@ def test_the_purchase_decision_list_excludes_breaks_the_archive_fixes_itself():
     # exchange-signalled actions at the top - the ones back_adjust corrects for free. On a
     # real NSE archive that filled all ten slots with penny-stock resumptions the venue had
     # restated, and made a report arguing for vendor data that was not needed.
-    days, split = split_history()
+    _days, split = split_history()
     gap_days = sessions(3, start=date(2021, 6, 1))
     gap_rows = [
         parse_bhavcopy(nse_file(gap_days[0], [
