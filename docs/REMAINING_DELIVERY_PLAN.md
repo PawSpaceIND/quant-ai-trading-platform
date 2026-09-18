@@ -182,3 +182,14 @@ outcomes stay unknown and no request is replayed. Schema 1-5 and selected AI/res
 coverage remain compatible. Unselected audit state is not claimed as captured.
 Automatic scheduling, independent audit-selection pins, authenticated off-host retention
 and actual restoration acceptance remain open. See `OPERATOR_AUDIT_BACKUP.md`.
+
+### M06 durable operator-credential component
+
+An explicitly selected PersistentApiKeyRegistry now supports local persistent
+possession-key grants, bounded aware expiry, irreversible revocation and atomic
+same-permission rotation. Existing API defaults remain in memory; deployed accounts
+are not changed. The real recovery handlers can use the durable registry and retain
+queued-principal checks across revocation/expiry/rotation. This is not external human
+identity, MFA, secure credential distribution, gateway rollout or off-host credential
+recovery. See `PERSISTENT_OPERATOR_CREDENTIALS.md` for limits and exact test scope.
+The M06 milestone and wider release requirements remain open.
