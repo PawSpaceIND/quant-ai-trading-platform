@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from quant_ai.domain.models import Instrument
 from quant_ai.execution.protection_state import positive_level
 from quant_ai.execution.session import MarketState
+from quant_ai.intelligence.regime_observation import RegimeObservationStore
 
 
 class PilotTelemetry:
@@ -132,7 +133,8 @@ class PilotTelemetry:
             fresh, timestamp = self.fresh(instrument, now)
             watchlist.append({"symbol": instrument.symbol, "currency": instrument.currency,
                 "market": instrument.market.value, "assetClass": instrument.asset_class.value,
-                "exchange": instrument.exchange, "fresh": fresh, "tickTimestamp": timestamp})
+                "exchange": instrument.exchange, "fresh": fresh, "tickTimestamp": timestamp,
+                "regimeContext": self._regime_context(instrument, now)})
         return {
             "status": "running", "mode": "paper", "updatedAt": now.isoformat(),
             "halted": daemon.kill_switch.engaged, "haltReason": daemon.kill_switch.reason,
@@ -162,6 +164,13 @@ class PilotTelemetry:
                        "drawdown": float(min(daemon.plan.max_drawdown_fraction, Decimal('.10'))),
                        "maxPositions": daemon.scheduler.pipeline.runtime.max_open_positions},
         }
+
+    def _regime_context(self, instrument, now):
+        # Read only the snapshot already produced by analysis; never invoke a provider.
+        store = getattr(self.daemon.scheduler.pipeline, "regime_observations", None)
+        if not isinstance(store, RegimeObservationStore):
+            return {"schema": "pramana.regime_observation.v1", "state": "not_observed"}
+        return store.snapshot(instrument, now)
 
     def _protection_sweep(self, now: datetime) -> dict:
         """Whether each stored stop can currently be acted on, symbol by symbol.
