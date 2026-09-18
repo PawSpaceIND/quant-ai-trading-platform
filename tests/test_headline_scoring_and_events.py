@@ -513,8 +513,9 @@ def test_metal_etfs_validate_as_pilot_instruments(tmp_path) -> None:
     validate_pilot_instruments(watchlist)  # NSE / INR / cash: an ETF is in scope
     broker = PaperBrokerService(tmp_path / "etf.db")
     broker.configure_pilot(watchlist, "pilot")
-    # An MCX metal contract is still out of scope; the ETF is the NSE-cash way in.
-    with pytest.raises(ValueError, match="not_supported"):
+    # MCX is admitted only with full verified contract evidence. A bare/incomplete
+    # metal contract remains refused; this cash-ETF test does not supply that evidence.
+    with pytest.raises(ValueError, match="pilot_mcx_contract_identity_incomplete"):
         validate_pilot_instruments((Instrument("GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX",
                    expiry=date(2026, 12, 5), lot_size=100, tick_size=Decimal(1)),))
 

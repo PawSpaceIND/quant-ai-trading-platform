@@ -1,7 +1,7 @@
 """India is one country and several exchanges that do not keep the same hours.
 
 Before this, every India instrument was judged by the NSE cash session (09:15-15:30 IST).
-An MCX metal trades until 23:30 - 23:55 under US daylight saving - so more than half of
+An MCX metal trades until 23:30 in US daylight saving, 23:55 in standard time, so more than half of
 gold's session was a window in which the engine held a position and decided nothing about
 it. Currency on CDS closes at 17:00, later than equities and earlier than metals.
 
@@ -61,14 +61,14 @@ def test_currency_closes_at_five_which_is_neither_the_equity_nor_the_metal_close
 
 
 def test_the_mcx_close_follows_us_daylight_saving_and_not_the_indian_calendar():
-    """23:55 while New York is on DST, 23:30 once it is not.
+    """23:30 while New York is on DST, 23:55 once it is not.
 
     MCX runs its evening session against COMEX, so the close moves with a rule set in a
     different country. Hardcoding either time is wrong for roughly half the year, and the
     half it is wrong for is the half nobody is watching at 23:40.
     """
-    assert at(DST_DAY, 23, 40, symbol="GOLD") == MarketState.REGULAR_HOURS
-    assert at(STANDARD_DAY, 23, 40, symbol="GOLD") == MarketState.CLOSED
+    assert at(DST_DAY, 23, 40, symbol="GOLD") == MarketState.CLOSED
+    assert at(STANDARD_DAY, 23, 40, symbol="GOLD") == MarketState.REGULAR_HOURS
     # The common ground and the far end behave the same either way.
     for day in (DST_DAY, STANDARD_DAY):
         assert at(day, 23, 20, symbol="GOLD") == MarketState.REGULAR_HOURS
@@ -83,7 +83,8 @@ def test_a_metal_has_no_post_market_window_to_mistake_for_trading():
     the book still reads as active.
     """
     assert at(DST_DAY, 15, 45, symbol="NIFTY") == MarketState.POST_MARKET
-    assert at(STANDARD_DAY, 23, 40, symbol="GOLD") == MarketState.CLOSED
+    assert at(STANDARD_DAY, 23, 55, symbol="GOLD") == MarketState.CLOSED
+    assert at(DST_DAY, 23, 30, symbol="GOLD") == MarketState.CLOSED
 
 
 def test_an_unmapped_symbol_takes_the_shorter_session_rather_than_the_longer_one():
@@ -136,17 +137,16 @@ def test_an_operator_can_state_the_days_one_exchange_keeps_and_another_does_not(
 
 
 def test_a_ratio_is_annualised_against_the_session_its_instrument_actually_trades():
-    """375 minutes for everything overstated a metal's Sharpe by sqrt(870/375).
+    """Fixed normal-session annualisation follows each venue's standard-time close.
 
-    Annualisation multiplies by sqrt(periods per year), so using the equity session for a
-    metal inflates every ratio by about 52%. Each exchange annualises against its own.
+    This is not an actual-day/session count and does not establish strategy skill.
     """
     minute = timedelta(minutes=1)
     assert regular_session_length(Market.INDIA, "NSE") == timedelta(hours=6, minutes=15)
-    assert regular_session_length(Market.INDIA, "MCX") == timedelta(hours=14, minutes=30)
+    assert regular_session_length(Market.INDIA, "MCX") == timedelta(hours=14, minutes=55)
     assert regular_session_length(Market.INDIA, "CDS") == timedelta(hours=8)
     assert intraday_periods_per_year(Market.INDIA, minute, "NSE") == 94500
-    assert intraday_periods_per_year(Market.INDIA, minute, "MCX") == 219240
+    assert intraday_periods_per_year(Market.INDIA, minute, "MCX") == 895 * 252
     # Unchanged for callers that pass no exchange, so nothing silently re-scales.
     assert intraday_periods_per_year(Market.INDIA, minute) == 94500
 
@@ -164,6 +164,6 @@ def test_every_shipped_session_opens_before_it_closes_and_names_a_real_zone(code
     assert session.timezone == "Asia/Kolkata"
     assert session.pre_open <= session.regular_open < session.regular_close <= session.post_close
     if session.us_dst_regular_close is not None:
-        # The DST variant must extend the session, never shorten or invert it.
-        assert session.regular_close < session.us_dst_regular_close
+        # Seasonal variants may be shorter or longer but cannot invert the session.
+        assert session.regular_open < session.us_dst_regular_close
         assert session.us_dst_regular_close <= (session.us_dst_post_close or time(23, 59))
