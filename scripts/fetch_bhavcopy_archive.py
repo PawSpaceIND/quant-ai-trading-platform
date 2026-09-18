@@ -52,28 +52,45 @@ HEADERS = {
 }
 
 
+#: Both venues changed over to the UDiFF format around here. The date only orders which
+#: pattern is tried first — the other is still tried — so being a few weeks out costs one
+#: extra request on a handful of days rather than losing them.
+UDIFF_CHANGEOVER = date(2024, 7, 1)
+
+
+def _by_era(day: date, udiff: str, legacy: str) -> list:
+    """Try the pattern that era actually used first.
+
+    Always trying the newer URL first would spend a wasted 404 on every day before the
+    changeover. Over a ten-year archive that is thousands of pointless requests, which
+    doubles the run time and, more to the point, doubles the reasons for the exchange to
+    start refusing us.
+    """
+    return [udiff, legacy] if day >= UDIFF_CHANGEOVER else [legacy, udiff]
+
+
 def nse_urls(day: date) -> list:
     month = MONTHS[day.month - 1]
     stamp = day.strftime("%Y%m%d")
     archives = "https://nsearchives.nseindia.com"
-    return [
-        # UDiFF, from mid-2024.
+    return _by_era(
+        day,
         f"{archives}/content/cm/BhavCopy_NSE_CM_0_0_0_{stamp}_F_0000.csv.zip",
-        # Legacy, until mid-2024.
         (
             f"{archives}/content/historical/EQUITIES/{day.year}/{month}"
             f"/cm{day.day:02d}{month}{day.year}bhav.csv.zip"
         ),
-    ]
+    )
 
 
 def bse_urls(day: date) -> list:
     stamp = day.strftime("%Y%m%d")
     downloads = "https://www.bseindia.com/download/BhavCopy/Equity"
-    return [
+    return _by_era(
+        day,
         f"{downloads}/BhavCopy_BSE_CM_0_0_0_{stamp}_F_0000.CSV",
         f"{downloads}/EQ{day.strftime('%d%m%y')}_CSV.ZIP",
-    ]
+    )
 
 
 def opener_for(exchange: str):
