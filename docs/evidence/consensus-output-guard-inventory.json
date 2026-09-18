@@ -1,0 +1,201 @@
+{
+  "scope": "OFFLINE_COPIED_SOURCE_ONLY",
+  "mutations": [
+    {
+      "id": "environment_output_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "raw = os.getenv(CONSENSUS_MAX_TOKENS_ENV, \"\").strip()",
+      "new": "raw = \"1200\"",
+      "test": "tests/test_consensus_output_limit.py::test_environment_selects_bounded_profile_and_preserves_schema"
+    },
+    {
+      "id": "canonical_output_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if not (raw.isascii() and raw.isdigit()) or len(raw) > 4 or raw.startswith(\"0\"):",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_invalid_environment_refuses_before_sdk_creation[02400]"
+    },
+    {
+      "id": "integer_output_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if type(value) is not int:",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_invalid_constructor_types_and_range_refuse[1200.0]"
+    },
+    {
+      "id": "minimum_output_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if value < DEFAULT_CONSENSUS_MAX_TOKENS:",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_invalid_constructor_types_and_range_refuse[1199]"
+    },
+    {
+      "id": "maximum_output_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if value > MAX_CONSENSUS_MAX_TOKENS:",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_invalid_constructor_types_and_range_refuse[4097]"
+    },
+    {
+      "id": "constructor_setting_binding",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "self.consensus_max_tokens = _consensus_output_limit(consensus_max_tokens)",
+      "new": "self.consensus_max_tokens = 1200",
+      "test": "tests/test_consensus_output_limit.py::test_explicit_constructor_value_overrides_environment"
+    },
+    {
+      "id": "request_uses_configured_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "\"model\": self.model, \"max_tokens\": self.consensus_max_tokens,",
+      "new": "\"model\": self.model, \"max_tokens\": 1200,",
+      "test": "tests/test_consensus_output_limit.py::test_explicit_valid_output_limits_reach_request[4096]"
+    },
+    {
+      "id": "compact_output_guidance",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if self.consensus_max_tokens > DEFAULT_CONSENSUS_MAX_TOKENS:",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_environment_selects_bounded_profile_and_preserves_schema"
+    },
+    {
+      "id": "runtime_manifest_binding",
+      "path": "src/quant_ai/governance/runtime_manifest.py",
+      "old": "        \"transport_kind\",\n        \"consensus_max_tokens\",",
+      "new": "        \"transport_kind\",",
+      "test": "tests/test_consensus_output_limit.py::test_configuration_identity_includes_actual_output_allowance"
+    },
+    {
+      "id": "compose_output_setting",
+      "path": "deploy/docker-compose.yml",
+      "old": "      PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}\n",
+      "new": "",
+      "test": "tests/test_consensus_output_limit.py::test_compose_exposes_opt_in_limit_without_raising_daily_budgets"
+    },
+    {
+      "id": "sdk_requires_stop_evidence",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if provenance[\"stop_reason\"] is None and self.transport_kind == \"anthropic_sdk\":",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_real_transport_requires_completed_tool_stop[None]"
+    },
+    {
+      "id": "explicit_stop_must_complete",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if provenance[\"stop_reason\"] not in {None, \"tool_use\"}:",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_real_transport_requires_completed_tool_stop[end_turn]"
+    },
+    {
+      "id": "diagnose_output_truncated",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "\"max_tokens\": \"output_truncated\"",
+      "new": "\"disabled_max_tokens\": \"output_truncated\"",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_unfinished_reply_refuses_even_if_tool_payload_looks_valid[max_tokens-output_truncated]"
+    },
+    {
+      "id": "diagnose_model_refusal",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "\"refusal\": \"model_refusal\"",
+      "new": "\"disabled_refusal\": \"model_refusal\"",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_unfinished_reply_refuses_even_if_tool_payload_looks_valid[refusal-model_refusal]"
+    },
+    {
+      "id": "diagnose_context_limit",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "\"model_context_window_exceeded\": \"context_limit\"",
+      "new": "\"disabled_model_context_window_exceeded\": \"context_limit\"",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_unfinished_reply_refuses_even_if_tool_payload_looks_valid[model_context_window_exceeded-context_limit]"
+    },
+    {
+      "id": "diagnose_incomplete_turn",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "\"pause_turn\": \"incomplete_turn\"",
+      "new": "\"disabled_pause_turn\": \"incomplete_turn\"",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_unfinished_reply_refuses_even_if_tool_payload_looks_valid[pause_turn-incomplete_turn]"
+    },
+    {
+      "id": "missing_tool_refusal",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if not tools:",
+      "new": "if False:",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_tool_envelope_must_identify_one_consensus[none-missing_consensus_tool]"
+    },
+    {
+      "id": "single_tool_identity",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if len(tools) != 1:",
+      "new": "if False:",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_tool_envelope_must_identify_one_consensus[duplicate-multiple_tool_blocks]"
+    },
+    {
+      "id": "expected_tool_identity",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if getattr(tools[0], \"name\", None) != TOOL_NAME:",
+      "new": "if False:",
+      "test": "tests/test_consensus_completion_diagnostics.py::test_tool_envelope_must_identify_one_consensus[wrong-unexpected_tool]"
+    },
+    {
+      "id": "tool_input_object",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if not isinstance(payload, dict):\n            raise invalid",
+      "new": "if False:\n            raise invalid",
+      "test": "tests/test_consensus_output_limit.py::test_nonobject_tool_refused_before_payload_parser"
+    },
+    {
+      "id": "strict_parser_still_executes",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "            self.parse_consensus(payload)\n        except ConsensusSchemaError",
+      "new": "            pass\n        except ConsensusSchemaError",
+      "test": "tests/test_consensus_output_limit.py::test_original_numeric_schema_remains_strict_with_larger_cap"
+    },
+    {
+      "id": "redacted_validation_exception",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "raise invalid(\"Consensus payload failed validation\", consensus_failure_code(error)) from None",
+      "new": "raise invalid(str(error), consensus_failure_code(error)) from None",
+      "test": "tests/test_consensus_output_limit.py::test_response_validation_exception_does_not_echo_unknown_fields"
+    },
+    {
+      "id": "failure_code_does_not_copy_unknown_fields",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "return \"unknown_consensus_fields\"",
+      "new": "return message",
+      "test": "tests/test_consensus_output_limit.py::test_response_validation_exception_does_not_echo_unknown_fields"
+    },
+    {
+      "id": "stop_label_allowlist",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "stop = stop if isinstance(stop, str) and stop in known_stops else None if stop is None else \"unrecognized\"",
+      "new": "stop = stop",
+      "test": "tests/test_consensus_output_limit.py::test_metadata_projection_is_bounded_and_omits_provider_text"
+    },
+    {
+      "id": "metadata_block_bound",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "else \"other\" for b in blocks[:32]]",
+      "new": "else \"other\" for b in blocks]",
+      "test": "tests/test_consensus_output_limit.py::test_metadata_projection_is_bounded_and_omits_provider_text"
+    },
+    {
+      "id": "block_type_allowlist",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "getattr(b, \"type\", None) if getattr(b, \"type\", None) in known_types\n                                else \"other\"",
+      "new": "getattr(b, \"type\", None)",
+      "test": "tests/test_consensus_output_limit.py::test_metadata_projection_is_bounded_and_omits_provider_text"
+    },
+    {
+      "id": "budget_before_request",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "if self.budget is not None and not self.budget.reserve(BUDGET_SCOPE):",
+      "new": "if False:",
+      "test": "tests/test_consensus_output_limit.py::test_exhausted_daily_budget_prevents_all_sdk_requests"
+    },
+    {
+      "id": "account_usage_before_rejection",
+      "path": "src/quant_ai/llm/anthropic_client.py",
+      "old": "self.budget.record(BUDGET_SCOPE, provenance[\"usage\"])",
+      "new": "pass",
+      "test": "tests/test_consensus_output_limit.py::test_spend_is_recorded_before_truncated_reply_and_no_budget_bypass"
+    }
+  ]
+}
