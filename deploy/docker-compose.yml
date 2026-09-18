@@ -57,6 +57,8 @@ services:
       PRAMANA_AI_DAILY_CALL_LIMIT: ${PRAMANA_AI_DAILY_CALL_LIMIT:-500}
       PRAMANA_AI_DAILY_TOKEN_LIMIT: ${PRAMANA_AI_DAILY_TOKEN_LIMIT:-2000000}
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
+      # Per-response allowance only; legacy default and daily spend limits are unchanged.
+      PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       # Mandatory entry gates; provider absence must never mean permission to trade.
       PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"

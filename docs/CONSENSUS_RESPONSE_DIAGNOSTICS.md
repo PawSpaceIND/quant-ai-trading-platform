@@ -1,3 +1,8 @@
+> **Update:** the bounded output-profile extension and current verification are in
+> `CONSENSUS_OUTPUT_RECOVERY.md`. The 1200-token no-change statements and initial
+> pending results below describe the original PR parent, not the later opt-in profile.
+> Legacy default, daily budgets, model/thinking and strict schema remain unchanged.
+
 # Claude consensus completion and isolated replay diagnostics
 
 ## Scope and current evidence

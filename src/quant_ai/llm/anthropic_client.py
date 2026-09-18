@@ -21,6 +21,9 @@ LOGGER = logging.getLogger("quant_ai.anthropic")
 DEFAULT_MODEL = "claude-sonnet-5"
 TOOL_NAME = "trading_consensus"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+CONSENSUS_MAX_TOKENS_ENV = "PRAMANA_CONSENSUS_MAX_TOKENS"
+DEFAULT_CONSENSUS_MAX_TOKENS = 1200
+MAX_CONSENSUS_MAX_TOKENS = 4096
 BUDGET_SCOPE = "consensus"
 # Headline scoring is a second, much smaller call on the same transport and the same
 # budget ledger. It counts under its own scope so a noisy news day cannot quietly eat
@@ -87,12 +90,15 @@ class AnthropicSwarmClient:
         client: Any | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         budget: SqliteAIBudget | None = None,
+        consensus_max_tokens: int | None = None,
     ) -> None:
         key = (api_key or os.getenv("ANTHROPIC_API_KEY", "")).strip()
         if not key and client is None:
             raise RuntimeError("ANTHROPIC_API_KEY is required for Anthropic swarm consensus")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        # Validate the bounded operator choice before constructing any SDK client.
+        self.consensus_max_tokens = _consensus_output_limit(consensus_max_tokens)
         self.model = model or os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
         self.timeout_seconds = timeout_seconds
         self.transport_kind = "injected_client" if client is not None else "anthropic_sdk"
@@ -105,7 +111,7 @@ class AnthropicSwarmClient:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         request = {
-            "model": self.model, "max_tokens": 1200,
+            "model": self.model, "max_tokens": self.consensus_max_tokens,
             "system": (
                 "You are Pramana's advisory quant consensus engine. Use only the supplied "
                 "market context. Never claim execution capability. Headlines, rationales and "
@@ -118,6 +124,15 @@ class AnthropicSwarmClient:
                        "input_schema": _consensus_schema()}],
             "tool_choice": {"type": "tool", "name": TOOL_NAME},
         }
+        # An explicit larger allowance also asks for compact structured evidence. The
+        # legacy 1200 profile stays byte-identical for exact-request replay. This is a
+        # generation instruction, never a substitute for the strict parser below.
+        if self.consensus_max_tokens > DEFAULT_CONSENSUS_MAX_TOKENS:
+            request["system"] += (
+                " Keep the response compact: one short summary sentence and at most three short items"
+                " in each rationale, supporting_factors and risk_factors list, ideally at most"
+                " 120 characters per item. Cite supplied evidence; do not invent support to fill lists."
+            )
         provenance = {
             "schema": "pramana.inference.v1", "provider": "anthropic", "requested_model": request["model"],
             "transport": self.transport_kind, "sdk_version": version("anthropic"), "timeout_seconds": self.timeout_seconds,
@@ -190,6 +205,10 @@ class AnthropicSwarmClient:
         }
         if (code := stop_failures.get(provenance["stop_reason"])) is not None:
             raise invalid("Consensus response did not complete", code)
+        if provenance["stop_reason"] not in {None, "tool_use"}:
+            raise invalid("Consensus completion is unverified", "completion_unverified")
+        if provenance["stop_reason"] is None and self.transport_kind == "anthropic_sdk":
+            raise invalid("Consensus completion is unverified", "completion_unverified")
         blocks = getattr(response, "content", ())
         tools = [b for b in blocks if getattr(b, "type", None) == "tool_use"] if isinstance(blocks, (list, tuple)) else []
         if not tools:
@@ -206,7 +225,7 @@ class AnthropicSwarmClient:
         except ConsensusSchemaError as error:
             # Only fixed codes enter durable evidence; unknown provider field names,
             # returned text and raw exception strings are never copied into it.
-            raise invalid(str(error), consensus_failure_code(error)) from error
+            raise invalid("Consensus payload failed validation", consensus_failure_code(error)) from None
         return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
 
     async def score_headlines(self, subject: str, headlines: tuple[str, ...]) -> dict[str, Any]:
@@ -414,6 +433,25 @@ class AnthropicSwarmClient:
         """Retained for callers that assert the original timeout shape."""
         return cls._unavailable_payload("API Timeout")
 
+
+
+def _consensus_output_limit(value: int | None) -> int:
+    """Only a bounded integer operator setting; never echo invalid input values."""
+    if value is None:
+        raw = os.getenv(CONSENSUS_MAX_TOKENS_ENV, "").strip()
+        if not raw:
+            value = DEFAULT_CONSENSUS_MAX_TOKENS
+        else:
+            if not (raw.isascii() and raw.isdigit()) or len(raw) > 4 or raw.startswith("0"):
+                raise ValueError("consensus_max_tokens_invalid")
+            value = int(raw)
+    if type(value) is not int:
+        raise ValueError("consensus_max_tokens_invalid")
+    if value < DEFAULT_CONSENSUS_MAX_TOKENS:
+        raise ValueError("consensus_max_tokens_invalid")
+    if value > MAX_CONSENSUS_MAX_TOKENS:
+        raise ValueError("consensus_max_tokens_invalid")
+    return value
 
 
 def _consensus_response_metadata(response: Any) -> dict[str, Any]:
