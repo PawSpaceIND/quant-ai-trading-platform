@@ -1,0 +1,68 @@
+{
+  "scope": "approval/readiness boundary only",
+  "mutations": [
+    {
+      "id": "typed_execution_scope",
+      "path": "src/quant_ai/compliance/gates.py",
+      "old": "    if (type(context.execution_mode) is not ExecutionMode\n            or type(context.market) is not Market\n            or type(context.asset_class) is not AssetClass):\n        return False\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_unknown_or_untyped_modes_refuse[PAPER]"
+    },
+    {
+      "id": "boolean_approval_boundary",
+      "path": "src/quant_ai/compliance/gates.py",
+      "old": "    if type(context.live_approved) is not bool or type(context.jurisdiction_approved) is not bool:\n        return False\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_malformed_approval_also_refuses_paper_dispatch"
+    },
+    {
+      "id": "both_live_approvals",
+      "path": "src/quant_ai/compliance/gates.py",
+      "old": "    return (context.execution_mode is ExecutionMode.LIVE\n            and context.live_approved is True and context.jurisdiction_approved is True)",
+      "new": "    return True",
+      "test": "tests/test_approval_readiness_boundaries.py::test_typed_false_approvals_never_pass_live_compliance"
+    },
+    {
+      "id": "order_scope_binding",
+      "path": "src/quant_ai/brokers/router.py",
+      "old": "        if (not isinstance(order, OrderIntent) or order.market is not context.market\n                or order.asset_class is not context.asset_class):\n            raise PermissionError(\"order scope does not match compliance context\")\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_bad_scope_does_not_consume_an_actual_paper_order_id"
+    },
+    {
+      "id": "hard_live_routing_refusal",
+      "path": "src/quant_ai/brokers/router.py",
+      "old": "        if context.execution_mode is ExecutionMode.LIVE:\n            raise LiveMoneyDisabledError(\"live broker routing is intentionally disabled\")\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_both_sides_remain_live_disabled_even_with_true_approvals"
+    },
+    {
+      "id": "strict_readiness_status",
+      "path": "src/quant_ai/operations/readiness.py",
+      "old": "        if type(self.ready) is not bool:\n            raise ValueError(\"readiness_check_status_must_be_boolean\")\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_readiness_does_not_accept_truthy_status_coercion[false]"
+    },
+    {
+      "id": "unique_check_names",
+      "path": "src/quant_ai/operations/readiness.py",
+      "old": "        if len({check.name for check in checks}) != len(checks):\n            raise ValueError(\"readiness_check_names_must_be_unique\")\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_duplicate_readiness_names_refuse_instead_of_overwriting_meaning"
+    },
+    {
+      "id": "snapshot_inventory",
+      "path": "src/quant_ai/operations/readiness.py",
+      "old": "        object.__setattr__(self, \"checks\", checks)",
+      "new": "        pass",
+      "test": "tests/test_approval_readiness_boundaries.py::test_caller_list_cannot_change_a_frozen_report"
+    },
+    {
+      "id": "canonical_check_names",
+      "path": "src/quant_ai/operations/readiness.py",
+      "old": "        if type(self.name) is not str or not self.name or self.name != self.name.strip():\n            raise ValueError(\"readiness_check_name_invalid\")\n",
+      "new": "",
+      "test": "tests/test_approval_readiness_boundaries.py::test_readiness_names_are_nonempty_canonical_strings"
+    }
+  ]
+}

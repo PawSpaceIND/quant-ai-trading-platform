@@ -115,6 +115,7 @@ FIELDS = {
         "model",
         "timeout_seconds",
         "transport_kind",
+        "consensus_max_tokens",
     ),
     "quant_ai.marketdata.ticker_stream.ZerodhaKiteTicker": ("instrument_tokens", "symbol_by_token"),
     "quant_ai.marketdata.ticker_stream.IBKRAsyncTicker": (

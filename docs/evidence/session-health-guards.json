@@ -1,0 +1,61 @@
+{
+  "scope": "read-only session health; no trading authority",
+  "mutations": [
+    {
+      "id": "default_holiday_calendar",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "MarketCalendar(holidays_from_json(json.loads(raw), default_holidays()))",
+      "new": "MarketCalendar(holidays_from_json(json.loads(raw), {}))",
+      "test": "tests/test_health_session_alignment.py::test_default_equity_holiday_does_not_report_a_dead_feed"
+    },
+    {
+      "id": "configured_calendar_override",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "holidays_from_json(json.loads(raw), default_holidays())",
+      "new": "holidays_from_json({}, default_holidays())",
+      "test": "tests/test_health_session_alignment.py::test_environment_holidays_match_the_existing_daemon_parser"
+    },
+    {
+      "id": "exchange_session_selection",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "calendar.state(market, now, exchange=exchange or None)",
+      "new": "calendar.state(market, now)",
+      "test": "tests/test_health_session_alignment.py::test_evening_commodity_session_uses_its_existing_exchange_clock"
+    },
+    {
+      "id": "closed_market_exclusion",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "if state is MarketState.REGULAR_HOURS:",
+      "new": "if True:",
+      "test": "tests/test_health_session_alignment.py::test_closed_usa_entry_cannot_hide_a_dead_open_india_feed[True]"
+    },
+    {
+      "id": "partial_feed_not_wholly_blind",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "state = \"blind\" if fresh == 0 else \"fresh\" if fresh == opened else \"partial\"",
+      "new": "state = \"blind\" if fresh < opened else \"fresh\"",
+      "test": "tests/test_health_session_alignment.py::test_one_stale_among_fresh_open_instruments_stays_partial_not_blind"
+    },
+    {
+      "id": "watchlist_loop_bound",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "or len(watchlist) > MAX_WATCHLIST:",
+      "new": ":",
+      "test": "tests/test_health_session_alignment.py::test_watchlist_loop_bound_and_unknown_state_are_explicit"
+    },
+    {
+      "id": "calendar_invalid_availability",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "    if market_data[\"reason\"] == \"calendar_configuration_invalid\":\n        reasons.append(\"market_calendar_invalid\")\n",
+      "new": "",
+      "test": "tests/test_health_session_alignment.py::test_invalid_calendar_configuration_returns_fixed_unhealthy_reason"
+    },
+    {
+      "id": "unknown_not_fresh",
+      "path": "src/quant_ai/operations/health.py",
+      "old": "        except (ValueError, KeyError, TypeError, OverflowError):\n            return result(\"unknown\", reason=\"market_unresolved\")",
+      "new": "        except (ValueError, KeyError, TypeError, OverflowError):\n            return result(\"fresh\", reason=\"market_unresolved\")",
+      "test": "tests/test_health_session_alignment.py::test_unresolvable_entry_is_unknown_not_a_crash_or_fresh_claim"
+    }
+  ]
+}
