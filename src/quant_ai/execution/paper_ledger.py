@@ -250,9 +250,17 @@ class PaperBrokerService(BrokerAdapter):
                 """
             )
             self._migrate_columns()
+            self._connection.execute("""CREATE TRIGGER IF NOT EXISTS shared_broker_witness_update_blocked
+                BEFORE UPDATE OF shared_risk_binding_sha256 ON paper_accounts
+                WHEN OLD.shared_risk_binding_sha256 IS NOT NULL
+                BEGIN SELECT RAISE(ABORT,'Shared broker witness is immutable'); END""")
+            self._connection.execute("""CREATE TRIGGER IF NOT EXISTS shared_broker_witness_delete_blocked
+                BEFORE DELETE ON paper_accounts WHEN OLD.shared_risk_binding_sha256 IS NOT NULL
+                BEGIN SELECT RAISE(ABORT,'Shared broker witness is immutable'); END""")
 
     _EXPECTED_COLUMNS = (
         ("paper_accounts", "peak_equity", "TEXT"),
+        ("paper_accounts", "shared_risk_binding_sha256", "TEXT"),
         ("paper_positions", "stop_price", "TEXT"),
         ("paper_positions", "take_profit_price", "TEXT"),
         ("paper_positions", "instrument_identity", "TEXT"),
@@ -342,12 +350,32 @@ class PaperBrokerService(BrokerAdapter):
     def configure_pilot(self, instruments, tenant_id: str) -> None:
         from quant_ai.governance.pilot import validate_pilot_instruments
         instruments = tuple(instruments)
-        validate_pilot_instruments(instruments)
         symbols = {item.symbol: item.asset_class.value for item in instruments}
         identities = {
             item.symbol: json.loads(canonical_instrument_identity(item))
             for item in instruments
         }
+        if any(identity.get("exchange") == "MCX" for identity in identities.values()):
+            from quant_ai.governance.runtime_identity import runtime_identity_configuration
+            bound = runtime_identity_configuration(self, tenant_id)
+            expected = {
+                symbol: canonical_instrument_identity(item)
+                for symbol, item in ((item.symbol, item) for item in instruments)
+            }
+            if (
+                bound is None
+                or bound.get("mode") != "bound_v1"
+                or bound.get("instruments") != expected
+            ):
+                raise ValueError("pilot_derivative_requires_bound_identity")
+        validate_pilot_instruments(
+            instruments,
+            derivative_fee_schedule=getattr(
+                self.friction_model, "derivative_fee_schedule", None
+            ),
+            margin_source=self.margin_source,
+            now=self._execution_time or datetime.now(timezone.utc),
+        )
         with self._lock, self._connection:
             self._connection.execute("""CREATE TABLE IF NOT EXISTS pilot_scope (
                 tenant_id TEXT PRIMARY KEY, currency TEXT NOT NULL, market TEXT NOT NULL,
@@ -366,7 +394,12 @@ class PaperBrokerService(BrokerAdapter):
                 raise ValueError("pilot_existing_positions_out_of_scope")
             for position in positions:
                 raw = position["instrument_identity"]
-                if raw is not None and json.loads(raw) != identities[position["symbol"]]:
+                configured = identities[position["symbol"]]
+                if configured.get("exchange") == "MCX" and raw is None:
+                    raise ValueError(
+                        "pilot_existing_derivative_contract_identity_missing"
+                    )
+                if raw is not None and json.loads(raw) != configured:
                     raise ValueError("pilot_existing_position_contract_mismatch")
             previous = self._connection.execute(
                 "SELECT currency, market FROM pilot_scope WHERE tenant_id=?", (tenant_id,)
@@ -403,15 +436,31 @@ class PaperBrokerService(BrokerAdapter):
             else {}
         )
         order_identity = _instrument_identity_for_order(order)
-        configured_identity = identities.get(order.symbol) if isinstance(identities, dict) else None
+        configured_identity = (
+            identities.get(order.symbol) if isinstance(identities, dict) else None
+        )
+        configured_instrument = (
+            instrument_from_identity(configured_identity)
+            if isinstance(configured_identity, dict)
+            else None
+        )
         if scope and (
             order.market.value != scope["market"]
-            or order.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
             or order.symbol not in symbols
             or (isinstance(symbols, dict) and symbols[order.symbol] != order.asset_class.value)
             or (
+                configured_instrument is not None
+                and (
+                    configured_instrument.market is not order.market
+                    or configured_instrument.asset_class is not order.asset_class
+                )
+            )
+            or (
                 order_identity is not None
-                and (configured_identity is None or json.loads(order_identity) != configured_identity)
+                and (
+                    configured_identity is None
+                    or json.loads(order_identity) != configured_identity
+                )
             )
         ):
             raise ValueError("pilot_order_out_of_scope")
@@ -531,6 +580,8 @@ class PaperBrokerService(BrokerAdapter):
             from quant_ai.governance.runtime_identity import assert_runtime_order_identity
             assert_runtime_order_identity(self, order)
             pilot_order = self._assert_pilot_order(order)
+            from quant_ai.execution.shared_risk_binding import assert_bound_entry
+            shared_binding = assert_bound_entry(self._connection, order, evidence, idempotency_key, now)
             if idempotency_key is not None:
                 inserted = self._connection.execute(
                     "INSERT OR IGNORE INTO paper_idempotency (key,tenant_id,claimed_at) VALUES (?,?,?)",
@@ -750,6 +801,8 @@ class PaperBrokerService(BrokerAdapter):
                         "cash_fees": str(statutory_fees), "status": "FILLED",
                         # What priced this fill: observed market inputs, or an assumption.
                         "friction": self._friction_proof(friction, context)}}
+                if shared_binding is not None:
+                    payload["shared_risk_binding_sha256"] = shared_binding
                 if order_identity is not None:
                     payload["fill"]["instrumentIdentity"] = json.loads(order_identity)
                 if idempotency_key is not None:
@@ -857,6 +910,8 @@ class PaperBrokerService(BrokerAdapter):
             raise ValueError("paper_receipt_unavailable_for_legacy_fill")
         order = order_from_snapshot(receipt["orderIntent"])
         entry = self._decode_ledger_entry(row)
+        from quant_ai.execution.shared_risk_binding import verify_receipt_binding
+        verify_receipt_binding(self._connection, tenant_id, payload, entry.side)
         if (order.tenant_id, order.symbol, order.market, order.asset_class, order.side, order.quantity) != (
             entry.tenant_id, entry.symbol, entry.market, entry.asset_class, entry.side, entry.quantity
         ) or _instrument_identity_for_order(order) != entry.instrument_identity:

@@ -31,7 +31,7 @@ class SessionDefinition:
     regular_close: time
     post_close: time
     # MCX runs an evening session that tracks COMEX, so its close moves with *US*
-    # daylight saving: 23:55 IST while New York is on DST, 23:30 IST otherwise. Both
+    # daylight saving: 23:30 IST while New York is on DST, 23:55 IST otherwise. Both
     # variants are stated outright rather than derived by adding 25 minutes to a base,
     # because that arithmetic silently crosses midnight and every time comparison in
     # ``state`` below assumes a session that begins and ends on the same local day.
@@ -86,9 +86,11 @@ INDIA_EXCHANGE_SESSIONS: dict[str, SessionDefinition] = {
     "BCD": SessionDefinition("Asia/Kolkata", time(9), time(9), time(17), time(17, 30)),
     # Non-agri commodities run 09:00 through the evening session. There is no post-market
     # window, so ``post_close`` equals the close and the state goes straight to CLOSED.
+    # MCX Trade Timings: 23:30, extended to23:55 typically November–March.
+    # https://www.mcxindia.com/market-operations/trading-surveillance
     "MCX": SessionDefinition(
-        "Asia/Kolkata", time(8, 45), time(9), time(23, 30), time(23, 30),
-        us_dst_regular_close=time(23, 55), us_dst_post_close=time(23, 55),
+        "Asia/Kolkata", time(8, 45), time(9), time(23, 55), time(23, 55),
+        us_dst_regular_close=time(23, 30), us_dst_post_close=time(23, 30),
     ),
     # Agri commodities close in the evening rather than at night.
     "NCDEX": SessionDefinition("Asia/Kolkata", time(9), time(9), time(17), time(17, 30)),
@@ -151,10 +153,10 @@ def regular_session_length(
 ) -> timedelta:
     """Length of one regular trading session, used to annualise intraday statistics.
 
-    The MCX variant is measured against its standard-time close. The DST close is 25
-    minutes later, which moves an annualised ratio by under 1.5% - far less than the
-    sampling error on any window short enough to care - and pinning one length keeps a
-    ratio comparable with the same ratio computed in a different month.
+    The MCX variant is measured against its standard-time 23:55 close. The DST
+    session closes 25 minutes earlier. This is a fixed normal-session convention,
+    not a reconstruction of actual sessions or holidays in a sampled dataset.
+    Session-specific return statistics must retain their actual sampling metadata.
     """
     session = session_for(market, exchange)
     opened = datetime.combine(date(2000, 1, 1), session.regular_open)

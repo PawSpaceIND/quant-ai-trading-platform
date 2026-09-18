@@ -21,6 +21,9 @@ LOGGER = logging.getLogger("quant_ai.anthropic")
 DEFAULT_MODEL = "claude-sonnet-5"
 TOOL_NAME = "trading_consensus"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+CONSENSUS_MAX_TOKENS_ENV = "PRAMANA_CONSENSUS_MAX_TOKENS"
+DEFAULT_CONSENSUS_MAX_TOKENS = 1200
+MAX_CONSENSUS_MAX_TOKENS = 4096
 BUDGET_SCOPE = "consensus"
 # Headline scoring is a second, much smaller call on the same transport and the same
 # budget ledger. It counts under its own scope so a noisy news day cannot quietly eat
@@ -87,12 +90,15 @@ class AnthropicSwarmClient:
         client: Any | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         budget: SqliteAIBudget | None = None,
+        consensus_max_tokens: int | None = None,
     ) -> None:
         key = (api_key or os.getenv("ANTHROPIC_API_KEY", "")).strip()
         if not key and client is None:
             raise RuntimeError("ANTHROPIC_API_KEY is required for Anthropic swarm consensus")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        # Validate the bounded operator choice before constructing any SDK client.
+        self.consensus_max_tokens = _consensus_output_limit(consensus_max_tokens)
         self.model = model or os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
         self.timeout_seconds = timeout_seconds
         self.transport_kind = "injected_client" if client is not None else "anthropic_sdk"
@@ -105,7 +111,7 @@ class AnthropicSwarmClient:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         request = {
-            "model": self.model, "max_tokens": 1200,
+            "model": self.model, "max_tokens": self.consensus_max_tokens,
             "system": (
                 "You are Pramana's advisory quant consensus engine. Use only the supplied "
                 "market context. Never claim execution capability. Headlines, rationales and "
@@ -118,6 +124,15 @@ class AnthropicSwarmClient:
                        "input_schema": _consensus_schema()}],
             "tool_choice": {"type": "tool", "name": TOOL_NAME},
         }
+        # An explicit larger allowance also asks for compact structured evidence. The
+        # legacy 1200 profile stays byte-identical for exact-request replay. This is a
+        # generation instruction, never a substitute for the strict parser below.
+        if self.consensus_max_tokens > DEFAULT_CONSENSUS_MAX_TOKENS:
+            request["system"] += (
+                " Keep the response compact: one short summary sentence and at most three short items"
+                " in each rationale, supporting_factors and risk_factors list, ideally at most"
+                " 120 characters per item. Cite supplied evidence; do not invent support to fill lists."
+            )
         provenance = {
             "schema": "pramana.inference.v1", "provider": "anthropic", "requested_model": request["model"],
             "transport": self.transport_kind, "sdk_version": version("anthropic"), "timeout_seconds": self.timeout_seconds,
@@ -137,6 +152,9 @@ class AnthropicSwarmClient:
                         risk_factor: str = "anthropic_api_unavailable") -> ConsensusPayload:
             return ConsensusPayload(self._unavailable_payload(detail, risk_factor),
                                     {**finish(status), "failure": detail})
+
+        def invalid(detail: str, code: str) -> ConsensusSchemaError:
+            return ConsensusSchemaError(detail, {**finish("invalid_schema"), "failure_code": code})
 
         if self.budget is not None and not self.budget.reserve(BUDGET_SCOPE):
             # Daily spend cap reached, or the budget ledger is unreadable (which fails
@@ -172,23 +190,43 @@ class AnthropicSwarmClient:
         for attribute in ("model", "id"):
             value = getattr(response, attribute, None)
             provenance["resolved_model" if attribute == "model" else "response_id"] = value if isinstance(value, str) else None
+        provenance.update(_consensus_response_metadata(response))
         usage = getattr(response, "usage", None)
         provenance["usage"] = {name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
                                for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}
         if self.budget is not None:
             # Tokens were spent whether or not the payload passes the schema below.
             self.budget.record(BUDGET_SCOPE, provenance["usage"])
-        for block in response.content:
-            if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_NAME:
-                payload = getattr(block, "input", None)
-                if not isinstance(payload, dict):
-                    raise ConsensusSchemaError("tool payload must be an object", finish("invalid_schema"))
-                try:
-                    self.parse_consensus(payload)
-                except ConsensusSchemaError as error:
-                    raise ConsensusSchemaError(str(error), finish("invalid_schema")) from error
-                return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
-        raise ConsensusSchemaError("Anthropic response did not contain structured trading consensus", finish("invalid_schema"))
+        # A syntactically complete-looking tool can still belong to a truncated or
+        # refused response. Account for spent tokens above, then fail closed.
+        stop_failures = {
+            "max_tokens": "output_truncated", "refusal": "model_refusal",
+            "model_context_window_exceeded": "context_limit", "pause_turn": "incomplete_turn",
+        }
+        if (code := stop_failures.get(provenance["stop_reason"])) is not None:
+            raise invalid("Consensus response did not complete", code)
+        if provenance["stop_reason"] not in {None, "tool_use"}:
+            raise invalid("Consensus completion is unverified", "completion_unverified")
+        if provenance["stop_reason"] is None and self.transport_kind == "anthropic_sdk":
+            raise invalid("Consensus completion is unverified", "completion_unverified")
+        blocks = getattr(response, "content", ())
+        tools = [b for b in blocks if getattr(b, "type", None) == "tool_use"] if isinstance(blocks, (list, tuple)) else []
+        if not tools:
+            raise invalid("Anthropic response did not contain structured trading consensus", "missing_consensus_tool")
+        if len(tools) != 1:
+            raise invalid("Consensus requires exactly one tool block", "multiple_tool_blocks")
+        if getattr(tools[0], "name", None) != TOOL_NAME:
+            raise invalid("Consensus tool name does not match", "unexpected_tool")
+        payload = getattr(tools[0], "input", None)
+        if not isinstance(payload, dict):
+            raise invalid("tool payload must be an object", "tool_input_not_object")
+        try:
+            self.parse_consensus(payload)
+        except ConsensusSchemaError as error:
+            # Only fixed codes enter durable evidence; unknown provider field names,
+            # returned text and raw exception strings are never copied into it.
+            raise invalid("Consensus payload failed validation", consensus_failure_code(error)) from None
+        return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
 
     async def score_headlines(self, subject: str, headlines: tuple[str, ...]) -> dict[str, Any]:
         """Score bounded, single-line headlines for their effect on ``subject``.
@@ -272,19 +310,57 @@ class AnthropicSwarmClient:
         }
         if self.budget is not None:
             self.budget.record(HEADLINE_BUDGET_SCOPE, provenance["usage"])
-        for block in getattr(response, "content", ()) or ():
-            if (getattr(block, "type", None) == "tool_use"
-                    and getattr(block, "name", None) == HEADLINE_TOOL_NAME):
-                payload = getattr(block, "input", None)
-                if not isinstance(payload, dict):
-                    return ConsensusPayload({"scores": []},
-                                            finish("invalid_schema", "tool payload must be an object"))
-                return ConsensusPayload(
-                    payload,
-                    {**finish("completed"), "response_payload_sha256": content_hash(payload)},
-                )
-        return ConsensusPayload({"scores": []},
-                                finish("invalid_schema", "no structured headline payload"))
+        def invalid_headline(code: str) -> ConsensusPayload:
+            return ConsensusPayload(
+                {"scores": []},
+                {**finish("invalid_schema", "Headline response failed validation"), "failure_code": code},
+            )
+
+        # Reuse the consensus path's bounded, redacted response-shape projection.
+        # Usage is already recorded above: even an unusable reply consumed tokens.
+        try:
+            response_shape = _consensus_response_metadata(response)
+        except (TypeError, ValueError):
+            return invalid_headline("invalid_response_metadata")
+        headline_blocks = getattr(response, "content", ())
+        headline_tools = [block for block in headline_blocks if getattr(block, "type", None) == "tool_use"] \
+            if isinstance(headline_blocks, (list, tuple)) else []
+        response_shape["matching_tool_blocks"] = sum(
+            getattr(block, "name", None) == HEADLINE_TOOL_NAME for block in headline_tools
+        )
+        provenance.update(response_shape)
+        headline_stop = response_shape["stop_reason"]
+        if headline_stop == "max_tokens":
+            return invalid_headline("output_truncated")
+        if headline_stop == "refusal":
+            return invalid_headline("model_refusal")
+        if headline_stop == "model_context_window_exceeded":
+            return invalid_headline("context_limit")
+        if headline_stop == "pause_turn":
+            return invalid_headline("incomplete_turn")
+        if headline_stop not in {None, "tool_use"}:
+            return invalid_headline("completion_unverified")
+        if headline_stop is None and self.transport_kind == "anthropic_sdk":
+            return invalid_headline("completion_unverified")
+        # Legacy injected fixtures may lack termination metadata; retain the explicit
+        # null and injected transport label, never fabricate real-provider completion.
+        if not headline_tools:
+            return invalid_headline("missing_headline_tool")
+        if len(headline_tools) != 1:
+            return invalid_headline("multiple_tool_blocks")
+        if getattr(headline_tools[0], "name", None) != HEADLINE_TOOL_NAME:
+            return invalid_headline("unexpected_headline_tool")
+        headline_payload = getattr(headline_tools[0], "input", None)
+        if not isinstance(headline_payload, dict):
+            return invalid_headline("tool_input_not_object")
+        try:
+            self.parse_headline_scores(headline_payload, len(headlines))
+        except ConsensusSchemaError:
+            return invalid_headline("invalid_headline_schema")
+        return ConsensusPayload(
+            headline_payload,
+            {**finish("completed"), "response_payload_sha256": content_hash(headline_payload)},
+        )
 
     @staticmethod
     def parse_headline_scores(
@@ -394,6 +470,70 @@ class AnthropicSwarmClient:
     def _timeout_payload(cls) -> dict[str, Any]:
         """Retained for callers that assert the original timeout shape."""
         return cls._unavailable_payload("API Timeout")
+
+
+
+def _consensus_output_limit(value: int | None) -> int:
+    """Only a bounded integer operator setting; never echo invalid input values."""
+    if value is None:
+        raw = os.getenv(CONSENSUS_MAX_TOKENS_ENV, "").strip()
+        if not raw:
+            value = DEFAULT_CONSENSUS_MAX_TOKENS
+        else:
+            if not (raw.isascii() and raw.isdigit()) or len(raw) > 4 or raw.startswith("0"):
+                raise ValueError("consensus_max_tokens_invalid")
+            value = int(raw)
+    if type(value) is not int:
+        raise ValueError("consensus_max_tokens_invalid")
+    if value < DEFAULT_CONSENSUS_MAX_TOKENS:
+        raise ValueError("consensus_max_tokens_invalid")
+    if value > MAX_CONSENSUS_MAX_TOKENS:
+        raise ValueError("consensus_max_tokens_invalid")
+    return value
+
+
+def _consensus_response_metadata(response: Any) -> dict[str, Any]:
+    """Bounded response shape only: no text, reasoning, tool input or credentials."""
+    known_stops = {"tool_use", "end_turn", "stop_sequence", "max_tokens", "refusal",
+                   "pause_turn", "model_context_window_exceeded"}
+    stop = getattr(response, "stop_reason", None)
+    stop = stop if isinstance(stop, str) and stop in known_stops else None if stop is None else "unrecognized"
+    blocks = getattr(response, "content", ())
+    blocks = blocks if isinstance(blocks, (list, tuple)) else ()
+    known_types = {"text", "thinking", "redacted_thinking", "tool_use", "server_tool_use"}
+    return {
+        "stop_reason": stop,
+        "content_block_types": [getattr(b, "type", None) if getattr(b, "type", None) in known_types
+                                else "other" for b in blocks[:32]],
+        "content_block_count": len(blocks),
+        "matching_tool_blocks": sum(getattr(b, "type", None) == "tool_use" and
+                                    getattr(b, "name", None) == TOOL_NAME for b in blocks),
+    }
+
+
+def consensus_failure_code(error: ConsensusSchemaError) -> str:
+    """Convert existing strict-validation failures to finite, privacy-safe labels."""
+    message = str(error)
+    if message.startswith("consensus payload missing fields:"):
+        return "missing_consensus_fields"
+    if message.startswith("consensus payload has unknown fields:"):
+        return "unknown_consensus_fields"
+    codes = {
+        "confidence must be between 0 and 1": "confidence_out_of_range",
+        "expected_risk must be non-negative": "negative_expected_risk",
+        "stance must be a string": "stance_not_string",
+        "stance is not a supported enum value": "unsupported_stance",
+        "rationale must not be empty": "rationale_empty",
+        "xai_proof must be an object": "proof_not_object",
+        "xai_proof fields do not match strict schema": "proof_fields_invalid",
+        "xai_proof.summary is required": "proof_summary_empty",
+    }
+    for field in ("confidence", "expected_return", "expected_risk"):
+        codes[field + " must be a number"] = field + "_not_numeric"
+        codes[field + " must be finite"] = field + "_nonfinite"
+    for field in ("rationale", "supporting_factors", "risk_factors"):
+        codes[field + " must be an array of strings"] = field + "_not_string_array"
+    return codes.get(message, "invalid_consensus_schema")
 
 
 def _strict_decimal(value: Any, field: str) -> Decimal:

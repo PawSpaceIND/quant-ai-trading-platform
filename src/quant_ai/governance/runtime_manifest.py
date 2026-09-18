@@ -41,6 +41,9 @@ FIELDS = {
         "allow_position_scaling",
         "max_open_positions",
     ),
+    "quant_ai.agents.institutional_runtime.InstitutionalSwarmPaperTradingService": (
+        "allow_position_scaling", "max_open_positions", "institutional_configuration",
+    ),
     "quant_ai.agents.atlas.AtlasInvestmentAgent": (
         "policy",
         "founder_policy",
@@ -112,6 +115,7 @@ FIELDS = {
         "model",
         "timeout_seconds",
         "transport_kind",
+        "consensus_max_tokens",
     ),
     "quant_ai.marketdata.ticker_stream.ZerodhaKiteTicker": ("instrument_tokens", "symbol_by_token"),
     "quant_ai.marketdata.ticker_stream.IBKRAsyncTicker": (
