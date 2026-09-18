@@ -254,7 +254,7 @@ class InstitutionalRecoveryOperations:
 
     @staticmethod
     def _response(record, *, replayed=False):
-        return {"request_id": record["request_id"], "program_id": record["program_id"],
+        return {"tenant_id": record["tenant"], "request_id": record["request_id"], "program_id": record["program_id"],
                 "actor_key_id": record["actor_key_id"], "context_sha256": record["context_sha256"],
                 "status": record["status"], "recorded_at": record["recorded_at"],
                 "result": record["result"], "replayed": replayed, "execution_authorized": False}
@@ -271,7 +271,7 @@ class InstitutionalRecoveryOperations:
         revision = (stored.request.proposal.provenance or {}).get("institutional_input_source")
         if type(revision) is not str or not revision.strip() or len(revision) > 180:
             raise OperatorRecoveryError(409, "institutional_recovery_context_unavailable")
-        return {"program_id": program_id, "context_sha256": program.context_sha256,
+        return {"tenant_id": self.tenant_id, "program_id": program_id, "context_sha256": program.context_sha256,
                 "program_state": program.state.value, "slice_states": [s.state.value for s in program.slices],
                 "source_revision_sha256": _sha(revision), "execution_authorized": False,
                 "confirmation_required": CONFIRM,
