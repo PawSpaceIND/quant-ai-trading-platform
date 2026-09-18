@@ -76,14 +76,27 @@ def test_missing_usage_keeps_the_admitted_call_charged_to_its_scope(tmp_path):
         ledger.close()
 
 
-def test_current_token_counter_is_not_a_cache_or_currency_meter(tmp_path):
-    ledger = budget(tmp_path / "usage.sqlite")
+def test_prompt_cache_tokens_count_toward_daily_account_budget(tmp_path):
+    ledger = budget(tmp_path / "usage.sqlite", tokens=4000)
     try:
-        assert ledger.reserve("consensus")
-        ledger.record("consensus", {"input_tokens": 10, "output_tokens": 20,
-                                   "cache_creation_input_tokens": 1000,
-                                   "cache_read_input_tokens": 2000})
-        assert ledger.status("consensus")["tokens"] == 30
+        assert ledger.reserve("consensus", 3500)
+        ledger.record(
+            "consensus",
+            {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 1000,
+                "cache_read_input_tokens": 2000,
+            },
+            token_reservation=3500,
+        )
+        state = ledger.status("consensus")
+        assert state["input_tokens"] == 3010
+        assert state["output_tokens"] == 20
+        assert state["tokens"] == 3030
+        assert state["aggregate"]["tokens"] == 3030
+        assert state["reserved_tokens"] == 0
+        assert state["remaining_tokens"] == 970
     finally:
         ledger.close()
 
