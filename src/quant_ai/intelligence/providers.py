@@ -36,7 +36,21 @@ class FundamentalSnapshot:
 @dataclass(frozen=True)
 class MacroSnapshot:
     indicators: dict[str, Decimal]
+    # Preserve the latest-observation version/change clock.
     observed_at: datetime
+    oldest_observed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.oldest_observed_at is None:
+            return  # Preserve legacy two-field snapshots.
+        for stamp in (self.observed_at, self.oldest_observed_at):
+            if not isinstance(stamp, datetime) or stamp.tzinfo is None or stamp.utcoffset() is None:
+                raise ValueError("macro_snapshot_clock_invalid")
+        if self.oldest_observed_at > self.observed_at:
+            raise ValueError("macro_snapshot_oldest_after_latest")
+    @property
+    def freshness_observed_at(self) -> datetime:
+        return self.observed_at if self.oldest_observed_at is None else self.oldest_observed_at
 
 
 class NewsSentimentProvider(Protocol):
