@@ -113,6 +113,7 @@ export type Runtime = {
     tickTimestamp?: string | null;
     tickAgeSeconds?: number | null;
     freshnessReason?: string;
+    regimeContext?: unknown;
   }[];
   lastAnalysisAt?: string;
   providers?: Record<string, string>;
