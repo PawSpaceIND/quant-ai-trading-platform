@@ -27,8 +27,8 @@ building parallel derivative rules:
   contract evidence on the paper fill.
 - `InstrumentBoundOrderIntent` is mandatory for admitted MCX risk. A legacy
   unbound order cannot use an MCX pilot scope.
-- The existing exchange calendar continues to determine MCX session hours,
-  including its US-DST-sensitive evening close. This PR does not change hours.
+- The existing exchange calendar continues to select MCX session hours. The
+  seasonal-close follow-up below corrects its reversed US-DST/standard-time values.
 
 ## Admission versus execution
 
@@ -48,13 +48,16 @@ separate deployment and acceptance gates.
 ## Runtime identity requirement
 
 Any watchlist containing MCX requires `PRAMANA_ORDER_IDENTITY_MODE=bound_v1`.
-The daemon refuses MCX before constructing the broker when legacy cash identity is
-selected. This prevents an old `OrderIntent` from bypassing contract expiry/lot/tick
-checks simply because a symbol appears in the pilot watchlist.
+Broker pilot configuration refuses MCX unless the matching bound runtime identity
+has already been persisted. This check precedes writing the MCX pilot scope; it
+is not a claim that the broker database or schema has never been constructed.
+A legacy `OrderIntent` cannot bypass the bound entry authority merely because its
+symbol appears in the pilot watchlist.
 
-The runtime uses the same `DerivativeFeeSchedule.from_env()` and
-`DerivativeMarginSource.from_env()` instances for admission and the paper broker;
-there is no second set of rates or collateral assumptions.
+The early validator reuses the existing `DerivativeFeeSchedule.from_env()` and
+`DerivativeMarginSource.from_env()` selection rules. At broker configuration, its
+actually selected fee schedule and margin source are passed explicitly to admission.
+An explicit missing source is not replaced from the environment.
 
 ## Configuration boundaries
 
