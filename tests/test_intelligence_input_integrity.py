@@ -238,7 +238,7 @@ def test_invalid_numeric_macro_record_refuses_as_provider_failure(value):
     error = None
     try:
         item.fetch(("US10Y",),NOW)
-    except Exception as caught:
+    except (ValueError, ArithmeticError) as caught:
         error = caught
     assert type(error) is ValueError
     assert str(error) == "fred_invalid_observation_value"
