@@ -310,19 +310,57 @@ class AnthropicSwarmClient:
         }
         if self.budget is not None:
             self.budget.record(HEADLINE_BUDGET_SCOPE, provenance["usage"])
-        for block in getattr(response, "content", ()) or ():
-            if (getattr(block, "type", None) == "tool_use"
-                    and getattr(block, "name", None) == HEADLINE_TOOL_NAME):
-                payload = getattr(block, "input", None)
-                if not isinstance(payload, dict):
-                    return ConsensusPayload({"scores": []},
-                                            finish("invalid_schema", "tool payload must be an object"))
-                return ConsensusPayload(
-                    payload,
-                    {**finish("completed"), "response_payload_sha256": content_hash(payload)},
-                )
-        return ConsensusPayload({"scores": []},
-                                finish("invalid_schema", "no structured headline payload"))
+        def invalid_headline(code: str) -> ConsensusPayload:
+            return ConsensusPayload(
+                {"scores": []},
+                {**finish("invalid_schema", "Headline response failed validation"), "failure_code": code},
+            )
+
+        # Reuse the consensus path's bounded, redacted response-shape projection.
+        # Usage is already recorded above: even an unusable reply consumed tokens.
+        try:
+            response_shape = _consensus_response_metadata(response)
+        except (TypeError, ValueError):
+            return invalid_headline("invalid_response_metadata")
+        headline_blocks = getattr(response, "content", ())
+        headline_tools = [block for block in headline_blocks if getattr(block, "type", None) == "tool_use"] \
+            if isinstance(headline_blocks, (list, tuple)) else []
+        response_shape["matching_tool_blocks"] = sum(
+            getattr(block, "name", None) == HEADLINE_TOOL_NAME for block in headline_tools
+        )
+        provenance.update(response_shape)
+        headline_stop = response_shape["stop_reason"]
+        if headline_stop == "max_tokens":
+            return invalid_headline("output_truncated")
+        if headline_stop == "refusal":
+            return invalid_headline("model_refusal")
+        if headline_stop == "model_context_window_exceeded":
+            return invalid_headline("context_limit")
+        if headline_stop == "pause_turn":
+            return invalid_headline("incomplete_turn")
+        if headline_stop not in {None, "tool_use"}:
+            return invalid_headline("completion_unverified")
+        if headline_stop is None and self.transport_kind == "anthropic_sdk":
+            return invalid_headline("completion_unverified")
+        # Legacy injected fixtures may lack termination metadata; retain the explicit
+        # null and injected transport label, never fabricate real-provider completion.
+        if not headline_tools:
+            return invalid_headline("missing_headline_tool")
+        if len(headline_tools) != 1:
+            return invalid_headline("multiple_tool_blocks")
+        if getattr(headline_tools[0], "name", None) != HEADLINE_TOOL_NAME:
+            return invalid_headline("unexpected_headline_tool")
+        headline_payload = getattr(headline_tools[0], "input", None)
+        if not isinstance(headline_payload, dict):
+            return invalid_headline("tool_input_not_object")
+        try:
+            self.parse_headline_scores(headline_payload, len(headlines))
+        except ConsensusSchemaError:
+            return invalid_headline("invalid_headline_schema")
+        return ConsensusPayload(
+            headline_payload,
+            {**finish("completed"), "response_payload_sha256": content_hash(headline_payload)},
+        )
 
     @staticmethod
     def parse_headline_scores(
