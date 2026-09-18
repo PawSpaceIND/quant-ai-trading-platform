@@ -27,6 +27,8 @@ from quant_ai.research.cross_sectional import (
     Series,
     _eligible_at,
     backtest_signal,
+    common_start_month,
+    first_formable_month,
 )
 
 START = date(2016, 1, 4)
@@ -360,3 +362,85 @@ def test_a_cached_month_still_respects_each_caller_s_own_lookback():
 
     assert len(shallow) == 20
     assert deep == []
+
+
+# --- One window for every candidate --------------------------------------------------------
+
+def test_a_slow_signal_sets_the_window_every_candidate_is_judged_on():
+    """The flaw the second search exposed. Long-term reversal needs five years before it ranks
+    anything, so it was measured over a later window than momentum - one where the market
+    itself did better, showing as a universe Sharpe of 0.37 against 0.21. Comparing those two
+    numbers compared two different decades."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    quick = CrossSectionalSignal("quick", 60, lambda closes, volumes: 1.0, "needs little")
+    slow = CrossSectionalSignal("slow", 500, lambda closes, volumes: 1.0, "needs a lot")
+
+    floor = common_start_month(series, universe, [quick, slow], _days())
+
+    assert floor == first_formable_month(series, universe, slow, _days())
+    assert floor > first_formable_month(series, universe, quick, _days())
+
+
+def test_the_common_window_shortens_the_fast_signal_to_match():
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    quick = CrossSectionalSignal("quick", 60, lambda closes, volumes: 1.0, "needs little")
+
+    unrestricted = backtest_signal(series, universe, quick, 63, _days())
+    restricted = backtest_signal(series, universe, quick, 63, _days(), None, 20)
+
+    assert restricted["observations"] < unrestricted["observations"]
+    assert restricted["observation_dates"][0] > unrestricted["observation_dates"][0]
+    assert restricted["start_month"] == 20
+
+
+def test_two_signals_on_the_common_window_observe_the_same_months():
+    """The property that makes the comparison mean anything: identical months, so the only
+    difference between two candidates is what they ranked."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    quick = CrossSectionalSignal("quick", 60, lambda closes, volumes: 1.0, "needs little")
+    slow = CrossSectionalSignal("slow", 500, lambda closes, volumes: 1.0, "needs a lot")
+    floor = common_start_month(series, universe, [quick, slow], _days())
+
+    first = backtest_signal(series, universe, quick, 63, _days(), None, floor)
+    second = backtest_signal(series, universe, slow, 63, _days(), None, floor)
+
+    assert first["observation_dates"] == second["observation_dates"]
+    # And the benchmark they are each measured against is therefore the same market.
+    assert first["universe_returns"] == second["universe_returns"]
+
+
+def test_a_signal_that_can_never_form_a_book_does_not_close_the_window():
+    """Otherwise one impossible signal would push the floor past the end of the archive and
+    silence every other candidate. Its own results grade as too short instead."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    quick = CrossSectionalSignal("quick", 60, lambda closes, volumes: 1.0, "needs little")
+    impossible = CrossSectionalSignal("impossible", 99999, lambda closes, volumes: 1.0, "never")
+
+    assert first_formable_month(series, universe, impossible, _days()) is None
+    assert common_start_month(series, universe, [quick, impossible], _days()) == \
+        first_formable_month(series, universe, quick, _days())
+
+
+def test_the_window_floors_formation_and_not_only_observation():
+    """Otherwise a fast signal enters the common window with a fully warmed book of
+    overlapping tranches while the slow one is still filling its first, and the comparison
+    hands the fast signal an advantage that has nothing to do with its ranking."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    quick = CrossSectionalSignal("quick", 60, lambda closes, volumes: 1.0, "needs little")
+
+    unrestricted = backtest_signal(series, universe, quick, 63, _days())
+    restricted = backtest_signal(series, universe, quick, 63, _days(), None, 20)
+
+    # Unrestricted starts the month its own lookback is first satisfied, not at month zero.
+    natural = first_formable_month(series, universe, quick, _days())
+    assert unrestricted["formations"] - restricted["formations"] == 20 - natural
