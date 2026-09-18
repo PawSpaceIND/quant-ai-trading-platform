@@ -424,11 +424,23 @@ def test_cli_refuses_existing_empty_output_directory(tmp_path, capsys):
     assert list(target.iterdir()) == []
 
 
-def test_cli_removes_inherited_setgid_from_new_private_directory(tmp_path):
+def test_cli_removes_inherited_setgid_from_new_private_directory(tmp_path, monkeypatch):
     args = cli_args(tmp_path)
     tmp_path.chmod(0o2700)
+    target = tmp_path / "new-proposal"
+    real_mkdir = Path.mkdir
+
+    def mkdir_with_inherited_setgid(self, mode=0o777, parents=False, exist_ok=False):
+        real_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
+        if self == target:
+            self.chmod(0o2700)
+
+    # Some filesystems do not propagate a parent's setgid bit. Simulate the
+    # inherited state explicitly so removal of the production chmod is detected
+    # on every supported CI platform.
+    monkeypatch.setattr(Path, "mkdir", mkdir_with_inherited_setgid)
     assert cli_module().main(args) == 0
-    assert stat.S_IMODE((tmp_path / "new-proposal").stat().st_mode) == 0o700
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o2700
 
 
