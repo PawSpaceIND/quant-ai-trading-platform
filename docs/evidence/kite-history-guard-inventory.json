@@ -221,8 +221,8 @@
     {
       "id": "missing_instrument",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "if identity is None:",
-      "new": "if False:",
+      "old": "                identity = master.get(instrument.symbol)\n                if identity is None:\n                    raise KiteHistoryError(\"kite_history_instrument_missing\")",
+      "new": "                identity = master.get(instrument.symbol)\n                if False:\n                    raise KiteHistoryError(\"kite_history_instrument_missing\")",
       "test": "tests/test_kite_history_boundaries.py::test_missing_master_symbol_and_contract_units_have_specific_refusals"
     },
     {
@@ -235,22 +235,22 @@
     {
       "id": "decimal_decoder",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "parse_float=Decimal",
-      "new": "parse_float=float",
+      "old": "                payload = json.loads(body, parse_float=Decimal, parse_constant=_constant, object_pairs_hook=_pairs)",
+      "new": "                payload = json.loads(body, parse_float=float, parse_constant=_constant, object_pairs_hook=_pairs)",
       "test": "tests/test_kite_daily_history.py::test_daily_candles_derive_tokens_and_preserve_decimal_and_source"
     },
     {
       "id": "strict_json_constants",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "parse_constant=_constant",
-      "new": "parse_constant=lambda _: None",
+      "old": "                payload = json.loads(body, parse_float=Decimal, parse_constant=_constant, object_pairs_hook=_pairs)",
+      "new": "                payload = json.loads(body, parse_float=Decimal, parse_constant=lambda _: None, object_pairs_hook=_pairs)",
       "test": "tests/test_kite_daily_history.py::test_nonfinite_unused_json_field_is_still_invalid_json"
     },
     {
       "id": "duplicate_decoder_hook",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "object_pairs_hook=_pairs",
-      "new": "object_pairs_hook=dict",
+      "old": "                payload = json.loads(body, parse_float=Decimal, parse_constant=_constant, object_pairs_hook=_pairs)",
+      "new": "                payload = json.loads(body, parse_float=Decimal, parse_constant=_constant, object_pairs_hook=dict)",
       "test": "tests/test_kite_daily_history.py::test_invalid_envelope_or_duplicate_or_nonfinite_is_not_silently_accepted"
     },
     {
@@ -270,8 +270,8 @@
     {
       "id": "candle_shape",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "if not isinstance(row, list) or len(row) != 6 or not isinstance(row[0], str):",
-      "new": "if False:",
+      "old": "                for row in rows:\n                    if not isinstance(row, list) or len(row) != 6 or not isinstance(row[0], str):\n                        raise KiteHistoryError(\"kite_history_candle_invalid\")",
+      "new": "                for row in rows:\n                    if False:\n                        raise KiteHistoryError(\"kite_history_candle_invalid\")",
       "test": "tests/test_kite_history_boundaries.py::test_candle_shape_reports_its_own_refusal"
     },
     {
@@ -284,8 +284,8 @@
     {
       "id": "whole_volume",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "if numbers[-1] != numbers[-1].to_integral_value():",
-      "new": "if False:",
+      "old": "                    numbers = tuple(_number(value) for value in row[1:])\n                    if numbers[-1] != numbers[-1].to_integral_value():\n                        raise KiteHistoryError(\"kite_history_volume_invalid\")",
+      "new": "                    numbers = tuple(_number(value) for value in row[1:])\n                    if False:\n                        raise KiteHistoryError(\"kite_history_volume_invalid\")",
       "test": "tests/test_kite_daily_history.py::test_invalid_candles_refuse_whole_series[fractional_volume]"
     },
     {

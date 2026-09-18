@@ -217,7 +217,23 @@ def overnight_risk_from_env(
         cap = Decimal(raw)
     except (ArithmeticError, ValueError) as error:
         raise RuntimeError(f"unsupported PRAMANA_OVERNIGHT_GROSS_CAP: {raw}") from error
+
+    window_raw = os.getenv("PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES", "").strip()
+    closing_window = DEFAULT_CLOSING_WINDOW
+    if window_raw:
+        try:
+            minutes = int(window_raw)
+        except ValueError as error:
+            raise RuntimeError(
+                f"unsupported PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES: {window_raw}"
+            ) from error
+        if minutes < 0 or str(minutes) != window_raw:
+            raise RuntimeError(
+                f"unsupported PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES: {window_raw}"
+            )
+        closing_window = timedelta(minutes=minutes)
+
     return OvernightExposureFirewall(
-        OvernightRiskPolicy(max_overnight_gross=cap),
+        OvernightRiskPolicy(max_overnight_gross=cap, closing_window=closing_window),
         calendar=calendar or MarketCalendar(holidays=default_holidays()),
     )

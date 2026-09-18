@@ -47,7 +47,7 @@ class KiteHistoryTransport:
     def request(self, method, url, *, params, headers, timeout_seconds, max_bytes):
         parts = urllib.parse.urlsplit(url)
         valid = parts.path == "/instruments/NSE" or re.fullmatch(
-            r"/instruments/historical/[1-9][0-9]*/day", parts.path)
+            r"/instruments/historical/[1-9][0-9]*/(?:day|minute)", parts.path)
         if method != "GET" or parts.scheme != "https" or parts.netloc != "api.kite.trade" or not valid or parts.query or parts.fragment:
             raise KiteHistoryError("kite_history_endpoint_refused")
         query = urllib.parse.urlencode(params or {})
@@ -261,6 +261,64 @@ class KiteDailyFeed:
             if self._authentication_failed:
                 return {}
             return {symbol: dict(record) for symbol, record in self._evidence.items()}
+
+
+class KiteMinuteWarmupProvider:
+    """Read-only bounded one-minute history used only to seed live technical context."""
+
+    provider_id = "zerodha-kite-minute-warmup"
+
+    def __init__(self, api_key: str, access_token: str, *, client=None):
+        self.feed = KiteDailyFeed(api_key, access_token, client=client)
+
+    def fetch(self, instrument: Instrument, now: datetime, *, days: int = 5) -> tuple[Candle, ...]:
+        _instrument(instrument)
+        current = _aware(now)
+        if not 1 <= days <= 30:
+            raise KiteHistoryError("kite_minute_history_window_invalid")
+        with self.feed._lock:
+            master = self.feed._load_master(current)
+            identity = master.get(instrument.symbol)
+            if identity is None:
+                raise KiteHistoryError("kite_history_instrument_missing")
+            token, lot, tick = identity
+            if ((instrument.lot_size is not None and instrument.lot_size != lot)
+                    or (instrument.tick_size is not None and instrument.tick_size != tick)):
+                raise KiteHistoryError("kite_history_instrument_units_mismatch")
+            start = current - timedelta(days=days)
+            params = {
+                "from": start.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                "to": current.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                "continuous": "0",
+                "oi": "0",
+            }
+            body = self.feed._get("/instruments/historical/" + token + "/minute", params)
+            payload = json.loads(
+                body, parse_float=Decimal, parse_constant=_constant, object_pairs_hook=_pairs
+            )
+            if (not isinstance(payload, dict) or payload.get("status") != "success"
+                    or not isinstance(payload.get("data"), dict)):
+                raise KiteHistoryError("kite_history_envelope_invalid")
+            rows = payload["data"].get("candles")
+            if not isinstance(rows, list) or len(rows) > 10_000:
+                raise KiteHistoryError("kite_history_candles_invalid")
+            candles: list[Candle] = []
+            previous: datetime | None = None
+            for row in rows:
+                if not isinstance(row, list) or len(row) != 6 or not isinstance(row[0], str):
+                    raise KiteHistoryError("kite_history_candle_invalid")
+                opened = _aware(datetime.fromisoformat(row[0]))
+                closed = opened + timedelta(minutes=1)
+                if closed > current or opened < start or (previous is not None and opened <= previous):
+                    raise KiteHistoryError("kite_history_session_invalid")
+                numbers = tuple(_number(value) for value in row[1:])
+                if numbers[-1] != numbers[-1].to_integral_value():
+                    raise KiteHistoryError("kite_history_volume_invalid")
+                candles.append(Candle(instrument, closed, *numbers))
+                previous = opened
+            return tuple(candles[-120:])
+
+
 
 
 class KiteDailyHistoryProvider(DailyHistoryProvider):
