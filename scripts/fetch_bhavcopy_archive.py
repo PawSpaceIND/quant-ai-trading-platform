@@ -27,6 +27,7 @@ summary makes a systematic pattern change obvious — it shows up as every day f
 from __future__ import annotations
 
 import argparse
+import ssl
 import sys
 import time
 import urllib.error
@@ -41,6 +42,25 @@ MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
 
 NSE_HOME = "https://www.nseindia.com"
 BSE_HOME = "https://www.bseindia.com"
+
+def _ssl_context() -> ssl.SSLContext:
+    """A verifying context that also works on a Python with no usable CA store.
+
+    macOS Python installs from python.org do not read the system keychain, so every HTTPS
+    request fails with CERTIFICATE_VERIFY_FAILED until someone runs an installer script
+    most people have never heard of. ``certifi`` ships the same CA bundle the rest of the
+    world uses, so it is preferred when present.
+
+    Verification is never disabled. A download that cannot be authenticated is not a
+    download worth having: the whole point of this archive is that it is the exchange's
+    record, and an unverified connection cannot say who it came from.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
 
 HEADERS = {
     "User-Agent": (
@@ -99,8 +119,10 @@ def opener_for(exchange: str):
     Both venues reject archive requests that arrive without a session cookie and a
     plausible referer, which is why this is not a plain urlretrieve.
     """
-    handler = urllib.request.HTTPCookieProcessor()
-    opener = urllib.request.build_opener(handler)
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(),
+        urllib.request.HTTPSHandler(context=_ssl_context()),
+    )
     home = NSE_HOME if exchange == "NSE" else BSE_HOME
     opener.addheaders = list(HEADERS.items()) + [("Referer", home)]
     try:
@@ -200,6 +222,13 @@ def main(argv=None) -> int:
         day += timedelta(days=1)
 
     print(f"saved {saved}, already had {cached}, absent {missing}, failed {failed}")
+    if failed and any("CERTIFICATE_VERIFY" in why for _, why in failures):
+        print(
+            "\nThese are certificate failures, not exchange refusals: this Python has no "
+            "usable CA store. Install the bundle and re-run - the download resumes where it "
+            "stopped:\n    python3 -m pip install --user certifi",
+            file=sys.stderr,
+        )
     if missing and not saved and not cached:
         print("every day was absent: the URL patterns in this script are almost certainly "
               "out of date, not the market closed for years", file=sys.stderr)
