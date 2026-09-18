@@ -9,7 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -30,7 +30,7 @@ jobs:
     env:
       TRADING_LIVE_MONEY_ACTIVE: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -44,7 +44,7 @@ jobs:
           bash --version
           /bin/bash -n scripts/deploy_pilot_host.sh
           python -m pytest -q tests/test_deploy_pilot_host.py tests/test_deploy_portability.py --junitxml="$RUNNER_TEMP/deployment-portability.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: deployment-portability-${{ matrix.os }}
@@ -60,7 +60,7 @@ jobs:
       TRADING_LIVE_MONEY_ACTIVE: "false"
       PYTHONPATH: src:tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -69,7 +69,7 @@ jobs:
       # Blocking: no skip, xfail, continue-on-error, or success-on-failure wrapper.
       - name: Institutional risk acceptance
         run: python -m pytest -q acceptance/test_institutional_edge_authority.py --junitxml="$RUNNER_TEMP/institutional-risk.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: institutional-risk-acceptance
@@ -85,7 +85,7 @@ jobs:
       TRADING_LIVE_MONEY_ACTIVE: "false"
       PYTHONPATH: src
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -93,7 +93,7 @@ jobs:
       # Open requirements remain real failures, not xfail/skip or a successful wrapper.
       - name: Preflight input and report acceptance
         run: python -m pytest -q acceptance/test_risk_preflight_input_boundary.py --junitxml="$RUNNER_TEMP/pilot-preflight-acceptance.xml"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pilot-preflight-acceptance
@@ -106,8 +106,8 @@ jobs:
       run:
         working-directory: apps/pramana-ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -125,8 +125,8 @@ jobs:
       run:
         working-directory: apps/pramana-ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -135,7 +135,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: attribution-browser-verification
@@ -145,8 +145,8 @@ jobs:
   cloud-web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -164,7 +164,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -172,7 +172,7 @@ jobs:
         env:
           PRAMANA_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python scripts/verify_pilot_containers.py --output /tmp/pilot-container-verification.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pilot-container-verification
@@ -184,7 +184,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # gitleaks scans the full commit history, not only the checked-out tip
 
@@ -222,7 +222,7 @@ jobs:
           python3 scripts/scan_repository_secrets.py --scanner "$tmp/gitleaks" \
             --report-directory "$RUNNER_TEMP/pramana-secret-scan"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: secret-scan-location-summary
@@ -263,7 +263,7 @@ jobs:
           pip-audit \
             --ignore-vuln PYSEC-2020-25 \
             --ignore-vuln PYSEC-2026-3447
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
