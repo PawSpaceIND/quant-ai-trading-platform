@@ -130,6 +130,14 @@ no such signal. And when real corporate-action records are supplied, `reconcile`
 whether the `PREVCLOSE` detector actually found them, so the assumption gets validated
 against data instead of trusted.
 
+**A percentage says nothing at the tick floor.** NSE quotes in paise, so a security trading
+at ₹0.05 can only move to ₹0.10 — exactly +100% — and back. Measured on a real archive, the
+ten largest "unexplained" breaks were all one stock oscillating between two adjacent ticks,
+every oscillation reported as a corporate action. The gap detector therefore ignores moves
+on prices below ₹1 and counts them in `below_price_floor` rather than filtering silently.
+The exchange's restated previous close still applies at any price, because it compares two
+stated numbers rather than judging a magnitude.
+
 ### The number that decides whether to buy anything
 
 `ReconciliationReport.unsignalled_gaps` — breaks the venue never announced. These cannot

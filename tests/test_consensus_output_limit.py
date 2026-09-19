@@ -250,3 +250,33 @@ def test_nonobject_tool_refused_before_payload_parser(monkeypatch):
         run(client)
     assert caught.value.provenance["failure_code"] == "tool_input_not_object"
     parser.assert_not_called()
+
+
+@pytest.mark.parametrize("cap", [None, 1200, 4096])
+def test_field_contract_reaches_every_output_profile(cap):
+    """Live Sonnet replies stringified rationale and dropped xai_proof entirely, on a prompt
+    that named neither shape. The contract has to hold on the legacy profile too, because a
+    ceiling raised by operator setting is not what makes the payload well formed."""
+    client, create = make(cap=cap, output=700)
+    run(client)
+    system = create.await_args.kwargs["system"]
+    assert "rationale is an array of separate strings" in system
+    assert "xai_proof is required" in system
+
+
+def test_shapes_observed_from_the_live_provider_are_rejected():
+    """Both live failure shapes, pinned as the parser sees them: a payload missing xai_proof
+    and one whose rationale arrived as tagged prose rather than an array."""
+    client, _ = make()
+    missing = {"stance": "NEUTRAL", "confidence": 0.42, "expected_return": 0.003,
+               "expected_risk": 0.0065, "rationale": ["Regime conflicts with the entry."]}
+    with pytest.raises(adapter.ConsensusSchemaError) as absent:
+        client.parse_consensus(missing)
+    assert adapter.consensus_failure_code(absent.value) == "missing_consensus_fields"
+
+    tagged = dict(missing, rationale="<item>Regime conflicts with the entry.</item>",
+                  xai_proof={"summary": "Held flat.", "supporting_factors": [],
+                             "risk_factors": ["uncertainty"]})
+    with pytest.raises(adapter.ConsensusSchemaError) as prose:
+        client.parse_consensus(tagged)
+    assert adapter.consensus_failure_code(prose.value) == "rationale_not_string_array"

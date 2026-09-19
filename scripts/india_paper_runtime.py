@@ -4,10 +4,12 @@ import fcntl
 import json
 import os
 import signal
+import subprocess
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quant_ai.execution.session import INDIA_EXCHANGE_SESSIONS
 from quant_ai.operations.zerodha_session import is_expired, read_session
 
 CONFIG = Path.home() / ".config/pramana"
@@ -16,8 +18,8 @@ DEFAULT_DIRECTIVES = Path(__file__).resolve().parents[1] / "deploy" / "founder-d
 DIRECTIVES_PATH = Path(os.environ.get("PRAMANA_PILOT_DIRECTIVES") or DEFAULT_DIRECTIVES)
 
 
-def load_directives() -> tuple[dict, tuple[str, ...]]:
-    """The pilot mandate and the symbols it names, read rather than restated here.
+def load_directives() -> tuple[dict, tuple[tuple[str, str], ...]]:
+    """The pilot mandate and the instruments it names, read rather than restated here.
 
     This launcher used to carry its own copy: three equities, three open positions and
     EQUITY only, while the operator's directives named five instruments, five positions and
@@ -41,15 +43,30 @@ def load_directives() -> tuple[dict, tuple[str, ...]]:
             f"Founder directives must be a JSON object: {DIRECTIVES_PATH}"
         )
     watchlist = directives.get("watchlist") or []
-    symbols = tuple(
-        str(item["symbol"]) for item in watchlist
-        if isinstance(item, dict) and item.get("exchange") == "NSE" and item.get("symbol")
+    # Every exchange the operator names, not NSE alone. Filtering to NSE here silently
+    # discarded the rest of the mandate: an MCX metal trades for eight hours after the cash
+    # market shuts, and dropping it at the launcher made the engine judge the whole pilot by
+    # the NSE clock. The calendar downstream already keeps MCX and CDS hours.
+    instruments = tuple(
+        (str(item["exchange"]).strip().upper(), str(item["symbol"]).strip().upper())
+        for item in watchlist
+        if isinstance(item, dict) and item.get("exchange") and item.get("symbol")
     )
-    if not symbols:
-        raise RuntimeError(f"Founder directives name no NSE instruments: {DIRECTIVES_PATH}")
+    if not instruments:
+        raise RuntimeError(f"Founder directives name no instruments: {DIRECTIVES_PATH}")
+    # An exchange with no published session would be judged by the venue fallback, which is
+    # the NSE cash session - the quiet mis-timing this change exists to remove. Refuse it.
+    unknown = sorted({code for code, _ in instruments} - set(INDIA_EXCHANGE_SESSIONS))
+    if unknown:
+        raise RuntimeError(
+            f"Founder directives name exchanges with no published session: {', '.join(unknown)}"
+        )
+    symbols = [symbol for _, symbol in instruments]
+    # Still keyed by symbol alone: the calendar maps symbol to exchange, so one symbol on two
+    # exchanges would leave half the book judged by the wrong clock.
     if len(set(symbols)) != len(symbols):
         raise RuntimeError(f"Founder directives list a symbol twice: {DIRECTIVES_PATH}")
-    return directives, symbols
+    return directives, instruments
 
 
 def configure():
@@ -72,13 +89,24 @@ def configure():
     if is_expired(session, datetime.now(timezone.utc)):
         raise RuntimeError("Zerodha session expired at 06:00 IST; run: pramana zerodha-login")
     kite = KiteConnect(api_key=credentials["api_key"], access_token=session.access_token, timeout=15)
+    directives, instruments = load_directives()
     profile = kite.profile()
-    if profile["user_id"] != session.user_id or "NSE" not in profile.get("exchanges", []):
+    # Each segment is enabled separately on a Zerodha account. An MCX instrument on an
+    # equity-only account does not fail at the quote call with anything an operator can read,
+    # so name the missing segment here rather than let the pilot start half-subscribed.
+    absent = [code for code, _ in instruments if code not in profile.get("exchanges", [])]
+    if profile["user_id"] != session.user_id:
         raise RuntimeError("Account validation failed")
-    directives, symbols = load_directives()
-    print(f"pilot universe from {DIRECTIVES_PATH}: {', '.join(symbols)}")
-    quotes = kite.quote(["NSE:" + symbol for symbol in symbols])
-    mappings = {str(quotes["NSE:" + symbol]["instrument_token"]): symbol for symbol in symbols}
+    if absent:
+        raise RuntimeError(
+            "Account validation failed: segments not enabled on this account: "
+            + ", ".join(sorted(set(absent)))
+        )
+    print(f"pilot universe from {DIRECTIVES_PATH}: "
+          + ", ".join(f"{code}:{symbol}" for code, symbol in instruments))
+    quotes = kite.quote([f"{code}:{symbol}" for code, symbol in instruments])
+    mappings = {str(quotes[f"{code}:{symbol}"]["instrument_token"]): symbol
+                for code, symbol in instruments}
     # Optional real providers are taken from the process environment only; nothing is hardcoded.
     passthrough = {name: os.environ[name] for name in ("FRED_API_KEY", "PRAMANA_FUNDAMENTALS_PROVIDER")
                    if os.environ.get(name, "").strip()}
@@ -95,8 +123,17 @@ def configure():
         "PRAMANA_TENANT_ID": "india-paper",
         "PRAMANA_HALT_FILE": str(RUNTIME / "HALT"),
         "PRAMANA_GHOST_LOG": str(RUNTIME / "events.jsonl"),
-        "PRAMANA_TARGET_SYMBOL": symbols[0], "PRAMANA_TARGET_MARKET": "INDIA",
-        "PRAMANA_TARGET_CURRENCY": "INR", "PRAMANA_TARGET_EXCHANGE": "NSE",
+        "PRAMANA_TARGET_SYMBOL": instruments[0][1], "PRAMANA_TARGET_MARKET": "INDIA",
+        "PRAMANA_TARGET_CURRENCY": "INR", "PRAMANA_TARGET_EXCHANGE": instruments[0][0],
+        # Monday paper-pilot safety controls. Universe and exchange still come only from
+        # the operator directives above; these arm history, book risk and deterministic close.
+        "PRAMANA_DAILY_HISTORY_PROVIDER": "kite",
+        "PRAMANA_INTRADAY_WARMUP_PROVIDER": "kite",
+        "PRAMANA_BOOK_RISK_HISTORY": "daily",
+        "PRAMANA_REQUIRE_BOOK_RISK_GATES": "true",
+        "PRAMANA_SESSION_FLATTEN_MINUTES": "15",
+        "PRAMANA_OVERNIGHT_GROSS_CAP": "0.25",
+        "PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES": "15",
         # Passed through unchanged. Rewriting any field here is how the launcher and the
         # operator's mandate came to disagree in the first place.
         "PRAMANA_FOUNDER_DIRECTIVES_JSON": json.dumps(directives),
@@ -105,6 +142,112 @@ def configure():
     # External messaging is intentionally not part of this local runtime.
     os.environ.pop("PRAMANA_TELEGRAM_BOT_TOKEN", None)
     os.environ.pop("PRAMANA_TELEGRAM_CHAT_ID", None)
+
+
+
+def release_revision():
+    configured = os.environ.get("PRAMANA_RELEASE_REVISION", "").strip()
+    if configured:
+        return configured
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            check=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def runtime_certification(runner):
+    directives, expected_instruments = load_directives()
+    expected_symbols = sorted(symbol for _exchange, symbol in expected_instruments)
+    required_capital = directives.get("starting_capital")
+    broker = runner.daemon.tracker.broker
+    reconciliation = broker.reconcile("india-paper")
+    protection = broker.protection_coverage("india-paper")
+    starting_capital = broker.get_starting_capital("india-paper")
+    paper_only = os.environ.get("TRADING_LIVE_MONEY_ACTIVE", "").strip().lower() == "false"
+    mapped = sorted(json.loads(os.environ["PRAMANA_ZERODHA_SYMBOLS_JSON"]).values())
+    warmup = dict(runner.intraday_warmup_status)
+    briefs = tuple(getattr(runner.daemon, "briefs", ()) or ())
+    cadence_subjects = sorted({item.subject for item in briefs})
+    cadence_provider_status = {
+        item.subject: list(item.provider_status) for item in briefs
+    }
+    traces = runner.daemon.scheduler.pipeline.runtime.xai_logger.traces()
+    cadence_at = max((item.generated_at for item in briefs), default=None)
+    inference_modes = {}
+    for trace in traces:
+        if trace.subject not in expected_symbols or cadence_at is None or trace.generated_at != cadence_at:
+            continue
+        provenance = trace.provenance if isinstance(trace.provenance, dict) else {}
+        mode = provenance.get("mode")
+        inference_modes[trace.subject] = mode if isinstance(mode, str) else "unverified"
+
+    flatten_minutes = int(os.environ["PRAMANA_SESSION_FLATTEN_MINUTES"])
+    history_provider = os.environ["PRAMANA_DAILY_HISTORY_PROVIDER"]
+    book_risk_required = os.environ["PRAMANA_REQUIRE_BOOK_RISK_GATES"] == "true"
+    overnight_cap = os.environ.get("PRAMANA_OVERNIGHT_GROSS_CAP", "").strip()
+    closing_window = os.environ.get("PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES", "").strip()
+
+    reasons = []
+    if not paper_only:
+        reasons.append("live_money_not_disabled")
+    if required_capital != 100000 or starting_capital != 100000:
+        reasons.append("starting_capital_not_100000")
+    if mapped != expected_symbols:
+        reasons.append("watchlist_mapping_mismatch")
+    if flatten_minutes != 15:
+        reasons.append("session_flatten_not_15_minutes")
+    if history_provider != "kite":
+        reasons.append("daily_history_not_kite")
+    if not book_risk_required:
+        reasons.append("book_risk_not_required")
+    if overnight_cap != "0.25":
+        reasons.append("overnight_gross_firewall_not_armed")
+    if closing_window != "15":
+        reasons.append("closing_window_firewall_not_15_minutes")
+    if set(warmup) != set(expected_symbols) or any(
+        item.get("status") != "ready" or int(item.get("bars", 0)) < 50
+        for item in warmup.values()
+    ):
+        reasons.append("intraday_warmup_not_ready")
+    if cadence_subjects != expected_symbols:
+        reasons.append("five_symbol_cadence_not_observed")
+    if any("price=FRESH" not in cadence_provider_status.get(symbol, ()) for symbol in expected_symbols):
+        reasons.append("five_symbol_price_freshness_not_observed")
+    if any(inference_modes.get(symbol) != "llm" for symbol in expected_symbols):
+        reasons.append("five_symbol_llm_inference_not_observed")
+    if reconciliation["status"] != "matched":
+        reasons.append("paper_ledger_reconciliation_failed")
+    if protection["status"] != "complete":
+        reasons.append("paper_position_protection_incomplete")
+
+    return {
+        "schema": "pramana.monday_pilot_runtime.v2",
+        "revision": release_revision(),
+        "ready": not reasons,
+        "reasons": reasons,
+        "paperOnly": paper_only,
+        "startingCapital": str(starting_capital),
+        "watchlist": [symbol for _exchange, symbol in expected_instruments],
+        "watchlistInstruments": [
+            {"exchange": exchange, "symbol": symbol}
+            for exchange, symbol in expected_instruments
+        ],
+        "mappedSymbols": mapped,
+        "sessionFlattenMinutes": flatten_minutes,
+        "dailyHistoryProvider": history_provider,
+        "bookRiskRequired": book_risk_required,
+        "overnightGrossCap": overnight_cap,
+        "overnightClosingWindowMinutes": closing_window,
+        "intradayWarmup": warmup,
+        "cadenceSubjects": cadence_subjects,
+        "cadenceProviderStatus": cadence_provider_status,
+        "inferenceModeBySymbol": inference_modes,
+        "reconciliation": reconciliation["status"],
+        "protection": protection["status"],
+    }
 
 
 def provider_status():
@@ -158,7 +301,8 @@ async def run():
                          "mode": "paper", "watchlist": running_watchlist(), "heartbeat": beat,
                          "cadenceFailures": runner.consecutive_failures,
                          "halted": (RUNTIME / "HALT").exists(),
-                         "providers": provider_status()})
+                         "providers": provider_status(),
+                         "certification": runtime_certification(runner)})
             await asyncio.sleep(15)
         if task.done():
             await task

@@ -160,3 +160,91 @@ def test_teaching_calendar_about_mcx_alone_does_not_admit_it_to_pilot():
     validate_pilot_instruments(
         (Instrument("INFY", Market.INDIA, AssetClass.EQUITY, "INR", "NSE"),)
     )
+
+
+# A watched row: the same metal, named as a listing rather than a contract. It carries no
+# expiry or lot because nothing can be ordered against it, which is the point of the flag.
+WATCHED_GOLD = Instrument(
+    "GOLD", Market.INDIA, AssetClass.METAL, "INR", "MCX", tradable=False,
+)
+INFY = Instrument("INFY", Market.INDIA, AssetClass.EQUITY, "INR", "NSE")
+# 02:00 IST: MCX is shut too, so this pins the gate ahead of the session branch rather
+# than a session that happens to be closed.
+DEAD_OF_NIGHT = datetime(2026, 9, 17, 2, tzinfo=IST).astimezone(timezone.utc)
+
+
+class ObservationPipeline(StubPipeline):
+    """``run`` is still a landmine; the feed is what an observation is allowed to read."""
+
+    def __init__(self, candles=()) -> None:
+        super().__init__()
+        self.candles = list(candles)
+        self.market_feed = SimpleNamespace(fetch_ohlcv=lambda *a, **k: list(self.candles))
+
+    async def run_async(self, *args, **kwargs):
+        raise Reached
+
+
+def candle(close: str):
+    return SimpleNamespace(timestamp=EVENING, close=Decimal(close))
+
+
+@pytest.mark.parametrize("moment", [EVENING, DEAD_OF_NIGHT])
+def test_a_watched_metal_is_read_without_entering_the_execution_path(moment):
+    """Observation is what was asked for and trading is not: the account holds no MCX
+    segment, so a proposal against gold could only ever be rejected by the broker. The gate
+    sits ahead of the session branch, so the row never reaches the pipeline in any state."""
+    scheduler = AutonomousCadenceScheduler(
+        ObservationPipeline([candle("153585")]), calendar=book_calendar()
+    )
+
+    brief = scheduler.run_tick(
+        WATCHED_GOLD, moment, plan=None, portfolio=None, country="INDIA",
+    )
+
+    assert brief.mode == "OBSERVATION_ONLY"
+    assert brief.risk_decision == "observation_only_instrument_not_tradable"
+    assert brief.paper_order_ids == ()
+    assert "last_price=153585" in brief.swarm_consensus
+    assert scheduler.last_result is None
+
+
+def test_a_watched_metal_reports_the_mcx_session_it_was_read_in():
+    scheduler = AutonomousCadenceScheduler(
+        ObservationPipeline([candle("153585")]), calendar=book_calendar()
+    )
+
+    brief = scheduler.run_tick(
+        WATCHED_GOLD, EVENING, plan=None, portfolio=None, country="INDIA",
+    )
+
+    # 20:00 IST: the equity clock says CLOSED, and judging gold by it is the blindness
+    # this whole path exists to remove.
+    assert brief.market_state is MarketState.REGULAR_HOURS
+    assert "MCX_session=REGULAR_HOURS" in brief.provider_status
+
+
+def test_a_watched_metal_with_no_bars_says_so_rather_than_printing_a_price():
+    scheduler = AutonomousCadenceScheduler(ObservationPipeline(), calendar=book_calendar())
+
+    brief = scheduler.run_tick(
+        WATCHED_GOLD, EVENING, plan=None, portfolio=None, country="INDIA",
+    )
+
+    assert "last_price=unavailable" in brief.swarm_consensus
+    assert "bars=0" in brief.provider_status
+
+
+def test_the_pilot_admits_a_watched_row_beside_the_cash_book():
+    from quant_ai.governance.pilot import validate_pilot_instruments
+
+    validate_pilot_instruments((INFY, WATCHED_GOLD))
+
+
+def test_the_pilot_refuses_a_watched_row_in_the_primary_seat():
+    """instruments[0] is the daemon's primary - the name whose country charges the
+    allocation cap and whose brief leads. An observation row cannot hold that seat."""
+    from quant_ai.governance.pilot import validate_pilot_instruments
+
+    with pytest.raises(ValueError, match="pilot_primary_instrument_must_be_tradable"):
+        validate_pilot_instruments((WATCHED_GOLD, INFY))
