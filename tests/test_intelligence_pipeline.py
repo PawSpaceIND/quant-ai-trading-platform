@@ -104,7 +104,7 @@ class ConflictMacro(SandboxMacroIndicatorProvider):
     def fetch(self, indicators, now):
         snapshot = super().fetch(indicators, now)
         values = dict(snapshot.indicators)
-        values.update({"US10Y": Decimal("6.5"), "BRENT": Decimal(140), "DXY": Decimal(120), "GOLD": Decimal(2300)})
+        values.update({"US10Y": Decimal("6.5"), "BRENT": Decimal(140), "USD_BROAD": Decimal(120), "GOLD": Decimal(2300)})
         return type(snapshot)(values, snapshot.observed_at)
 
 

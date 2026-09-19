@@ -64,7 +64,7 @@ def dataset():
                 "INDIA10Y": Decimal("6.5"),
                 "BRENT": Decimal(60),
                 "GOLD": Decimal(2600),
-                "DXY": Decimal(90),
+                "USD_BROAD": Decimal(90),
             },
         ),
         HistoricalMacroEvent(
@@ -74,7 +74,7 @@ def dataset():
                 "INDIA10Y": Decimal(8),
                 "BRENT": Decimal(120),
                 "GOLD": Decimal(1900),
-                "DXY": Decimal(120),
+                "USD_BROAD": Decimal(120),
             },
         ),
     )

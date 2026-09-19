@@ -122,7 +122,7 @@ class AutonomousCadenceScheduler:
     ) -> FounderExecutionBrief:
         provider_status: list[str] = []
         macro = self.pipeline.macro.fetch(
-            ("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now
+            ("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now
         )
         news = self.pipeline.news.fetch("GEOPOLITICAL", now)
         provider_status.append(f"macro_indicators={len(macro.indicators)}")

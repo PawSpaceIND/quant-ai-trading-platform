@@ -86,7 +86,7 @@ def test_missing_production_inputs_are_empty_not_sandbox(clean_config):
     news, fundamentals, macro = _env_intelligence_providers()
     assert news.fetch("INFY", NOW) == ()
     assert fundamentals.fetch("INFY", NOW).metrics == {}
-    assert macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), NOW).indicators == {}
+    assert macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), NOW).indicators == {}
 
 
 @pytest.mark.parametrize("rss,fred,yahoo", [(a,b,c) for a in (False,True) for b in (False,True) for c in (False,True)])
