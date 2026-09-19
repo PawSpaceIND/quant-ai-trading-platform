@@ -293,12 +293,12 @@ def _dataset() -> HistoricalReplayDataset:
         HistoricalMacroEvent(
             start,
             {"US10Y": Decimal("3.5"), "INDIA10Y": Decimal("6.5"), "BRENT": Decimal(60),
-             "GOLD": Decimal(2600), "DXY": Decimal(90)},
+             "GOLD": Decimal(2600), "USD_BROAD": Decimal(90)},
         ),
         HistoricalMacroEvent(
             start + timedelta(minutes=40),
             {"US10Y": Decimal("6.5"), "INDIA10Y": Decimal("8.0"), "BRENT": Decimal(120),
-             "GOLD": Decimal(1900), "DXY": Decimal(120)},
+             "GOLD": Decimal(1900), "USD_BROAD": Decimal(120)},
         ),
     )
     fundamentals = (

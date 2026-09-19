@@ -320,7 +320,7 @@ def test_pipeline_run_async_builds_a_bounded_context_from_live_bars(tmp_path) ->
     assert context.headlines[-1].subject == "GEOPOLITICAL"  # newest survive the cap, oldest drop
     assert [item.published_at for item in context.headlines] == sorted(item.published_at for item in context.headlines)
     assert dict(context.technical).keys() == {"sma_spread", "rsi", "momentum", "price_history_bars"}
-    assert dict(context.macro).keys() == {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
+    assert dict(context.macro).keys() == {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
     assert context.macro_observed_at == NOW.isoformat()
     assert dict(context.fundamentals)["pe"] == Decimal(31)
     assert dict(context.freshness) == {
