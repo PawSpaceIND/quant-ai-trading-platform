@@ -94,7 +94,11 @@ class AtlasInvestmentAgent:
         if len(relevant) < self.policy.min_evidence_agents:
             return self._hold(subject, now, relevant, "insufficient_agent_coverage", market_tick,
                               evidence_context, knowledge_context)
-        stale = tuple(item for item in relevant if item.source_freshness_seconds > self.policy.stale_evidence_seconds)
+        stale = tuple(
+            item for item in relevant
+            if item.source_freshness_seconds > self.policy.stale_evidence_seconds
+            and item.stance not in {Stance.NEUTRAL, Stance.AVOID}
+        )
         if stale:
             return self._hold(subject, now, relevant, "stale_specialist_evidence", market_tick,
                               evidence_context, knowledge_context)
@@ -103,14 +107,38 @@ class AtlasInvestmentAgent:
             return self._hold(subject, now, relevant, "specialist_veto", market_tick,
                               evidence_context, knowledge_context)
 
-        total_weight = sum((item.confidence for item in relevant), Decimal(0))
+        abstained = tuple(
+            item for item in relevant
+            if item.stance is Stance.NEUTRAL
+            and (
+                item.source_freshness_seconds > self.policy.stale_evidence_seconds
+                or item.confidence <= 0
+            )
+        )
+        participating = tuple(item for item in relevant if item not in abstained)
+        if len(participating) < self.policy.min_evidence_agents:
+            return self._hold(
+                subject, now, relevant, "insufficient_usable_agent_coverage",
+                market_tick, evidence_context, knowledge_context,
+            )
+        total_weight = sum((item.confidence for item in participating), Decimal(0))
         if total_weight <= 0:
             return self._hold(subject, now, relevant, "zero_confidence", market_tick,
                               evidence_context, knowledge_context)
-        weighted_score = sum((STANCE_SCORE[item.stance] * item.confidence for item in relevant), Decimal(0)) / total_weight
-        confidence = sum((item.confidence for item in relevant), Decimal(0)) / Decimal(len(relevant))
-        expected_return = sum((item.expected_return * item.confidence for item in relevant), Decimal(0)) / total_weight
-        expected_risk = sum((item.expected_risk * item.confidence for item in relevant), Decimal(0)) / total_weight
+        weighted_score = sum(
+            (STANCE_SCORE[item.stance] * item.confidence for item in participating),
+            Decimal(0),
+        ) / total_weight
+        confidence = (
+            sum((item.confidence for item in participating), Decimal(0))
+            / Decimal(len(participating))
+        )
+        expected_return = sum(
+            (item.expected_return * item.confidence for item in participating), Decimal(0)
+        ) / total_weight
+        expected_risk = sum(
+            (item.expected_risk * item.confidence for item in participating), Decimal(0)
+        ) / total_weight
 
         if confidence < self.policy.min_consensus_confidence or expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
@@ -139,6 +167,7 @@ class AtlasInvestmentAgent:
             f"average_confidence={confidence}",
             f"expected_return={expected_return}",
             f"expected_risk={expected_risk}",
+            f"abstained_specialists={','.join(item.agent_id for item in abstained) or 'none'}",
         ) + _market_rationale(market_tick) + self._founder_rationale()
         return AtlasDecision(
             uuid4().hex,
