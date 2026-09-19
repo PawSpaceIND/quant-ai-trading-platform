@@ -8,7 +8,6 @@ delisting exit and the trial charge - each of which is a way a backtest flatters
 
 from __future__ import annotations
 
-import math
 import statistics
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -20,11 +19,13 @@ from quant_ai.marketdata.models import Candle
 from quant_ai.marketdata.point_in_time import Listing, PointInTimeUniverse
 from quant_ai.research.cross_sectional import (
     CLOSE_SIGNALS,
+    FORMATION_SESSIONS,
     MINIMUM_NAMES,
     MINIMUM_PRICE,
     MINIMUM_TURNOVER,
     CrossSectionalSignal,
     Series,
+    _eligible_at,
     backtest_signal,
 )
 
@@ -84,7 +85,8 @@ def _universe(symbols: list[str], *, ceased: dict[str, date] | None = None) -> P
     )
 
 
-CONSTANT = CrossSectionalSignal("constant", 1, lambda closes: 1.0, "ranks nothing; a control")
+CONSTANT = CrossSectionalSignal(
+    "constant", 1, lambda closes, volumes: 1.0, "ranks nothing; a control")
 
 
 def test_the_ranking_finds_an_effect_that_is_really_there():
@@ -102,8 +104,8 @@ def test_the_ranking_finds_an_effect_that_is_really_there():
 
     result = backtest_signal(series, universe, signal, 21, _days())
 
-    assert result["rebalances"] > 10
-    earned = statistics.fmean(result["gross_returns"])
+    assert result["observations"] > 10
+    earned = statistics.fmean(result["portfolio_returns"])
     assert earned > 0
     # The book is the rising names, so it must beat the losing cohort's drift over the period.
     assert earned > (1.0 - 0.0004) ** 21 - 1.0
@@ -120,7 +122,7 @@ def test_a_sub_rupee_security_never_enters_the_book():
 
     assert float(MINIMUM_PRICE) > 0.05
     # Nothing clears the floor, so no rebalance ever reaches the minimum book width.
-    assert result["rebalances"] == 0
+    assert result["observations"] == 0
 
 
 def test_a_name_nobody_trades_never_enters_the_book():
@@ -134,7 +136,7 @@ def test_a_name_nobody_trades_never_enters_the_book():
     result = backtest_signal(series, universe, CONSTANT, 21, _days())
 
     assert Decimal(2_000) < MINIMUM_TURNOVER
-    assert result["rebalances"] == 0
+    assert result["observations"] == 0
 
 
 def test_a_delisted_holding_is_exited_at_the_last_price_the_archive_holds():
@@ -147,9 +149,12 @@ def test_a_delisted_holding_is_exited_at_the_last_price_the_archive_holds():
     short = _series("STOPS", _drifting(-0.002, count=400), days=days[:400])
     universe = _universe([*names, "STOPS"], ceased={"STOPS": days[399]})
 
-    result = backtest_signal([*series, short], universe, CONSTANT, 21, days)
+    # Three overlapping tranches, so a holding formed before the stop is still open after
+    # it. The stopping name leads the list because a constant signal ranks by insertion, and
+    # a name outside the top decile would never be held to test anything.
+    result = backtest_signal([short, *series], universe, CONSTANT, 63, days)
 
-    assert result["rebalances"] > 10
+    assert result["observations"] > 10
     assert result["positions_exited_on_delisting"] >= 1
 
 
@@ -160,7 +165,7 @@ def test_a_book_too_narrow_to_be_a_portfolio_is_skipped_rather_than_held():
 
     result = backtest_signal(series, universe, CONSTANT, 21, _days())
 
-    assert result["rebalances"] == 0
+    assert result["observations"] == 0
 
 
 def test_an_instrument_outside_the_manifest_coverage_is_unknown_not_tradeable():
@@ -179,13 +184,13 @@ def test_an_instrument_outside_the_manifest_coverage_is_unknown_not_tradeable():
 
     result = backtest_signal(series, narrow, CONSTANT, 21, days)
 
-    assert all(item <= days[300].isoformat() for item in result["rebalance_dates"])
+    assert all(item <= days[300].isoformat() for item in result["observation_dates"])
 
 
-@pytest.mark.parametrize("horizon", [21, 63])
-def test_the_holding_period_is_the_rebalance_period(horizon):
-    """Return is measured over exactly the window the book is held for. A study that
-    rebalances monthly and measures quarterly returns is counting the same move three times."""
+@pytest.mark.parametrize("horizon", [63, 126])
+def test_an_observation_is_one_month_whatever_the_holding_period(horizon):
+    """Tranches overlap, so a year-held strategy still reports monthly. Without this a
+    ten-year archive yields nine annual observations and grades nothing at all."""
     names = [f"NAME{index}" for index in range(MINIMUM_NAMES + 2)]
     rate = 0.001
     series = [_series(name, _drifting(rate)) for name in names]
@@ -193,9 +198,40 @@ def test_the_holding_period_is_the_rebalance_period(horizon):
 
     result = backtest_signal(series, universe, CONSTANT, horizon, _days())
 
-    expected = (1.0 + rate) ** horizon - 1.0
-    assert result["gross_returns"]
-    assert math.isclose(result["gross_returns"][0], expected, rel_tol=0.02)
+    monthly = (1.0 + rate) ** FORMATION_SESSIONS - 1.0
+    assert result["portfolio_returns"]
+    # Net of the one tranche in ``tranches`` that turns over this month, so a little under.
+    assert 0 < result["portfolio_returns"][0] <= monthly
+    assert result["overlapping_tranches"] == horizon // FORMATION_SESSIONS
+
+
+def test_a_longer_hold_pays_less_cost_for_the_same_book():
+    """The real economic argument for holding longer, and the reason cost must be charged on
+    the tranche that turns rather than on the whole book every month."""
+    names = [f"NAME{index}" for index in range(MINIMUM_NAMES + 2)]
+    series = [_series(name, _drifting(0.001)) for name in names]
+    universe = _universe(names)
+
+    quarterly = backtest_signal(series, universe, CONSTANT, 63, _days())
+    yearly = backtest_signal(series, universe, CONSTANT, 252, _days())
+
+    assert yearly["portfolio_returns"][0] > quarterly["portfolio_returns"][0]
+
+
+def test_ranking_nothing_earns_nothing_over_the_universe():
+    """The control that makes the benchmark meaningful. A signal that ranks every name the
+    same holds a slice of the universe, so its excess over the universe must be about zero -
+    and a study measuring against zero instead would report the market's decade as an edge."""
+    names = [f"NAME{index}" for index in range(40)]
+    series = [_series(name, _drifting(0.0008)) for name in names]
+    universe = _universe(names)
+
+    result = backtest_signal(series, universe, CONSTANT, 63, _days())
+
+    assert result["universe_returns"]
+    assert statistics.fmean(result["universe_returns"]) > 0
+    # Costs make it slightly negative; the point is that none of the market's return leaks in.
+    assert abs(statistics.fmean(result["returns"])) < 0.002
 
 
 # --- End to end: what the register is charged ---------------------------------------------
@@ -258,12 +294,12 @@ def test_the_search_is_charged_per_signal_not_per_instrument(tmp_path):
         datasets,
         _manifest(tmp_path / "universe.json", names, last),
         register=tmp_path / "register.json",
-        horizons=(21, 63),
+        horizons=(63, 126),
     )
 
     assert report["instruments_loaded"] == 30
     # Three signals at two horizons. Not 30 x anything.
-    assert report["trial_register"]["candidate_trials"] == len(CLOSE_SIGNALS) * 2 == 6
+    assert report["trial_register"]["candidate_trials"] == len(CLOSE_SIGNALS) * 2
     assert report["promotion_approved"] is False
 
 
@@ -281,7 +317,46 @@ def test_running_it_again_is_charged_for_looking_again(tmp_path):
     manifest = _manifest(tmp_path / "universe.json", names, last)
     register = tmp_path / "register.json"
 
-    first = run_cross_sectional_study(datasets, manifest, register=register, horizons=(21,))
-    second = run_cross_sectional_study(datasets, manifest, register=register, horizons=(21,))
+    first = run_cross_sectional_study(datasets, manifest, register=register, horizons=(63,))
+    second = run_cross_sectional_study(datasets, manifest, register=register, horizons=(63,))
 
     assert second["trial_register"]["candidate_trials"] > first["trial_register"]["candidate_trials"]
+
+
+def test_the_shared_cache_changes_speed_and_nothing_else():
+    """Eligibility and friction depend on the month and the name, never on which candidate is
+    asking - so memoising them across eighteen candidates must be invisible in the result. A
+    cache that changes an answer is worse than no cache, because it changes it quietly."""
+    names = [f"NAME{index}" for index in range(30)]
+    series = [_series(name, _drifting(0.0003 + index * 0.00002)) for index, name in enumerate(names)]
+    universe = _universe(names)
+    signal = next(item for item in CLOSE_SIGNALS if item.name == "momentum_12_1")
+
+    uncached = backtest_signal(series, universe, signal, 63, _days())
+    shared: dict = {}
+    first = backtest_signal(series, universe, signal, 63, _days(), shared)
+    # A second candidate reading a warm cache must also agree.
+    second = backtest_signal(series, universe, signal, 63, _days(), shared)
+
+    assert first["returns"] == uncached["returns"] == second["returns"]
+    assert first["universe_returns"] == uncached["universe_returns"]
+    assert first["positions_exited_on_delisting"] == uncached["positions_exited_on_delisting"]
+
+
+def test_a_cached_month_still_respects_each_caller_s_own_lookback():
+    """The cached set is every eligible name on that day, and each caller filters it by the
+    history its own signal needs. Tested on _eligible_at directly because the shipped signals
+    all guard their own lookback too - going through them would pass whatever this did."""
+    names = [f"NAME{index}" for index in range(20)]
+    series = [_series(name, _drifting(0.0005)) for name in names]
+    universe = _universe(names)
+    day = _days()[300]
+    shared: dict = {}
+
+    # Cold, by a caller that needs little history: fills the cache with every eligible name.
+    shallow = _eligible_at(series, universe, day, 60, shared)
+    # Warm, by a caller that needs more history than any of these names have on that day.
+    deep = _eligible_at(series, universe, day, 500, shared)
+
+    assert len(shallow) == 20
+    assert deep == []
