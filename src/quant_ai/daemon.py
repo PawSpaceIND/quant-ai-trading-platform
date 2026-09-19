@@ -136,6 +136,8 @@ class DaemonRunner:
         clock: Clock | None = None,
         sleeper: Sleeper = asyncio.sleep,
         protection_interval: float = 1.0,
+        intraday_warmup_provider: Any | None = None,
+        intraday_warmup_instruments: Iterable[Instrument] = (),
     ) -> None:
         _assert_ghost_mode()
         if cadence <= timedelta(0):
@@ -160,6 +162,12 @@ class DaemonRunner:
         self._start_entered = False
         self._recovery_stop = asyncio.Event()
         self._runner_loop = None
+        self.intraday_warmup_provider = intraday_warmup_provider
+        self.intraday_warmup_instruments = tuple(intraday_warmup_instruments)
+        self.intraday_warmup_status = {
+            item.symbol: {"status": "pending", "bars": 0, "updatedAt": None}
+            for item in self.intraday_warmup_instruments
+        }
 
     def attach_recovery_service(self, service) -> None:
         """Explicitly cohost recovery for this exact runtime; default remains absent."""
@@ -236,6 +244,45 @@ class DaemonRunner:
         except Exception:  # noqa: BLE001 - malformed optional wiring must not take runner down
             self._logger.warning("required_book_history_warmup_unavailable")
 
+    def _warm_intraday_history(self, now: datetime) -> None:
+        """Seed recent closed one-minute bars before the first AI cadence."""
+        provider = self.intraday_warmup_provider
+        if provider is None or not self.intraday_warmup_instruments:
+            return
+        feed = self.daemon.scheduler.pipeline.market_feed
+        seed = getattr(feed, "seed_closed_candles", None)
+        recent = getattr(feed, "fetch_recent_ohlcv", None)
+        if not callable(seed) or not callable(recent):
+            stamp = now.isoformat()
+            for instrument in self.intraday_warmup_instruments:
+                self.intraday_warmup_status[instrument.symbol] = {
+                    "status": "unavailable", "bars": 0, "updatedAt": stamp
+                }
+            self._logger.warning("intraday_warmup_feed_unsupported")
+            return
+        for instrument in self.intraday_warmup_instruments:
+            if self._stop_requested:
+                return
+            stamp = now.isoformat()
+            try:
+                candles = tuple(provider.fetch(instrument, now))
+                seed(candles, now)
+                available = len(recent(instrument, now, count=60))
+            except Exception:  # noqa: BLE001 - external history must fail closed, not crash protection
+                self.intraday_warmup_status[instrument.symbol] = {
+                    "status": "failed", "bars": 0, "updatedAt": stamp
+                }
+                self._logger.warning("intraday_warmup_failed symbol=%s", instrument.symbol)
+                continue
+            status = "ready" if available >= 50 else "insufficient"
+            self.intraday_warmup_status[instrument.symbol] = {
+                "status": status, "bars": available, "updatedAt": stamp
+            }
+            if available < 50:
+                self._logger.warning(
+                    "intraday_warmup_insufficient symbol=%s bars=%d", instrument.symbol, available
+                )
+
     def _protect(self) -> None:
         # A dedicated thread keeps protection responsive even when synchronous provider
         # I/O blocks the analysis event loop. Ledger operations share one RLock.
@@ -264,7 +311,9 @@ class DaemonRunner:
             if self._recovery_service is not None and not self._stop_requested:
                 await self._recovery_service.start()
             if not self._stop_requested:
-                await asyncio.to_thread(self._warm_required_book_history, _as_utc(self.clock()))
+                current = _as_utc(self.clock())
+                await asyncio.to_thread(self._warm_required_book_history, current)
+                await asyncio.to_thread(self._warm_intraday_history, current)
             if self._stop_requested:
                 return
             cadence_task = asyncio.create_task(self._run_aligned_cadence())
@@ -446,6 +495,7 @@ def build_ghost_runner(
     headline_scorer: HeadlineSentimentScorer | None = None,
     event_calendar: EventCalendar | None = None,
     institutional_inputs: InstitutionalRuntimeInputs | None = None,
+    intraday_warmup_provider: Any | None = None,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -517,7 +567,9 @@ def build_ghost_runner(
         llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
         book_risk_history=book_history,
-        book_risk_required_symbols=(tuple(item.symbol for item in instruments)
+        # Tradable rows only. A watched instrument holds no position, so demanding a
+        # daily-close history for it would gate the book on risk that cannot exist.
+        book_risk_required_symbols=(tuple(item.symbol for item in instruments if item.tradable)
                                     if require_book_risk_gates else ()),
         # The operator's own calendar, holiday overrides included, so the close the
         # overnight limits measure against is the one the scheduler runs to.
@@ -563,7 +615,9 @@ def build_ghost_runner(
         )
     )
     if pilot_mode:
-        broker.configure_pilot(instruments, tenant_id)
+        # Broker-side pilot state is for instruments that can be ordered; a watched row
+        # has no identity to bind and no position to reconcile.
+        broker.configure_pilot(tuple(item for item in instruments if item.tradable), tenant_id)
     mapped = set(zerodha_symbol_by_token.values())
     if include_ibkr:
         mapped.update(_contract_symbol(contract) for contract in ib_contracts)
@@ -615,7 +669,11 @@ def build_ghost_runner(
         )
     if pilot_mode:
         daemon.bind_strategy_manifest(streams)
-    return DaemonRunner(daemon, streams, cadence=timedelta(minutes=10), log_path=log_path)
+    return DaemonRunner(
+        daemon, streams, cadence=timedelta(minutes=10), log_path=log_path,
+        intraday_warmup_provider=intraday_warmup_provider,
+        intraday_warmup_instruments=instruments,
+    )
 
 def _assert_ghost_mode() -> None:
     if os.getenv("TRADING_LIVE_MONEY_ACTIVE", "false").strip().lower() == "true":
@@ -763,6 +821,16 @@ def _env_daily_history_provider() -> DailyHistoryProvider | None:
         raise
 
 
+def _env_intraday_warmup_provider(credentials):
+    selected = os.getenv("PRAMANA_INTRADAY_WARMUP_PROVIDER", "none").strip().lower()
+    if selected in {"", "none"}:
+        return None
+    if selected != "kite":
+        raise RuntimeError("unsupported PRAMANA_INTRADAY_WARMUP_PROVIDER")
+    from quant_ai.marketdata.kite_history import KiteMinuteWarmupProvider
+    return KiteMinuteWarmupProvider(credentials.api_key, credentials.access_token)
+
+
 def _env_required_book_risk() -> bool:
     value = os.getenv("PRAMANA_REQUIRE_BOOK_RISK_GATES", "false").strip().lower()
     if value not in {"true", "false"}:
@@ -881,6 +949,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         event_calendar=event_calendar_from_env(),
         instrument=instrument,
         include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
+        intraday_warmup_provider=_env_intraday_warmup_provider(credentials),
     )
 
 

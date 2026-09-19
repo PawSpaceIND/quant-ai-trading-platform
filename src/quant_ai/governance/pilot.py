@@ -111,7 +111,18 @@ def validate_pilot_instruments(
         derivative_fee_schedule = None
         margin_source = None
 
+    if not instruments[0].tradable:
+        # The daemon takes instruments[0] as its primary: the name whose country charges the
+        # allocation cap and whose brief leads. An observation row cannot hold that seat.
+        raise ValueError("pilot_primary_instrument_must_be_tradable")
+
     for item in instruments:
+        if not item.tradable:
+            # A watched, untradeable row: an MCX metal whose evening session is the move that
+            # gaps its ETF at the next open. It needs no contract identity, fee schedule or
+            # margin source, because it can never become an order - instrument_identity_payload
+            # and InstrumentBoundOrderIntent both refuse a non-tradable instrument outright.
+            continue
         if _cash_pilot_instrument(item):
             continue
         if _mcx_pilot_instrument(item):

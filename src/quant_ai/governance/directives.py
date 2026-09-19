@@ -164,6 +164,10 @@ def _instrument_from_json(item: dict[str, Any]) -> Instrument:
         str(item.get("currency", "USD")).upper(),
         str(item.get("exchange", "")).upper(),
         metadata=metadata,
+        # Whether the operator may trade this row, or only watch it. A watched row is how an
+        # MCX metal enters the book on an account with no commodity segment: read for its
+        # evening session, structurally unable to become an order.
+        tradable=_watch_flag(item.get("tradable")),
         # Contract identity, for a watchlist entry that names a dated contract rather than
         # a share. Absent for every cash instrument, and `Instrument` refuses a derivative
         # that leaves them out - so a directives file cannot declare a half-named contract.
@@ -172,6 +176,23 @@ def _instrument_from_json(item: dict[str, Any]) -> Instrument:
         tick_size=_contract_decimal(item.get("tick_size")),
         underlying=(str(item["underlying"]).strip().upper() or None) if item.get("underlying") else None,
     )
+
+
+def _watch_flag(value: Any) -> bool:
+    """Whether this row may be traded, defaulting to yes when the operator says nothing.
+
+    Strict about the type deliberately. JSON ``"false"`` is a non-empty string and therefore
+    truthy, so a lenient read would turn an observation row into a tradable one - admitting
+    an instrument to the execution path the operator meant only to watch, which is the one
+    mistake this flag exists to make impossible.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        # ValueError, not TypeError, to match every sibling parser here: a malformed
+        # watchlist field is one kind of error to the caller, however it is malformed.
+        raise ValueError(f"watchlist_tradable_not_a_boolean:{value!r}")  # noqa: TRY004
+    return value
 
 
 def _contract_date(value: Any) -> date | None:
