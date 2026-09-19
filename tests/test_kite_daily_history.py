@@ -98,6 +98,27 @@ def test_default_yahoo_and_none_remain_unchanged():
         daily_history_from_env(source="not-a-source", environ={})
 
 
+def test_minute_warmup_uses_read_only_kite_history_and_returns_closed_bars():
+    rows = []
+    start = datetime(2026, 9, 16, 9, 15, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+    for index in range(60):
+        opened = start + timedelta(minutes=index)
+        rows.append([
+            opened.isoformat(), 100, 101, 99, 100 + index / 100, 1000 + index,
+        ])
+    client = Client(candles=encoded(rows))
+    provider = kh.KiteMinuteWarmupProvider("fixture", "dummy", client=client)
+
+    result = provider.fetch(INSTRUMENT, NOW)
+
+    assert len(result) == 60
+    assert result[0].timestamp == (start + timedelta(minutes=1)).astimezone(timezone.utc)
+    assert result[-1].timestamp == (start + timedelta(minutes=60)).astimezone(timezone.utc)
+    assert client.calls[0] == (kh.BASE + "/instruments/NSE", None)
+    assert client.calls[1][0] == kh.BASE + "/instruments/historical/101/minute"
+    assert client.calls[1][1]["continuous"] == client.calls[1][1]["oi"] == "0"
+
+
 def test_daily_candles_derive_tokens_and_preserve_decimal_and_source():
     client = Client(candles=b'{"status":"success","data":{"candles":[["2026-09-16T09:15:00+0530",100,105,95,100.123456789012345678901,1000]]}}')
     reader = feed(client)

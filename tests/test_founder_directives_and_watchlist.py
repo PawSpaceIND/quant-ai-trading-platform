@@ -244,3 +244,43 @@ def test_ghost_runner_builds_from_founder_directives(tmp_path, monkeypatch) -> N
     assert runtime.max_open_positions == 3
     assert AssetClass.CRYPTO in runtime.warden.blocked_asset_classes
     assert runtime.cio.atlas.founder_instructions.startswith("Preserve capital")
+
+
+def _watch_payload(**overrides):
+    row = {"symbol": "GOLD", "market": "INDIA", "asset_class": "METAL",
+           "currency": "INR", "exchange": "MCX"}
+    row.update(overrides)
+    return {"watchlist": [row]}
+
+
+def test_a_watchlist_row_can_be_marked_watch_only():
+    """How an MCX metal enters the book on an account with no commodity segment: read for
+    its evening session, and structurally unable to become an order."""
+    from quant_ai.governance.directives import FounderDirectives
+
+    watched = FounderDirectives.from_json(_watch_payload(tradable=False)).watchlist[0]
+
+    assert watched.tradable is False
+    # A listing, not a contract: no expiry or lot is required of it, because nothing can
+    # be ordered against it.
+    assert watched.expiry is None and watched.lot_size is None
+
+
+def test_a_watchlist_row_is_tradable_unless_the_operator_says_otherwise():
+    from quant_ai.governance.directives import FounderDirectives
+
+    row = {"symbol": "INFY", "market": "INDIA", "asset_class": "EQUITY",
+           "currency": "INR", "exchange": "NSE"}
+
+    assert FounderDirectives.from_json({"watchlist": [row]}).watchlist[0].tradable is True
+
+
+@pytest.mark.parametrize("value", ["false", "no", 0, "", "true"])
+def test_a_non_boolean_tradable_flag_is_refused_rather_than_coerced(value):
+    """JSON "false" is a non-empty string and therefore truthy. Coercing it would promote a
+    row the operator meant only to watch into one the engine may trade - silently, and in
+    the direction that costs money."""
+    from quant_ai.governance.directives import FounderDirectives
+
+    with pytest.raises(ValueError, match="watchlist_tradable_not_a_boolean"):
+        FounderDirectives.from_json(_watch_payload(tradable=value))

@@ -74,6 +74,22 @@ IMPLAUSIBLE_FACTOR = Decimal(1000)
 #: reported as an unexplained corporate action, and each carrying no such information.
 MAX_CONSECUTIVE_SESSION_DAYS = 7
 
+#: Below this price the tick grid dominates the percentage and the gap detector stops
+#: meaning anything. NSE quotes in paise, so a security trading at 0.05 can only move to
+#: 0.10 - exactly +100% - and back. Measured on a real NSE archive, the ten largest
+#: "unexplained" breaks were all one stock at 0.05 oscillating between two adjacent ticks,
+#: each oscillation reported as a corporate action.
+#:
+#: The floor is a price, not a tick count, because a bhavcopy does not carry the tick size.
+#: At a rupee a one-paisa tick is 1%, far below any threshold worth detecting; beneath that
+#: the grid is coarse enough to manufacture breaks on its own.
+#:
+#: Only the gap detector is suppressed. The exchange's own restated previous close still
+#: applies at any price, because it compares two stated numbers rather than judging a
+#: magnitude - so a genuine action on a sub-rupee security is still recovered when the
+#: venue signals it.
+MINIMUM_GAP_PRICE = Decimal("1.00")
+
 
 @dataclass(frozen=True)
 class CorporateActionRecord:
@@ -140,6 +156,10 @@ class ReconciliationReport:
     records_matched: int
     verdict: str
     notes: tuple
+    #: Large moves on sub-rupee prices, where one tick is already bigger than the
+    #: threshold. Suppressed rather than reported, and counted so the suppression is
+    #: visible instead of being a filter nobody knows ran.
+    below_price_floor: int = 0
 
     @property
     def detected(self) -> int:
@@ -224,6 +244,7 @@ class ReconciliationReport:
             "self_adjustable": self.self_adjustable,
             "unsignalled_gaps": self.unsignalled_gaps,
             "by_detector": by_detector,
+            "below_price_floor": self.below_price_floor,
             "records_supplied": self.records_supplied,
             "records_matched": self.records_matched,
             "verdict": self.verdict,
@@ -245,8 +266,10 @@ def _discontinuities_for(
     *,
     tolerance: Decimal,
     gap_threshold: Decimal,
-) -> list:
+    minimum_gap_price: Decimal = MINIMUM_GAP_PRICE,
+) -> tuple:
     found: list = []
+    below_floor = 0
     for index in range(1, len(bars)):
         previous, current = bars[index - 1], bars[index]
         actual = previous.close
@@ -274,6 +297,9 @@ def _discontinuities_for(
                     detector="exchange-prevclose",
                 )
             )
+        elif consecutive and abs(move) >= gap_threshold and actual < minimum_gap_price:
+            # A move this large on a sub-rupee price is the tick grid, not an event.
+            below_floor += 1
         elif consecutive and abs(move) >= gap_threshold:
             # No restatement, but a move past every circuit limit. Either an action the
             # venue did not signal, or a data error. Both need a human before a study runs.
@@ -289,7 +315,7 @@ def _discontinuities_for(
                     detector="unexplained-gap",
                 )
             )
-    return found
+    return tuple(found), below_floor
 
 
 def reconcile(
@@ -312,14 +338,15 @@ def reconcile(
     discontinuities: list = []
     instruments = 0
     sessions = 0
+    below_floor = 0
     for history in histories:
         instruments += 1
         sessions += len(history.bars)
-        discontinuities.extend(
-            _discontinuities_for(
-                history.bars, tolerance=tolerance, gap_threshold=gap_threshold
-            )
+        found, skipped = _discontinuities_for(
+            history.bars, tolerance=tolerance, gap_threshold=gap_threshold
         )
+        discontinuities.extend(found)
+        below_floor += skipped
 
     matched: set = set()
     resolved: list = []
@@ -387,6 +414,12 @@ def reconcile(
                 "this archive."
             )
 
+    if below_floor:
+        notes.append(
+            f"{below_floor} large moves were suppressed on prices below "
+            f"{MINIMUM_GAP_PRICE}, where a single tick already exceeds the threshold and "
+            "the percentage says nothing about whether anything happened."
+        )
     if implausible:
         notes.append(
             f"{len(implausible)} discontinuities imply a factor above {IMPLAUSIBLE_FACTOR}, "
@@ -402,6 +435,7 @@ def reconcile(
         records_matched=len(matched),
         verdict=verdict,
         notes=tuple(notes),
+        below_price_floor=below_floor,
     )
 
 
