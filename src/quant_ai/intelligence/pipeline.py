@@ -370,18 +370,15 @@ class SwarmMarketAnalysisPipeline:
         common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
         common["sanctions_risk"] = max(Decimal(0), -geopolitical_sentiment / Decimal(2))
 
-        max_age = max(
-            item.age_seconds or 0
-            for item in (states.price, states.news, states.macro, states.fundamentals)
-        )
         requests = []
         for agent in self.agents:
             required = self._required_freshness(agent.agent_id, states)
+            required_age = self._required_freshness_age(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
             metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
-                self._analysis_request(instrument, now, metrics, max_age)
+                self._analysis_request(instrument, now, metrics, required_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
@@ -508,18 +505,15 @@ class SwarmMarketAnalysisPipeline:
             if market_tick.spread is not None:
                 common["live_bid_ask_spread"] = market_tick.spread
 
-        max_age = max(
-            item.age_seconds or 0
-            for item in (states.price, states.news, states.macro, states.fundamentals)
-        )
         requests = []
         for agent in self.agents:
             required = self._required_freshness(agent.agent_id, states)
+            required_age = self._required_freshness_age(agent.agent_id, states)
             metrics = dict(common)
             metrics["freshness_multiplier"] = required
             metrics["freshness_diagnostic"] = self._freshness_diagnostic(agent.agent_id, states)
             requests.append(
-                self._analysis_request(instrument, now, metrics, max_age)
+                self._analysis_request(instrument, now, metrics, required_age)
             )
         evidence = tuple(agent.analyze(request) for agent, request in zip(self.agents, requests))
         conflict = self._conflict_ratio(evidence)
@@ -658,6 +652,18 @@ class SwarmMarketAnalysisPipeline:
     def _required_freshness(cls, agent_id: str, states: PipelineFreshness) -> Decimal:
         sources = cls._freshness_sources(agent_id)
         return min(getattr(states, source).confidence_multiplier for source in sources)
+
+    @classmethod
+    def _required_freshness_age(cls, agent_id: str, states: PipelineFreshness) -> int:
+        """Age only the inputs this specialist actually consumes.
+
+        A slow-moving macro series must not make fresh price/news evidence appear stale
+        for unrelated specialists. Missing data is already represented by a zero
+        freshness multiplier and NEUTRAL stance; its age remains zero rather than being
+        fabricated.
+        """
+        sources = cls._freshness_sources(agent_id)
+        return max((getattr(states, source).age_seconds or 0) for source in sources)
 
     @classmethod
     def _freshness_diagnostic(cls, agent_id: str, states: PipelineFreshness) -> str:

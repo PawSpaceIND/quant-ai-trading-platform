@@ -71,6 +71,24 @@ def test_specialist_freshness_dependencies_match_inputs() -> None:
     assert "macro=MISSING" in SwarmMarketAnalysisPipeline._freshness_diagnostic("commodity-yield", states)
 
 
+def test_specialist_freshness_age_uses_only_its_declared_dependencies() -> None:
+    states = PipelineFreshness(
+        FreshnessResult(FreshnessState.FRESH, 10, 60, Decimal(1)),
+        FreshnessResult(FreshnessState.FRESH, 20, 1800, Decimal(1)),
+        FreshnessResult(FreshnessState.STALE, 259200, 14400, Decimal("0.10")),
+        FreshnessResult(FreshnessState.FRESH, 30, 86400, Decimal(1)),
+    )
+    assert SwarmMarketAnalysisPipeline._required_freshness_age(
+        "technical-quant-mas", states
+    ) == 10
+    assert SwarmMarketAnalysisPipeline._required_freshness_age(
+        "indian-equities", states
+    ) == 30
+    assert SwarmMarketAnalysisPipeline._required_freshness_age(
+        "commodity-yield", states
+    ) == 259200
+
+
 def test_indian_equities_is_silenced_when_its_actual_fundamentals_are_missing() -> None:
     states = PipelineFreshness(
         _freshness_result(FreshnessState.FRESH, "1"),
