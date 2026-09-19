@@ -319,11 +319,11 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
+        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
@@ -446,7 +446,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now)
+        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
         # Every headline is re-scored against this instrument before anything reads its
         # sentiment, so the specialists, the aggregate metrics and the consensus evidence
         # all see the same number and the same scorer label.
@@ -457,7 +457,7 @@ class SwarmMarketAnalysisPipeline:
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"}
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
@@ -828,7 +828,7 @@ class SwarmMarketAnalysisPipeline:
             "yield_change": change("US10Y"),
             "brent_change": change("BRENT"),
             "gold_change": change("GOLD"),
-            "dxy_change": change("DXY"),
+            "usd_broad_change": change("USD_BROAD"),
         }
 
     @staticmethod

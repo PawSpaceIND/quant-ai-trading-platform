@@ -56,6 +56,6 @@ class SandboxMacroIndicatorProvider:
             "INDIA10Y": Decimal("6.85"),
             "BRENT": Decimal(78),
             "GOLD": Decimal(2450),
-            "DXY": Decimal(103),
+            "USD_BROAD": Decimal(103),
         }
         return MacroSnapshot({key: values[key] for key in indicators if key in values}, now - timedelta(seconds=self.age_seconds))
