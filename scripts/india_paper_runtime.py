@@ -7,9 +7,12 @@ import signal
 import subprocess
 from dataclasses import asdict
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from quant_ai.execution.session import INDIA_EXCHANGE_SESSIONS
+from quant_ai.governance.directives import FounderDirectives
+from quant_ai.governance.exposure import assess_contract_exposure
 from quant_ai.operations.zerodha_session import is_expired, read_session
 
 CONFIG = Path.home() / ".config/pramana"
@@ -107,6 +110,29 @@ def configure():
     quotes = kite.quote([f"{code}:{symbol}" for code, symbol in instruments])
     mappings = {str(quotes[f"{code}:{symbol}"]["instrument_token"]): symbol
                 for code, symbol in instruments}
+    # A derivative is admitted on margin and lost on notional, and this is the first moment
+    # both numbers exist: the operator's capital and a live price. GOLDTEN's margin is
+    # fourteen thousand against a lakh and its contract controls one and a half times the
+    # whole account; a check that ran later, on margin, would wave that through.
+    mandate = FounderDirectives.from_json(directives)
+    venue = {symbol: code for code, symbol in instruments}
+    # Only the contracts the gate judges. A cash equity is sized per order rather than held
+    # in indivisible lots, so asking the quote for its price here would make the launcher
+    # depend on a field it has no use for.
+    prices = {
+        item.symbol: Decimal(str(quotes[f"{venue[item.symbol]}:{item.symbol}"]["last_price"]))
+        for item in mandate.watchlist
+        if item.tradable and item.is_dated_contract and item.symbol in venue
+    }
+    try:
+        exposures = assess_contract_exposure(
+            mandate.watchlist, prices, capital=mandate.starting_capital
+        )
+    except ValueError as error:
+        raise RuntimeError(f"Pilot universe refused: {error}") from error
+    for item in exposures:
+        print(f"contract exposure: {item.symbol} notional={item.notional} "
+              f"({item.fraction_of_book:.1%} of book)")
     # Optional real providers are taken from the process environment only; nothing is hardcoded.
     passthrough = {name: os.environ[name] for name in ("FRED_API_KEY", "PRAMANA_FUNDAMENTALS_PROVIDER")
                    if os.environ.get(name, "").strip()}
