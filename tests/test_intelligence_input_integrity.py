@@ -30,7 +30,7 @@ def provider(observations):
 
 def test_fred_mixed_age_cannot_refresh_an_older_indicator():
     item = provider({"DGS10": [{"date": "2026-09-18", "value": "4"}],
-                     "IRLTLT01INM156N": [{"date": "2026-08-01", "value": "6"}]})
+                     "INDIRLTLT01STM": [{"date": "2026-08-01", "value": "6"}]})
     result = item.fetch(("US10Y", "INDIA10Y"), NOW)
     assert result.indicators == {"US10Y": Decimal(4), "INDIA10Y": Decimal(6)}
     assert result.observed_at == datetime(2026, 9, 18, tzinfo=timezone.utc)
@@ -47,7 +47,7 @@ def test_fred_nonfinite_observation_refuses(value):
 
 def test_fred_future_observation_cannot_hide_behind_oldest_time():
     item = provider({"DGS10": [{"date": "2026-09-19", "value": "4"}],
-                     "IRLTLT01INM156N": [{"date": "2026-08-01", "value": "6"}]})
+                     "INDIRLTLT01STM": [{"date": "2026-08-01", "value": "6"}]})
     with pytest.raises(ValueError, match="fred_future_observation"):
         item.fetch(("US10Y", "INDIA10Y"), NOW)
 
@@ -255,9 +255,9 @@ def test_macro_changes_keep_latest_clock_when_oldest_series_does_not_move():
     pipeline._macro_current={}
     pipeline._macro_previous={}
     first=provider({"DGS10":[{"date":"2026-09-17","value":"4"}],
-                    "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+                    "INDIRLTLT01STM":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
     second=provider({"DGS10":[{"date":"2026-09-18","value":"5"}],
-                     "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+                     "INDIRLTLT01STM":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
     assert pipeline._macro_metrics(first)["yield_change"]==0
     assert pipeline._macro_metrics(second)["yield_change"]==Decimal("0.25")
 

@@ -164,3 +164,43 @@ def test_pipeline_populates_validated_data_cache(tmp_path) -> None:
     assert pipeline.cache.get("news:AAPL") is not None
     assert pipeline.cache.get("macro:core") is not None
     assert pipeline.cache.get("fundamentals:AAPL") is not None
+
+
+class PartialMacro:
+    """Returns a chosen subset of the five requested indicators."""
+
+    provider_id = "partial-macro"
+
+    def __init__(self, present: tuple[str, ...]) -> None:
+        self.present = present
+
+    def fetch(self, indicators, now):
+        from quant_ai.intelligence.providers import MacroSnapshot
+        values = {name: Decimal("4.5") for name in indicators if name in self.present}
+        return MacroSnapshot(values, now, oldest_observed_at=now)
+
+
+def run_with_macro(tmp_path, name, macro):
+    broker = PaperBrokerService(tmp_path / f"{name}.db", starting_capital=Decimal(100000),
+                                slippage_bps=Decimal(0))
+    pipeline = SwarmMarketAnalysisPipeline(
+        UsaSandboxMarketDataFeed(), SandboxNewsSentimentProvider(),
+        SandboxFundamentalDataProvider(), macro,
+        runtime=SwarmPaperTradingService(broker=broker),
+    )
+    return pipeline.run(instrument(), datetime.now(timezone.utc), plan(), portfolio(),
+                        quantity=5, country="USA", tenant_id=name)
+
+
+def test_macro_stays_available_without_the_retired_gold_series(tmp_path) -> None:
+    # FRED retired its spot gold series, so a live snapshot carries only the other four.
+    result = run_with_macro(tmp_path, "goldless",
+                            PartialMacro(("US10Y", "INDIA10Y", "BRENT", "USD_BROAD")))
+    assert result.freshness.macro.state is FreshnessState.FRESH
+
+
+def test_macro_is_missing_when_a_required_indicator_is_absent(tmp_path) -> None:
+    # Dropping GOLD must not turn the rule into "any subset will do".
+    result = run_with_macro(tmp_path, "nobrent",
+                            PartialMacro(("US10Y", "INDIA10Y", "USD_BROAD")))
+    assert result.freshness.macro.state is FreshnessState.MISSING

@@ -323,7 +323,10 @@ class SwarmMarketAnalysisPipeline:
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
+        # GOLD is still requested and still reaches gold_change, but it is not required:
+        # FRED retired its spot gold series with no replacement, so demanding it would
+        # mark macro MISSING forever and mute every agent that reads macro evidence.
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
@@ -457,7 +460,10 @@ class SwarmMarketAnalysisPipeline:
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
+        # GOLD is still requested and still reaches gold_change, but it is not required:
+        # FRED retired its spot gold series with no replacement, so demanding it would
+        # mark macro MISSING forever and mute every agent that reads macro evidence.
+        required_macro = {"US10Y", "INDIA10Y", "BRENT", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
