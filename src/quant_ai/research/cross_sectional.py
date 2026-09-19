@@ -354,6 +354,46 @@ def _eligible_at(
     return [(item, cut) for item, cut in out if cut >= lookback]
 
 
+def first_formable_month(
+    series: Sequence[Series],
+    universe: PointInTimeUniverse,
+    signal: CrossSectionalSignal,
+    calendar: Sequence[date],
+    cache: dict[Any, Any] | None = None,
+) -> int | None:
+    """The earliest month this signal could rank a book, or None if it never can."""
+    bounds = list(range(0, len(calendar), FORMATION_SESSIONS))
+    for month, index in enumerate(bounds[:-1]):
+        if len(_eligible_at(series, universe, calendar[index], signal.lookback, cache)) >= MINIMUM_NAMES:
+            return month
+    return None
+
+
+def common_start_month(
+    series: Sequence[Series],
+    universe: PointInTimeUniverse,
+    signals: Sequence[CrossSectionalSignal],
+    calendar: Sequence[date],
+    cache: dict[Any, Any] | None = None,
+) -> int:
+    """The first month every signal can form a book, so none is judged on its own window.
+
+    Long-term reversal needs five years of history before it ranks anything, so it began in
+    2020 while momentum began in 2016 - and the later window happened to be one where the
+    market itself did better, which showed up as a universe Sharpe of 0.37 against 0.21.
+    Comparing those two numbers was comparing two different decades. A signal that cannot
+    form a book at all is ignored here rather than pushing the floor to the end of the
+    archive; its own candidates will simply grade as too short.
+    """
+    starts = [
+        month for month in (
+            first_formable_month(series, universe, signal, calendar, cache)
+            for signal in signals
+        ) if month is not None
+    ]
+    return max(starts) if starts else 0
+
+
 def backtest_signal(
     series: Sequence[Series],
     universe: PointInTimeUniverse,
@@ -361,6 +401,7 @@ def backtest_signal(
     horizon: int,
     calendar: Sequence[date],
     cache: dict[Any, Any] | None = None,
+    start_month: int = 0,
 ) -> dict[str, Any]:
     """Overlapping tranches, measured as excess over the universe the names came from.
 
@@ -385,6 +426,8 @@ def backtest_signal(
     unpriceable = 0
 
     for month, index in enumerate(bounds[:-1]):
+        if month < start_month:
+            continue
         picks = _eligible_at(series, universe, calendar[index], signal.lookback, cache)
         ranked: list[tuple[float, Series, int]] = []
         for item, cut in picks:
@@ -420,7 +463,7 @@ def backtest_signal(
     dates: list[str] = []
     widths: list[int] = []
 
-    for month in range(1, len(bounds) - 1):
+    for month in range(max(1, start_month + 1), len(bounds) - 1):
         active = [selections[m] for m in range(max(0, month - tranches + 1), month + 1)
                   if m in selections]
         if not active:
@@ -464,6 +507,8 @@ def backtest_signal(
         "signal": signal.name,
         "rationale": signal.rationale,
         "horizon_sessions": horizon,
+        "start_month": start_month,
+        "formations": len(selections),
         "overlapping_tranches": tranches,
         "observations": len(excess),
         "returns": excess,
@@ -550,8 +595,13 @@ def run_cross_sectional_study(
     # One cache across the whole search: eligibility and friction depend on the month and the
     # name, never on which candidate is asking.
     shared: dict[Any, Any] = {}
+    # And one window. The second search compared a signal measured over 2020-2025 against one
+    # measured over 2016-2025 and called the first the winner; the universe's own Sharpe was
+    # 0.37 in the one and 0.21 in the other, which is most of the difference. Every candidate
+    # now starts the month the slowest of them can first form a book.
+    floor = common_start_month(series, universe, signals, calendar, shared)
     candidates = [
-        backtest_signal(series, universe, signal, horizon, calendar, shared)
+        backtest_signal(series, universe, signal, horizon, calendar, shared, floor)
         for signal in signals
         for horizon in horizons
     ]
@@ -608,6 +658,8 @@ def run_cross_sectional_study(
         "instruments_loaded": len(series),
         "instruments_skipped": skipped,
         "sessions": len(calendar),
+        "common_start_month": floor,
+        "common_start_date": calendar[min(floor * FORMATION_SESSIONS, len(calendar) - 1)].isoformat(),
         "trial_register": summary,
         "candidates": candidates,
         "best": None if best is None else f"{best['signal']}@{best['horizon_sessions']}",
