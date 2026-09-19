@@ -72,6 +72,7 @@ from quant_ai.marketdata.ticker_stream import (
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
+from quant_ai.operations.macro_probe import check_macro_provider
 from quant_ai.operations.zerodha_renewal import check_runtime_token
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.orders.oms import DurableOms
@@ -896,6 +897,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
     dispatcher = _env_notifications()
     credentials = check_runtime_token(dispatcher=dispatcher)
+    # Asked once, like the token: a macro provider that refuses is otherwise invisible
+    # until someone reads a journal row. This never blocks the boot - macro is optional -
+    # but a rejected key is a CRITICAL alert, because it silences three specialists.
+    check_macro_provider(dispatcher=dispatcher)
     ib_module = import_module("ib_async")
     ib = ib_module.IB()
     contracts = tuple(
