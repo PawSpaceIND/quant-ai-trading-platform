@@ -9,12 +9,12 @@ controls that exist today.
 | Input | Source in the ghost daemon | Status |
 |---|---|---|
 | Prices, candles, marks | Zerodha / IBKR websocket ticks → `LiveTickMarketDataFeed` | **Real**, any market the streams carry |
-| Protective stops / targets | Persisted on fill, swept at the top of every cadence tick against the live tick | **Real** (latency ≤ cadence, 10 min) |
+| Protective stops / targets | Persisted on fill, swept by the independent protection heartbeat against fresh live ticks | **Real paper protection** (1 s protection heartbeat; execution still depends on a fresh observed mark) |
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` through the production failover registry | Configured does not mean retrieved. Missing configuration or provider failure returns no headlines, never sandbox constants. |
-| Macro (US10Y, INDIA10Y, BRENT, GOLD, DXY aliases) | `FRED_API_KEY` and the declared FRED series map | Missing configuration or provider failure returns an empty snapshot. Returned series, dates, semantics and freshness still require qualification. |
+| Macro (US10Y, INDIA10Y, BRENT, GOLD, USD_BROAD) | `FRED_API_KEY` and the declared FRED series map | Missing configuration or provider failure returns an empty snapshot. `USD_BROAD` is the configured FRED broad-dollar index; it must not be described as ICE DXY. Returned series, dates, semantics and freshness still require qualification. |
 | Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
-| Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real |
+| Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real only when the XAI trace for the current cadence records `mode=llm`; malformed tool payloads fail closed. The prompt explicitly requires `rationale` as a string array and mandatory `xai_proof`. |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
 The production `build_ghost_runner_from_env()` path passes explicit failover wrappers
@@ -104,7 +104,10 @@ pramana resume                           # released on the next tick
 tail -f pramana-ghost.log                # JSON lines: ticks, exits, faults, proofs
 ```
 
-A halt freezes new risk only: protective exits keep running.
+A halt freezes new risk only: protective exits keep running. The protection heartbeat
+runs independently of the 10-minute AI analysis cadence inside the engine process. A
+process/host failure can still stop paper protection, which is why the independent host
+monitor remains a separate external gate.
 
 `resume` releases operator halts and nothing else. It removes the halt marker file and
 clears the persisted halt only when that halt came from the marker file. A halt the
@@ -218,27 +221,35 @@ the headlines that were not scored, with the reason recorded as the rationale
 per instrument, so a story is not re-scored every ten-minute tick; a keyword fallback is
 never cached, so the next tick retries once the budget or the provider recovers.
 
-AI spend: Anthropic calls are capped per UTC day on both paths. The daemon admits at
-most `PRAMANA_AI_DAILY_CALL_LIMIT` (500) consensus calls and
-`PRAMANA_AI_DAILY_TOKEN_LIMIT` (2,000,000) tokens, counted in `ai-budget.sqlite` next
-to the ledger (`PRAMANA_AI_BUDGET_DB`). Once either is reached the consensus degrades
-to NEUTRAL and the tick ends in PRESERVE_CAPITAL; the proof shows
-`Consensus Skipped: AI budget exhausted` with inference status `budget_exhausted`, and
-the log carries one `anthropic_consensus_budget_exhausted` warning per day. A budget
-file the daemon cannot read refuses the call the same way. Headline scoring counts
-against the same limits under its own `headline_sentiment` scope, so a heavy news day
-cannot quietly consume the consensus allowance and the two spends are readable apart. The dashboard admits
+AI spend: Anthropic calls are capped per UTC day on both the consensus and headline
+paths. The configured `PRAMANA_AI_DAILY_CALL_LIMIT` (500 by default) and
+`PRAMANA_AI_DAILY_TOKEN_LIMIT` (2,000,000 by default) apply to each named scope **and**
+to one account-wide aggregate ledger in `ai-budget.sqlite` (`PRAMANA_AI_BUDGET_DB`).
+Before provider I/O the runtime reserves a conservative request allowance against both
+the scope and aggregate headroom; valid provider usage reconciles that reservation.
+Timeouts or missing usage keep the reservation consumed for the UTC day. Once admission
+is refused the consensus degrades to NEUTRAL/PRESERVE_CAPITAL and the proof records
+`budget_exhausted`. These are local call/token safety counters, not a provider invoice or
+currency-cost guarantee. The dashboard admits
 `PRAMANA_CHAT_DAILY_LIMIT` (200) Atlas chat calls per day and answers 429 afterwards,
 with a `copilot.budget_exhausted` audit row; `GET /api/copilot` reports
 `dailyRemaining`. Counters reset at 00:00 UTC; a value of 0 or less disables that cap.
 
 ## What to watch (first 24–48h of session hours)
 
+**LLM validity** — do not treat an Anthropic key or a completed API call as proof that
+the model influenced the decision. The current-cadence XAI trace must record
+`mode=llm`; `llm_invalid_schema`, `output_truncated`, `budget_exhausted` or any
+fallback mode is a NO-GO for the Monday LLM evidence gate. The system prompt now states
+the required field shapes explicitly, while the strict parser remains fail-closed.
+
 **Data path** — a proof every 10 minutes in `pramana-proofs/`; `price=FRESH` in the
 provider status. `Missing Market Data` / `Stale Market Data` as the veto reason means
 the token→symbol map does not match the watchlist. Outside session hours the mode is
-`OFF_HOURS_MACRO_GEO_SWEEP`. `insufficient_price_history` on the technical agent is
-normal for the first 50 minutes after the stream connects.
+`OFF_HOURS_MACRO_GEO_SWEEP`. The India pilot warms the live bar cache from bounded
+read-only Kite one-minute history before the first AI cadence so the technical agent can
+start with the latest 60 closed trading bars. `insufficient_price_history` at startup is
+therefore a warmup/source finding, not an expected 50-minute startup phase.
 
 **Sizing and scope** — first fill notional ≈ 5% of equity; size moves with equity,
 never a constant. `position_already_open` (C2), `re_entry_cooldown_active`,
@@ -265,6 +276,27 @@ positions and cooldowns must survive; no duplicate fill on the next tick.
 
 **Proofs** — every trade row shows EXACT PROOF; every proof carries
 `founder_directives=…` when instructions are set.
+
+## Monday paper-pilot close policy
+
+The standalone India paper launcher reads exchange+symbol pairs directly from the founder directives.
+The shipped Monday directives remain the five-name NSE cash/ETF watchlist
+(INFY, TCS, RELIANCE, GOLDBEES, SILVERBEES), pass the ₹100,000 founder starting
+capital into the paper broker, enable required Kite daily/book-risk history and bounded
+Kite minute warmup, and arm both `PRAMANA_SESSION_FLATTEN_MINUTES=15` and
+`PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES=15`.
+
+Inside that final fifteen-minute regular-session window the independent protection
+heartbeat submits covered paper SELL exits for any remaining configured positions. This
+session flatten is deterministic and independent of an AI vote. It still requires a
+fresh observable mark; an unavailable/failed protective exit latches the existing
+`protective_exit_failed` halt rather than inventing a price. Generic runtimes remain
+unchanged unless the session-flatten environment setting is explicitly configured.
+
+After the close, verify that the paper position book is flat, every session-flatten fill
+has its evidence receipt, the ledger/cash/fees reconcile, and no new entry was admitted
+after the close window began. A source-level setting or green CI does not replace this
+real-session evidence.
 
 ## Daily routine and the decision record
 
