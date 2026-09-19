@@ -137,8 +137,8 @@
     {
       "id": "missing_is_unknown",
       "path": "scripts/inspect_watchlist_budget.py",
-      "old": "\"reservedLogicalCalls\": None,",
-      "new": "\"reservedLogicalCalls\": 0,",
+      "old": "\"dayUTC\": day, \"scope\": scope, \"rowPresent\": False,\n                \"reservedLogicalCalls\": None,",
+      "new": "\"dayUTC\": day, \"scope\": scope, \"rowPresent\": False,\n                \"reservedLogicalCalls\": 0,",
       "test": "tests/test_nse_watchlist_budget.py::test_missing_rows_are_unknown_not_zero"
     },
     {

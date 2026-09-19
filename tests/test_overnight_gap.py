@@ -40,7 +40,11 @@ from quant_ai.marketdata.gap import (
 )
 from quant_ai.notifications.trading import TradingAlertCode, TradingNotificationDispatcher
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
-from quant_ai.risk.overnight import OvernightExposureFirewall, OvernightRiskPolicy
+from quant_ai.risk.overnight import (
+    OvernightExposureFirewall,
+    OvernightRiskPolicy,
+    overnight_risk_from_env,
+)
 from quant_ai.risk.warden import RiskWarden
 
 EQUITY = Decimal(100000)
@@ -852,3 +856,23 @@ def test_an_unarmed_daemon_sweeps_a_gap_exactly_as_it_always_did(tmp_path, monke
     daemon_sweep(runner, "74", NEXT_MORNING + regular_session_length(GlobalVenue.INDIA))
     assert not daemon.kill_switch.engaged
     assert gap_alerts(daemon.notifications, "pilot") == ()
+
+
+def test_operator_can_align_closing_window_with_fifteen_minute_flatten(monkeypatch) -> None:
+    monkeypatch.setenv("PRAMANA_OVERNIGHT_GROSS_CAP", "0.25")
+    monkeypatch.setenv("PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES", "15")
+    firewall = overnight_risk_from_env(MarketCalendar())
+    assert firewall.policy.closing_window == timedelta(minutes=15)
+
+    # NSE close is 10:00 UTC. 09:44 is outside the 15-minute guard; 09:45 is inside.
+    before = datetime(2026, 9, 15, 9, 44, tzinfo=timezone.utc)
+    inside = datetime(2026, 9, 15, 9, 45, tzinfo=timezone.utc)
+    assert firewall.evaluate(entry(), snapshot(), before).approved
+    assert firewall.evaluate(entry(), snapshot(), inside).reason == "overnight_closing_window"
+
+
+def test_malformed_operator_closing_window_fails_closed(monkeypatch) -> None:
+    monkeypatch.setenv("PRAMANA_OVERNIGHT_GROSS_CAP", "0.25")
+    monkeypatch.setenv("PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES", "fifteen")
+    with pytest.raises(RuntimeError, match="PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES"):
+        overnight_risk_from_env(MarketCalendar())

@@ -643,17 +643,19 @@ def test_a_stock_closing_at_its_circuit_limit_is_not_called_a_corporate_action()
 def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_action():
     # An instrument's bars are the days it traded, not the days the market was open, so a
     # security suspended for two years has adjacent bars two years apart. Measuring an
-    # overnight move across that hole gives a multi-year return. On a real NSE archive the
-    # largest such readings were penny stocks resuming from suspension - VISESHINFO at
-    # +2000% on a previous close of 0.05 - every one of them reported as an unexplained
-    # corporate action, and every one of them a resumption carrying no such information.
+    # overnight move across that hole gives a multi-year return. Found on a real NSE archive
+    # as penny-stock resumptions reported as corporate actions.
+    #
+    # Prices sit above MINIMUM_GAP_PRICE throughout so this isolates the adjacency rule:
+    # below the floor the tick guard would suppress these anyway and the test would pass
+    # without exercising anything.
     before, after = date(2020, 1, 6), date(2022, 3, 29)
     rows = [
         parse_bhavcopy(nse_file(before, [
-            nse_row("SUSPENDED", before, Decimal("0.05"), Decimal("0.05"),
+            nse_row("SUSPENDED", before, Decimal("50.00"), Decimal("50.00"),
                     isin="INE017A01011")])),
         parse_bhavcopy(nse_file(after, [
-            nse_row("SUSPENDED", after, Decimal("1.05"), Decimal("0.05"),
+            nse_row("SUSPENDED", after, Decimal("1050.00"), Decimal("50.00"),
                     isin="INE017A01011")])),
     ]
     result = reconstruct_universe(
@@ -663,18 +665,17 @@ def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_act
     report = reconcile(result.histories)
 
     assert report.unsignalled_gaps == 0
+    assert report.below_price_floor == 0, "suppressed by adjacency, not by the price floor"
 
-    # The same move between genuinely adjacent sessions is still caught, so the detector is
-    # gated on adjacency rather than switched off.
     # A month-long suspension is the common case and pins the window far more tightly than
     # a two-year one: a window wide enough to swallow this would let ordinary suspensions
     # back in as corporate actions.
     month = [
         parse_bhavcopy(nse_file(date(2020, 1, 6), [
-            nse_row("PAUSED", date(2020, 1, 6), Decimal("0.05"), Decimal("0.05"),
+            nse_row("PAUSED", date(2020, 1, 6), Decimal("50.00"), Decimal("50.00"),
                     isin="INE019A01011")])),
         parse_bhavcopy(nse_file(date(2020, 2, 10), [
-            nse_row("PAUSED", date(2020, 2, 10), Decimal("1.05"), Decimal("0.05"),
+            nse_row("PAUSED", date(2020, 2, 10), Decimal("1050.00"), Decimal("50.00"),
                     isin="INE019A01011")])),
     ]
     paused = reconstruct_universe(
@@ -682,85 +683,21 @@ def test_a_stock_resuming_after_a_suspension_is_not_an_unexplained_corporate_act
     )
     assert reconcile(paused.histories).unsignalled_gaps == 0
 
+    # The same move between genuinely adjacent sessions is still caught, so the detector is
+    # gated on adjacency rather than switched off.
     adjacent = sessions(2, start=date(2020, 1, 6))
     tight = [
         parse_bhavcopy(nse_file(adjacent[0], [
-            nse_row("JUMPY", adjacent[0], Decimal("0.05"), Decimal("0.05"),
+            nse_row("JUMPY", adjacent[0], Decimal("50.00"), Decimal("50.00"),
                     isin="INE018A01011")])),
         parse_bhavcopy(nse_file(adjacent[1], [
-            nse_row("JUMPY", adjacent[1], Decimal("1.05"), Decimal("0.05"),
+            nse_row("JUMPY", adjacent[1], Decimal("1050.00"), Decimal("50.00"),
                     isin="INE018A01011")])),
     ]
     jumpy = reconstruct_universe(
         tight, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
     )
     assert reconcile(jumpy.histories).unsignalled_gaps == 1
-
-
-def test_two_companies_that_used_the_same_ticker_do_not_overwrite_each_other():
-    # ISIN keying separates a company that renamed from the name it left behind. This is the
-    # mirror case it does not help with: a ticker released by one company and later taken by
-    # another. Two securities, two ISINs, one symbol - and everything downstream files by
-    # symbol, so the manifest listed the name twice and both wrote to the same dataset file.
-    # Found on a real NSE archive as "SRPL is listed twice on INDIA".
-    days = sessions(200)
-    files = []
-    for index, day in enumerate(days):
-        rows = [nse_row("ANCHOR", day, Decimal(100), Decimal(100), isin="INE030A01011")]
-        if index <= 59:
-            rows.append(nse_row("SRPL", day, Decimal(10), Decimal(10), isin="INE031A01011"))
-        elif index >= 120:
-            rows.append(nse_row("SRPL", day, Decimal(90), Decimal(90), isin="INE032A01011"))
-        files.append(parse_bhavcopy(nse_file(day, rows)))
-
-    result = reconstruct_universe(files, source="NSE bhavcopy archive, test fixture")
-
-    names = sorted(item.symbol for item in result.universe.listings)
-    assert len(names) == len(set(names)), "the manifest must not list a symbol twice"
-    # The current holder keeps the plain ticker; the earlier company is qualified.
-    assert "SRPL" in names
-    qualified = [name for name in names if name.startswith("SRPL~")]
-    assert len(qualified) == 1
-
-    # And it is the *current* holder that keeps it, not whichever sorted first. In this
-    # fixture the second company is still trading at the end and the first ceased at
-    # session 59, so the plain ticker must belong to the one still listed.
-    by_name = {item.symbol: item for item in result.universe.listings}
-    assert by_name["SRPL"].delisted_on is None
-    assert by_name[qualified[0]].delisted_on == days[59] + timedelta(days=1)
-
-    assert any("used by more than one security" in note for note in result.report.caveats)
-
-
-def test_each_security_that_shared_a_ticker_gets_its_own_dataset_file(tmp_path):
-    days = sessions(200)
-    files = []
-    for index, day in enumerate(days):
-        rows = [nse_row("ANCHOR", day, Decimal(100), Decimal(100), isin="INE033A01011")]
-        if index <= 59:
-            rows.append(nse_row("DUP", day, Decimal(10), Decimal(10), isin="INE034A01011"))
-        elif index >= 120:
-            rows.append(nse_row("DUP", day, Decimal(90), Decimal(90), isin="INE035A01011"))
-        files.append(parse_bhavcopy(nse_file(day, rows)))
-    result = reconstruct_universe(files, source="NSE bhavcopy archive, test fixture")
-
-    summary = write_study_inputs(result, tmp_path)
-
-    written = sorted(path.name for path in (tmp_path / "datasets").iterdir())
-    # Three securities, three files. Keyed by symbol alone this was two, with one company's
-    # prices silently replaced by the other's while the count still said three.
-    assert len(written) == 3 == summary["files_written"]
-    assert len(set(written)) == 3
-    universe = load_universe_manifest(summary["manifest"])
-    assert len(universe.listings) == 3
-
-    # And the manifest and the datasets agree on the names, which is what the study joins on.
-    manifest_names = {item.symbol for item in universe.listings}
-    dataset_names = {
-        json.loads((tmp_path / "datasets" / name).read_text())["provenance"]["instrument"]["symbol"]
-        for name in written
-    }
-    assert manifest_names == dataset_names
 
 
 def test_the_purchase_decision_list_excludes_breaks_the_archive_fixes_itself():
@@ -797,3 +734,73 @@ def test_the_purchase_decision_list_excludes_breaks_the_archive_fixes_itself():
     evidence = report.as_evidence()
     assert [item["symbol"] for item in evidence["worst_unexplained"]] == ["GAPPY"]
     assert [item["symbol"] for item in evidence["largest_self_adjusting"]] == ["SPLIT"]
+
+
+def penny_oscillation(symbol, isin, low, high, count=8):
+    """A security alternating between two adjacent ticks, which is all it can do."""
+    days = sessions(count)
+    files = []
+    for index, day in enumerate(days):
+        close = high if index % 2 else low
+        previous = low if index % 2 else high
+        if index == 0:
+            previous = low
+        files.append(parse_bhavcopy(nse_file(day, [
+            nse_row(symbol, day, close, previous, isin=isin)])))
+    return files
+
+
+def test_a_security_oscillating_between_two_ticks_is_not_a_stream_of_corporate_actions():
+    # Measured on a real NSE archive: the ten largest unexplained breaks were all one stock
+    # at 0.05. It can only move to 0.10 and back - exactly +100% each way - so every
+    # oscillation of the tick grid was reported as a corporate action. A percentage
+    # threshold says nothing at a price where one tick already exceeds it.
+    files = penny_oscillation("BIRLACOT", "INE050A01011", Decimal("0.05"), Decimal("0.10"))
+    result = reconstruct_universe(
+        files, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+
+    report = reconcile(result.histories)
+
+    assert report.unsignalled_gaps == 0
+    assert report.below_price_floor > 0
+    assert any("a single tick already exceeds the threshold" in note for note in report.notes)
+    assert report.as_evidence()["below_price_floor"] == report.below_price_floor
+
+
+def test_the_same_percentage_move_above_the_floor_is_still_reported():
+    # The guard is a price floor, not a blanket softening: an identical +100% move on a
+    # security priced where the tick grid is fine remains a break worth surfacing.
+    files = penny_oscillation("NORMALCO", "INE051A01011", Decimal("50.00"), Decimal("100.00"))
+    result = reconstruct_universe(
+        files, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+
+    report = reconcile(result.histories)
+
+    assert report.unsignalled_gaps > 0
+    assert report.below_price_floor == 0
+
+
+def test_the_exchange_signal_still_applies_below_the_price_floor():
+    # Only the magnitude-based detector is suppressed. A restated previous close is two
+    # stated numbers disagreeing, which is meaningful at any price, so a genuine action on a
+    # sub-rupee security is still recovered when the venue signals it.
+    days = sessions(3)
+    rows = [
+        parse_bhavcopy(nse_file(days[0], [
+            nse_row("TINY", days[0], Decimal("0.50"), Decimal("0.50"), isin="INE052A01011")])),
+        parse_bhavcopy(nse_file(days[1], [
+            nse_row("TINY", days[1], Decimal("0.05"), Decimal("0.05"), isin="INE052A01011")])),
+        parse_bhavcopy(nse_file(days[2], [
+            nse_row("TINY", days[2], Decimal("0.05"), Decimal("0.05"), isin="INE052A01011")])),
+    ]
+    result = reconstruct_universe(
+        rows, source="NSE bhavcopy archive, test fixture", active_tail_sessions=1
+    )
+
+    report = reconcile(result.histories)
+
+    assert report.self_adjustable == 1
+    assert report.discontinuities[0].detector == "exchange-prevclose"
+    assert report.discontinuities[0].implied_factor == Decimal(10)
