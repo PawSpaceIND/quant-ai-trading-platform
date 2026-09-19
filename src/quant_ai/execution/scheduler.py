@@ -47,6 +47,8 @@ class AutonomousCadenceScheduler:
         state = self.calendar.state(instrument.market, now, exchange=instrument.exchange)
         self.last_run_at = now
         self.last_result = None
+        if not instrument.tradable:
+            return self._observation_brief(instrument, now, state)
         if state != MarketState.REGULAR_HOURS:
             return self._off_hours_brief(instrument, now, state)
         result = self.pipeline.run(
@@ -77,6 +79,8 @@ class AutonomousCadenceScheduler:
         state = self.calendar.state(instrument.market, now, exchange=instrument.exchange)
         self.last_run_at = now
         self.last_result = None
+        if not instrument.tradable:
+            return self._observation_brief(instrument, now, state)
         if state != MarketState.REGULAR_HOURS:
             return self._off_hours_brief(instrument, now, state)
         result = await self.pipeline.run_async(
@@ -86,12 +90,39 @@ class AutonomousCadenceScheduler:
         self.last_result = result
         return self._market_brief(instrument, now, state, result)
 
+    def _observation_brief(
+        self, instrument: Instrument, now: datetime, state: MarketState
+    ) -> FounderExecutionBrief:
+        """What a watched, untradeable instrument is doing - no proposal, no order, no capital.
+
+        An MCX metal is live for eight hours after the cash market shuts, and that evening
+        session is where the move that gaps its ETF at the next open happens. Reading it needs
+        none of the execution path and must not enter it, so the check sits ahead of the
+        session branch: a ``tradable=False`` row never reaches the pipeline in any state. The
+        prohibition is structural rather than conventional - ``instrument_identity_payload``
+        and ``InstrumentBoundOrderIntent`` both refuse a non-tradable instrument outright.
+        """
+        candles = self.pipeline.market_feed.fetch_ohlcv(
+            instrument, now - timedelta(minutes=60), now, "1m"
+        )
+        last = candles[-1].close if candles else None
+        return FounderExecutionBrief(
+            now,
+            state,
+            instrument.symbol,
+            "OBSERVATION_ONLY",
+            (f"last_price={last}" if last is not None else "last_price=unavailable",),
+            "observation_only_instrument_not_tradable",
+            (),
+            (f"{instrument.exchange}_session={state.value}", f"bars={len(candles)}"),
+        )
+
     def _off_hours_brief(
         self, instrument: Instrument, now: datetime, state: MarketState
     ) -> FounderExecutionBrief:
         provider_status: list[str] = []
         macro = self.pipeline.macro.fetch(
-            ("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY"), now
+            ("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now
         )
         news = self.pipeline.news.fetch("GEOPOLITICAL", now)
         provider_status.append(f"macro_indicators={len(macro.indicators)}")

@@ -6,11 +6,12 @@ import os
 import signal
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, DecimalException
 from pathlib import Path
 from time import monotonic
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from quant_ai.audit.journal import InMemoryAuditJournal
 from quant_ai.brokers.adapter import BrokerPosition
@@ -109,6 +110,13 @@ class AutonomousTradingDaemon:
             os.getenv("PRAMANA_UNPROTECTED_HALT_SECONDS", "120") or 120
         )
         self._unprotected_since: dict[str, datetime] = {}
+        raw_flatten = os.getenv("PRAMANA_SESSION_FLATTEN_MINUTES", "0").strip() or "0"
+        try:
+            self.session_flatten_minutes = int(raw_flatten)
+        except ValueError as error:
+            raise ValueError("invalid_session_flatten_minutes") from error
+        if not 0 <= self.session_flatten_minutes <= 120:
+            raise ValueError("invalid_session_flatten_minutes")
         self.reconciliation = None
         self.protection_coverage = None
         self.trade_evidence = None
@@ -208,7 +216,9 @@ class AutonomousTradingDaemon:
             if self.telemetry is not None:
                 self.check_protection_coverage(timestamp)
             try:
-                self.protective_exits = self.sweep_protective_exits(timestamp)
+                exits = list(self.sweep_protective_exits(timestamp))
+                exits.extend(self._flatten_session_positions(timestamp))
+                self.protective_exits = tuple(exits)
             except Exception:
                 # Durably halt before the runner reports/retries an unexpected failure.
                 self.engage_kill_switch("protective_exit_failed")
@@ -237,6 +247,35 @@ class AutonomousTradingDaemon:
                 elif opening > 0 and -metrics.daily_total_pnl / opening >= daily_limit:
                     self.engage_kill_switch("portfolio_daily_loss_limit")
                 self.telemetry.publish(timestamp)
+
+    def _flatten_session_positions(self, now: datetime) -> tuple[ProtectiveExit, ...]:
+        """Flatten positions inside the configured pre-close window.
+
+        Disabled by default. The India paper launcher arms it explicitly so a demo day
+        ends flat. The check is exchange-specific and runs on the independent protection
+        heartbeat, so it does not wait for an AI cadence tick.
+        """
+        if self.session_flatten_minutes <= 0:
+            return ()
+        due: set[str] = set()
+        for instrument in self.instruments:
+            if self.scheduler.calendar.state(
+                instrument.market, now, exchange=instrument.exchange
+            ) != MarketState.REGULAR_HOURS:
+                continue
+            session = self.scheduler.calendar.session(
+                instrument.market, exchange=instrument.exchange
+            )
+            zone = ZoneInfo(session.timezone)
+            local = now.astimezone(zone)
+            regular_close, _ = session.closes_on(local.date())
+            close_at = datetime.combine(local.date(), regular_close, tzinfo=zone)
+            remaining = close_at - local
+            if timedelta(0) <= remaining <= timedelta(minutes=self.session_flatten_minutes):
+                due.add(instrument.symbol)
+        if not due:
+            return ()
+        return self.exit_engine.flatten_session(now, symbols=due)
 
     def bind_strategy_manifest(self, streams=(), **options) -> None:
         from quant_ai.governance.runtime_manifest import RuntimeManifest

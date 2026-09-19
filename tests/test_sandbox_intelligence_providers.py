@@ -25,6 +25,6 @@ def test_sandbox_fundamentals_cover_india_and_us() -> None:
 
 def test_sandbox_macro_has_required_indicators() -> None:
     now = datetime.now(timezone.utc)
-    keys = ("US10Y", "INDIA10Y", "BRENT", "GOLD", "DXY")
+    keys = ("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD")
     snapshot = SandboxMacroIndicatorProvider().fetch(keys, now)
     assert set(snapshot.indicators) == set(keys)

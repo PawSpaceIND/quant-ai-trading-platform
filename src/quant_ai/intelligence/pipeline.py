@@ -251,6 +251,15 @@ class SwarmMarketAnalysisPipeline:
             return InstrumentBoundAnalysisRequest(**vars(request), instrument=instrument)
         return request
 
+    def _minute_candles(self, instrument: Instrument, now: datetime) -> tuple[Candle, ...]:
+        """Use the latest 60 closed trading bars when the live feed has a warm cache."""
+        recent = getattr(self.market_feed, "fetch_recent_ohlcv", None)
+        if callable(recent):
+            return tuple(recent(instrument, now, count=60))
+        return self.market_feed.fetch_ohlcv(
+            instrument, now - timedelta(minutes=60), now, "1m"
+        )
+
     def _resolve_quantity(
         self,
         requested: int | None,
@@ -306,9 +315,7 @@ class SwarmMarketAnalysisPipeline:
         country_exposure: dict[str, Decimal] | None = None,
         reference_price_override: Decimal | None = None,
     ) -> MarketAnalysisResult:
-        candles = self.market_feed.fetch_ohlcv(
-            instrument, now - timedelta(minutes=60), now, "1m"
-        )
+        candles = self._minute_candles(instrument, now)
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
@@ -432,9 +439,7 @@ class SwarmMarketAnalysisPipeline:
         tenant_id: str = "default",
         country_exposure: dict[str, Decimal] | None = None,
     ) -> MarketAnalysisResult:
-        candles = self.market_feed.fetch_ohlcv(
-            instrument, now - timedelta(minutes=60), now, "1m"
-        )
+        candles = self._minute_candles(instrument, now)
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)

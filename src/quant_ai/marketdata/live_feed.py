@@ -111,6 +111,41 @@ class TickBarAggregator:
             forming.close = tick.ltp
             forming.volume += delta
 
+    def seed_candles(self, candles: tuple[Candle, ...], now: datetime) -> None:
+        """Seed already-closed provider candles without fabricating websocket ticks."""
+        current = _utc(now)
+        grouped: dict[str, dict[datetime, _Bar]] = {}
+        for candle in candles:
+            end = _utc(candle.timestamp)
+            if end > current:
+                raise ValueError("future_warmup_candle")
+            symbol = candle.instrument.symbol
+            grouped.setdefault(symbol, {})[end] = _Bar(
+                end - self.bar_length, end, candle.open, candle.high,
+                candle.low, candle.close, candle.volume,
+            )
+        with self._lock:
+            for symbol, seeded in grouped.items():
+                existing = {bar.end: bar for bar in self._closed.get(symbol, ())}
+                existing.update(seeded)
+                ordered = [existing[key] for key in sorted(existing)]
+                self._closed[symbol] = deque(ordered[-self.max_bars :], maxlen=self.max_bars)
+                if ordered:
+                    self._sealed_until[symbol] = max(
+                        self._sealed_until.get(symbol, ordered[-1].end), ordered[-1].end
+                    )
+
+    def recent_closed_bars(
+        self, symbol: str, end: datetime, count: int = 60
+    ) -> tuple[_Bar, ...]:
+        if count < 1:
+            raise ValueError("count must be positive")
+        current = _utc(end)
+        with self._lock:
+            self._roll(symbol, current)
+            series = self._closed.get(symbol, ())
+            return tuple(bar for bar in series if bar.end <= current)[-count:]
+
     def closed_bars(
         self, symbol: str, start: datetime, end: datetime, now: datetime | None = None
     ) -> tuple[_Bar, ...]:
@@ -170,6 +205,18 @@ class LiveTickMarketDataFeed(MarketDataFeed):
         self.aggregator = aggregator or TickBarAggregator(clock=lambda: self.clock())
         self.max_tick_age = max_tick_age
         buffer.subscribe(self.aggregator.ingest)
+
+    def seed_closed_candles(self, candles: tuple[Candle, ...], now: datetime) -> None:
+        self.aggregator.seed_candles(candles, now)
+
+    def fetch_recent_ohlcv(
+        self, instrument: Instrument, end: datetime, *, count: int = 60
+    ) -> tuple[Candle, ...]:
+        bars = self.aggregator.recent_closed_bars(instrument.symbol, end, count)
+        return tuple(
+            Candle(instrument, bar.end, bar.open, bar.high, bar.low, bar.close, bar.volume)
+            for bar in bars
+        )
 
     def fetch_ohlcv(
         self,

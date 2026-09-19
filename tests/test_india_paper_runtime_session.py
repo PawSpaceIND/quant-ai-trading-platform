@@ -85,6 +85,23 @@ def test_fresh_session_configures_and_passes_provider_env_through(runtime, monke
     assert os.environ["TRADING_LIVE_MONEY_ACTIVE"] == "false"
     assert os.environ["FRED_API_KEY"] == "fred-key"
     assert os.environ["PRAMANA_FUNDAMENTALS_PROVIDER"] == "example-provider"
+    assert os.environ["PRAMANA_DAILY_HISTORY_PROVIDER"] == "kite"
+    assert os.environ["PRAMANA_INTRADAY_WARMUP_PROVIDER"] == "kite"
+    assert os.environ["PRAMANA_BOOK_RISK_HISTORY"] == "daily"
+    assert os.environ["PRAMANA_REQUIRE_BOOK_RISK_GATES"] == "true"
+    assert os.environ["PRAMANA_SESSION_FLATTEN_MINUTES"] == "15"
+    assert os.environ["PRAMANA_OVERNIGHT_GROSS_CAP"] == "0.25"
+    assert os.environ["PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES"] == "15"
+    directives = json.loads(os.environ["PRAMANA_FOUNDER_DIRECTIVES_JSON"])
+    assert directives["starting_capital"] == 100000
+    assert directives["max_open_positions"] == 5
+    assert directives["allowed_asset_classes"] == ["EQUITY", "ETF"]
+    assert [item["symbol"] for item in directives["watchlist"]] == [
+        "INFY", "TCS", "RELIANCE", "GOLDBEES", "SILVERBEES"
+    ]
+    assert runtime.module.running_watchlist() == (
+        "GOLDBEES", "INFY", "RELIANCE", "SILVERBEES", "TCS"
+    )
     assert runtime.module.provider_status() == {
         "News": "Economic Times RSS; rule-based sentiment",
         "Macro": "FRED configured (FRED_API_KEY present)",
