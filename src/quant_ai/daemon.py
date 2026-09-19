@@ -567,7 +567,9 @@ def build_ghost_runner(
         llm_client=llm_client,
         xai_logger=XAITraceLogger(xai_directory),
         book_risk_history=book_history,
-        book_risk_required_symbols=(tuple(item.symbol for item in instruments)
+        # Tradable rows only. A watched instrument holds no position, so demanding a
+        # daily-close history for it would gate the book on risk that cannot exist.
+        book_risk_required_symbols=(tuple(item.symbol for item in instruments if item.tradable)
                                     if require_book_risk_gates else ()),
         # The operator's own calendar, holiday overrides included, so the close the
         # overnight limits measure against is the one the scheduler runs to.
@@ -613,7 +615,9 @@ def build_ghost_runner(
         )
     )
     if pilot_mode:
-        broker.configure_pilot(instruments, tenant_id)
+        # Broker-side pilot state is for instruments that can be ordered; a watched row
+        # has no identity to bind and no position to reconcile.
+        broker.configure_pilot(tuple(item for item in instruments if item.tradable), tenant_id)
     mapped = set(zerodha_symbol_by_token.values())
     if include_ibkr:
         mapped.update(_contract_symbol(contract) for contract in ib_contracts)
