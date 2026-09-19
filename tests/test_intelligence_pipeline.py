@@ -204,3 +204,55 @@ def test_macro_is_missing_when_a_required_indicator_is_absent(tmp_path) -> None:
     result = run_with_macro(tmp_path, "nobrent",
                             PartialMacro(("US10Y", "INDIA10Y", "USD_BROAD")))
     assert result.freshness.macro.state is FreshnessState.MISSING
+
+
+def test_macro_published_days_late_still_counts_as_fresh() -> None:
+    # FRED's daily series land days late; a ten-day-old broad dollar reading is the
+    # newest that exists mid-week, and must not be penalised as if it were a stale tick.
+    now = datetime.now(timezone.utc)
+    result = FreshnessValidator().validate(
+        DataCategory.MACRO, now - timedelta(days=10), now
+    )
+    assert result.state is FreshnessState.FRESH
+    assert result.confidence_multiplier == Decimal(1)
+
+
+def test_macro_older_than_a_fortnight_is_still_penalised() -> None:
+    # The deadline is longer, not absent: a two-month-old reading is not a regime read.
+    now = datetime.now(timezone.utc)
+    result = FreshnessValidator().validate(
+        DataCategory.MACRO, now - timedelta(days=60), now
+    )
+    assert result.state is FreshnessState.STALE
+    assert result.confidence_multiplier < Decimal(1)
+
+
+def test_macro_specialist_keeps_its_confidence_on_a_days_late_snapshot(tmp_path) -> None:
+    # The whole point of the longer deadline: commodity-yield was pinned at the 0.10
+    # penalty floor on every real FRED snapshot, which muted it on every decision.
+    now = datetime.now(timezone.utc)
+    states = PipelineFreshness(
+        FreshnessValidator().validate(DataCategory.PRICE, now, now),
+        FreshnessValidator().validate(DataCategory.NEWS, now, now),
+        FreshnessValidator().validate(DataCategory.MACRO, now - timedelta(days=8), now),
+        FreshnessValidator().validate(DataCategory.FUNDAMENTAL, now, now),
+    )
+    assert SwarmMarketAnalysisPipeline._required_freshness("commodity-yield", states) == Decimal(1)
+
+
+def test_monthly_india_yield_is_not_requested_from_the_macro_provider(tmp_path) -> None:
+    # No specialist reads INDIA10Y, and the OECD series is monthly: requesting it only
+    # dragged the snapshot's oldest-observation clock two months back.
+    asked: list[tuple[str, ...]] = []
+
+    class RecordingMacro:
+        provider_id = "recording-macro"
+
+        def fetch(self, indicators, now):
+            from quant_ai.intelligence.providers import MacroSnapshot
+            asked.append(tuple(indicators))
+            return MacroSnapshot({name: Decimal("4.5") for name in indicators}, now,
+                                 oldest_observed_at=now)
+
+    run_with_macro(tmp_path, "recording", RecordingMacro())
+    assert asked and all("INDIA10Y" not in call for call in asked), asked

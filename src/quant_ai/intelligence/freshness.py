@@ -32,7 +32,13 @@ class FreshnessValidator:
     TTL: ClassVar[dict[DataCategory, int]] = {
         DataCategory.PRICE: 60,
         DataCategory.NEWS: 30 * 60,
-        DataCategory.MACRO: 4 * 60 * 60,
+        # Matched to how the source actually publishes, not to how fast a tick moves.
+        # FRED's daily series land days late - the H.10 broad dollar index is released
+        # weekly and is routinely ten days old mid-week - so a four-hour deadline marked
+        # every macro snapshot STALE at the 0.10 penalty floor and silenced the macro
+        # specialist permanently. These indicators describe a rate and commodity regime
+        # that turns over weeks; a fortnight is the honest shelf life for that reading.
+        DataCategory.MACRO: 14 * 24 * 60 * 60,
         DataCategory.FUNDAMENTAL: 24 * 60 * 60,
     }
 

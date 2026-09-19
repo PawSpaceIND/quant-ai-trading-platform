@@ -282,8 +282,11 @@ def test_legacy_macro_snapshot_keeps_its_existing_clock():
 
 
 def complete_mixed_macro():
-    return provider({series: [{'date': '2026-08-01' if name == 'INDIA10Y' else '2026-09-18',
-                              'value': '6' if name == 'INDIA10Y' else '4'}]
+    # BRENT carries the deliberately old observation. It must be an indicator the pipeline
+    # actually requests, or the oldest-clock property below is never exercised: INDIA10Y
+    # used to play this role and is no longer asked for.
+    return provider({series: [{'date': '2026-08-01' if name == 'BRENT' else '2026-09-18',
+                              'value': '6' if name == 'BRENT' else '4'}]
                      for name, series in FredMacroProvider.series.items()})
 
 

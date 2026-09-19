@@ -319,14 +319,17 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
+        macro = self.macro.fetch(("US10Y", "BRENT", "GOLD", "USD_BROAD"), now)
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
         # GOLD is still requested and still reaches gold_change, but it is not required:
         # FRED retired its spot gold series with no replacement, so demanding it would
         # mark macro MISSING forever and mute every agent that reads macro evidence.
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "USD_BROAD"}
+        # INDIA10Y is not requested at all. No specialist reads it, and the OECD series
+        # is monthly, so it only ever dragged the snapshot's oldest-observation clock
+        # two months back and made the whole reading STALE.
+        required_macro = {"US10Y", "BRENT", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
@@ -449,7 +452,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
+        macro = self.macro.fetch(("US10Y", "BRENT", "GOLD", "USD_BROAD"), now)
         # Every headline is re-scored against this instrument before anything reads its
         # sentiment, so the specialists, the aggregate metrics and the consensus evidence
         # all see the same number and the same scorer label.
@@ -463,7 +466,10 @@ class SwarmMarketAnalysisPipeline:
         # GOLD is still requested and still reaches gold_change, but it is not required:
         # FRED retired its spot gold series with no replacement, so demanding it would
         # mark macro MISSING forever and mute every agent that reads macro evidence.
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "USD_BROAD"}
+        # INDIA10Y is not requested at all. No specialist reads it, and the OECD series
+        # is monthly, so it only ever dragged the snapshot's oldest-observation clock
+        # two months back and made the whole reading STALE.
+        required_macro = {"US10Y", "BRENT", "USD_BROAD"}
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
