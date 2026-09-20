@@ -9,6 +9,11 @@ import os
 from datetime import datetime, timezone
 
 from quant_ai.intelligence.external.fred import FredMacroProvider
+from quant_ai.intelligence.external.india_macro import (
+    CompositeMacroProvider,
+    NseInstitutionalFlowsProvider,
+    YahooIndiaVixProvider,
+)
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
 from quant_ai.intelligence.failover import (
@@ -23,6 +28,14 @@ from quant_ai.intelligence.failover import (
 def _require(condition, reason):
     if not condition:
         raise ValueError("intelligence_inputs_" + reason)
+
+
+# The parts the macro composite may carry, by exact type, and the label each reports as.
+MACRO_PART_LABELS = {
+    FredMacroProvider: "fred",
+    YahooIndiaVixProvider: "yahoo_india_vix",
+    NseInstitutionalFlowsProvider: "nse_fii_dii",
+}
 
 
 def inspect_intelligence_configuration(*, clock=None):
@@ -40,7 +53,7 @@ def inspect_intelligence_configuration(*, clock=None):
         ("news", ProviderCategory.NEWS, FailoverNewsProvider, RssNewsSentimentAdapter, "rss"),
         ("fundamentals", ProviderCategory.FUNDAMENTALS, FailoverFundamentalProvider,
          YahooFundamentalsProvider, "yahoo_fundamentals"),
-        ("macro", ProviderCategory.MACRO, FailoverMacroProvider, FredMacroProvider, "fred"),
+        ("macro", ProviderCategory.MACRO, FailoverMacroProvider, CompositeMacroProvider, "composite"),
     )
     inputs = {}
     registry = None
@@ -58,6 +71,12 @@ def inspect_intelligence_configuration(*, clock=None):
             "data_availability": "not_probed",
             "freshness": "not_probed",
         }
+        if registered and adapter_type is CompositeMacroProvider:
+            parts = registered[0].parts
+            _require(type(parts) is tuple and len(parts) >= 1, "macro_parts")
+            _require(all(type(part) in MACRO_PART_LABELS for part in parts), "unexpected_macro_part")
+            _require(len({type(part) for part in parts}) == len(parts), "duplicate_macro_part")
+            inputs[name]["parts"] = [MACRO_PART_LABELS[type(part)] for part in parts]
     _require(set(registry._providers) <= {rule[1] for rule in rules}, "unexpected_category")
     return {
         "schema": "pramana.intelligence_configuration.v1",

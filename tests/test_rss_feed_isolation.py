@@ -205,7 +205,8 @@ def test_daemon_gives_news_and_macro_separate_clients(monkeypatch):
     monkeypatch.delenv("PRAMANA_NEWS_SYMBOL_ALIASES_JSON", raising=False)
     news, _, macro = _env_intelligence_providers()
     (rss,) = news.registry._providers[ProviderCategory.NEWS]
-    (fred,) = macro.registry._providers[ProviderCategory.MACRO]
+    (composite,) = macro.registry._providers[ProviderCategory.MACRO]
+    (fred,) = composite.parts  # macro is one composite adapter; FRED is its core part
     assert isinstance(rss, RssNewsSentimentAdapter) and isinstance(fred, FredMacroProvider)
     assert rss.feed_urls == (GOOD, "https://other.example/rss")
     assert rss.client is not fred.client

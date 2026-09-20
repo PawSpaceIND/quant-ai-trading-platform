@@ -41,6 +41,22 @@ class FundamentalSnapshot:
 # metric ever read it, and as a monthly series it aged the whole snapshot.
 MACRO_CORE_INDICATORS: tuple[str, ...] = ("US10Y", "BRENT", "GOLD", "USD_BROAD")
 
+# India-specific context the macro snapshot carries on top of the core set. None of these is
+# required for macro freshness: the core set decides whether macro is present at all, and a
+# missing India series simply leaves its metric out, so a specialist can tell "not observed"
+# from a value. INDIA_VIX is NSE's 30-day implied volatility index and its previous close,
+# both from Yahoo's ^INDIAVIX daily bars. The flow figures are NSE's provisional daily net
+# purchases by foreign (FII/FPI) and domestic (DII) institutions in the cash market, in
+# rupees crore, published after the close for the same day.
+INDIA_MACRO_INDICATORS: tuple[str, ...] = (
+    "INDIA_VIX",
+    "INDIA_VIX_PREV_CLOSE",
+    "FII_NET_CRORE",
+    "DII_NET_CRORE",
+)
+# What the pipeline asks the macro provider for on every cycle.
+MACRO_INDICATORS: tuple[str, ...] = MACRO_CORE_INDICATORS + INDIA_MACRO_INDICATORS
+
 
 @dataclass(frozen=True)
 class MacroSnapshot:

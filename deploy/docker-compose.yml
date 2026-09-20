@@ -48,6 +48,10 @@ services:
       # out-of-bounds map stops the daemon at boot rather than attributing nothing.
       PRAMANA_NEWS_SYMBOL_ALIASES_JSON: ${PRAMANA_NEWS_SYMBOL_ALIASES_JSON:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
+      # India context beside FRED's core series: India VIX from Yahoo (^INDIAVIX daily bars)
+      # and NSE's provisional daily FII/DII net flows. Opt-in; "none" leaves each out.
+      PRAMANA_INDIA_VIX_PROVIDER: ${PRAMANA_INDIA_VIX_PROVIDER:-none}
+      PRAMANA_INDIA_FLOWS_PROVIDER: ${PRAMANA_INDIA_FLOWS_PROVIDER:-none}
       # Second candidate in the research comparison only. The engine never calls OpenAI:
       # `quant_ai.research` is offline by construction and touches no broker credential,
       # no ledger and no cadence. Optional - with it unset, `research_extensions compare`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -42,6 +43,21 @@ class InstrumentBoundAnalysisRequest(AgentAnalysisRequest):
 # sheet; a metal, a rupee pair or a crude contract has no P/E and must not be scored
 # as if it had a bad one.
 EQUITY_LIKE = frozenset({AssetClass.EQUITY, AssetClass.ETF, AssetClass.INDEX})
+
+# India VIX regime, from the index's own history since 2010: the median sits near 15, the
+# top quintile begins around 20, and readings above 25 belong to shocks (March 2020, the
+# June 2024 count). A stressed tape is a headwind for a new long in a single name; a calm
+# tape earns nothing, because calm is the normal state and this specialist's edge is the
+# balance sheet, not the regime. A same-day jump of 15% or more is fear arriving, whatever
+# the level it starts from.
+INDIA_VIX_ELEVATED = Decimal(20)
+INDIA_VIX_STRESSED = Decimal(25)
+INDIA_VIX_SPIKE = Decimal("0.15")
+# Foreign institutional net flow in the cash market, rupees crore per day. Ordinary days
+# run in the low thousands either way; 2,000 crore is a day the tape notices. Selling
+# weighs more than buying: foreign outflows have led every sharp Indian drawdown, while
+# inflows arrive into strength that the price already shows.
+FII_FLOW_NOTABLE_CRORE = Decimal(2000)
 
 
 class SwarmAgent(ABC):
@@ -178,7 +194,45 @@ class IndianEquitiesAgent(SwarmAgent):
         score += Decimal("0.25") if margin >= Decimal("0.15") else Decimal("-0.10")
         score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
         score += news * Decimal("0.30")
-        return self._evidence(request, score, Decimal("0.80"), "india_valuation_balance_sheet_margin_and_news")
+        rationale = "india_valuation_balance_sheet_margin_and_news"
+        if request.asset_class is AssetClass.EQUITY:
+            # The regime and flow terms read the Indian equity tape, so they apply to single
+            # names only: the metal ETFs in the same book move with gold and silver, which a
+            # stressed equity tape tends to lift. Both are optional inputs, present only when
+            # observed; nothing here treats an absent series as a calm one.
+            adjustment, notes = self._india_tape(request.metrics)
+            score += adjustment
+            rationale += notes
+        return self._evidence(request, score, Decimal("0.80"), rationale)
+
+    @staticmethod
+    def _india_tape(metrics: Mapping[str, Decimal]) -> tuple[Decimal, str]:
+        adjustment = Decimal(0)
+        notes = ""
+        vix = metrics.get("india_vix")
+        if vix is not None:
+            regime = "calm"
+            if vix >= INDIA_VIX_STRESSED:
+                adjustment -= Decimal("0.35")
+                regime = "stressed"
+            elif vix >= INDIA_VIX_ELEVATED:
+                adjustment -= Decimal("0.20")
+                regime = "elevated"
+            notes += f";india_vix={vix}:{regime}"
+            if metrics.get("india_vix_change", Decimal(0)) >= INDIA_VIX_SPIKE:
+                adjustment -= Decimal("0.15")
+                notes += ";india_vix_spike"
+        fii = metrics.get("fii_net_crore")
+        if fii is not None:
+            flow = "quiet"
+            if fii >= FII_FLOW_NOTABLE_CRORE:
+                adjustment += Decimal("0.10")
+                flow = "inflow"
+            elif fii <= -FII_FLOW_NOTABLE_CRORE:
+                adjustment -= Decimal("0.15")
+                flow = "outflow"
+            notes += f";fii_net_crore={fii}:{flow}"
+        return adjustment, notes
 
 
 class USEquitiesAgent(SwarmAgent):

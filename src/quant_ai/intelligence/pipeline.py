@@ -48,6 +48,7 @@ from quant_ai.intelligence.headline_sentiment import (
 )
 from quant_ai.intelligence.providers import (
     MACRO_CORE_INDICATORS,
+    MACRO_INDICATORS,
     FundamentalDataProvider,
     FundamentalSnapshot,
     MacroIndicatorProvider,
@@ -328,7 +329,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
+        macro = self.macro.fetch(MACRO_INDICATORS, now)
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
@@ -453,7 +454,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
+        macro = self.macro.fetch(MACRO_INDICATORS, now)
         # Every headline is re-scored against this instrument before anything reads its
         # sentiment, so the specialists, the aggregate metrics and the consensus evidence
         # all see the same number and the same scorer label.
@@ -877,20 +878,20 @@ class SwarmMarketAnalysisPipeline:
         return self._mean(recent)
 
     def _macro_metrics(self, snapshot: MacroSnapshot) -> dict[str, Decimal]:
-        if self._macro_current_at is None:
-            self._macro_current_at = snapshot.observed_at
-            self._macro_current = dict(snapshot.indicators)
-        elif snapshot.observed_at > self._macro_current_at:
-            self._macro_previous = self._macro_current
-            self._macro_current = dict(snapshot.indicators)
-            self._macro_current_at = snapshot.observed_at
-
         values = snapshot.indicators
-        previous = (
-            self._macro_previous
-            if snapshot.observed_at == self._macro_current_at
-            else {}
-        )
+        # Observation-over-observation changes are tracked on the core series alone, and a
+        # new observation is a change in their values, not in the snapshot's clock. The clock
+        # is stamped by whichever part is freshest, and India VIX moves every bar during the
+        # session; keyed on the clock, "previous" would mean ten minutes ago and every daily
+        # change would read zero.
+        core = {key: values[key] for key in MACRO_CORE_INDICATORS if key in values}
+        if core:
+            if self._macro_current_at is None:
+                self._macro_current, self._macro_current_at = core, snapshot.observed_at
+            elif core != self._macro_current and snapshot.observed_at >= self._macro_current_at:
+                self._macro_previous, self._macro_current = self._macro_current, core
+                self._macro_current_at = snapshot.observed_at
+        previous = self._macro_previous if core == self._macro_current else {}
 
         def change(key: str) -> Decimal:
             current = values.get(key, Decimal(0))
@@ -899,13 +900,25 @@ class SwarmMarketAnalysisPipeline:
                 return Decimal(0)
             return (current - prior) / prior
 
-        return {
+        metrics = {
             "us10y": values.get("US10Y", Decimal(0)),
             "yield_change": change("US10Y"),
             "brent_change": change("BRENT"),
             "gold_change": change("GOLD"),
             "usd_broad_change": change("USD_BROAD"),
         }
+        # India context is optional and never defaulted: an absent key tells the specialist
+        # the series was not observed, which a zero could not.
+        vix = values.get("INDIA_VIX")
+        if vix is not None:
+            metrics["india_vix"] = vix
+            previous_close = values.get("INDIA_VIX_PREV_CLOSE")
+            if previous_close is not None and previous_close > 0:
+                metrics["india_vix_change"] = (vix - previous_close) / previous_close
+        for indicator, metric in (("FII_NET_CRORE", "fii_net_crore"), ("DII_NET_CRORE", "dii_net_crore")):
+            if indicator in values:
+                metrics[metric] = values[indicator]
+        return metrics
 
     @staticmethod
     def _technical_metrics(closes: tuple[Decimal, ...]) -> dict[str, Decimal]:
