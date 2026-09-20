@@ -287,18 +287,25 @@ class LiquidityDeskAgent(SwarmAgent):
             # No two-sided live quote on this tick: the desk cannot judge, so it does not.
             return self._evidence(request, Decimal(0), Decimal(0), "liquidity_unobserved:no_live_quote")
         median_value = _metric(request, "median_minute_traded_value") or Decimal(0)
+        if median_value <= 0:
+            # Not one bar in the window carried volume. That is a feed that does not report
+            # volume, or a synthetic tape, far more often than a large cap that has not
+            # printed for an hour - and a desk cannot tell the two apart from here. Refusing
+            # on it would veto every tick of a volume-less feed; judging on it would invent
+            # a number. So the desk abstains and says what it could not see.
+            return self._evidence(
+                request, Decimal(0), Decimal(0), "liquidity_unobserved:no_volume_in_window"
+            )
         intended = _metric(request, "intended_position_notional") or Decimal(0)
         dead = _metric(request, "dead_tape_bars") or Decimal(0)
-        participation = intended / median_value if median_value > 0 else None
+        participation = intended / median_value
 
         breaches: list[str] = []
         if spread_bps > self.policy.max_spread_bps:
             breaches.append(f"spread_bps={_quantized(spread_bps)}>{self.policy.max_spread_bps}")
         if dead >= self.policy.dead_tape_bars:
             breaches.append(f"dead_tape_bars={dead}>={self.policy.dead_tape_bars}")
-        if participation is None:
-            breaches.append("no_traded_value_in_window")
-        elif participation > self.policy.max_participation:
+        if participation > self.policy.max_participation:
             breaches.append(
                 f"participation={_quantized(participation)}>{self.policy.max_participation}"
             )

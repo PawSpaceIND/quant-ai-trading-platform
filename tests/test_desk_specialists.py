@@ -95,7 +95,6 @@ def test_liquidity_desk_passes_a_tight_active_quote() -> None:
         ({"live_bid_ask_spread_bps": D("31")}, "spread_bps=31.0000>30"),
         ({"dead_tape_bars": D(5)}, "dead_tape_bars=5>=5"),
         ({"intended_position_notional": D("700000")}, "participation=0.2800>0.25"),
-        ({"median_minute_traded_value": D(0)}, "no_traded_value_in_window"),
     ],
 )
 def test_liquidity_desk_vetoes_and_names_the_breach(override: dict[str, Decimal], fragment: str) -> None:
@@ -104,6 +103,16 @@ def test_liquidity_desk_vetoes_and_names_the_breach(override: dict[str, Decimal]
     assert evidence.confidence == D("0.90")
     assert evidence.rationale[0].startswith("liquidity_veto:")
     assert fragment in evidence.rationale[0]
+
+
+def test_liquidity_desk_abstains_rather_than_vetoes_when_no_bar_carries_volume() -> None:
+    """A window with no volume at all is a feed that does not report it, not a dead stock.
+    Vetoing on it would hold every tick of such a feed; the desk abstains and names it."""
+    evidence = LiquidityDeskAgent().analyze(
+        request(**liquid(median_minute_traded_value=D(0), dead_tape_bars=D(30)))
+    )
+    assert evidence.stance is Stance.NEUTRAL and evidence.confidence == 0
+    assert evidence.rationale[0] == "liquidity_unobserved:no_volume_in_window"
 
 
 def test_liquidity_desk_collapses_to_silence_on_stale_price_data() -> None:
@@ -315,3 +324,22 @@ def test_a_full_cycle_records_both_desks_beside_the_five_specialists() -> None:
     # The book is empty and the plan allows trading: the risk desk passes, with numbers.
     assert by_agent["risk-desk"].stance is Stance.NEUTRAL
     assert by_agent["risk-desk"].rationale[0].startswith("risk_ok:daily_loss_used=0.0000")
+
+
+# --------------------------------------------------------------------------------------
+# Runtime manifest: the desks are vouched for, and their thresholds are part of the strategy
+# --------------------------------------------------------------------------------------
+
+def test_manifest_vouches_for_both_desks_and_fingerprints_liquidity_thresholds() -> None:
+    """The manifest refuses every entry while the roster holds a specialist it cannot
+    describe. Both desks must be described, and a changed liquidity threshold must change
+    the strategy hash, because it changes what the book is allowed to trade into."""
+    from quant_ai.governance import runtime_manifest
+    from quant_ai.governance.runtime_manifest import stable
+
+    source = __import__("inspect").getsource(runtime_manifest)
+    assert '"LiquidityDeskAgent"' in source and '"RiskDeskAgent"' in source
+    tight = stable(LiquidityDeskAgent().policy)
+    loose = stable(LiquidityDeskAgent(LiquidityDeskPolicy(max_spread_bps=D(60))).policy)
+    assert tight != loose
+    assert stable(RiskDeskAgent().domain) == stable(AgentDomain.RISK)

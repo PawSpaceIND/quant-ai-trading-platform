@@ -327,6 +327,11 @@ class RuntimeManifest:
             "IndianEquitiesAgent",
             "USEquitiesAgent",
             "TechnicalQuantAgent",
+            # The two desks are gates, not voters (AtlasPolicy.gate_domains). The liquidity
+            # desk carries thresholds, so its policy is part of the fingerprint below: a
+            # changed spread or participation limit is a changed strategy.
+            "LiquidityDeskAgent",
+            "RiskDeskAgent",
         }
         agents = []
         for agent in p.agents:
@@ -337,14 +342,16 @@ class RuntimeManifest:
             )
             if not supported:
                 issues.append(f"unsupported_specialist:{name}")
-            agents.append(
-                {
-                    "type": name,
-                    "agent_id": agent.agent_id,
-                    "domain": stable(agent.domain),
-                    "supported": supported,
-                }
-            )
+            entry = {
+                "type": name,
+                "agent_id": agent.agent_id,
+                "domain": stable(agent.domain),
+                "supported": supported,
+            }
+            policy = getattr(agent, "policy", None)
+            if policy is not None:
+                entry["policy"] = stable(policy)
+            agents.append(entry)
         if not self.streams:
             issues.append("market_stream_configuration_unbound")
         # Package metadata is cached with the source scan, not read from disk every heartbeat.
