@@ -1,0 +1,102 @@
+{
+  "starting_capital": 100000,
+  "risk_mode": "BALANCED",
+  "confidence": 0.8,
+  "annualized_volatility": 0.2,
+  "expected_edge": 0.02,
+  "allowed_markets": [
+    "INDIA"
+  ],
+  "allowed_asset_classes": [
+    "EQUITY",
+    "ETF"
+  ],
+  "max_open_positions": 5,
+  "watchlist": [
+    {
+      "symbol": "TRENT",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "BEL",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "BAJAJ-AUTO",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "INDIGO",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "NTPC",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "COALINDIA",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "SUNPHARMA",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "LT",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "EICHERMOT",
+      "market": "INDIA",
+      "asset_class": "EQUITY",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "GOLDBEES",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "currency": "INR",
+      "exchange": "NSE"
+    },
+    {
+      "symbol": "SILVERBEES",
+      "market": "INDIA",
+      "asset_class": "ETF",
+      "currency": "INR",
+      "exchange": "NSE"
+    }
+  ],
+  "instructions": "Preserve capital first. Take only liquid, large instruments. Never add risk after a daily loss; let protective exits work. Prefer trend-following entries with a defined stop over mean-reversion guesses. The two NSE metal ETFs are the risk-off destination: when the equity names are all being sold together, holding nothing is the first choice and the metal is the second."
+}
