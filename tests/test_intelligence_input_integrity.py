@@ -30,9 +30,9 @@ def provider(observations):
 
 def test_fred_mixed_age_cannot_refresh_an_older_indicator():
     item = provider({"DGS10": [{"date": "2026-09-18", "value": "4"}],
-                     "IRLTLT01INM156N": [{"date": "2026-08-01", "value": "6"}]})
-    result = item.fetch(("US10Y", "INDIA10Y"), NOW)
-    assert result.indicators == {"US10Y": Decimal(4), "INDIA10Y": Decimal(6)}
+                     "NASDAQQGLDI": [{"date": "2026-08-01", "value": "6"}]})
+    result = item.fetch(("US10Y", "GOLD"), NOW)
+    assert result.indicators == {"US10Y": Decimal(4), "GOLD": Decimal(6)}
     assert result.observed_at == datetime(2026, 9, 18, tzinfo=timezone.utc)
     assert result.freshness_observed_at == datetime(2026, 8, 1, tzinfo=timezone.utc)
     assert FreshnessValidator().validate(DataCategory.MACRO, result.freshness_observed_at, NOW).state == FreshnessState.STALE
@@ -47,9 +47,9 @@ def test_fred_nonfinite_observation_refuses(value):
 
 def test_fred_future_observation_cannot_hide_behind_oldest_time():
     item = provider({"DGS10": [{"date": "2026-09-19", "value": "4"}],
-                     "IRLTLT01INM156N": [{"date": "2026-08-01", "value": "6"}]})
+                     "NASDAQQGLDI": [{"date": "2026-08-01", "value": "6"}]})
     with pytest.raises(ValueError, match="fred_future_observation"):
-        item.fetch(("US10Y", "INDIA10Y"), NOW)
+        item.fetch(("US10Y", "GOLD"), NOW)
 
 
 def test_fred_clock_must_be_aware_before_transport():
@@ -86,7 +86,7 @@ def test_missing_production_inputs_are_empty_not_sandbox(clean_config):
     news, fundamentals, macro = _env_intelligence_providers()
     assert news.fetch("INFY", NOW) == ()
     assert fundamentals.fetch("INFY", NOW).metrics == {}
-    assert macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), NOW).indicators == {}
+    assert macro.fetch(("US10Y", "GOLD", "BRENT", "GOLD", "USD_BROAD"), NOW).indicators == {}
 
 
 @pytest.mark.parametrize("rss,fred,yahoo", [(a,b,c) for a in (False,True) for b in (False,True) for c in (False,True)])
@@ -255,9 +255,9 @@ def test_macro_changes_keep_latest_clock_when_oldest_series_does_not_move():
     pipeline._macro_current={}
     pipeline._macro_previous={}
     first=provider({"DGS10":[{"date":"2026-09-17","value":"4"}],
-                    "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+                    "NASDAQQGLDI":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","GOLD"),NOW)
     second=provider({"DGS10":[{"date":"2026-09-18","value":"5"}],
-                     "IRLTLT01INM156N":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","INDIA10Y"),NOW)
+                     "NASDAQQGLDI":[{"date":"2026-08-01","value":"6"}]}).fetch(("US10Y","GOLD"),NOW)
     assert pipeline._macro_metrics(first)["yield_change"]==0
     assert pipeline._macro_metrics(second)["yield_change"]==Decimal("0.25")
 
@@ -282,8 +282,8 @@ def test_legacy_macro_snapshot_keeps_its_existing_clock():
 
 
 def complete_mixed_macro():
-    return provider({series: [{'date': '2026-08-01' if name == 'INDIA10Y' else '2026-09-18',
-                              'value': '6' if name == 'INDIA10Y' else '4'}]
+    return provider({series: [{'date': '2026-08-01' if name == 'GOLD' else '2026-09-18',
+                              'value': '6' if name == 'GOLD' else '4'}]
                      for name, series in FredMacroProvider.series.items()})
 
 

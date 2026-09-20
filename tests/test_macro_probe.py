@@ -7,7 +7,8 @@ from decimal import Decimal
 
 import pytest
 
-from quant_ai.intelligence.providers import MacroSnapshot
+from quant_ai.intelligence.external.fred import FredMacroProvider
+from quant_ai.intelligence.providers import MACRO_CORE_INDICATORS, MacroSnapshot
 from quant_ai.intelligence.resilience import ProviderHttpError
 from quant_ai.notifications.trading import (
     AlertPriority,
@@ -20,6 +21,7 @@ from quant_ai.operations.macro_probe import MacroProbeResult, check_macro_provid
 NOW = datetime(2026, 9, 21, 3, 0, tzinfo=timezone.utc)
 KEY = "fake-fred-key"
 ENV = {"FRED_API_KEY": KEY, "PRAMANA_TENANT_ID": "ghost"}
+FULL = MacroSnapshot({name: Decimal("4.1") for name in MACRO_CORE_INDICATORS}, NOW)
 
 
 class CaptureSink:
@@ -82,10 +84,10 @@ def test_status_codes_map_to_fixed_reasons(status: int, reason: str) -> None:
 
 def test_healthy_provider_is_silent() -> None:
     dispatcher, sink = _dispatcher()
-    fake = FakeFred(snapshot=MacroSnapshot({"US10Y": Decimal("4.1")}, NOW))
+    fake = FakeFred(snapshot=FULL)
     result = check_macro_provider(env=ENV, now=NOW, dispatcher=dispatcher, provider_factory=lambda key: fake)
     assert result == MacroProbeResult(True, True, "ok")
-    assert fake.calls == 1
+    assert fake.calls == len(MACRO_CORE_INDICATORS)
     assert sink.sent == []
 
 
@@ -107,7 +109,8 @@ def test_empty_snapshot_is_a_failure_not_a_pass() -> None:
     dispatcher, sink = _dispatcher()
     fake = FakeFred(snapshot=MacroSnapshot({}, NOW))
     result = check_macro_provider(env=ENV, now=NOW, dispatcher=dispatcher, provider_factory=lambda key: fake)
-    assert result.reason == "fred_no_observations" and result.healthy is False
+    assert result.reason == "fred_no_observations:" + ",".join(MACRO_CORE_INDICATORS)
+    assert result.healthy is False
     assert len(sink.sent) == 1
 
 
@@ -145,4 +148,59 @@ def test_ghost_boot_probes_macro_right_after_the_token() -> None:
     token_at = source.index("check_runtime_token(dispatcher=dispatcher)")
     probe_at = source.index("check_macro_provider(dispatcher=dispatcher)")
     assert token_at < probe_at
-    assert macro_probe.PROBE_INDICATOR == "US10Y"
+    assert macro_probe.PROBE_INDICATORS == MACRO_CORE_INDICATORS
+
+
+# --------------------------------------------------------------------------------------
+# The September 2026 outage: a retired series answers 400 exactly like a bad key
+# --------------------------------------------------------------------------------------
+
+class PartialFred:
+    """Answers every series except the ones FRED has retired, which it refuses with 400."""
+
+    def __init__(self, retired: frozenset[str]) -> None:
+        self.retired = retired
+        self.asked: list[str] = []
+
+    def fetch(self, indicators, now):
+        self.asked.extend(indicators)
+        (indicator,) = indicators
+        if indicator in self.retired:
+            raise ProviderHttpError(400, "provider_request_rejected")
+        return MacroSnapshot({indicator: Decimal(1)}, now)
+
+
+def test_a_retired_series_is_named_and_not_blamed_on_the_key() -> None:
+    """What actually happened: the key was valid, GOLD's series was gone, and the probe
+    said 'key rejected'. The operator went and rotated a working key."""
+    dispatcher, sink = _dispatcher()
+    fake = PartialFred(frozenset({"GOLD"}))
+    result = check_macro_provider(env=ENV, now=NOW, dispatcher=dispatcher, provider_factory=lambda key: fake)
+    assert result == MacroProbeResult(True, False, "fred_series_rejected:GOLD", 400)
+    assert fake.asked == list(MACRO_CORE_INDICATORS), "every series is probed on its own"
+    assert sink.sent[0].metadata["reason"] == "fred_series_rejected:GOLD"
+    assert sink.sent[0].priority is AlertPriority.CRITICAL
+
+
+def test_every_series_refused_is_the_key() -> None:
+    dispatcher, _sink = _dispatcher()
+    fake = PartialFred(frozenset(MACRO_CORE_INDICATORS))
+    result = check_macro_provider(env=ENV, now=NOW, dispatcher=dispatcher, provider_factory=lambda key: fake)
+    assert result == MacroProbeResult(True, False, "fred_key_rejected", 400)
+
+
+def test_rate_limit_stops_the_probe_at_once() -> None:
+    """A 429 says nothing about the catalog; probing on would spend the session's quota."""
+    dispatcher, _sink = _dispatcher()
+    fake = FakeFred(error=ProviderHttpError(429, "rate_limited"))
+    result = check_macro_provider(env=ENV, now=NOW, dispatcher=dispatcher, provider_factory=lambda key: fake)
+    assert result.reason == "fred_rate_limited" and fake.calls == 1
+
+
+def test_provider_maps_every_core_indicator_to_a_live_series() -> None:
+    """The map and the required set cannot drift apart, and the two retired ids are gone."""
+    assert set(MACRO_CORE_INDICATORS) <= set(FredMacroProvider.series)
+    # INDIA10Y is mapped to its live successor but is not required: it is monthly, nothing
+    # reads it, and its age would stale every other indicator in the snapshot.
+    assert "INDIA10Y" in FredMacroProvider.series and "INDIA10Y" not in MACRO_CORE_INDICATORS
+    assert not {"GOLDAMGBD228NLBM", "IRLTLT01INM156N"} & set(FredMacroProvider.series.values())

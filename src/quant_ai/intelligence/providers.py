@@ -33,6 +33,15 @@ class FundamentalSnapshot:
     observed_at: datetime
 
 
+# The indicators every macro request asks for and the freshness gate requires in full.
+# One retired upstream series answers HTTP 400 and, because the provider fails closed, blanks
+# the whole snapshot; every specialist that reads macro then reports zero. So the set lives
+# here, once, and a series that FRED retires is replaced here rather than left to fail the
+# fetch. INDIA10Y left this set in September 2026: FRED retired the series behind it, no
+# metric ever read it, and as a monthly series it aged the whole snapshot.
+MACRO_CORE_INDICATORS: tuple[str, ...] = ("US10Y", "BRENT", "GOLD", "USD_BROAD")
+
+
 @dataclass(frozen=True)
 class MacroSnapshot:
     indicators: dict[str, Decimal]

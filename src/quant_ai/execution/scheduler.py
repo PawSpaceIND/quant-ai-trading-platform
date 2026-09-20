@@ -8,6 +8,7 @@ from quant_ai.domain.models import Instrument, PortfolioSnapshot
 from quant_ai.execution.briefing import FounderExecutionBrief
 from quant_ai.execution.session import MarketCalendar, MarketState
 from quant_ai.intelligence.pipeline import MarketAnalysisResult, SwarmMarketAnalysisPipeline
+from quant_ai.intelligence.providers import MACRO_CORE_INDICATORS
 from quant_ai.planning.capital import CapitalPlan
 
 
@@ -121,9 +122,7 @@ class AutonomousCadenceScheduler:
         self, instrument: Instrument, now: datetime, state: MarketState
     ) -> FounderExecutionBrief:
         provider_status: list[str] = []
-        macro = self.pipeline.macro.fetch(
-            ("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now
-        )
+        macro = self.pipeline.macro.fetch(MACRO_CORE_INDICATORS, now)
         news = self.pipeline.news.fetch("GEOPOLITICAL", now)
         provider_status.append(f"macro_indicators={len(macro.indicators)}")
         provider_status.append(f"geopolitical_items={len(news)}")
