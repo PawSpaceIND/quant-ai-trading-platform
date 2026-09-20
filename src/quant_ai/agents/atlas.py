@@ -55,6 +55,17 @@ class AtlasPolicy:
     # consensus nor dilute one. A tuple, not a set: the policy is serialised into every
     # decision's provenance.
     gate_domains: tuple[AgentDomain, ...] = (AgentDomain.LIQUIDITY, AgentDomain.RISK)
+    # Domains whose inputs are published daily or weekly, not streamed. Their evidence is
+    # aged by the pipeline at the age of the oldest series it read - days, not minutes -
+    # and the one-hour rule above would hard-hold every cycle in which such a specialist
+    # held a view. The freshness multiplier has already scaled that view by the same
+    # calendar (see FreshnessValidator.TTL); this budget only decides when it is too old
+    # to be allowed a stance at all. Two publication weeks.
+    slow_domains: tuple[AgentDomain, ...] = (AgentDomain.MACRO, AgentDomain.PORTFOLIO)
+    slow_domain_stale_seconds: int = 14 * 24 * 60 * 60
+
+    def stale_budget_seconds(self, domain: AgentDomain) -> int:
+        return self.slow_domain_stale_seconds if domain in self.slow_domains else self.stale_evidence_seconds
 
 
 class AtlasInvestmentAgent:
@@ -106,7 +117,7 @@ class AtlasInvestmentAgent:
                               evidence_context, knowledge_context)
         stale = tuple(
             item for item in voters
-            if item.source_freshness_seconds > self.policy.stale_evidence_seconds
+            if item.source_freshness_seconds > self.policy.stale_budget_seconds(item.domain)
             and item.stance not in {Stance.NEUTRAL, Stance.AVOID}
         )
         if stale:
@@ -121,7 +132,7 @@ class AtlasInvestmentAgent:
             item for item in voters
             if item.stance is Stance.NEUTRAL
             and (
-                item.source_freshness_seconds > self.policy.stale_evidence_seconds
+                item.source_freshness_seconds > self.policy.stale_budget_seconds(item.domain)
                 or item.confidence <= 0
             )
         )

@@ -83,6 +83,8 @@ def test_three_india_relevant_specialists_clear_the_coverage_floor_and_two_do_no
 
 
 def test_stale_neutral_specialist_does_not_veto_or_dilute_fresh_consensus() -> None:
+    # Macro-driven domains are stale past a fortnight (AtlasPolicy.slow_domain_stale_seconds);
+    # fifteen days old, these two abstain and neither veto nor dilute the fresh votes.
     now = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
     items = (
         evidence("technical", AgentDomain.TECHNICAL, Stance.BUY),
@@ -92,12 +94,12 @@ def test_stale_neutral_specialist_does_not_veto_or_dilute_fresh_consensus() -> N
         AgentEvidence(
             "macro", AgentDomain.MACRO, "AAPL", Stance.NEUTRAL,
             Decimal("0.10"), Decimal(0), Decimal(0),
-            ("macro_stale_neutralized",), now, 259200,
+            ("macro_stale_neutralized",), now, 15 * 86400,
         ),
         AgentEvidence(
             "us-equities", AgentDomain.PORTFOLIO, "AAPL", Stance.NEUTRAL,
             Decimal("0.03"), Decimal(0), Decimal(0),
-            ("macro_dependent_stale_neutralized",), now, 259200,
+            ("macro_dependent_stale_neutralized",), now, 15 * 86400,
         ),
     )
     decision = AtlasInvestmentAgent().decide("AAPL", items, now)
@@ -108,13 +110,15 @@ def test_stale_neutral_specialist_does_not_veto_or_dilute_fresh_consensus() -> N
 
 
 def test_stale_directional_specialist_still_hard_holds() -> None:
+    # A fast-domain specialist (news, country, technical) two hours old is past its budget.
+    # Macro-driven domains have a calendar budget of their own; see test_macro_staleness_budget.
     now = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
     items = (
         evidence("technical", AgentDomain.TECHNICAL, Stance.BUY),
         evidence("news", AgentDomain.NEWS, Stance.BUY),
         evidence("risk", AgentDomain.RISK, Stance.BUY),
         AgentEvidence(
-            "macro", AgentDomain.MACRO, "AAPL", Stance.BUY,
+            "country", AgentDomain.COUNTRY, "AAPL", Stance.BUY,
             Decimal("0.75"), Decimal("0.04"), Decimal("0.02"),
             ("stale_directional",), now, 7200,
         ),
