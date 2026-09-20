@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from quant_ai.agents.contracts import (
+    AgentDomain,
     AgentEvidence,
     AtlasDecision,
     EvidenceBar,
@@ -47,6 +48,13 @@ class AtlasPolicy:
     stale_evidence_seconds: int = 3600
     max_expected_risk: Decimal = Decimal("0.08")
     require_governed_knowledge: bool = False
+    # Domains whose specialists are gates, not voters. Their AVOID vetoes the cycle exactly
+    # like any other specialist's; anything else they say is recorded in the rationale and
+    # kept out of the coverage floor and the directional mean. A desk that only ever says
+    # "the quote is fine" or "the book has room" must be able to neither manufacture a
+    # consensus nor dilute one. A tuple, not a set: the policy is serialised into every
+    # decision's provenance.
+    gate_domains: tuple[AgentDomain, ...] = (AgentDomain.LIQUIDITY, AgentDomain.RISK)
 
 
 class AtlasInvestmentAgent:
@@ -76,6 +84,8 @@ class AtlasInvestmentAgent:
         knowledge_context: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
         relevant = tuple(item for item in evidence if item.subject == subject)
+        voters = tuple(item for item in relevant if item.domain not in self.policy.gate_domains)
+        gates = tuple(item for item in relevant if item.domain in self.policy.gate_domains)
         if knowledge_context is not None:
             try:
                 if type(knowledge_context) is not DecisionKnowledgeContext:
@@ -91,11 +101,11 @@ class AtlasInvestmentAgent:
                 subject, now, relevant, "governed_knowledge_missing", market_tick,
                 evidence_context, knowledge_context
             )
-        if len(relevant) < self.policy.min_evidence_agents:
+        if len(voters) < self.policy.min_evidence_agents:
             return self._hold(subject, now, relevant, "insufficient_agent_coverage", market_tick,
                               evidence_context, knowledge_context)
         stale = tuple(
-            item for item in relevant
+            item for item in voters
             if item.source_freshness_seconds > self.policy.stale_evidence_seconds
             and item.stance not in {Stance.NEUTRAL, Stance.AVOID}
         )
@@ -108,14 +118,14 @@ class AtlasInvestmentAgent:
                               evidence_context, knowledge_context)
 
         abstained = tuple(
-            item for item in relevant
+            item for item in voters
             if item.stance is Stance.NEUTRAL
             and (
                 item.source_freshness_seconds > self.policy.stale_evidence_seconds
                 or item.confidence <= 0
             )
         )
-        participating = tuple(item for item in relevant if item not in abstained)
+        participating = tuple(item for item in voters if item not in abstained)
         if len(participating) < self.policy.min_evidence_agents:
             return self._hold(
                 subject, now, relevant, "insufficient_usable_agent_coverage",
@@ -168,6 +178,8 @@ class AtlasInvestmentAgent:
             f"expected_return={expected_return}",
             f"expected_risk={expected_risk}",
             f"abstained_specialists={','.join(item.agent_id for item in abstained) or 'none'}",
+            "gate_specialists="
+            + (";".join(f"{item.agent_id}:{item.rationale[0]}" for item in gates) or "none"),
         ) + _market_rationale(market_tick) + self._founder_rationale()
         return AtlasDecision(
             uuid4().hex,
