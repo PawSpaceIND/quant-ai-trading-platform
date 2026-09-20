@@ -45,6 +45,7 @@ from quant_ai.intelligence.headline_sentiment import (
     normalize_headline,
 )
 from quant_ai.intelligence.providers import (
+    MACRO_CORE_INDICATORS,
     FundamentalDataProvider,
     FundamentalSnapshot,
     MacroIndicatorProvider,
@@ -319,11 +320,11 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
+        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
+        required_macro = set(MACRO_CORE_INDICATORS)
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(
@@ -443,7 +444,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(("US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"), now)
+        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
         # Every headline is re-scored against this instrument before anything reads its
         # sentiment, so the specialists, the aggregate metrics and the consensus evidence
         # all see the same number and the same scorer label.
@@ -454,7 +455,7 @@ class SwarmMarketAnalysisPipeline:
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
-        required_macro = {"US10Y", "INDIA10Y", "BRENT", "GOLD", "USD_BROAD"}
+        required_macro = set(MACRO_CORE_INDICATORS)
         macro_at = macro.freshness_observed_at if required_macro <= macro.indicators.keys() else None
         fundamentals_at = fundamentals.observed_at if fundamentals.metrics else None
         states = PipelineFreshness(

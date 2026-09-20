@@ -11,11 +11,20 @@ from quant_ai.intelligence.resilience import ResilientHttpClient
 class FredMacroProvider:
     provider_id = "fred"
     endpoint = "https://api.stlouisfed.org/fred/series/observations"
+    # Verified against the live FRED catalog on 20 September 2026 from the pilot host.
+    # Two earlier mappings had been retired upstream and answered "Bad Request. The series
+    # does not exist": IRLTLT01INM156N (the old OECD id for India's 10-year yield) and
+    # GOLDAMGBD228NLBM (the LBMA gold fixing). FRED no longer carries any spot gold price;
+    # GOLD reads the daily NASDAQ gold price index instead, which is only ever consumed as
+    # a day-over-day fractional change, so its level and base do not matter. INDIA10Y
+    # points at the OECD series that replaced the old id; it is monthly and no metric reads
+    # it, so it is available on request but not part of MACRO_CORE_INDICATORS, where its
+    # age would stale the whole snapshot.
     series: ClassVar[dict[str, str]] = {
         "US10Y": "DGS10",
-        "INDIA10Y": "IRLTLT01INM156N",
+        "INDIA10Y": "INDIRLTLT01STM",
         "BRENT": "DCOILBRENTEU",
-        "GOLD": "GOLDAMGBD228NLBM",
+        "GOLD": "NASDAQQGLDI",
         "USD_BROAD": "DTWEXBGS",
     }
 

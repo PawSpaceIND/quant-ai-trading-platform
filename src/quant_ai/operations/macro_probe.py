@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from quant_ai.intelligence.external.fred import FredMacroProvider
+from quant_ai.intelligence.providers import MACRO_CORE_INDICATORS
 from quant_ai.intelligence.resilience import ProviderHttpError, ResilientHttpClient, UrllibTransport
 from quant_ai.notifications.trading import (
     AlertPriority,
@@ -33,9 +34,11 @@ from quant_ai.notifications.trading import (
 
 LOGGER = logging.getLogger(__name__)
 
-# One cheap series is enough to prove the key and the route. US10Y is on every macro request
-# the pipeline makes, so a probe that passes here exercises the path the specialists use.
-PROBE_INDICATOR = "US10Y"
+# Every series the pipeline requires, asked for one at a time. One series would prove the key
+# and the route, but not the catalog: the September 2026 outage was two series FRED had
+# retired, answering 400 exactly like a bad key while US10Y still answered. Probing each
+# indicator separately is what lets the probe say which it was.
+PROBE_INDICATORS = MACRO_CORE_INDICATORS
 
 PHASES = frozenset({"boot", "preopen", "watch_start"})
 
@@ -63,6 +66,41 @@ def _reason_for(status_code: int) -> str:
     return "fred_key_rejected"
 
 
+def _probe_each(provider: Any, moment: datetime) -> MacroProbeResult:
+    """One request per required series, so a retired series is told apart from a bad key.
+
+    A bad key is refused on every series. A retired series is refused while the others
+    answer. Rate limiting and outages end the probe at once: they say nothing about the
+    catalog and retrying them here would only spend the quota the session needs.
+    """
+    answered: list[str] = []
+    rejected: list[str] = []
+    empty: list[str] = []
+    status: int | None = None
+    for indicator in PROBE_INDICATORS:
+        try:
+            snapshot = provider.fetch((indicator,), moment)
+        except ProviderHttpError as error:
+            if error.status_code == 429 or error.status_code >= 500:
+                return MacroProbeResult(True, False, _reason_for(error.status_code), error.status_code)
+            rejected.append(indicator)
+            status = error.status_code
+        except (TimeoutError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            # The same family the failover registry swallows into AllProvidersFailed. Name
+            # the type, never the message: a transport error can echo the request URL, and
+            # the URL carries the key.
+            return MacroProbeResult(True, False, f"fred_probe_failed:{type(error).__name__}")
+        else:
+            (answered if indicator in snapshot.indicators else empty).append(indicator)
+    if rejected and not answered:
+        return MacroProbeResult(True, False, "fred_key_rejected", status)
+    if rejected:
+        return MacroProbeResult(True, False, "fred_series_rejected:" + ",".join(rejected), status)
+    if empty:
+        return MacroProbeResult(True, False, "fred_no_observations:" + ",".join(empty))
+    return MacroProbeResult(True, True, "ok")
+
+
 def check_macro_provider(
     *,
     env: Mapping[str, str] | None = None,
@@ -82,20 +120,10 @@ def check_macro_provider(
         return MacroProbeResult(False, False, "macro_not_configured")
     moment = now or datetime.now(timezone.utc)
     provider = (provider_factory or _default_provider)(api_key)
-    try:
-        snapshot = provider.fetch((PROBE_INDICATOR,), moment)
-    except ProviderHttpError as error:
-        result = MacroProbeResult(True, False, _reason_for(error.status_code), error.status_code)
-    except (TimeoutError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
-        # The same family the failover registry swallows into AllProvidersFailed. Name the
-        # type, never the message: a transport error can echo the request URL, and the URL
-        # carries the key.
-        result = MacroProbeResult(True, False, f"fred_probe_failed:{type(error).__name__}")
-    else:
-        if PROBE_INDICATOR in snapshot.indicators:
-            LOGGER.info("macro_provider_probe_ok phase=%s", phase)
-            return MacroProbeResult(True, True, "ok")
-        result = MacroProbeResult(True, False, "fred_no_observations")
+    result = _probe_each(provider, moment)
+    if result.healthy:
+        LOGGER.info("macro_provider_probe_ok phase=%s indicators=%s", phase, ",".join(PROBE_INDICATORS))
+        return result
     LOGGER.error(
         "macro_provider_probe_failed phase=%s reason=%s status=%s",
         phase, result.reason, result.status_code,
@@ -105,9 +133,10 @@ def check_macro_provider(
         dispatcher = notifications()
     dispatcher.dispatch(
         TradingAlertCode.MACRO_PROVIDER_UNAVAILABLE,
-        "Macro provider (FRED) is not answering. Every specialist that reads macro will report "
-        "zero confidence and the consensus cannot reach its floor; the pilot will hold all "
-        "session. Check FRED_API_KEY on the host and re-run the probe.",
+        "Macro provider (FRED) is not answering in full. Every specialist that reads macro "
+        "will report zero confidence for the session. fred_key_rejected: check FRED_API_KEY "
+        "on the host. fred_series_rejected: FRED has retired a series the code maps; replace "
+        "it in FredMacroProvider.series. Re-run the probe after either fix.",
         tenant_id=source.get("PRAMANA_TENANT_ID", "ghost"),
         priority=AlertPriority.CRITICAL,
         metadata={"phase": phase, "reason": result.reason,
