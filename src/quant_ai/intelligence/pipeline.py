@@ -48,6 +48,7 @@ from quant_ai.intelligence.headline_sentiment import (
 )
 from quant_ai.intelligence.providers import (
     MACRO_CORE_INDICATORS,
+    MACRO_INDICATORS,
     FundamentalDataProvider,
     FundamentalSnapshot,
     MacroIndicatorProvider,
@@ -328,7 +329,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
+        macro = self.macro.fetch(MACRO_INDICATORS, now)
 
         last_price_at = candles[-1].timestamp if candles else None
         latest_news_at = max((item.published_at for item in news + geopolitical), default=None)
@@ -453,7 +454,7 @@ class SwarmMarketAnalysisPipeline:
         news = self.news.fetch(instrument.symbol, now)
         geopolitical = self.news.fetch("GEOPOLITICAL", now)
         fundamentals = self.fundamentals.fetch(instrument.symbol, now)
-        macro = self.macro.fetch(MACRO_CORE_INDICATORS, now)
+        macro = self.macro.fetch(MACRO_INDICATORS, now)
         # Every headline is re-scored against this instrument before anything reads its
         # sentiment, so the specialists, the aggregate metrics and the consensus evidence
         # all see the same number and the same scorer label.
@@ -877,6 +878,9 @@ class SwarmMarketAnalysisPipeline:
         return self._mean(recent)
 
     def _macro_metrics(self, snapshot: MacroSnapshot) -> dict[str, Decimal]:
+        # The snapshot clock is the core's latest observation: the composite keeps it on the
+        # part that supplied the core series, so the India parts, which move every bar during
+        # the session, never make "previous" mean ten minutes ago.
         if self._macro_current_at is None:
             self._macro_current_at = snapshot.observed_at
             self._macro_current = dict(snapshot.indicators)
@@ -899,13 +903,25 @@ class SwarmMarketAnalysisPipeline:
                 return Decimal(0)
             return (current - prior) / prior
 
-        return {
+        metrics = {
             "us10y": values.get("US10Y", Decimal(0)),
             "yield_change": change("US10Y"),
             "brent_change": change("BRENT"),
             "gold_change": change("GOLD"),
             "usd_broad_change": change("USD_BROAD"),
         }
+        # India context is optional and never defaulted: an absent key tells the specialist
+        # the series was not observed, which a zero could not.
+        vix = values.get("INDIA_VIX")
+        if vix is not None:
+            metrics["india_vix"] = vix
+            previous_close = values.get("INDIA_VIX_PREV_CLOSE")
+            if previous_close is not None and previous_close > 0:
+                metrics["india_vix_change"] = (vix - previous_close) / previous_close
+        for indicator, metric in (("FII_NET_CRORE", "fii_net_crore"), ("DII_NET_CRORE", "dii_net_crore")):
+            if indicator in values:
+                metrics[metric] = values[indicator]
+        return metrics
 
     @staticmethod
     def _technical_metrics(closes: tuple[Decimal, ...]) -> dict[str, Decimal]:

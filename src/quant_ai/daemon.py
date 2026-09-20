@@ -42,6 +42,11 @@ from quant_ai.governance.runtime_identity import (
     validate_identity_storage,
 )
 from quant_ai.intelligence.external.fred import FredMacroProvider
+from quant_ai.intelligence.external.india_macro import (
+    CompositeMacroProvider,
+    NseInstitutionalFlowsProvider,
+    YahooIndiaVixProvider,
+)
 from quant_ai.intelligence.external.rss import RssNewsSentimentAdapter, symbol_aliases_from_env
 from quant_ai.intelligence.external.yahoo_fundamentals import YahooFundamentalsProvider
 from quant_ai.intelligence.headline_sentiment import (
@@ -775,10 +780,30 @@ def _env_intelligence_providers() -> tuple[
         news_client = ResilientHttpClient(UrllibTransport(), max_attempts=1)
         registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(news_client, feeds, aliases))
     fred_key = os.getenv("FRED_API_KEY", "").strip()
+    # Macro is one composite adapter: FRED's core series plus the optional India parts, each
+    # on its own client and circuit, each failing closed on its own. The registry reads the
+    # providers of a category as alternatives, so two adapters side by side would never both
+    # be read; the composite is the one it sees.
+    macro_parts: list[object] = []
     if fred_key:
-        registry.register(
-            ProviderCategory.MACRO, FredMacroProvider(ResilientHttpClient(UrllibTransport()), fred_key)
+        macro_parts.append(FredMacroProvider(ResilientHttpClient(UrllibTransport()), fred_key))
+    vix_source = os.getenv("PRAMANA_INDIA_VIX_PROVIDER", "none").strip().lower()
+    if vix_source == "yahoo":
+        macro_parts.append(YahooIndiaVixProvider(ResilientHttpClient(UrllibTransport())))
+    elif vix_source != "none":
+        raise RuntimeError(f"unsupported PRAMANA_INDIA_VIX_PROVIDER: {vix_source}")
+    flows_source = os.getenv("PRAMANA_INDIA_FLOWS_PROVIDER", "none").strip().lower()
+    if flows_source == "nse":
+        # The cookie bootstrap loads NSE's site root, a page well over the default bound.
+        macro_parts.append(
+            NseInstitutionalFlowsProvider(
+                ResilientHttpClient(UrllibTransport(), max_payload_bytes=4_000_000)
+            )
         )
+    elif flows_source != "none":
+        raise RuntimeError(f"unsupported PRAMANA_INDIA_FLOWS_PROVIDER: {flows_source}")
+    if macro_parts:
+        registry.register(ProviderCategory.MACRO, CompositeMacroProvider(tuple(macro_parts)))
     fundamentals_source = os.getenv("PRAMANA_FUNDAMENTALS_PROVIDER", "yahoo").strip().lower()
     if fundamentals_source in {"", "yahoo"}:
         # Own client so a Yahoo rate-limit opens Yahoo's circuit, not the news/macro one.

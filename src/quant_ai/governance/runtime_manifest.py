@@ -82,6 +82,17 @@ FIELDS = {
     "quant_ai.intelligence.sandbox.SandboxFundamentalDataProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.sandbox.SandboxMacroIndicatorProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.external.fred.FredMacroProvider": ("series",),
+    "quant_ai.intelligence.external.india_macro.CompositeMacroProvider": (),
+    "quant_ai.intelligence.external.india_macro.YahooIndiaVixProvider": (
+        "serves",
+        "cache_ttl",
+        "abstain_ttl",
+    ),
+    "quant_ai.intelligence.external.india_macro.NseInstitutionalFlowsProvider": (
+        "serves",
+        "cache_ttl",
+        "abstain_ttl",
+    ),
     "quant_ai.intelligence.external.rss.RssNewsSentimentAdapter": (),
     "quant_ai.intelligence.failover.FailoverNewsProvider": (),
     "quant_ai.intelligence.failover.FailoverMacroProvider": (),
@@ -219,6 +230,11 @@ def describe(obj, issues: list[str]) -> dict | None:
     if name.endswith("LiveTickMarketDataFeed"):
         result["aggregator"] = describe(obj.aggregator, issues)
     if name.endswith("FredMacroProvider"):
+        result["endpoint_sha256"] = source_identity(obj.endpoint)
+        result["http"] = describe(obj.client, issues)
+    if name.endswith("CompositeMacroProvider"):
+        result["parts"] = [describe(part, issues) for part in obj.parts]
+    if name.endswith(("YahooIndiaVixProvider", "NseInstitutionalFlowsProvider")):
         result["endpoint_sha256"] = source_identity(obj.endpoint)
         result["http"] = describe(obj.client, issues)
     if name.endswith("RssNewsSentimentAdapter"):

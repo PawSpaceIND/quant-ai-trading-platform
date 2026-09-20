@@ -36,6 +36,9 @@ class HttpResponse:
     status_code: int
     body: bytes
     headers: dict[str, str]
+    # Every ``Set-Cookie`` header, in order. ``headers`` keeps one value per name, which
+    # loses all but the last cookie of a response that sets several (NSE sets six).
+    set_cookies: tuple[str, ...] = ()
 
 
 class HttpTransport(Protocol):
@@ -76,6 +79,7 @@ class UrllibTransport:
                     int(response.status),
                     body,
                     {key.lower(): value for key, value in response.headers.items()},
+                    tuple(response.headers.get_all("Set-Cookie") or ()),
                 )
         except urllib.error.HTTPError as exc:
             body = exc.read(max_bytes + 1)
@@ -85,6 +89,7 @@ class UrllibTransport:
                 int(exc.code),
                 body,
                 {key.lower(): value for key, value in exc.headers.items()},
+                tuple(exc.headers.get_all("Set-Cookie") or ()),
             )
 
 

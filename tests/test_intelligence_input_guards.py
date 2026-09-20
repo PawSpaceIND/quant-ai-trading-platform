@@ -22,6 +22,9 @@ TARGETS={
     "adapter_count":"test_unrecognized_provider_graph_is_not_certified[adapter_count]",
     "unexpected_adapter":"test_unrecognized_provider_graph_is_not_certified[unexpected_adapter]",
     "unexpected_category":"test_unrecognized_provider_graph_is_not_certified[unexpected_category]",
+    "macro_parts":"test_macro_composite_parts_are_certified_by_type[macro_parts]",
+    "unexpected_macro_part":"test_macro_composite_parts_are_certified_by_type[unexpected_macro_part]",
+    "duplicate_macro_part":"test_macro_composite_parts_are_certified_by_type[duplicate_macro_part]",
 }
 
 
