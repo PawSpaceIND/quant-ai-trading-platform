@@ -32,7 +32,17 @@ STANCE_SCORE = {
 
 @dataclass(frozen=True)
 class AtlasPolicy:
-    min_evidence_agents: int = 4
+    # Three, not four. The floor is the number of specialists that must actually weigh in
+    # before the consensus may act, and it has to be reachable by the roster that runs.
+    # On an NSE equity that number is three: geopolitical-analyst, technical-quant-mas and
+    # indian-equities. us-equities reports zero confidence for any non-US market by
+    # design, and commodity-yield reads a daily macro series that is always older than the
+    # one-hour stale rule during the session, so neither can ever be a fourth. A floor of
+    # four was therefore unreachable, and the record shows it: 370 consecutive decisions
+    # over two sessions, every one NEUTRAL, consensus confidence pinned at 0.32 - the mean
+    # over five specialists of which three were zero. The confidence floor below is not
+    # touched; three voters still have to agree with conviction, they just have to exist.
+    min_evidence_agents: int = 3
     min_consensus_confidence: Decimal = Decimal("0.55")
     stale_evidence_seconds: int = 3600
     max_expected_risk: Decimal = Decimal("0.08")

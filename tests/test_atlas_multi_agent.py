@@ -57,6 +57,31 @@ def test_country_outperformance_creates_founder_escalation() -> None:
     assert decision.founder_escalations[0].category == "NEW_JURISDICTION"
 
 
+def test_three_india_relevant_specialists_clear_the_coverage_floor_and_two_do_not() -> None:
+    """Why the floor is three.
+
+    The live roster can field exactly three specialists with a real view on an NSE stock:
+    geopolitical, technical and indian-equities. A floor of four was unreachable by
+    construction - us-equities is zero for India by design and commodity-yield's daily macro
+    is always past the stale rule - and 370 straight NEUTRAL decisions came out of it. Three
+    fresh, agreeing, confident specialists must therefore be enough to act; two must not be,
+    because that is where a single loud voice starts deciding on its own.
+    """
+    now = datetime(2026, 9, 12, tzinfo=timezone.utc)
+    three = (
+        evidence("geopolitical-analyst", AgentDomain.NEWS, Stance.BUY),
+        evidence("technical-quant-mas", AgentDomain.TECHNICAL, Stance.BUY),
+        evidence("indian-equities", AgentDomain.COUNTRY, Stance.BUY),
+    )
+    decision = AtlasInvestmentAgent().decide("AAPL", three, now)
+    assert "insufficient_agent_coverage" not in decision.rationale
+    assert decision.action == Stance.BUY
+
+    two = AtlasInvestmentAgent().decide("AAPL", three[:2], now)
+    assert two.action == Stance.NEUTRAL
+    assert "insufficient_agent_coverage" in two.rationale
+
+
 def test_stale_neutral_specialist_does_not_veto_or_dilute_fresh_consensus() -> None:
     now = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
     items = (
