@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
-from quant_ai.intelligence.providers import MacroSnapshot
+from quant_ai.intelligence.providers import MACRO_CORE_INDICATORS, MacroSnapshot
 from quant_ai.intelligence.resilience import ProviderHttpError, ResilientHttpClient
 
 LOGGER = logging.getLogger("quant_ai.india_macro")
@@ -304,6 +304,7 @@ class CompositeMacroProvider:
     def fetch(self, indicators: tuple[str, ...], now: datetime) -> MacroSnapshot:
         now = _aware_utc(now, "composite_macro")
         merged: dict[str, Decimal] = {}
+        core_latest: datetime | None = None
         latest: datetime | None = None
         oldest: datetime | None = None
         asked: list[str] = []
@@ -327,10 +328,22 @@ class CompositeMacroProvider:
                 continue
             merged.update(snapshot.indicators)
             latest = snapshot.observed_at if latest is None else max(latest, snapshot.observed_at)
+            if any(name in MACRO_CORE_INDICATORS for name in snapshot.indicators):
+                core_latest = (
+                    snapshot.observed_at
+                    if core_latest is None
+                    else max(core_latest, snapshot.observed_at)
+                )
             stamp = snapshot.freshness_observed_at
             oldest = stamp if oldest is None else min(oldest, stamp)
         if asked and len(failed) == len(asked):
             raise MacroPartsUnavailable("macro_parts_unavailable:" + ";".join(failed))
         if not merged or latest is None:
             return MacroSnapshot({}, now)
-        return MacroSnapshot(merged, latest, None if oldest == latest else oldest)
+        # The snapshot clock is the core's latest observation whenever a core part answered.
+        # The pipeline computes observation-over-observation changes by that clock, and the
+        # India parts move every bar during the session: stamped by them, "previous" would
+        # mean ten minutes ago and every daily change would read zero. The India stamps
+        # still bound freshness through the oldest clock.
+        observed = core_latest if core_latest is not None else latest
+        return MacroSnapshot(merged, observed, None if oldest == observed else oldest)

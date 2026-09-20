@@ -76,7 +76,9 @@ def inspect_intelligence_configuration(*, clock=None):
             _require(type(parts) is tuple and len(parts) >= 1, "macro_parts")
             _require(all(type(part) in MACRO_PART_LABELS for part in parts), "unexpected_macro_part")
             _require(len({type(part) for part in parts}) == len(parts), "duplicate_macro_part")
-            inputs[name]["parts"] = [MACRO_PART_LABELS[type(part)] for part in parts]
+            # Only the guard above keeps an unknown type out; the label lookup itself never
+            # raises, so removing that guard is a wrong report, not a crash.
+            inputs[name]["parts"] = [MACRO_PART_LABELS.get(type(part), "unsupported") for part in parts]
     _require(set(registry._providers) <= {rule[1] for rule in rules}, "unexpected_category")
     return {
         "schema": "pramana.intelligence_configuration.v1",

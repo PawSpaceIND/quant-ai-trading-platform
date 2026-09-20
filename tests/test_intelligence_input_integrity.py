@@ -160,6 +160,27 @@ def test_unrecognized_provider_graph_is_not_certified(clean_config,kind):
         inspect_intelligence_configuration(clock=lambda:NOW)
 
 
+@pytest.mark.parametrize("kind", ["macro_parts", "unexpected_macro_part", "duplicate_macro_part"])
+def test_macro_composite_parts_are_certified_by_type(clean_config, kind):
+    """The macro composite is certified part by part: a tuple of at least one known type, each once."""
+    from quant_ai import daemon
+    from quant_ai.intelligence.failover import ProviderCategory
+    from quant_ai.operations.intelligence_inputs import inspect_intelligence_configuration
+    clean_config.setenv("FRED_API_KEY", "unit-test-not-a-key")
+    selected = _env_intelligence_providers()
+    (composite,) = selected[2].registry._providers[ProviderCategory.MACRO]
+    (fred,) = composite.parts
+    if kind == "macro_parts":
+        composite.parts = [fred]  # a list, not the tuple the factory builds
+    elif kind == "unexpected_macro_part":
+        composite.parts = (fred, object())
+    else:
+        composite.parts = (fred, FredMacroProvider(ResilientHttpClient(RecordedTransport({})), "unit-test-not-a-key"))
+    clean_config.setattr(daemon, "_env_intelligence_providers", lambda: selected)
+    with pytest.raises(ValueError, match="intelligence_inputs_" + kind):
+        inspect_intelligence_configuration(clock=lambda: NOW)
+
+
 @pytest.mark.parametrize("moment",[None,1,NOW.replace(tzinfo=None)])
 def test_configuration_clock_refuses_before_factory(clean_config,moment):
     from quant_ai import daemon

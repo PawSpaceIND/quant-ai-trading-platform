@@ -253,7 +253,9 @@ def test_composite_routes_by_served_names_and_merges_clocks():
                      MacroSnapshot({"FII_NET_CRORE": Decimal("599.54")}, FRIDAY_CLOSE_UTC))
     snapshot = CompositeMacroProvider((fred, vix, flows)).fetch(MACRO_INDICATORS, NOW)
     assert set(snapshot.indicators) == set(MACRO_CORE_INDICATORS) | {"INDIA_VIX", "INDIA_VIX_PREV_CLOSE", "FII_NET_CRORE"}
-    assert snapshot.observed_at == datetime(2026, 9, 18, 10, 13, tzinfo=timezone.utc)
+    # The clock is the core's latest observation, not the fresher VIX trade time; the oldest
+    # clock still bounds freshness across every part.
+    assert snapshot.observed_at == datetime(2026, 9, 18, tzinfo=timezone.utc)
     assert snapshot.freshness_observed_at == datetime(2026, 9, 17, tzinfo=timezone.utc)
     assert fred.requests == [MACRO_INDICATORS]
     assert vix.requests == [("INDIA_VIX", "INDIA_VIX_PREV_CLOSE")]
@@ -314,22 +316,45 @@ def test_macro_metrics_carry_india_context_only_when_observed():
     assert without["us10y"] == Decimal(2)
 
 
-def test_core_changes_follow_core_observations_not_the_moving_vix_clock():
-    holder = pipeline_metrics()
+def test_composite_keeps_the_core_clock_so_daily_changes_survive_a_moving_vix():
     friday = {"US10Y": Decimal("4.0"), "BRENT": Decimal(80), "GOLD": Decimal(100), "USD_BROAD": Decimal(120)}
     monday = {"US10Y": Decimal("4.2"), "BRENT": Decimal(84), "GOLD": Decimal(100), "USD_BROAD": Decimal(120)}
-    t0 = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
-    holder._macro_metrics(MacroSnapshot({**friday, "INDIA_VIX": Decimal(11)}, t0))
-    # The next cycle: the same core observation, a newer VIX stamp. No spurious "previous".
-    same = holder._macro_metrics(MacroSnapshot({**friday, "INDIA_VIX": Decimal("11.2")}, t0 + timedelta(minutes=10)))
+    fred_day = datetime(2026, 9, 18, tzinfo=timezone.utc)
+    session = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
+
+    class Core:
+        def __init__(self):
+            self.values, self.day = friday, fred_day
+
+        def fetch(self, indicators, now):
+            return MacroSnapshot(dict(self.values), self.day)
+
+    class Vix(StubPart):
+        def fetch(self, indicators, now):
+            # A new bar every cycle: the VIX stamp is always the freshest thing in the book.
+            return MacroSnapshot({"INDIA_VIX": Decimal(11)}, now - timedelta(minutes=1))
+
+    core = Core()
+    composite = CompositeMacroProvider((core, Vix("yahoo-india-vix", ("INDIA_VIX", "INDIA_VIX_PREV_CLOSE"))))
+    holder = pipeline_metrics()
+    first = composite.fetch(MACRO_INDICATORS, session)
+    assert first.observed_at == fred_day and first.indicators["INDIA_VIX"] == Decimal(11)
+    holder._macro_metrics(first)
+    # Ten minutes later: same core observation, newer VIX. The clock has not moved, so there
+    # is no spurious "previous" and the daily changes still read zero.
+    same = holder._macro_metrics(composite.fetch(MACRO_INDICATORS, session + timedelta(minutes=10)))
     assert same["brent_change"] == 0 and same["yield_change"] == 0
-    # FRED publishes: the core values move, and the change is against Friday's, not against
-    # ten minutes ago.
-    moved = holder._macro_metrics(MacroSnapshot({**monday, "INDIA_VIX": Decimal("11.5")}, t0 + timedelta(hours=1)))
+    # FRED publishes Monday's observation: the clock moves once and the change is against
+    # Friday's values, not against ten minutes ago.
+    core.values, core.day = monday, datetime(2026, 9, 21, tzinfo=timezone.utc)
+    moved = holder._macro_metrics(composite.fetch(MACRO_INDICATORS, session + timedelta(hours=1)))
     assert moved["brent_change"] == Decimal(4) / Decimal(80)
     assert moved["yield_change"] == Decimal("0.2") / Decimal("4.0")
-    later = holder._macro_metrics(MacroSnapshot({**monday, "INDIA_VIX": Decimal("11.7")}, t0 + timedelta(hours=2)))
+    later = holder._macro_metrics(composite.fetch(MACRO_INDICATORS, session + timedelta(hours=2)))
     assert later["brent_change"] == Decimal(4) / Decimal(80)
+    # Without a core part the clock is whatever answered.
+    vix_only = CompositeMacroProvider((Vix("yahoo-india-vix", ("INDIA_VIX",)),)).fetch(MACRO_INDICATORS, session)
+    assert vix_only.observed_at == session - timedelta(minutes=1)
 
 
 # --- Indian equities specialist ------------------------------------------------------------

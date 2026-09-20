@@ -878,20 +878,23 @@ class SwarmMarketAnalysisPipeline:
         return self._mean(recent)
 
     def _macro_metrics(self, snapshot: MacroSnapshot) -> dict[str, Decimal]:
+        # The snapshot clock is the core's latest observation: the composite keeps it on the
+        # part that supplied the core series, so the India parts, which move every bar during
+        # the session, never make "previous" mean ten minutes ago.
+        if self._macro_current_at is None:
+            self._macro_current_at = snapshot.observed_at
+            self._macro_current = dict(snapshot.indicators)
+        elif snapshot.observed_at > self._macro_current_at:
+            self._macro_previous = self._macro_current
+            self._macro_current = dict(snapshot.indicators)
+            self._macro_current_at = snapshot.observed_at
+
         values = snapshot.indicators
-        # Observation-over-observation changes are tracked on the core series alone, and a
-        # new observation is a change in their values, not in the snapshot's clock. The clock
-        # is stamped by whichever part is freshest, and India VIX moves every bar during the
-        # session; keyed on the clock, "previous" would mean ten minutes ago and every daily
-        # change would read zero.
-        core = {key: values[key] for key in MACRO_CORE_INDICATORS if key in values}
-        if core:
-            if self._macro_current_at is None:
-                self._macro_current, self._macro_current_at = core, snapshot.observed_at
-            elif core != self._macro_current and snapshot.observed_at >= self._macro_current_at:
-                self._macro_previous, self._macro_current = self._macro_current, core
-                self._macro_current_at = snapshot.observed_at
-        previous = self._macro_previous if core == self._macro_current else {}
+        previous = (
+            self._macro_previous
+            if snapshot.observed_at == self._macro_current_at
+            else {}
+        )
 
         def change(key: str) -> Decimal:
             current = values.get(key, Decimal(0))
