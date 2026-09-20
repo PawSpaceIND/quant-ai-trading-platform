@@ -1,20 +1,56 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
+from threading import Lock
+from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
 from quant_ai.intelligence.headline_sentiment import keyword_sentiment
 from quant_ai.intelligence.providers import NewsSignal
 from quant_ai.intelligence.resilience import ResilientHttpClient
 
+LOGGER = logging.getLogger("quant_ai.rss_news")
+
 # The subject that means "everything": world news carries no instrument ticker.
 GEOPOLITICAL_SUBJECT = "GEOPOLITICAL"
+
+
+class NewsFeedsUnavailable(RuntimeError):
+    """Every configured feed failed and none held a body recent enough to stand in."""
+
+
+# What a single feed can do on its own, none of which says anything about the others: the
+# guarded client's transport, HTTP, size and circuit errors (OSError or RuntimeError), a
+# body that is not UTF-8, and a body that is not XML. The last is the everyday one - an
+# HTML error page served with status 200 - and ``ParseError`` is a ``SyntaxError``, which
+# the failover registry does not catch, so before this guard one such page ended the whole
+# analysis cycle instead of costing one feed.
+_FEED_FAILURES: tuple[type[BaseException], ...] = (
+    TimeoutError,
+    OSError,
+    RuntimeError,
+    UnicodeDecodeError,
+    ElementTree.ParseError,
+)
+
+
+@dataclass
+class _FeedState:
+    """One feed's last good body and when it was fetched or last refused."""
+
+    document: ElementTree.Element | None = None
+    fetched_at: float | None = None
+    failed_at: float | None = None
+
 
 SYMBOL_ALIASES_ENV = "PRAMANA_NEWS_SYMBOL_ALIASES_JSON"
 
@@ -124,6 +160,11 @@ def _alias_pattern(alias: str) -> re.Pattern[str]:
     return re.compile(rf"\b{re.escape(alias)}(?:E?S)?\b")
 
 
+def _feed_host(url: str) -> str:
+    """The only part of a feed URL that belongs in a log line: paid feeds carry keys."""
+    return urlsplit(url).netloc or "unknown-host"
+
+
 class RssNewsSentimentAdapter:
     provider_id = "rss-news"
 
@@ -132,11 +173,45 @@ class RssNewsSentimentAdapter:
         client: ResilientHttpClient,
         feed_urls: tuple[str, ...],
         symbol_aliases: Mapping[str, Sequence[str]] | None = None,
+        *,
+        cache_ttl_seconds: float = 300.0,
+        retry_after_seconds: float = 60.0,
+        stale_grace_seconds: float = 1800.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """Read headlines from ``feed_urls``, each feed on its own footing.
+
+        The pipeline asks for news once per instrument and once for the world subject on
+        every cycle, so a twelve-name book asks each feed twenty-six times in a few
+        minutes. Three windows keep that honest and cheap:
+
+        * ``cache_ttl_seconds``: a feed body downloaded inside this window answers every
+          later question. One download per feed per window, whatever the book size.
+        * ``retry_after_seconds``: a feed that just failed is not asked again inside this
+          window, so a dead feed costs one attempt per window rather than one per subject.
+        * ``stale_grace_seconds``: while a feed is failing, its last good body keeps
+          answering until it is this old. Headlines carry their own publication times, so
+          freshness is still judged per item; this only decides whether the feed counts as
+          readable at all. The default matches the NEWS freshness budget.
+
+        A feed that fails with nothing to stand in is logged by host and left out. The
+        adapter raises only when every feed is out, which the failover registry turns into
+        "no headlines" exactly as one bad feed used to.
+        """
         if not feed_urls:
             raise ValueError("at least one RSS feed URL is required")
+        if cache_ttl_seconds <= 0 or retry_after_seconds <= 0 or stale_grace_seconds <= 0:
+            raise ValueError("rss feed windows must be positive")
+        if stale_grace_seconds < cache_ttl_seconds:
+            raise ValueError("rss stale grace must be at least the cache ttl")
         self.client = client
         self.feed_urls = feed_urls
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        self.retry_after_seconds = float(retry_after_seconds)
+        self.stale_grace_seconds = float(stale_grace_seconds)
+        self._clock = clock
+        self._lock = Lock()
+        self._feeds: dict[str, _FeedState] = {}
         # Validated here too, not only at the environment edge: an alias reaching the
         # matcher unbounded is the failure these bounds exist to prevent, whichever
         # caller built the map.
@@ -147,12 +222,16 @@ class RssNewsSentimentAdapter:
         }
 
     def fetch(self, subject: str, now: datetime) -> tuple[NewsSignal, ...]:
+        documents = [(url, self._feed_document(url)) for url in self.feed_urls]
+        readable = [(url, root) for url, root in documents if root is not None]
+        if not readable:
+            raise NewsFeedsUnavailable(
+                "news_feeds_unavailable:" + ";".join(_feed_host(url) for url, _ in documents)
+            )
         signals: list[NewsSignal] = []
         needle = subject.upper()
         patterns = self._alias_patterns.get(needle, ())
-        for url in self.feed_urls:
-            xml = self.client.get_text(url, headers={"User-Agent": "quant-ai-readonly/1.0"})
-            root = ElementTree.fromstring(xml)
+        for url, root in readable:
             for item in root.findall(".//item")[:50]:
                 title = (item.findtext("title") or "").strip()
                 description = (item.findtext("description") or "").strip()
@@ -181,6 +260,37 @@ class RssNewsSentimentAdapter:
                     )
                 )
         return tuple(sorted(signals, key=lambda item: item.published_at, reverse=True)[:50])
+
+    def _feed_document(self, url: str) -> ElementTree.Element | None:
+        """The feed's parsed body: cached, refreshed, or held over a failure. None if none."""
+        with self._lock:
+            state = self._feeds.setdefault(url, _FeedState())
+            moment = self._clock()
+            if self._younger_than(state.fetched_at, moment, self.cache_ttl_seconds):
+                return state.document
+            if not self._younger_than(state.failed_at, moment, self.retry_after_seconds):
+                try:
+                    document = ElementTree.fromstring(
+                        self.client.get_text(url, headers={"User-Agent": "quant-ai-readonly/1.0"})
+                    )
+                except _FEED_FAILURES as exc:
+                    state.failed_at = moment
+                    LOGGER.warning(
+                        "rss_feed_unavailable host=%s error=%s held_body=%s",
+                        _feed_host(url),
+                        type(exc).__name__,
+                        state.document is not None,
+                    )
+                else:
+                    state.document, state.fetched_at, state.failed_at = document, moment, None
+                    return document
+            if self._younger_than(state.fetched_at, moment, self.stale_grace_seconds):
+                return state.document
+            return None
+
+    @staticmethod
+    def _younger_than(since: float | None, moment: float, window: float) -> bool:
+        return since is not None and moment - since < window
 
     @staticmethod
     def _matching_alias(
