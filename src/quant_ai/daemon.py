@@ -763,16 +763,22 @@ def _env_intelligence_providers() -> tuple[
     )
 
     registry = ProviderFailoverRegistry()
-    client = ResilientHttpClient(UrllibTransport())
     feeds = tuple(item.strip() for item in os.getenv("PRAMANA_NEWS_RSS_URLS", "").split(",") if item.strip())
     # Read before the feed check on purpose: a malformed alias map stops the boot even when
     # no feed is configured, rather than waiting for a tick to quietly attribute nothing.
     aliases = symbol_aliases_from_env()
     if feeds:
-        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(client, feeds, aliases))
+        # News gets a client of its own so a dead feed's failures open a circuit that FRED
+        # never shares. One attempt per feed: the adapter caches each body across the
+        # instruments and holds the last good one over a failure, so a retry buys little,
+        # while a single feed's three failed attempts would trip the breaker for the rest.
+        news_client = ResilientHttpClient(UrllibTransport(), max_attempts=1)
+        registry.register(ProviderCategory.NEWS, RssNewsSentimentAdapter(news_client, feeds, aliases))
     fred_key = os.getenv("FRED_API_KEY", "").strip()
     if fred_key:
-        registry.register(ProviderCategory.MACRO, FredMacroProvider(client, fred_key))
+        registry.register(
+            ProviderCategory.MACRO, FredMacroProvider(ResilientHttpClient(UrllibTransport()), fred_key)
+        )
     fundamentals_source = os.getenv("PRAMANA_FUNDAMENTALS_PROVIDER", "yahoo").strip().lower()
     if fundamentals_source in {"", "yahoo"}:
         # Own client so a Yahoo rate-limit opens Yahoo's circuit, not the news/macro one.
