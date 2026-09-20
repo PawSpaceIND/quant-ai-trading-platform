@@ -35,6 +35,11 @@ class TradingAlertCode(str, Enum):
     # alert: they are the cases where a corporate action and a catastrophic gap are
     # indistinguishable, and only a human can close them.
     OVERNIGHT_GAP_UNEXPLAINED = "OVERNIGHT_GAP_UNEXPLAINED"
+    # The macro provider refused or failed at boot. Its own code because the failure is
+    # silent everywhere else: every specialist that reads macro simply reports zero
+    # confidence, the consensus mean sinks below its floor, and the pilot holds all day
+    # with nothing in the logs. A dead FRED key cost two full sessions exactly this way.
+    MACRO_PROVIDER_UNAVAILABLE = "MACRO_PROVIDER_UNAVAILABLE"
 
 
 class AlertPriority(str, Enum):
