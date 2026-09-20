@@ -25,6 +25,8 @@ from quant_ai.agents.swarm import (
     GeopoliticalAnalystAgent,
     IndianEquitiesAgent,
     InstrumentBoundAnalysisRequest,
+    LiquidityDeskAgent,
+    RiskDeskAgent,
     TechnicalQuantAgent,
     USEquitiesAgent,
 )
@@ -234,11 +236,17 @@ class SwarmMarketAnalysisPipeline:
         self.sizer = sizer or PositionSizer()
         self.cache = IntelligenceDataCache()
         self.regime_observations = RegimeObservationStore()
+        # Five directional specialists and two desks. The desks are gates (see
+        # ``AtlasPolicy.gate_domains``): they can veto a cycle and are never counted as
+        # votes. The technical agent stays last: its request is the root request the CIO
+        # is handed, and it is the one whose freshness is the price feed alone.
         self.agents = (
             GeopoliticalAnalystAgent(),
             CommodityYieldAgent(),
             IndianEquitiesAgent(),
             USEquitiesAgent(),
+            LiquidityDeskAgent(),
+            RiskDeskAgent(),
             TechnicalQuantAgent(),
         )
         self._macro_current_at: datetime | None = None
@@ -366,6 +374,7 @@ class SwarmMarketAnalysisPipeline:
         common.update(technical)
         common.update(macro_metrics)
         common.update(market.metrics())
+        common.update(self._desk_metrics(instrument.symbol, candles, effective_plan, portfolio, None))
         common["equity_news_sentiment"] = equity_news
         common["news_sentiment"] = geopolitical_sentiment
         common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
@@ -505,6 +514,9 @@ class SwarmMarketAnalysisPipeline:
             common["live_volume"] = market_tick.volume
             if market_tick.spread is not None:
                 common["live_bid_ask_spread"] = market_tick.spread
+        common.update(
+            self._desk_metrics(instrument.symbol, candles, effective_plan, portfolio, market_tick)
+        )
 
         requests = []
         for agent in self.agents:
@@ -634,9 +646,66 @@ class SwarmMarketAnalysisPipeline:
         return tick
 
     @staticmethod
+    def _desk_metrics(
+        symbol: str,
+        candles: Sequence[Candle],
+        plan: CapitalPlan,
+        portfolio: PortfolioSnapshot,
+        market_tick: LiveTick | None,
+    ) -> dict[str, Decimal]:
+        """Inputs for the liquidity and risk desks, derived from what is on hand.
+
+        Nothing here is estimated. The traded-value median and the dead-tape count come
+        from the closed one-minute bars of this cycle; the spread from the live two-sided
+        quote, when there is one; every limit from the operator's (regime-adjusted) plan;
+        every exposure from the ledger's own snapshot. An input that is absent is left out,
+        and the desk that needed it abstains and names it.
+        """
+        metrics: dict[str, Decimal] = {}
+        traded = sorted(c.close * c.volume for c in candles if c.close > 0 and c.volume >= 0)
+        if traded:
+            middle = len(traded) // 2
+            metrics["median_minute_traded_value"] = (
+                traded[middle] if len(traded) % 2 else (traded[middle - 1] + traded[middle]) / 2
+            )
+            dead = 0
+            for candle in reversed(candles):
+                if candle.volume > 0:
+                    break
+                dead += 1
+            metrics["dead_tape_bars"] = Decimal(dead)
+        metrics["intended_position_notional"] = plan.max_position_amount
+        if market_tick is not None and market_tick.ltp > 0 and market_tick.spread is not None:
+            metrics["live_bid_ask_spread_bps"] = (
+                market_tick.spread / market_tick.ltp * Decimal(10000)
+            )
+        equity = portfolio.equity
+        if equity > 0:
+            peak = portfolio.peak_equity
+            metrics["book_equity"] = equity
+            metrics["book_gross_exposure_fraction"] = portfolio.gross_exposure / equity
+            metrics["book_symbol_exposure_fraction"] = (
+                portfolio.symbol_exposure.get(symbol, Decimal(0)) / equity
+            )
+            metrics["book_daily_pnl_fraction"] = portfolio.daily_total_pnl / equity
+            metrics["book_drawdown_fraction"] = (
+                max(Decimal(0), (peak - equity) / peak) if peak is not None and peak > 0 else Decimal(0)
+            )
+            metrics["plan_max_daily_loss_fraction"] = plan.max_daily_loss_fraction
+            metrics["plan_max_drawdown_fraction"] = plan.max_drawdown_fraction
+            metrics["plan_max_gross_exposure_fraction"] = plan.max_gross_exposure_fraction
+            metrics["plan_max_position_fraction"] = plan.max_position_fraction
+            metrics["plan_trading_allowed"] = Decimal(1 if plan.trading_allowed else 0)
+        return metrics
+
+    @staticmethod
     def _freshness_sources(agent_id: str) -> tuple[str, ...]:
         if agent_id == "geopolitical-analyst":
             return ("news",)
+        if agent_id in {"liquidity-desk", "risk-desk"}:
+            # The desks read the live quote, the closed bars and the book. The book is
+            # always current; the quote and bars are the price feed.
+            return ("price",)
         if agent_id == "commodity-yield":
             return ("macro",)
         if agent_id == "indian-equities":

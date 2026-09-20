@@ -71,14 +71,7 @@ class SwarmAgent(ABC):
         freshness = request.metrics.get("freshness_multiplier", Decimal(1))
         adjusted_confidence = max(Decimal(0), min(Decimal(1), confidence * freshness))
         stance = self._stance(clamped) if freshness > Decimal("0.25") else Stance.NEUTRAL
-        reasons = [rationale]
-        if freshness < 1:
-            reasons.append(f"freshness_penalty={freshness}")
-            diagnostic = request.metrics.get("freshness_diagnostic")
-            if isinstance(diagnostic, str) and diagnostic:
-                reasons.append(f"freshness_sources={diagnostic}")
-        if freshness <= Decimal("0.25"):
-            reasons.append("capital_preservation_stale_or_missing_data")
+        reasons = [rationale, *self._freshness_notes(request, freshness)]
         return AgentEvidence(
             self.agent_id,
             self.domain,
@@ -88,6 +81,44 @@ class SwarmAgent(ABC):
             clamped * Decimal("0.04"),
             abs(clamped) * Decimal("0.03"),
             tuple(reasons),
+            request.observed_at,
+            request.source_freshness_seconds,
+        )
+
+    @staticmethod
+    def _freshness_notes(request: AgentAnalysisRequest, freshness: Decimal) -> list[str]:
+        notes: list[str] = []
+        if freshness < 1:
+            notes.append(f"freshness_penalty={freshness}")
+            diagnostic = request.metrics.get("freshness_diagnostic")
+            if isinstance(diagnostic, str) and diagnostic:
+                notes.append(f"freshness_sources={diagnostic}")
+        if freshness <= Decimal("0.25"):
+            notes.append("capital_preservation_stale_or_missing_data")
+        return notes
+
+    def _gate(
+        self, request: AgentAnalysisRequest, stance: Stance, confidence: Decimal, rationale: str
+    ) -> AgentEvidence:
+        """Evidence whose stance the desk chose itself, under the same freshness rule.
+
+        A desk verdict on stale or missing inputs is worth nothing either way, so it
+        collapses to the same silent NEUTRAL the scoring agents produce, and the rationale
+        says so. A gate carries no return or risk estimate: it is not a forecast.
+        """
+        freshness = request.metrics.get("freshness_multiplier", Decimal(1))
+        if freshness <= Decimal("0.25"):
+            return self._evidence(request, Decimal(0), Decimal(0), rationale)
+        adjusted_confidence = max(Decimal(0), min(Decimal(1), confidence * freshness))
+        return AgentEvidence(
+            self.agent_id,
+            self.domain,
+            request.subject,
+            stance,
+            adjusted_confidence,
+            Decimal(0),
+            Decimal(0),
+            (rationale, *self._freshness_notes(request, freshness)),
             request.observed_at,
             request.source_freshness_seconds,
         )
@@ -191,6 +222,166 @@ class TechnicalQuantAgent(SwarmAgent):
         elif Decimal(45) <= rsi <= Decimal(65):
             score += Decimal("0.10") if momentum > 0 else Decimal(0)
         return self._evidence(request, score, Decimal("0.84"), "sma20_sma50_rsi_and_momentum")
+
+
+# ---------------------------------------------------------------------------------------
+# Desk specialists: gates, not voters.
+#
+# The liquidity desk and the risk desk hold no view on direction. Their question is whether
+# the book should be allowed to act at all on this tick: is the quote tradable, and does the
+# book have the room. They report LIQUIDITY / RISK evidence, and Atlas treats those domains
+# as gates - an AVOID vetoes the cycle; anything else is recorded and kept out of both the
+# directional mean and the coverage floor. A desk can therefore never manufacture a consensus
+# and never dilute one, which is what let three silenced specialists pin the pilot at 0.32.
+#
+# Every threshold is either the operator's own capital plan, carried in the request metrics,
+# or an explicit policy below. Nothing is invented: a desk that cannot observe its inputs
+# abstains (NEUTRAL, zero confidence) and says which input was missing.
+# ---------------------------------------------------------------------------------------
+
+def _metric(request: AgentAnalysisRequest, key: str) -> Decimal | None:
+    value = request.metrics.get(key)
+    return value if isinstance(value, Decimal) else None
+
+
+def _quantized(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.0001"))
+
+
+@dataclass(frozen=True)
+class LiquidityDeskPolicy:
+    """What the liquidity desk refuses to trade into.
+
+    ``max_spread_bps``: the quoted bid/ask spread, in basis points of the last price, above
+    which an entry is refused. NSE large caps quote inside 5 bps for most of the session;
+    30 is a quote that has come apart (pre-open, halt, thin book), not one that is wide.
+
+    ``max_participation``: the plan's maximum position notional as a share of the median
+    one-minute traded value in the analysis window. An order that would be more than a
+    quarter of a typical minute's turnover moves the price it is filled at.
+
+    ``dead_tape_bars``: consecutive closed one-minute bars with no volume at the end of the
+    window. Five silent minutes on a listed large cap means the tape has stopped, whatever
+    the last quote says.
+    """
+
+    max_spread_bps: Decimal = Decimal(30)
+    max_participation: Decimal = Decimal("0.25")
+    dead_tape_bars: int = 5
+
+    def __post_init__(self) -> None:
+        if self.max_spread_bps <= 0 or self.max_participation <= 0 or self.dead_tape_bars < 1:
+            raise ValueError("liquidity_desk_policy_invalid")
+
+
+class LiquidityDeskAgent(SwarmAgent):
+    agent_id = "liquidity-desk"
+    domain = AgentDomain.LIQUIDITY
+
+    def __init__(self, policy: LiquidityDeskPolicy | None = None) -> None:
+        self.policy = policy or LiquidityDeskPolicy()
+
+    def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        spread_bps = _metric(request, "live_bid_ask_spread_bps")
+        if spread_bps is None:
+            # No two-sided live quote on this tick: the desk cannot judge, so it does not.
+            return self._evidence(request, Decimal(0), Decimal(0), "liquidity_unobserved:no_live_quote")
+        median_value = _metric(request, "median_minute_traded_value") or Decimal(0)
+        if median_value <= 0:
+            # Not one bar in the window carried volume. That is a feed that does not report
+            # volume, or a synthetic tape, far more often than a large cap that has not
+            # printed for an hour - and a desk cannot tell the two apart from here. Refusing
+            # on it would veto every tick of a volume-less feed; judging on it would invent
+            # a number. So the desk abstains and says what it could not see.
+            return self._evidence(
+                request, Decimal(0), Decimal(0), "liquidity_unobserved:no_volume_in_window"
+            )
+        intended = _metric(request, "intended_position_notional") or Decimal(0)
+        dead = _metric(request, "dead_tape_bars") or Decimal(0)
+        participation = intended / median_value
+
+        breaches: list[str] = []
+        if spread_bps > self.policy.max_spread_bps:
+            breaches.append(f"spread_bps={_quantized(spread_bps)}>{self.policy.max_spread_bps}")
+        if dead >= self.policy.dead_tape_bars:
+            breaches.append(f"dead_tape_bars={dead}>={self.policy.dead_tape_bars}")
+        if participation > self.policy.max_participation:
+            breaches.append(
+                f"participation={_quantized(participation)}>{self.policy.max_participation}"
+            )
+        if breaches:
+            return self._gate(request, Stance.AVOID, Decimal("0.90"), "liquidity_veto:" + ";".join(breaches))
+        return self._gate(
+            request,
+            Stance.NEUTRAL,
+            Decimal("0.70"),
+            f"liquidity_ok:spread_bps={_quantized(spread_bps)};"
+            f"participation={_quantized(participation)};dead_tape_bars={dead}",
+        )
+
+
+class RiskDeskAgent(SwarmAgent):
+    """Refuses new risk the operator's own plan would not allow, before it is proposed.
+
+    The warden enforces these limits after the decision; the desk states them before it,
+    so the journal explains a hold in the plan's own terms and Atlas does not propose what
+    the firewall is about to refuse. Every number is the plan's or the book's.
+    """
+
+    agent_id = "risk-desk"
+    domain = AgentDomain.RISK
+
+    _REQUIRED = (
+        "book_daily_pnl_fraction",
+        "book_drawdown_fraction",
+        "book_gross_exposure_fraction",
+        "book_symbol_exposure_fraction",
+        "plan_max_daily_loss_fraction",
+        "plan_max_drawdown_fraction",
+        "plan_max_gross_exposure_fraction",
+        "plan_max_position_fraction",
+        "plan_trading_allowed",
+    )
+
+    def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        values = {key: _metric(request, key) for key in self._REQUIRED}
+        if any(value is None for value in values.values()):
+            missing = ",".join(key for key, value in values.items() if value is None)
+            return self._evidence(request, Decimal(0), Decimal(0), f"risk_unobserved:{missing}")
+        book: dict[str, Decimal] = {k: v for k, v in values.items() if v is not None}
+
+        breaches: list[str] = []
+        if book["plan_trading_allowed"] <= 0:
+            breaches.append("plan_trading_disallowed")
+        daily = book["book_daily_pnl_fraction"]
+        loss_limit = book["plan_max_daily_loss_fraction"]
+        loss_used = Decimal(0)
+        if daily < 0:
+            loss_used = (-daily / loss_limit) if loss_limit > 0 else Decimal(1)
+            if loss_used >= 1:
+                breaches.append(f"daily_loss_limit_reached:used={_quantized(loss_used)}")
+        drawdown = book["book_drawdown_fraction"]
+        drawdown_limit = book["plan_max_drawdown_fraction"]
+        if drawdown > 0 and (drawdown_limit <= 0 or drawdown >= drawdown_limit):
+            breaches.append(f"drawdown_limit_reached:{_quantized(drawdown)}>={drawdown_limit}")
+        gross = book["book_gross_exposure_fraction"]
+        position = book["plan_max_position_fraction"]
+        gross_cap = book["plan_max_gross_exposure_fraction"]
+        projected = gross + position
+        if projected > gross_cap:
+            breaches.append(f"gross_exposure_cap:projected={_quantized(projected)}>{gross_cap}")
+        held = book["book_symbol_exposure_fraction"]
+        if held >= position:
+            breaches.append(f"position_full:held={_quantized(held)}>={position}")
+        if breaches:
+            return self._gate(request, Stance.AVOID, Decimal("0.90"), "risk_veto:" + ";".join(breaches))
+        return self._gate(
+            request,
+            Stance.NEUTRAL,
+            Decimal("0.70"),
+            f"risk_ok:daily_loss_used={_quantized(loss_used)};drawdown={_quantized(drawdown)};"
+            f"gross={_quantized(gross)};projected={_quantized(projected)};held={_quantized(held)}",
+        )
 
 
 @dataclass(frozen=True)
