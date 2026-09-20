@@ -29,10 +29,19 @@ class FreshnessResult:
 
 
 class FreshnessValidator:
+    # A TTL is the age at which a source stops being current *for the cadence it is
+    # published on*. Price is a live feed; news is a wire; fundamentals are a daily
+    # snapshot. Macro is daily and weekly series that FRED publishes with lags of one to
+    # nine days (the broad dollar index arrives a week late), and the snapshot is aged by
+    # its oldest series. At four hours every macro read of every session was STALE at the
+    # 0.10 floor, the commodity specialist never held a stance, and the consensus never
+    # saw a macro view. Seven days is one publication week: full weight inside it, half
+    # weight to a fortnight (the penalty floor below is ttl/age), fading to silence by a
+    # month. The Atlas hard-hold budget for macro-driven domains is set to match.
     TTL: ClassVar[dict[DataCategory, int]] = {
         DataCategory.PRICE: 60,
         DataCategory.NEWS: 30 * 60,
-        DataCategory.MACRO: 4 * 60 * 60,
+        DataCategory.MACRO: 7 * 24 * 60 * 60,
         DataCategory.FUNDAMENTAL: 24 * 60 * 60,
     }
 
