@@ -69,6 +69,10 @@ services:
       PRAMANA_BOOK_RISK_HISTORY: ${PRAMANA_BOOK_RISK_HISTORY:-daily}
       PRAMANA_SECTOR_MAP_JSON: ${PRAMANA_SECTOR_MAP_JSON:-}
       PRAMANA_SECTOR_MAP_FILE: /app/pilot-sector-map.json
+      # Scheduled events that suppress new entries (results days, RBI policy, budget day).
+      # The mounted file is validated once at boot; a malformed file refuses the boot. The
+      # committed example holds no events, so the default is exactly "no blackouts".
+      PRAMANA_EVENT_CALENDAR: /app/event-calendar.json
       PRAMANA_DECISION_QUALITY_REPORT: /data/decision-quality.json
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
@@ -89,6 +93,12 @@ services:
       - type: bind
         source: ${PRAMANA_DIRECTIVES_HOST_FILE:-./founder-directives.example.json}
         target: /app/directives.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRAMANA_EVENT_CALENDAR_HOST_FILE:-./event-calendar.example.json}
+        target: /app/event-calendar.json
         read_only: true
         bind:
           create_host_path: false
