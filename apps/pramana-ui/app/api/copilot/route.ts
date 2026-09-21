@@ -1,3 +1,4 @@
+import {spendStatus} from "@/lib/ai-spend";
 import { NextRequest, NextResponse } from "next/server";
 import { boundedJson } from "@/lib/auth";
 import { audit, dailyBudget, rateLimit } from "@/lib/console-db";
@@ -14,6 +15,7 @@ function dailyLimit() {
 export async function GET() {
   const limit = dailyLimit();
   return NextResponse.json({
+    dollarBudget: spendStatus(),
     conversations: conversations(),
     configured: !!process.env.ANTHROPIC_API_KEY,
     dailyLimit: limit > 0 ? limit : null,

@@ -21,6 +21,7 @@ from quant_ai.llm.anthropic_client import (
     parse_consensus,
 )
 from quant_ai.llm.provenance import ConsensusPayload, content_hash
+from quant_ai.llm.spend import SpendRefused, initialize, require_reservation, settle
 
 ASTRA_MODEL = "gpt-6-astra"
 RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -38,6 +39,7 @@ class OpenAIConsensusClient:
             raise ValueError("astra_output_limit_invalid")
         if reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError("astra_reasoning_effort_invalid")
+        initialize()
         self.model = ASTRA_MODEL
         self._key, self._transport = key, transport
         self.budget = budget
@@ -51,7 +53,7 @@ class OpenAIConsensusClient:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 32_000:
             raise ValueError("astra_prompt_invalid")
         request = {
-            "model": self.model, "store": False,
+            "model": self.model, "store": False, "service_tier": "default",
             "instructions": CONSENSUS_SYSTEM, "input": prompt,
             "reasoning": {"effort": self.reasoning_effort},
             "max_output_tokens": self.max_output_tokens,
@@ -96,7 +98,10 @@ class OpenAIConsensusClient:
                                          headers={"Authorization": "Bearer " + self._key})
 
         try:
+            spend_ticket = require_reservation(request)
             response = await asyncio.wait_for(send(), self.timeout_seconds)
+        except SpendRefused:
+            return unavailable("budget_exhausted", "budget_exhausted")
         except (asyncio.TimeoutError, httpx.TimeoutException):
             return unavailable("provider_timeout")
         except httpx.HTTPError:
@@ -120,6 +125,7 @@ class OpenAIConsensusClient:
             key: value if type(value := usage.get(key)) is int and value >= 0 else None
             for key in ("input_tokens", "output_tokens")
         }
+        settle(spend_ticket, provenance["usage"])
         # OpenAI input_tokens already includes cached input: never add it twice.
         if self.budget is not None:
             self.budget.record(scope, provenance["usage"], token_reservation=reservation)

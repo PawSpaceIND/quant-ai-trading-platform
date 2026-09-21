@@ -1,3 +1,4 @@
+import {reserveChat, settleChat} from "./ai-spend";
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 type Attempt = {
   requestId: string | null;
@@ -35,10 +36,11 @@ export async function requestClaude(
   let error: string | null = null;
   try {
     for (let index = 0; index < 2; index++) {
+      const spendTicket = reserveChat(request);
       const response = await transport("https://api.anthropic.com/v1/messages", {
         method: "POST", signal,
         headers: { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": key },
-        body: JSON.stringify(request),
+        body: JSON.stringify({...request, service_tier: "standard_only"}),
       });
       const attempt: Attempt = {
         requestId: response.headers.get("request-id"), httpStatus: response.status,
@@ -58,6 +60,7 @@ export async function requestClaude(
         throw new Error(`Claude request failed (${response.status}). ${response.status === 429 ? "Provider rate limit reached; please wait before retrying." : "Please retry later or ask the operator to check saved diagnostics."}`);
       }
       const data = await response.json();
+      settleChat(spendTicket, data?.usage);
       attempt.stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
       const blocks = Array.isArray(data?.content) ? data.content : [];
       attempt.contentTypes = blocks.map((b: { type?: unknown } | null) =>
@@ -100,7 +103,9 @@ export async function requestClaude(
   };
   return { answer, error, usage: {
     inputTokens: total("inputTokens"), outputTokens: total("outputTokens"),
-    estimatedCostUsd: null, costNote: "Pricing is not configured; known token usage retained across attempts.",
+    estimatedCostUsd: null, costNote: process.env.PRAMANA_AI_DAILY_USD_LIMIT === undefined
+      ? "Pricing is not configured; known token usage retained across attempts."
+      : "Shared dollar ledger tracks reservations and conservative usage estimates; this conversation is not an invoice.",
     attempts,
   } };
 }

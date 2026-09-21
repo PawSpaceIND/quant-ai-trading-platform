@@ -481,6 +481,18 @@ class RuntimeManifest:
             "news_window_seconds": p.news_window.total_seconds(),
             "baseline_risk_policy": stable(RiskPolicy()),
         }
+        from quant_ai.governance.runtime_identity import path_digest
+        from quant_ai.llm.spend import DB_ENV, EXPIRES, LIMIT_ENV, POLICY, SpendRefused, limit_micro
+
+        if LIMIT_ENV in os.environ:
+            try:
+                manifest["paid_inference_budget"] = {
+                    "daily_limit_micro_usd": limit_micro(os.environ[LIMIT_ENV]),
+                    "database_sha256": path_digest(os.getenv(DB_ENV, "/data/ai-spend.sqlite")),
+                    "pricing_policy": POLICY, "pricing_expires": EXPIRES, "reset_timezone": "UTC",
+                }
+            except SpendRefused:
+                issues.append("paid_inference_budget_invalid")
         if not manifest["shared_broker_wiring"] or not manifest["shared_market_feed_wiring"]:
             issues.append("unsupported_engine_wiring")
         if not re.fullmatch("[0-9a-f]{40}", self.revision):

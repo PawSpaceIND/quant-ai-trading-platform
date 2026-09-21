@@ -23,6 +23,7 @@ export function CopilotPanel({
   const [active, setActive] = useState<Conversation | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [dollarBudget, setDollarBudget] = useState<{status:string;limitUsd?:number;spentUsd?:number;reservedUsd?:number;remainingUsd:number}|null>(null);
   // The daily chat cap is enforced server-side and answered with 429. Showing the
   // remaining allowance means running out is expected rather than a mystery failure.
   const [allowance, setAllowance] = useState<{ remaining: number; limit: number } | null>(null);
@@ -36,6 +37,7 @@ export function CopilotPanel({
       .then((d) => {
         if (!alive) return;
         setHistory(d.conversations);
+        setDollarBudget(d.dollarBudget ?? null);
         const remaining = d.dailyRemaining, limit = d.dailyLimit;
         setAllowance(
           typeof remaining === "number" && typeof limit === "number" && limit > 0
@@ -104,6 +106,7 @@ export function CopilotPanel({
       void fetch("/api/copilot", { signal: AbortSignal.timeout(12000) })
         .then((r) => r.ok ? r.json() : null)
         .then((d) => {
+          if (d) setDollarBudget(d.dollarBudget ?? null);
           if (d && typeof d.dailyRemaining === "number" && typeof d.dailyLimit === "number")
             setAllowance({ remaining: Math.max(0, d.dailyRemaining), limit: d.dailyLimit });
         }).catch(() => {});
@@ -203,6 +206,11 @@ export function CopilotPanel({
           {error}
         </p>
       )}
+      {dollarBudget && <p className="muted chat-dollar-budget" role="status">
+        {dollarBudget.status === "unavailable" ? "AI dollar budget unavailable; paid calls paused."
+          : dollarBudget.status === "activation_hold" ? `Combined AI limit: $${dollarBudget.limitUsd?.toFixed(2)}/day. Paid calls paused until 05:30 IST because earlier spending is unverified.`
+          : `Combined AI limit: $${dollarBudget.limitUsd?.toFixed(2)}/day · estimated used $${dollarBudget.spentUsd?.toFixed(2)} · reserved $${dollarBudget.reservedUsd?.toFixed(2)} · available $${dollarBudget.remainingUsd.toFixed(2)}. Resets 05:30 IST.`}
+      </p>}
       {allowance && (
         <p className={allowance.remaining > 0 ? "muted chat-allowance" : "error chat-allowance"} role="status">
           {allowance.remaining > 0
