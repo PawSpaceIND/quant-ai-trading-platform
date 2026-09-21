@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { AiBudget, CalibrationBin, DecisionQualityReport, MissedOpportunities, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
-import { count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, stancesSummary } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
+import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, stancesSummary } from "@/lib/decision-quality-model";
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
 
@@ -54,6 +54,7 @@ export function DecisionQuality() {
         <button onClick={() => void load()} disabled={busy} aria-label="Refresh decision quality">↻ Refresh</button>
       </div>
       <Headline report={report} />
+      <ModelDecisionHealth report={report.inference_health} />
       <Calibration bins={report.calibration.bins} brier={report.calibration.brier_score} horizon={report.directional.horizon_minutes} />
       <div className="quality-tables">
         <Panel eyebrow="OUTCOMES BY REGIME" title="By regime">
@@ -114,6 +115,23 @@ export function AiBudgetNotice({ budget }: { budget: AiBudget }) {
     </p>
     {shared && <p>{`${budget.scope}: ${count(budget.calls)} calls and ${count(budget.tokens)} tokens used. Other scopes share the same daily ceiling.`}</p>}
   </div>;
+}
+
+export function ModelDecisionHealth({ report }: { report: InferenceHealth | null }) {
+  return <section className="panel" aria-label="Model decision health">
+    <span className="eyebrow">RECORDED MODEL DIAGNOSTICS</span><h2>Model decision health</h2>
+    {!report ? <div className="empty">No valid model diagnostic breakdown was recorded. Earlier failure causes cannot be reconstructed from decision totals.</div> : <>
+      <p>{count(report.recorded)} of {count(report.decisions)} decisions carry diagnostics. {count(report.not_recorded)} have no recorded diagnostic.</p>
+      <DataTable label="Model decision statuses" columns={[{ name: "Status" }, { name: "Decisions", numeric: true }]}
+        rows={report.statuses.map((row) => [INFERENCE_STATUS_LABELS[row.status], count(row.decisions)])}
+        empty="No model status has been recorded in this window." />
+      <h3>Failure reasons</h3>
+      <DataTable label="Model failure reasons" columns={[{ name: "Recorded cause" }, { name: "Decisions", numeric: true }]}
+        rows={report.failures.map((row) => [row.code.replaceAll("_", " "), count(row.decisions)])}
+        empty="No failure codes in the recorded diagnostics. Decisions without diagnostics remain unknown." />
+    </>}
+    <p className="muted">These are decision counts, not API request counts or provider error rates. A completed model response can still recommend waiting or be rejected by risk controls.</p>
+  </section>;
 }
 
 function VerdictBanner({ verdict }: { verdict: Verdict }) {
