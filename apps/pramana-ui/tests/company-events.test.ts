@@ -6,6 +6,7 @@ import path from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import {createHash} from "node:crypto";
 import {readCompanyEvents, saveCompanyMapping, companyEventsContext, officialEventUrl} from "../lib/company-events";
+import {instrumentIdentity, watchlisted} from "../lib/symbols";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "company-events-test-"));
 const fixture = JSON.parse(fs.readFileSync(path.resolve("../../tests/fixtures/company_events.json"), "utf8"));
 const file = path.join(dir, "events.sqlite");
@@ -161,4 +162,22 @@ test("withdrawn automatic Atlas evidence stays excluded and manual handoff ident
   const context = JSON.parse(conversations(result.id)[0].context!);
   assert.equal(context.companyEvents.events.length, 0); assert.equal(context.companyEvents.eventsWithWithdrawnMapping, 2);
   assert(!sent.includes("Unicode")); assert(sent.includes("Withdrawn or conflicting mappings")); assert(sent.includes(JSON.stringify(context)));
+});
+
+test("an instrument identity is exchange-qualified from the row, not the bare feed symbol", () => {
+  assert.equal(instrumentIdentity({symbol: "INFY", instrument: {exchange: "NSE"} as never}), "NSE:INFY");
+  assert.equal(instrumentIdentity({symbol: "RELIANCE", instrument: {exchange: "BSE"} as never}), "BSE:RELIANCE");
+  // A row with no instrument must not silently pass the NSE mapping filter.
+  assert.equal(instrumentIdentity({symbol: "INFY"}), "UNKNOWN:INFY");
+});
+
+test("watchlist membership accepts the feed's bare symbol and the stored qualified one", () => {
+  // The market feed writes `INFY`; a reviewed mapping is stored as `NSE:INFY`. Comparing
+  // the two namespaces directly is what made "Watchlist only" match nothing in production.
+  assert.equal(watchlisted("NSE:INFY", ["INFY"]), true);
+  assert.equal(watchlisted("NSE:INFY", ["NSE:INFY"]), true);
+  assert.equal(watchlisted("NSE:INFY", ["TCS", "NSE:TCS"]), false);
+  assert.equal(watchlisted("NSE:INFY", []), false);
+  // A prefix must not match by accident.
+  assert.equal(watchlisted("NSE:INFYX", ["INFY"]), false);
 });

@@ -38,3 +38,14 @@ test("an expired portfolio cannot retain fresh labels from its old payload",()=>
  const r=portfolioRisk(p,-5);assert.equal(r.status,"ok");if(r.status!=="ok")return;
  assert.equal(r.staleMarks,2);assert.ok(r.rows.every(row=>!row.fresh));
 });
+
+test("downside to recorded stops is withheld, not zero, when no holding has a stop",()=>{
+ const p=portfolio();delete p.holdings[0].stopPrice;
+ const r=portfolioRisk(p,0);assert.equal(r.status,"ok");if(r.status!=="ok")return;
+ // Every stop missing means the downside is unknown. Zero would read as "no downside".
+ assert.equal(r.recordedStopDownside,null);assert.equal(r.missingStops,2);
+ // A breached stop still contributes a real zero, so a mixed book keeps a number.
+ const mixed=portfolio();mixed.holdings[0].stopPrice=110;
+ const m=portfolioRisk(mixed,0);assert.equal(m.status,"ok");if(m.status!=="ok")return;
+ assert.equal(m.recordedStopDownside,0);
+});

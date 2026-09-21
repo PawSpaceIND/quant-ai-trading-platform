@@ -9,7 +9,7 @@ export async function GET() {
   const state = readResearchLab();
   if (!state.report) return NextResponse.json({error: state.detail}, {
     status: state.status === "unavailable" ? 404 : 503,
-    headers: {"Cache-Control": "no-store"},
+    headers: {"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="pramana-experiment-comparison-unavailable.json"'},
   });
   return new NextResponse(JSON.stringify(state.report, null, 2), {headers: {
     "Content-Type": "application/json; charset=utf-8",

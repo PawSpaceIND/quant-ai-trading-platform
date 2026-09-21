@@ -39,6 +39,12 @@ export function provenanceSummary(proof: Proof): DecisionProvenance {
     requestSha256:hash(i.request_sha256),configurationSha256:hash(p.configuration_sha256)};
 }
 
+/** Largest single trace this reader will parse. Every other evidence reader bounds
+ * itself; the proof directory is unpruned and is re-read on every workspace poll. */
+const PROOF_LIMIT_BYTES = 1_000_000;
+/** Newest files considered when linking fills to traces. The directory only grows. */
+const PROOF_INDEX_FILES = 2000;
+
 export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; proof: Proof }> {
   const directory = proofDirectory();
   const canonical = ledgerProofs().filter(({ proof }) => Array.isArray(proof.input_matrix));
@@ -47,8 +53,10 @@ export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; p
     .filter((file) => file.endsWith(".json") && file !== "latest-backtest-tearsheet.json")
     .map((file) => {
       const full = path.join(/* turbopackIgnore: true */ directory, file);
-      return { file, full, mtimeMs: fs.statSync(/* turbopackIgnore: true */ full).mtimeMs };
+      const stat = fs.statSync(/* turbopackIgnore: true */ full);
+      return { file, full, mtimeMs: stat.mtimeMs, size: stat.size };
     })
+    .filter(({ size }) => size <= PROOF_LIMIT_BYTES)
     .sort((a, b) => b.mtimeMs - a.mtimeMs)
     .slice(0, limit)
     .flatMap(({ file, full, mtimeMs }) => {
@@ -69,7 +77,9 @@ export function latestSwarmIntelligence() {
   if (!latest) {
     return { status: "empty", regime: "UNKNOWN", regimeSource: "not_persisted", consensus: "NO_PROOF", agents: [], proof: null };
   }
-  const agents = (latest.proof.input_matrix ?? []).map((row) => ({
+  const agents = (latest.proof.input_matrix ?? [])
+    .filter((row): row is NonNullable<typeof row> => !!row && typeof row === "object" && !Array.isArray(row))
+    .map((row) => ({
     agentId: row.agent_id ?? "unknown",
     domain: row.domain ?? "UNKNOWN",
     stance: row.stance ?? "NEUTRAL",
@@ -140,8 +150,17 @@ export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
   for (const item of ledgerProofs()) index.set(item.proof.order_id!, item);
   const directory = proofDirectory();
   if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return index;
-  for (const file of fs.readdirSync(/* turbopackIgnore: true */ directory)) {
-    if (!file.endsWith(".json") || file === "latest-backtest-tearsheet.json") continue;
+  const candidates = fs.readdirSync(/* turbopackIgnore: true */ directory)
+    .filter((file) => file.endsWith(".json") && file !== "latest-backtest-tearsheet.json")
+    .flatMap((file) => {
+      try {
+        const stat = fs.statSync(/* turbopackIgnore: true */ path.join(directory, file));
+        return stat.size <= PROOF_LIMIT_BYTES ? [{ file, mtimeMs: stat.mtimeMs }] : [];
+      } catch { return []; }
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, PROOF_INDEX_FILES);
+  for (const { file } of candidates) {
     let raw: string;
     try {
       raw = fs.readFileSync(/* turbopackIgnore: true */ path.join(directory, file), "utf8");

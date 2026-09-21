@@ -152,7 +152,9 @@ test("workspace, private selected export and saved Atlas context share identical
   delete process.env.PRAMANA_PORTFOLIO_RISK_METADATA;
   delete process.env.PRAMANA_PORTFOLIO_RISK_METADATA_FILE;
   const {GET:attribution}=await import("../app/api/portfolio/attribution/route");
-  const attributionResponse=await attribution();assert.equal(attributionResponse.status,422);assert.equal(attributionResponse.headers.get("cache-control"),"no-store");assert.equal(attributionResponse.headers.get("content-disposition"),null);
+  const attributionResponse=await attribution();assert.equal(attributionResponse.status,422);assert.equal(attributionResponse.headers.get("cache-control"),"no-store");// The export anchor carries its own download filename, so an error body is saved
+  // either way. Name the failure in the file rather than letting it pose as the report.
+  assert.equal(attributionResponse.headers.get("content-disposition"),'attachment; filename="pramana-portfolio-attribution-unavailable.json"');
   const {generateAnswer,conversations}=await import("../lib/copilot");delete process.env.ANTHROPIC_API_KEY;
   const answer=await generateAnswer("Explain NIFTY BANK over 20 sessions",undefined,"account-benchmark-fixture");assert.equal(answer.status,"error");
   const context=JSON.parse(conversations(answer.id)[0].context!);const saved=context.benchmarkPerformance;

@@ -3,6 +3,7 @@ import {boundedJson} from "@/lib/auth";
 import {rateLimit} from "@/lib/console-db";
 import {tenantId} from "@/lib/db";
 import {readMarket} from "@/lib/market";
+import {instrumentIdentity} from "@/lib/symbols";
 import {nseSymbol, readCompanyEvents, saveCompanyMapping} from "@/lib/company-events";
 export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
@@ -12,14 +13,14 @@ export async function GET(req: NextRequest) {
   const state = readCompanyEvents(at);
   return new NextResponse(JSON.stringify(state), {status: state.status === "invalid" ? 503 : state.status === "unavailable" ? 404 : 200,
     headers: {"Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-      ...(req.nextUrl.searchParams.get("download") === "1" ? {"Content-Disposition": 'attachment; filename="pramana-company-events.json"'} : {})}});
+      ...(req.nextUrl.searchParams.get("download") === "1" ? {"Content-Disposition": `attachment; filename="pramana-company-events${state.status === "available" ? "" : "-unavailable"}.json"`} : {})}});
 }
 export async function POST(req: NextRequest) {
   try {
     if (!rateLimit(`event-mapping:${tenantId}`, 12)) return NextResponse.json({error: "Too many mapping requests. Try again shortly."}, {status: 429});
     const body = await boundedJson(req, 6000);
     const market = await readMarket();
-    const mapping = saveCompanyMapping(body, market.rows.map(r => r.symbol).filter(nseSymbol));
+    const mapping = saveCompanyMapping(body, market.rows.map(instrumentIdentity).filter(nseSymbol));
     return NextResponse.json({mapping}, {headers: {"Cache-Control": "no-store"}});
   } catch (error) {
     const conflict = error instanceof Error && error.message.startsWith("Mapping changed.");

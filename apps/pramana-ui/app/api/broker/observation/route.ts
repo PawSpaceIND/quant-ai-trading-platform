@@ -8,5 +8,5 @@ export function GET(request:Request) {
   if((journalId!==null||sequence!==null)&&(!journalId||!/^[a-f0-9]{32}$/.test(journalId)||!sequence||!/^([1-9]\d*)$/.test(sequence)||!Number.isSafeInteger(Number(sequence))||query.getAll("journalId").length!==1||query.getAll("sequence").length!==1))
     return NextResponse.json({error:"Select a valid journal and capture sequence."},{status:400,headers:{"Cache-Control":"no-store"}});
   const state=readBrokerObservation(Date.now(),journalId&&sequence?{journalId,sequence:Number(sequence),...(captureSha256?{captureSha256}:{})}:undefined);
-  return new NextResponse(JSON.stringify(state,null,2),{status:state.report?200:state.status==="invalid"?503:422,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff",...(state.report?{"Content-Disposition":'attachment; filename="pramana-broker-observation.json"'}:{})}});
+  return new NextResponse(JSON.stringify(state,null,2),{status:state.report?200:state.status==="invalid"?503:422,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff",...(state.report?{"Content-Disposition":'attachment; filename="pramana-broker-observation.json"'}:{"Content-Disposition":'attachment; filename="pramana-broker-observation-unavailable.json"'})}});
 }

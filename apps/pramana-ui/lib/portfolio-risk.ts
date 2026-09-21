@@ -45,7 +45,12 @@ export function portfolioRisk(p: Portfolio, parallelShock: number, overrides: Re
     largestEquityWeight: rows.length ? Math.max(...rows.map(r => r.weight)) : 0,
     effectiveHoldings: hhi ? 1 / hhi : null,
     grossEquityWeight: exposure / p.totalEquity,
-    recordedStopDownside: rows.reduce((sum, r) => sum + (r.stopDownside ?? 0), 0),
+    // Null, not zero, when no holding has a recorded stop: the downside is unknown, not
+    // absent. A breached stop still contributes a real zero, so only an all-missing book
+    // withholds the figure.
+    recordedStopDownside: rows.length > 0 && rows.every(r => r.stopDownside === null)
+      ? null
+      : rows.reduce((sum, r) => sum + (r.stopDownside ?? 0), 0),
     missingStops: rows.filter(r => r.stopState === "missing").length,
     breachedStops: rows.filter(r => r.stopState === "at_or_breached").length,
     staleMarks: rows.filter(r => !r.fresh).length,
