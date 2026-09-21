@@ -1,5 +1,10 @@
 # Recorded feature store to training-only data
 
+For chronological model evaluation using an earlier training subset and later
+test observations, see [Forecast holdout evaluation](FORECAST_HOLDOUT_EVALUATION.md).
+That command partitions the package before fitting; the ordinary `fit` command
+below uses the entire supplied package.
+
 This is the next data-assembly component after #143. It reads the existing
 `PointInTimeFeatureStore`, preserves its original selection logic, emits the
 existing fitter's exact input format inside an auditable package, and can pass

@@ -193,15 +193,20 @@ def predict(bundle, snapshot, *, now):
     _check(type(bundle) is ShadowModelBundle, "typed_bundle_required")
     now = _instant(now)
     value, model = _input(snapshot, bundle, now)
+    return _numeric_probability(model, value["values"]), value, model
+
+
+def _numeric_probability(model, values):
+    """Shared arithmetic for validated inputs, without asserting a forecast timestamp."""
     with localcontext() as context:
         context.prec = 34
         logit = _decimal(model["intercept"]) + sum((
-            _decimal(weight) * _decimal(value["values"][name])
+            _decimal(weight) * _decimal(values[name])
             for name, weight in zip(model["feature_names"], model["coefficients"])
         ), Decimal(0))
         _check(logit.is_finite() and abs(logit) <= 60, "logit_outside_supported_domain")
         probability = Decimal(1) / (Decimal(1) + (-logit).exp())
-    return probability, value, model
+    return probability
 
 
 def _private_existing(path):
