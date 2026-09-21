@@ -441,6 +441,7 @@ class AtlasInvestmentAgent:
         )
         hard_holds = {
             "insufficient_agent_coverage",
+            "insufficient_usable_agent_coverage",
             "stale_specialist_evidence",
             "specialist_veto",
             "zero_confidence",
