@@ -115,6 +115,7 @@ def main():
             assert services[service]["environment"]["PRAMANA_DECISION_QUALITY_REPORT"] == "/data/decision-quality.json"
             assert services[service]["environment"]["PRAMANA_MISSED_OPPORTUNITY_DIR"] == "/data/missed-opportunities"
             assert services[service]["environment"]["PRAMANA_POST_MORTEM_DIR"] == "/data/post-mortems"
+            assert services[service]["environment"]["PRAMANA_SESSION_PLAN_DIR"] == "/data/session-plans"
         assert services["pramana-ghost"]["healthcheck"]["test"][3] == "health"
         for key, value in {**research_paths, **attribution_config}.items():
             assert services["dashboard"]["environment"][key] == value
@@ -138,6 +139,7 @@ def main():
         assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_NOTIONAL_FRACTION"] == "0.01"
         # Regime routing is on unless the operator turns it off for a comparison run.
         assert services["pramana-ghost"]["environment"]["PRAMANA_REGIME_PLAYBOOKS"] == "on"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_SPECIALIST_REWEIGHTING"] == "on"
         assert services["pramana-ghost"]["environment"]["PRAMANA_CORPORATE_ACTIONS"] == "/app/corporate-actions.json"
         limits = {}
         for name, service in services.items():

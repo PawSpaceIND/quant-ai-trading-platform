@@ -98,6 +98,19 @@ def missed(database: Path, tenant: str, session_date: str | None = None,
     return report.render(built)
 
 
+def plan(database: Path, session_date: str | None = None) -> str:
+    """The pre-open session plan beside the ledger (or the newest one), as terminal text."""
+    from quant_ai.agents import strategist
+    directory = Path(os.environ.get("PRAMANA_SESSION_PLAN_DIR") or database.resolve().parent / "session-plans")
+    if session_date:
+        found = strategist.load_plan(strategist.plan_path(directory, session_date))
+    else:
+        found = strategist.latest_plan(directory)
+    if found is None:
+        return f"no session plan {'for ' + session_date if session_date else 'written'} under {directory}"
+    return strategist.render(found)
+
+
 def fraction(text: str) -> Decimal:
     """A ``--threshold`` such as 0.01; argparse only reports ValueError-family failures."""
     try:
@@ -108,12 +121,12 @@ def fraction(text: str) -> Decimal:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check", "missed"])
+    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check", "missed", "plan"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--evidence", type=Path)
-    parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed`; default today")
+    parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed` (default today) or `plan` (default newest)")
     parser.add_argument("--threshold", type=fraction, help="missed-move threshold as a fraction; default 0.01")
     args = parser.parse_args()
     if args.action == "pilot-check":
@@ -134,6 +147,9 @@ if __name__ == "__main__":
         parser.error(f"{args.action} requires --database")
     if args.action == "missed":
         print(missed(args.database, args.tenant, session_date=args.date, threshold=args.threshold))
+        raise SystemExit(0)
+    if args.action == "plan":
+        print(plan(args.database, session_date=args.date))
         raise SystemExit(0)
     if args.action == "reconcile":
         from quant_ai.execution.reconciliation import reconcile_paper

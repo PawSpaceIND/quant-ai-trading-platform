@@ -244,6 +244,28 @@ def _playbooks(env: Mapping[str, str]) -> Check:
     return Check("regime_playbooks", "INFO", f"on: {describe()}; {sizing}")
 
 
+def _learning(env: Mapping[str, str]) -> Check:
+    """Governed learning as the container reads it: weekly skill weights and post-mortems."""
+    from quant_ai.analytics.specialist_skill import (
+        DEFAULT_SESSIONS,
+        MINIMUM_SAMPLE,
+        WEIGHT_CEILING,
+        WEIGHT_FLOOR,
+        reweighting_enabled,
+    )
+
+    try:
+        enabled = reweighting_enabled(env)
+    except RuntimeError as error:
+        return Check("learning", "FAIL", str(error)[:160])
+    weights = (
+        f"specialist re-weighting on: weekly, last {DEFAULT_SESSIONS} sessions, >= {MINIMUM_SAMPLE} "
+        f"scored votes, band {WEIGHT_FLOOR}-{WEIGHT_CEILING}"
+        if enabled else "specialist re-weighting off (report still written)"
+    )
+    return Check("learning", "INFO", f"{weights}; post-mortems built after the close, approval manual")
+
+
 def _market_data(payload: Mapping, now: datetime) -> Check:
     integrity = payload.get("marketDataIntegrity") or {}
     accepted = integrity.get("accepted")
@@ -274,6 +296,7 @@ def premarket_checks(
         _event_calendar(env),
         _exploration(env),
         _playbooks(env),
+        _learning(env),
         _market_data(payload, now),
     ]
 

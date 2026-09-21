@@ -31,6 +31,13 @@ class TradingAlertCode(str, Enum):
     SESSION_FLATTENED = "SESSION_FLATTENED"
     CADENCE_TICK_FAILED = "CADENCE_TICK_FAILED"
     LEARNING_EVIDENCE_DEGRADED = "LEARNING_EVIDENCE_DEGRADED"
+    # A session post-mortem was written after the close and waits for the operator's
+    # approval before its lessons can reach a decision.
+    POST_MORTEM_PENDING = "POST_MORTEM_PENDING"
+    # The weekly specialist skill weights were recomputed from the journal.
+    SPECIALIST_WEIGHTS_UPDATED = "SPECIALIST_WEIGHTS_UPDATED"
+    # The pre-open session plan was written: the day's focus, stand-down and posture.
+    SESSION_PLAN_READY = "SESSION_PLAN_READY"
     # A price step across a session boundary that the engine could not explain. Its own
     # code because an operator has to be able to find these without reading every stop
     # alert: they are the cases where a corporate action and a catastrophic gap are
