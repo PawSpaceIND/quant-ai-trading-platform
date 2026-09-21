@@ -72,18 +72,20 @@ def test_roles_and_posture_follow_the_playbooks_and_the_blackouts() -> None:
     )
     assert plan["schema"] == "pramana.session_plan.v1" and plan["session_date"] == "2026-09-22"
     assert plan["focus"] == ["INFY", "TRENT"]
-    assert plan["standdown"] == ["COALINDIA", "HDFCBANK", "TCS", "UNREAD"]
+    assert plan["standdown"] == ["COALINDIA", "TCS"]
+    assert plan["unread"] == ["HDFCBANK", "UNREAD"]  # no regime read: at the plan floor, not a focus
     assert plan["blackout"] == ["RELIANCE"] and plan["watch"] == ["NIFTY 50"]
-    assert plan["posture"] == "cautious"  # 5 of 7 tradable names sit out
+    assert plan["posture"] == "cautious"  # 5 of 7 tradable names are not in focus
     by_symbol = {item["symbol"]: item for item in plan["names"]}
     assert by_symbol["TCS"] == {
         "symbol": "TCS", "tradable": True, "regime": "trending_down", "daily_bars": 45, "playbook": "defensive",
         "floor": "0.65", "size_multiplier": "0.50", "probes_allowed": False, "blackout": None, "role": "standdown",
     }
     assert by_symbol["TRENT"]["probes_allowed"] is True and by_symbol["TRENT"]["floor"] == "0.55"
-    assert by_symbol["UNREAD"]["playbook"] == "cautious_default"
+    assert by_symbol["UNREAD"]["playbook"] == "plan_default" and by_symbol["UNREAD"]["role"] == "unread"
+    assert by_symbol["HDFCBANK"]["floor"] == "0.55" and by_symbol["HDFCBANK"]["probes_allowed"] is True
     assert by_symbol["RELIANCE"]["role"] == "blackout" and by_symbol["RELIANCE"]["playbook"] == "trend_following"
-    assert plan["exploration"] == {"max_per_day": 3, "eligible_names": 2}
+    assert plan["exploration"] == {"max_per_day": 3, "eligible_names": 2}  # unread names are not counted
     assert plan["yesterday"] is None and plan["lessons_in_force"] == 0 and plan["skill_weights"] == {}
 
 
@@ -160,6 +162,13 @@ def test_the_morning_brief_reads_the_plan_out_in_a_few_lines() -> None:
     ]
     late = strategist.build_session_plan(tenant_id=TENANT, now=utc(5), session_date=TODAY, policy=AtlasPolicy(), names=(), late=True)
     assert strategist.morning_brief(late).startswith("Atlas pre-open 2026-09-22 (late): posture observe, 0 focus, 0 stand-down.")
+    unread = strategist.build_session_plan(tenant_id=TENANT, now=utc(3), session_date=TODAY, policy=AtlasPolicy(),
+                                           names=(name("INFY", "trending_up"), name("TCS", None, bars=7)))
+    assert strategist.morning_brief(unread).split("\n")[:3] == [
+        "Atlas pre-open 2026-09-22: posture cautious, 1 focus, 0 stand-down, 1 unread.",
+        "Focus: INFY trend_following",
+        "Unread (plan floor until the bars exist): TCS 7 bars",
+    ]
     assert strategist.morning_brief(late).endswith("Probes off. Lessons in force 0. Skill weights: none.")
     text = strategist.render(plan)
     assert "SYMBOL" in text and "TCS" in text and "defensive" in text

@@ -37,6 +37,7 @@ from quant_ai.analytics.decision_quality import (
     ratio,
     write_report,
 )
+from quant_ai.intelligence.regime import INSUFFICIENT_HISTORY
 
 SCHEMA = "pramana.session_plan.v1"
 # The earliest local time a plan is built on a trading day; the pre-open bell is 09:00 IST.
@@ -44,6 +45,9 @@ PLAN_FROM = time(8, 30)
 # Playbooks that trade the day: at the plan floor (trend, or routing off) or a touch above it.
 FOCUS_PLAYBOOKS = frozenset({"trend_following", "range_trading", "unrouted"})
 ROLE_FOCUS, ROLE_STANDDOWN, ROLE_BLACKOUT, ROLE_WATCH = "focus", "standdown", "blackout", "watch"
+# No regime read yet: the engine decides at the plan floor (plan_default), but the plan
+# cannot call a name it has not read a focus; it is listed apart and counts as sitting out.
+ROLE_UNREAD = "unread"
 POSTURES = ("normal", "selective", "cautious", "defensive", "observe")
 MAX_BRIEF_NAMES = 12
 
@@ -59,11 +63,15 @@ class NameInputs:
     blackout: str | None = None  # ``event_blackout:<category>`` from the operator's calendar
 
 
-def role_of(playbook: RegimePlaybook, *, blackout: str | None, tradable: bool) -> str:
+def role_of(
+    playbook: RegimePlaybook, *, blackout: str | None, tradable: bool, regime: str | None = "read",
+) -> str:
     if not tradable:
         return ROLE_WATCH
     if blackout:
         return ROLE_BLACKOUT
+    if regime is None or regime == INSUFFICIENT_HISTORY:
+        return ROLE_UNREAD
     return ROLE_FOCUS if playbook.name in FOCUS_PLAYBOOKS else ROLE_STANDDOWN
 
 
@@ -154,11 +162,12 @@ def build_session_plan(
             "size_multiplier": str(playbook.size_multiplier),
             "probes_allowed": playbook.probes_allowed and policy.exploration_max_per_day > 0,
             "blackout": item.blackout,
-            "role": role_of(playbook, blackout=item.blackout, tradable=item.tradable),
+            "role": role_of(playbook, blackout=item.blackout, tradable=item.tradable, regime=item.regime),
         })
     focus = [item["symbol"] for item in rows if item["role"] == ROLE_FOCUS]
     standdown = [item["symbol"] for item in rows if item["role"] == ROLE_STANDDOWN]
     blackout = [item["symbol"] for item in rows if item["role"] == ROLE_BLACKOUT]
+    unread = [item["symbol"] for item in rows if item["role"] == ROLE_UNREAD]
     watch = [item["symbol"] for item in rows if item["role"] == ROLE_WATCH]
     return {
         "schema": SCHEMA,
@@ -170,6 +179,7 @@ def build_session_plan(
         "focus": focus,
         "standdown": standdown,
         "blackout": blackout,
+        "unread": unread,
         "watch": watch,
         "names": rows,
         "exploration": {
@@ -228,8 +238,9 @@ def latest_plan(directory: str | Path) -> dict[str, Any] | None:
 
 def _named(plan: Mapping[str, Any], role: str) -> str:
     items = [f"{item['symbol']} {item['playbook']}" if role == ROLE_FOCUS else
-             f"{item['symbol']} {item['regime'] or 'unread'}" if role == ROLE_STANDDOWN else
-             f"{item['symbol']} {item['blackout']}" if role == ROLE_BLACKOUT else item["symbol"]
+             f"{item['symbol']} {item['regime']}" if role == ROLE_STANDDOWN else
+             f"{item['symbol']} {item['blackout']}" if role == ROLE_BLACKOUT else
+             f"{item['symbol']} {item['daily_bars']} bars" if role == ROLE_UNREAD else item["symbol"]
              for item in plan["names"] if item["role"] == role]
     shown = ", ".join(items[:MAX_BRIEF_NAMES])
     return shown + (f", +{len(items) - MAX_BRIEF_NAMES}" if len(items) > MAX_BRIEF_NAMES else "")
@@ -240,7 +251,8 @@ def morning_brief(plan: Mapping[str, Any]) -> str:
     lines = [
         f"Atlas pre-open {plan['session_date']}{' (late)' if plan.get('late') else ''}: "
         f"posture {plan['posture']}, {len(plan['focus'])} focus, {len(plan['standdown'])} stand-down"
-        + (f", {len(plan['blackout'])} blackout" if plan["blackout"] else "") + "."
+        + (f", {len(plan['blackout'])} blackout" if plan["blackout"] else "")
+        + (f", {len(plan.get('unread') or ())} unread" if plan.get("unread") else "") + "."
     ]
     if plan["focus"]:
         lines.append(f"Focus: {_named(plan, ROLE_FOCUS)}")
@@ -248,6 +260,8 @@ def morning_brief(plan: Mapping[str, Any]) -> str:
         lines.append(f"Stand down: {_named(plan, ROLE_STANDDOWN)}")
     if plan["blackout"]:
         lines.append(f"Blackout: {_named(plan, ROLE_BLACKOUT)}")
+    if plan.get("unread"):
+        lines.append(f"Unread (plan floor until the bars exist): {_named(plan, ROLE_UNREAD)}")
     yesterday = plan.get("yesterday")
     if yesterday:
         hit = yesterday.get("hit_rate_60m")

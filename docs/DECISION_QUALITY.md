@@ -94,9 +94,10 @@ Before each session Atlas writes one plan for the day to `session-plans/<IST dat
 day (a late boot during regular hours builds it late, marked so; nothing is built after the
 close). For every watched name it records the regime read from closed daily bars, the
 playbook that regime selects with its floor, size multiplier and probe permission, and any
-operator blackout; from those it names the focus list (playbooks that trade at the plan
-floor), the stand-down list, the blackouts and a posture for the book (normal, selective,
-cautious, defensive, observe). It also quotes the last session's counts and 60-minute hit
+operator blackout; from those it names the focus list (playbooks that trade the day), the
+stand-down list, the blackouts, the names whose regime could not be read yet (the engine
+decides them at the plan floor, but the plan does not call them a focus) and a posture for
+the book (normal, selective, cautious, defensive, observe). It also quotes the last session's counts and 60-minute hit
 rate, its missed moves when the file exists, the probe budget, the lessons in force and the
 week's skill weights. The plan comes from the same regime and playbook code the decisions
 run on, so it can never promise a stance the engine would not take; it informs the founder

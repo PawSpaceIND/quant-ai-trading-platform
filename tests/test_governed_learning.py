@@ -14,6 +14,11 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from test_premarket_check import (  # pytest puts tests/ on sys.path, not the root
+    env,
+    manifest,
+    payload,
+)
 
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
@@ -40,7 +45,6 @@ from quant_ai.marketdata.feed import IndiaSandboxMarketDataFeed
 from quant_ai.notifications.trading import TradingAlertCode
 from quant_ai.operations.premarket import premarket_checks
 from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
-from tests.test_premarket_check import env, manifest, payload
 
 D = Decimal
 TENANT = "learning"
