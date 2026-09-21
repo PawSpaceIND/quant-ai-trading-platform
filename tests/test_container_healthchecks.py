@@ -39,6 +39,29 @@ SERVED_BY_A_HEALTHCHECK = {"pramana-ghost", "dashboard", "market-monitor", "toke
 SNAPSHOT_PATH = "/data/market-monitor.json"
 
 
+def test_compose_has_no_duplicate_explicit_mapping_keys():
+    # safe_load silently keeps the last duplicate; Docker Compose rejects it.
+    # Inspect the source nodes before merge-key expansion so intentional << overrides
+    # remain valid while duplicate environment entries fail locally too.
+    visited = set()
+
+    def walk(node):
+        if id(node) in visited:
+            return
+        visited.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            names = set()
+            for key, value in node.value:
+                assert key.value not in names, f"duplicate YAML key {key.value} at line {key.start_mark.line + 1}"
+                names.add(key.value)
+                walk(value)
+        elif isinstance(node, yaml.SequenceNode):
+            for child in node.value:
+                walk(child)
+
+    walk(yaml.compose(COMPOSE_FILE.read_text()))
+
+
 def probe(service: str) -> list[str]:
     return SERVICES[service]["healthcheck"]["test"]
 

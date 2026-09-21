@@ -52,10 +52,8 @@ services:
       # and NSE's provisional daily FII/DII net flows. Opt-in; "none" leaves each out.
       PRAMANA_INDIA_VIX_PROVIDER: ${PRAMANA_INDIA_VIX_PROVIDER:-none}
       PRAMANA_INDIA_FLOWS_PROVIDER: ${PRAMANA_INDIA_FLOWS_PROVIDER:-none}
-      # Second candidate in the research comparison only. The engine never calls OpenAI:
-      # `quant_ai.research` is offline by construction and touches no broker credential,
-      # no ledger and no cadence. Optional - with it unset, `research_extensions compare`
-      # refuses the paid call and records `credential_missing` rather than guessing.
+      # Optional credential shared by the research comparison and opt-in Astra shadow.
+      # A present key alone does not activate the cadence challenger or grant it orders.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PRAMANA_FUNDAMENTALS_PROVIDER: ${PRAMANA_FUNDAMENTALS_PROVIDER:-yahoo}
       PRAMANA_AI_DAILY_CALL_LIMIT: ${PRAMANA_AI_DAILY_CALL_LIMIT:-500}
@@ -63,6 +61,7 @@ services:
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
       # Per-response allowance only; legacy default and daily spend limits are unchanged.
       PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
+      PRAMANA_ASTRA_SHADOW_ENABLED: ${PRAMANA_ASTRA_SHADOW_ENABLED:-false}
       # Exploration budget (paper): probe entries a day below the conviction floor, their
       # minimum specialist confidence and their size as a fraction of equity. 0 is off.
       # docs and defaults in .env.example; read by the engine and the replay alike.
