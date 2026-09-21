@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { projectRoot, openLedger, hasTable, tenantId } from "@/lib/db";
 import type { DecisionProvenance } from "@/lib/types";
+import { providerFailures, specialistParticipation } from "@/lib/specialist-participation";
 
 export type Proof = Record<string, unknown> & {
   decision_id?: string;
@@ -33,6 +34,7 @@ export function provenanceSummary(proof: Proof): DecisionProvenance {
   const hash = (x: unknown) => typeof x === "string" && /^[0-9a-f]{64}$/.test(x) ? x : null;
   if (p.schema !== "pramana.decision_provenance.v1") return {mode:"unrecorded",status:"unrecorded",provider:null,transport:null,requestedModel:null,resolvedModel:null,requestSha256:null,configurationSha256:null};
   return {mode:text(p.mode) ?? "unrecorded",status:text(i.status) ?? (p.mode === "deterministic" ? "not_called" : "unrecorded"),provider:text(i.provider),
+    failureCode: typeof i.failure_code === "string" && Object.hasOwn(providerFailures, i.failure_code) ? i.failure_code : null,
     transport:text(i.transport),requestedModel:text(i.requested_model),resolvedModel:text(i.resolved_model),
     requestSha256:hash(i.request_sha256),configurationSha256:hash(p.configuration_sha256)};
 }
@@ -74,12 +76,15 @@ export function latestSwarmIntelligence() {
     confidence: Number(row.confidence ?? "0"),
     expectedReturn: Number(row.expected_return ?? "0"),
     expectedRisk: Number(row.expected_risk ?? "0"),
+    participation: specialistParticipation(row),
   }));
-  const score = agents.reduce((sum, agent) => {
+  const directional = agents.filter(agent => !["RISK", "LIQUIDITY"].includes(agent.domain));
+  const score = directional.reduce((sum, agent) => {
     const direction = agent.stance.includes("BUY") ? 1 : agent.stance.includes("SELL") || agent.stance === "AVOID" ? -1 : 0;
     return sum + direction * agent.confidence;
   }, 0);
-  const consensus = score > 0.35 ? "BULLISH" : score < -0.35 ? "BEARISH" : "MIXED";
+  const consensus = directional.every(agent => agent.stance === "NEUTRAL") ? "NEUTRAL"
+    : score > 0.35 ? "BULLISH" : score < -0.35 ? "BEARISH" : "MIXED";
   const regime = String(latest.proof.market_regime ?? latest.proof.regime ?? "UNKNOWN");
   return {
     status: "ok",

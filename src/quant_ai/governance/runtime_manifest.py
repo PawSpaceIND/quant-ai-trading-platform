@@ -34,6 +34,7 @@ FIELDS = {
     ),
     "quant_ai.execution.scheduler.AutonomousCadenceScheduler": ("cadence",),
     "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": ("bind_order_instruments",),
+    "quant_ai.intelligence.etf_reference.ETFReferenceReader": (),
     "quant_ai.agents.swarm.AtlasCIOAgent": (),
     "quant_ai.analytics.attribution.AgentAttributionEngine": (),
     "quant_ai.execution.session.MarketCalendar": ("holidays", "special_sessions"),
@@ -246,6 +247,11 @@ def describe(obj, issues: list[str]) -> dict | None:
         result["budget"] = describe(obj.budget, issues)
         if obj._transport is not None:
             issues.append("unsupported_inference_transport")
+    if name.endswith("ETFReferenceReader"):
+        from quant_ai.governance.runtime_identity import path_digest
+
+        # Bind the selected source, not its changing market observations or private path.
+        result["source_path_sha256"] = path_digest(obj.path) if obj.path is not None else None
     if name.endswith("AutonomousCadenceScheduler"):
         result["calendar"] = describe(obj.calendar, issues)
     if name.endswith("MarketCalendar"):
@@ -389,6 +395,7 @@ class RuntimeManifest:
                 "news": p.news,
                 "fundamentals": p.fundamentals,
                 "macro": p.macro,
+                "etf_reference": p.etf_reference,
                 "friction": r.broker.friction_model,
                 "broker": r.broker,
             }.items()
@@ -404,6 +411,7 @@ class RuntimeManifest:
             # changed spread or participation limit is a changed strategy.
             "LiquidityDeskAgent",
             "RiskDeskAgent",
+            "ETFValueReferenceAgent",
         }
         agents = []
         for agent in p.agents:

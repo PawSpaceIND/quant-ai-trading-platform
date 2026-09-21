@@ -42,7 +42,7 @@ class InstrumentBoundAnalysisRequest(AgentAnalysisRequest):
 # Valuation-driven agents only have an opinion on instruments that carry a balance
 # sheet; a metal, a rupee pair or a crude contract has no P/E and must not be scored
 # as if it had a bad one.
-EQUITY_LIKE = frozenset({AssetClass.EQUITY, AssetClass.ETF, AssetClass.INDEX})
+EQUITY_LIKE = frozenset({AssetClass.EQUITY})
 
 # The valuation ratios each specialist scores, in rationale order. The fundamentals
 # provider returns only the ratios its source carries (most NSE listings publish no free
@@ -190,6 +190,8 @@ class CommodityYieldAgent(SwarmAgent):
     domain = AgentDomain.MACRO
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        if request.asset_class is not AssetClass.EQUITY:
+            return self._evidence(request, Decimal(0), Decimal(0), "non_equity_macro_model")
         crude = request.metrics.get("brent_change", Decimal(0))
         gold = request.metrics.get("gold_change", Decimal(0))
         yields = request.metrics.get("yield_change", Decimal(0))
@@ -319,6 +321,19 @@ class TechnicalQuantAgent(SwarmAgent):
         elif Decimal(45) <= rsi <= Decimal(65):
             score += Decimal("0.10") if momentum > 0 else Decimal(0)
         return self._evidence(request, score, Decimal("0.84"), "sma20_sma50_rsi_and_momentum")
+
+
+class ETFValueReferenceAgent(SwarmAgent):
+    """Observable fund-value context only; never a directional vote or an order veto."""
+    agent_id = "etf-value-reference"
+    domain = AgentDomain.RISK
+
+    def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
+        if request.asset_class is not AssetClass.ETF:
+            reason = "non_etf_instrument"
+        else:
+            reason = request.metrics.get("etf_reference_status", "etf_reference_unconfigured")
+        return self._evidence(request, Decimal(0), Decimal(0), str(reason))
 
 
 # ---------------------------------------------------------------------------------------

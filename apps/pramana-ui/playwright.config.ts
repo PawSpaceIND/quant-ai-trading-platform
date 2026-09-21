@@ -49,6 +49,7 @@ export default defineConfig({
       PRAMANA_OPERATOR_READ_KEY_FILE:path.join(recoveryRoot,"read.key"),
       PRAMANA_OPERATOR_APPLY_KEY_FILE:path.join(recoveryRoot,"apply.key"),
       PRAMANA_LEDGER_PATH:path.join(paperOmsRoot,"paper.sqlite"),
+      PRAMANA_PROOF_DIR:path.resolve("tests/fixtures/specialist-proofs"),
       PRAMANA_OMS_DB:path.join(paperOmsRoot,"oms.sqlite"),
       PRAMANA_TENANT_ID:"default",
       PRAMANA_CONSOLE_DB:path.join(paperOmsRoot,"console.sqlite"),
