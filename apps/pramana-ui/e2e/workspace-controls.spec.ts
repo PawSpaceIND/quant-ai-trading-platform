@@ -121,3 +121,19 @@ test("a refused halt reports inside the dialog instead of behind its backdrop", 
   await page.getByRole("button", {name: "Halt entries", exact: true}).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
 });
+
+test("the alerts the engine raised reach a screen", async ({page, context, baseURL}) => {
+  await signIn(context, baseURL!);
+  await page.goto("/?view=activity");
+  const panel = page.getByRole("region", {name: "Engine alerts"});
+  // Seven of the engine's codes had no path to any screen. MACRO_PROVIDER_UNAVAILABLE is
+  // the one its own source calls out: a refused provider leaves every macro-reading
+  // specialist at zero confidence and the pilot holding all day with nothing to show.
+  await expect(panel.getByText("Macro provider unavailable", {exact: true})).toBeVisible();
+  await expect(panel.getByText("Unexplained overnight gap", {exact: true})).toBeVisible();
+  await expect(panel.getByText(/provider: FRED/)).toBeVisible();
+  // Newest first, and another account's alert on the same shared volume is not shown.
+  const labels = await panel.locator("tbody tr td:nth-child(3) strong").allInnerTexts();
+  expect(labels[0]).toBe("Trading halted");
+  expect(await panel.getByText(/OTHER-TENANT-PRIVATE/).count()).toBe(0);
+});

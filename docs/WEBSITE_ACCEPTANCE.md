@@ -29,6 +29,8 @@ by generating fixtures from the producer rather than by hand.
 | Workspace freshness | Broker and external-account panels claimed a current reading beside an expired banner | Both re-aged with the snapshot | `tests/freshness.test.ts` |
 | Workspace | Refresh and Retry were silent no-ops while a poll was outstanding | Both show that a refresh is running | `components/pilot-workspace.tsx` |
 | Atlas chat | A republished pinned run comparison spent a daily question on a call that never ran | The pinned report resolves before the budget is consumed | `app/api/copilot/route.ts` |
+| Alerts | The engine raises seventeen alert codes to a durable log and no screen read it; seven had no other path to the operator at all | A bounded, tenant-scoped tail reader and an Engine alerts panel under Activity | `tests/alerts.test.ts` against a log written by the engine's own sink, `e2e/workspace-controls.spec.ts` |
+| Providers | A panel titled "Data & provider health" listed the adapter class names that are wired | Retitled "Data sources"; the row says these are the classes configured, not that any answered, and points at the alert the engine raises when one refuses | `components/pilot-workspace.tsx` |
 
 Note on tenancy: both containers running as the same tenant is a deployment fact and does
 not establish ownership of a file. That is why the proof fix is at the write and read
@@ -41,7 +43,6 @@ These have had no systematic pass. Listing them is not a claim that they are bro
 - The Atlas chat surface itself: conversation lifecycle, budget exhaustion states, errors.
 - Login and authentication flows beyond session expiry and sign-out.
 - Overview and Risk lab panels in depth.
-- Notifications and alerts.
 - The hosted Cloudflare worker build.
 - Accessibility beyond roles and labels already used by tests.
 - Viewports between 390px and 1280px.
