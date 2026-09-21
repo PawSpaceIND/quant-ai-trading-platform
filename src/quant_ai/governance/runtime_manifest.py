@@ -82,6 +82,14 @@ FIELDS = {
     "quant_ai.intelligence.sandbox.SandboxFundamentalDataProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.sandbox.SandboxMacroIndicatorProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.external.fred.FredMacroProvider": ("series",),
+    # The default fundamentals source. Which symbols it serves and how long it holds an
+    # answer are strategy-relevant; the cookie and crumb it negotiates are not recorded.
+    "quant_ai.intelligence.external.yahoo_fundamentals.YahooFundamentalsProvider": (
+        "markets",
+        "modules",
+        "cache_ttl",
+        "abstain_ttl",
+    ),
     "quant_ai.intelligence.external.india_macro.CompositeMacroProvider": (),
     "quant_ai.intelligence.external.india_macro.YahooIndiaVixProvider": (
         "serves",
@@ -231,6 +239,9 @@ def describe(obj, issues: list[str]) -> dict | None:
         result["aggregator"] = describe(obj.aggregator, issues)
     if name.endswith("FredMacroProvider"):
         result["endpoint_sha256"] = source_identity(obj.endpoint)
+        result["http"] = describe(obj.client, issues)
+    if name.endswith("YahooFundamentalsProvider"):
+        result["endpoint_sha256"] = source_identity(obj.quote_summary_url)
         result["http"] = describe(obj.client, issues)
     if name.endswith("CompositeMacroProvider"):
         result["parts"] = [describe(part, issues) for part in obj.parts]
