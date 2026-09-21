@@ -27,6 +27,7 @@ from quant_ai.analytics.decision_journal import (
     load_rows,
     parse_decimal,
 )
+from quant_ai.analytics.forecast_scoring import summarize as score_forecasts
 from quant_ai.analytics.metrics import (
     MINIMUM_SIGNIFICANCE_OBSERVATIONS,
     mean_return_significance,
@@ -505,6 +506,10 @@ def summarize(
         "trades": trades(rows),
         "significance": significance(rows),
         "calibration": calibration(rows),
+        # What the decisions claimed would happen, scored against what did. Separate from
+        # `calibration`, which scores the confidence the agents stated in their agreement,
+        # not a probability anyone committed to before the outcome existed.
+        "forecast_scoring": score_forecasts(rows),
         "by_regime": by_regime(rows),
         "by_playbook": by_playbook(rows),
         "by_hour_ist": by_hour_ist(rows),
