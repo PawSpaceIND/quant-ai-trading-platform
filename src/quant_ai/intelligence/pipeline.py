@@ -420,6 +420,9 @@ class SwarmMarketAnalysisPipeline:
             country_exposure=country_exposure,
             tenant_id=tenant_id,
             evidence_context=evidence_context,
+            # An explicit quantity is honoured whole; only a plan-sized one is scaled by
+            # conviction and playbook downstream.
+            quantity_source="explicit" if quantity is not None else "plan",
         )
         return MarketAnalysisResult(
             evidence,
@@ -564,6 +567,7 @@ class SwarmMarketAnalysisPipeline:
             country_exposure=country_exposure,
             tenant_id=tenant_id,
             evidence_context=evidence_context,
+            quantity_source="explicit" if quantity is not None else "plan",
         )
         return MarketAnalysisResult(
             evidence,

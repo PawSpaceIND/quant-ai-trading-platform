@@ -135,6 +135,8 @@ def main():
         assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_MAX_PER_DAY"] == "0"
         assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_MIN_CONFIDENCE"] == "0.40"
         assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_NOTIONAL_FRACTION"] == "0.01"
+        # Regime routing is on unless the operator turns it off for a comparison run.
+        assert services["pramana-ghost"]["environment"]["PRAMANA_REGIME_PLAYBOOKS"] == "on"
         assert services["pramana-ghost"]["environment"]["PRAMANA_CORPORATE_ACTIONS"] == "/app/corporate-actions.json"
         limits = {}
         for name, service in services.items():

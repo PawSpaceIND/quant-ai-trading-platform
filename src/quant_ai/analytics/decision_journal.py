@@ -58,6 +58,7 @@ COLUMNS = (
     "features",
     "feature_schema_version",
     "probe",
+    "playbook",
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     features TEXT,
     feature_schema_version INTEGER,
     probe INTEGER,
+    playbook TEXT,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -161,6 +163,9 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
     # into a bounded entry under the policy's daily budget. The budget is counted from
     # this column, so a restart cannot reset it.
     ("probe", "INTEGER"),
+    # The regime playbook the decision was judged under (quant_ai.agents.playbook), so
+    # decision quality can score trend_following apart from defensive.
+    ("playbook", "TEXT"),
 )
 
 
@@ -312,6 +317,14 @@ def probe_of(proposal) -> bool:
     return isinstance(exploration, dict) and bool(exploration.get("probe"))
 
 
+def playbook_of(proposal) -> str | None:
+    """The regime playbook name the proposal's decision recorded, when it recorded one."""
+    provenance = getattr(proposal, "provenance", None)
+    playbook = provenance.get("playbook") if isinstance(provenance, dict) else None
+    name = playbook.get("name") if isinstance(playbook, dict) else None
+    return str(name)[:64] if isinstance(name, str) and name else None
+
+
 def count_probes(broker, *, tenant_id: str, now: datetime) -> int:
     """Probes journaled in the IST session that contains ``now``.
 
@@ -388,6 +401,7 @@ def decision_row(
         "features": (encoded := feature_json(features)),
         "feature_schema_version": FEATURE_SCHEMA_VERSION if encoded else None,
         "probe": 1 if probe_of(proposal) else 0,
+        "playbook": playbook_of(proposal),
     }
 
 

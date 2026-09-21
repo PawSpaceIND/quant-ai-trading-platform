@@ -17,6 +17,7 @@ from quant_ai.agents.contracts import (
     EvidenceHeadline,
     Stance,
 )
+from quant_ai.agents.playbook import RegimePlaybook, playbook_for, regime_label_of
 from quant_ai.geography.opportunity import CountryOpportunity, expansion_candidates
 from quant_ai.governance.founder import FounderPolicy
 from quant_ai.learning.router import DecisionKnowledgeContext
@@ -77,6 +78,10 @@ class AtlasPolicy:
     exploration_min_confidence: Decimal = Decimal("0.40")
     exploration_min_weighted_score: Decimal = Decimal("0.45")
     exploration_notional_fraction: Decimal = Decimal("0.01")
+    # Regime playbooks (quant_ai.agents.playbook): the deterministic regime the evidence
+    # carried raises the consensus floor, scales the entry and may withhold probes. Every
+    # playbook only tightens, so False is the looser setting; kept for comparison runs.
+    regime_playbooks: bool = True
 
     def __post_init__(self) -> None:
         if self.exploration_max_per_day < 0:
@@ -91,6 +96,10 @@ class AtlasPolicy:
     def stale_budget_seconds(self, domain: AgentDomain) -> int:
         return self.slow_domain_stale_seconds if domain in self.slow_domains else self.stale_evidence_seconds
 
+    def playbook(self, context: EvidenceContext | None) -> RegimePlaybook:
+        """The playbook for the regime this evidence context carried."""
+        return playbook_for(regime_label_of(context), enabled=self.regime_playbooks)
+
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 # Consensus figures in provenance are written at a fixed precision so two readers (the
@@ -104,6 +113,9 @@ def _fixed(value: Decimal) -> str:
 EXPLORATION_MAX_ENV = "PRAMANA_EXPLORATION_MAX_PER_DAY"
 EXPLORATION_MIN_CONFIDENCE_ENV = "PRAMANA_EXPLORATION_MIN_CONFIDENCE"
 EXPLORATION_FRACTION_ENV = "PRAMANA_EXPLORATION_NOTIONAL_FRACTION"
+REGIME_PLAYBOOKS_ENV = "PRAMANA_REGIME_PLAYBOOKS"
+_SWITCH = {"on": True, "true": True, "1": True, "yes": True,
+           "off": False, "false": False, "0": False, "no": False}
 
 
 def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPolicy:
@@ -117,8 +129,13 @@ def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPoli
     raw_max = source.get(EXPLORATION_MAX_ENV, "").strip()
     raw_confidence = source.get(EXPLORATION_MIN_CONFIDENCE_ENV, "").strip()
     raw_fraction = source.get(EXPLORATION_FRACTION_ENV, "").strip()
+    raw_playbooks = source.get(REGIME_PLAYBOOKS_ENV, "").strip().lower()
     overrides: dict[str, object] = {}
     try:
+        if raw_playbooks:
+            if raw_playbooks not in _SWITCH:
+                raise ValueError(f"{REGIME_PLAYBOOKS_ENV} must be on or off")
+            overrides["regime_playbooks"] = _SWITCH[raw_playbooks]
         if raw_max:
             overrides["exploration_max_per_day"] = int(raw_max)
         if raw_confidence:
@@ -221,6 +238,11 @@ class AtlasInvestmentAgent:
             or expected_risk > policy.max_expected_risk
         ):
             return decision
+        playbook = (decision.provenance or {}).get("playbook")
+        if isinstance(playbook, dict) and playbook.get("probes_allowed") is False:
+            return replace(decision, rationale=decision.rationale + (
+                f"exploration_suppressed=playbook:{playbook.get('name')}",
+            ))
         used = self._probes_used(now)
         if used >= policy.exploration_max_per_day:
             return replace(decision, rationale=decision.rationale + (
@@ -328,7 +350,9 @@ class AtlasInvestmentAgent:
             (item.expected_risk * item.confidence for item in participating), Decimal(0)
         ) / total_weight
 
-        if confidence < self.policy.min_consensus_confidence or expected_risk > self.policy.max_expected_risk:
+        playbook = self.policy.playbook(evidence_context)
+        floor = playbook.floor(self.policy.min_consensus_confidence)
+        if confidence < floor or expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
         elif weighted_score >= Decimal("1.25"):
             action = Stance.STRONG_BUY
@@ -358,6 +382,7 @@ class AtlasInvestmentAgent:
             f"abstained_specialists={','.join(item.agent_id for item in abstained) or 'none'}",
             "gate_specialists="
             + (";".join(f"{item.agent_id}:{item.rationale[0]}" for item in gates) or "none"),
+            f"playbook={playbook.name}:floor={_fixed(floor)}",
         ) + _market_rationale(market_tick) + self._founder_rationale()
         return AtlasDecision(
             uuid4().hex,
@@ -507,6 +532,9 @@ class AtlasInvestmentAgent:
                 "inputs": inputs, "inputs_sha256": content_hash(inputs), "inference": None,
                 "regime": label if isinstance(label, str) else None,
                 "regime_timeframe": timeframe if isinstance(timeframe, str) else None,
+                # The regime's playbook: the floor this decision was judged against and the
+                # share of the plan-sized entry it may take. The runtime sizes from this.
+                "playbook": self.policy.playbook(context).provenance(self.policy.min_consensus_confidence),
                 "governed_knowledge": knowledge_provenance,
                 **_headline_provenance(context)}
 

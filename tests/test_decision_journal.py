@@ -412,7 +412,7 @@ def test_report_carries_the_exact_schema_and_flags_a_thin_sample(tmp_path):
     report = quality.build_report(broker, tenant_id=TENANT, now=SESSION + timedelta(hours=2))
 
     assert sorted(report) == [
-        "by_agent", "by_hour_ist", "by_mode", "by_regime", "calibration", "counts",
+        "by_agent", "by_hour_ist", "by_mode", "by_playbook", "by_regime", "calibration", "counts",
         "directional", "generated_at", "insufficient_sample", "limitations",
         "minimum_sample", "recent", "rejections", "schema", "significance", "tenant_id",
         "trades", "window",
@@ -559,7 +559,8 @@ def test_recent_is_newest_first_and_bounded(tmp_path):
     assert recent[-1]["decision_id"] == "row-010"
     assert sorted(recent[0]) == [
         "confidence", "decided_at", "decision_id", "exit_trigger", "forward_return_60m",
-        "governance", "mode", "net_pnl", "order_id", "probe", "reason", "regime", "stance", "symbol",
+        "governance", "mode", "net_pnl", "order_id", "playbook", "probe", "reason", "regime", "stance",
+        "symbol",
     ]
 
 

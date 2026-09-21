@@ -27,7 +27,7 @@ from quant_ai.agents.atlas import (
     atlas_policy_from_env,
     probe_quantity,
 )
-from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
+from quant_ai.agents.contracts import AgentDomain, AgentEvidence, EvidenceContext, Stance
 from quant_ai.analytics import decision_journal as journal
 from quant_ai.governance.runtime_manifest import describe
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
@@ -61,6 +61,11 @@ def budget(max_per_day: int = 3, **overrides) -> AtlasPolicy:
     return AtlasPolicy(exploration_max_per_day=max_per_day, **overrides)
 
 
+# The regime the probe tests run in: a trend, whose playbook allows probes. Defensive and
+# crisis playbooks withhold probes (test_regime_playbooks); an unread regime tightens nothing.
+TREND = EvidenceContext(regime=(("label", "trending_up"), ("timeframe", "1d")))
+
+
 def test_policy_defaults_are_off_and_bounds_are_enforced() -> None:
     policy = AtlasPolicy()
     assert policy.exploration_max_per_day == 0
@@ -90,7 +95,7 @@ def test_without_a_budget_a_lean_below_the_floor_stays_a_hold_and_records_the_co
 
 def test_a_budget_turns_the_lean_into_a_labelled_probe_and_counts_it() -> None:
     atlas = AtlasInvestmentAgent(policy=budget(3))
-    first = atlas.decide("TRENT", LEAN, NOW)
+    first = atlas.decide("TRENT", LEAN, NOW, evidence_context=TREND)
     assert first.action is Stance.BUY
     assert first.confidence == Decimal("0.45")
     assert first.rationale[0] == "exploration_probe:weighted_consensus=1.0000;average_confidence=0.4500;budget=1/3"
@@ -99,15 +104,15 @@ def test_a_budget_turns_the_lean_into_a_labelled_probe_and_counts_it() -> None:
         "budget_used": 1, "budget_max": 3, "notional_fraction": "0.01", "overrode": "NEUTRAL",
     }
     assert first.provenance["mode"] == "deterministic"
-    second = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=10))
-    third = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=20))
+    second = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=10), evidence_context=TREND)
+    third = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=20), evidence_context=TREND)
     assert (second.provenance["exploration"]["budget_used"], third.provenance["exploration"]["budget_used"]) == (2, 3)
-    fourth = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=30))
+    fourth = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=30), evidence_context=TREND)
     assert fourth.action is Stance.NEUTRAL
     assert "exploration_budget_exhausted=3/3" in fourth.rationale
     assert "exploration" not in fourth.provenance
     # A new IST session starts the count again.
-    tomorrow = atlas.decide("TRENT", LEAN, NOW + timedelta(days=1))
+    tomorrow = atlas.decide("TRENT", LEAN, NOW + timedelta(days=1), evidence_context=TREND)
     assert tomorrow.provenance["exploration"]["budget_used"] == 1
 
 
@@ -145,15 +150,15 @@ def test_only_a_buy_lean_at_the_minimum_confidence_under_the_floor_is_probed(cas
 
 def test_the_journal_count_seeds_the_budget_and_an_unreadable_count_spends_nothing() -> None:
     seeded = AtlasInvestmentAgent(policy=budget(3), exploration_used=lambda now: 2)
-    decision = seeded.decide("TRENT", LEAN, NOW)
+    decision = seeded.decide("TRENT", LEAN, NOW, evidence_context=TREND)
     assert decision.provenance["exploration"]["budget_used"] == 3
-    assert seeded.decide("TRENT", LEAN, NOW + timedelta(minutes=10)).action is Stance.NEUTRAL
+    assert seeded.decide("TRENT", LEAN, NOW + timedelta(minutes=10), evidence_context=TREND).action is Stance.NEUTRAL
 
     def broken(now):
         raise OSError("ledger unreadable")
 
     fail_closed = AtlasInvestmentAgent(policy=budget(3), exploration_used=broken)
-    assert fail_closed.decide("TRENT", LEAN, NOW).action is Stance.NEUTRAL
+    assert fail_closed.decide("TRENT", LEAN, NOW, evidence_context=TREND).action is Stance.NEUTRAL
 
 
 def consensus_client(stance: str, confidence: float = 0.5) -> AnthropicSwarmClient:
@@ -168,7 +173,7 @@ def consensus_client(stance: str, confidence: float = 0.5) -> AnthropicSwarmClie
 
 def test_a_model_hold_over_a_specialist_lean_becomes_a_probe_and_a_model_buy_is_left_alone() -> None:
     held = AtlasInvestmentAgent(policy=budget(3), llm_client=consensus_client("NEUTRAL"))
-    decision = asyncio.run(held.decide_with_llm("TRENT", LEAN, NOW))
+    decision = asyncio.run(held.decide_with_llm("TRENT", LEAN, NOW, evidence_context=TREND))
     assert decision.action is Stance.BUY
     assert decision.provenance["mode"] == "llm"
     assert decision.provenance["exploration"]["overrode"] == "NEUTRAL"
@@ -176,7 +181,7 @@ def test_a_model_hold_over_a_specialist_lean_becomes_a_probe_and_a_model_buy_is_
     assert "anthropic_model=m" in decision.rationale
 
     bought = AtlasInvestmentAgent(policy=budget(3), llm_client=consensus_client("BUY", 0.7))
-    decision = asyncio.run(bought.decide_with_llm("TRENT", LEAN, NOW))
+    decision = asyncio.run(bought.decide_with_llm("TRENT", LEAN, NOW, evidence_context=TREND))
     assert decision.action is Stance.BUY
     assert "exploration" not in decision.provenance
     assert bought._probes_issued == {}
