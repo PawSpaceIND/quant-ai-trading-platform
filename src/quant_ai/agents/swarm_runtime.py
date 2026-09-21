@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from quant_ai.agents.atlas import probe_quantity
 from quant_ai.agents.contracts import AgentEvidence, EvidenceContext
+from quant_ai.agents.playbook import sized_from_provenance
 from quant_ai.agents.swarm import AgentAnalysisRequest, AtlasCIOAgent, TradeProposal
 from quant_ai.analytics.attribution import AgentAttributionEngine
 from quant_ai.brokers.base import ExecutionResult
@@ -176,6 +177,8 @@ class SwarmPaperTradingService:
             proposal = replace(proposal, quantity=probe_quantity(
                 portfolio.equity, exploration.get("notional_fraction"), proposal.reference_price,
             ))
+        elif proposal.side == Side.BUY:
+            proposal = self._conviction_sized(proposal)
         held = self._held_quantity(proposal, tenant_id)
         if proposal.side == Side.SELL and held > 0:
             # A SELL never exceeds the holding, and an unsized SELL (the sizer found no
@@ -247,6 +250,21 @@ class SwarmPaperTradingService:
         return self._dispatch_approved(
             request, weighted_evidence, proposal, plan, portfolio, stress, risk, lifecycle, tenant_id
         )
+
+    @staticmethod
+    def _conviction_sized(proposal: TradeProposal) -> TradeProposal:
+        """Scale a plan-sized BUY by the decision's conviction and its regime playbook.
+
+        Only a proposal whose provenance names a playbook (every Atlas decision does) is
+        touched; the plan's caps were applied first and scaling can only take less. The
+        sizing is written back into the provenance so the proof shows both quantities.
+        """
+        sized = sized_from_provenance(proposal.quantity, proposal.confidence, proposal.provenance)
+        if sized is None:
+            return proposal
+        quantity, sizing = sized
+        return replace(proposal, quantity=quantity,
+                       provenance={**(proposal.provenance or {}), "sizing": sizing})
 
     def _dispatch_approved(self, request, weighted_evidence, proposal, plan, portfolio,
                            stress, risk, lifecycle, tenant_id):

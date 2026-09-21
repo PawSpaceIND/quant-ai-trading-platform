@@ -69,6 +69,9 @@ services:
       PRAMANA_EXPLORATION_MAX_PER_DAY: ${PRAMANA_EXPLORATION_MAX_PER_DAY:-0}
       PRAMANA_EXPLORATION_MIN_CONFIDENCE: ${PRAMANA_EXPLORATION_MIN_CONFIDENCE:-0.40}
       PRAMANA_EXPLORATION_NOTIONAL_FRACTION: ${PRAMANA_EXPLORATION_NOTIONAL_FRACTION:-0.01}
+      # Regime playbooks: the regime raises the consensus floor, scales entries and may
+      # withhold probes. Every playbook only tightens; off is the looser comparison run.
+      PRAMANA_REGIME_PLAYBOOKS: ${PRAMANA_REGIME_PLAYBOOKS:-on}
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       # Mandatory entry gates; provider absence must never mean permission to trade.
       PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"

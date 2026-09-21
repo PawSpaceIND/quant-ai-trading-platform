@@ -364,6 +364,27 @@ def by_agent(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def by_playbook(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hit rate and closed P&L per regime playbook, most-used first."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(str(row.get("playbook") or UNKNOWN), []).append(row)
+    result = []
+    for playbook, group in groups.items():
+        hit_rate, pnl = _group_metrics(group)
+        result.append(
+            {
+                "playbook": playbook,
+                "decisions": len(group),
+                "filled": sum(row.get("governance") == GOVERNANCE_FILLED for row in group),
+                "probes": sum(1 for row in group if is_probe(row)),
+                "hit_rate": hit_rate,
+                "net_pnl": pnl,
+            }
+        )
+    return sorted(result, key=lambda item: (-item["decisions"], item["playbook"]))
+
+
 def by_mode(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     tally = Counter(str(row.get("mode") or UNKNOWN) for row in rows)
     return [
@@ -390,6 +411,7 @@ def recent(rows: list[dict[str, Any]], limit: int = RECENT_LIMIT) -> list[dict[s
             "net_pnl": number(parse_decimal(row.get("realized_net_pnl"))),
             "exit_trigger": row.get("exit_trigger"),
             "probe": is_probe(row),
+            "playbook": row.get("playbook"),
         }
         for row in reversed(newest[-limit:])
     ]
@@ -465,6 +487,7 @@ def summarize(
         "significance": significance(rows),
         "calibration": calibration(rows),
         "by_regime": by_regime(rows),
+        "by_playbook": by_playbook(rows),
         "by_hour_ist": by_hour_ist(rows),
         "by_agent": by_agent(rows),
         "by_mode": by_mode(rows),

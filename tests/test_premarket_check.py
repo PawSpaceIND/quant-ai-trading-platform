@@ -79,7 +79,8 @@ def test_a_ready_engine_before_the_open_is_all_green_with_ticks_pending():
     assert states(checks) == {
         "engine_running": "OK", "manifest_matched": "OK", "watchlist_mapped": "OK",
         "token_covers_session": "OK", "specialists_supported": "OK", "providers_configured": "OK",
-        "risk_gates_armed": "OK", "event_calendar": "OK", "exploration": "INFO", "market_data": "INFO",
+        "risk_gates_armed": "OK", "event_calendar": "OK", "exploration": "INFO", "regime_playbooks": "INFO",
+        "market_data": "INFO",
     }
     text = render(checks)
     assert text.endswith("READY TO TRADE")

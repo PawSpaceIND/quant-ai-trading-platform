@@ -229,6 +229,21 @@ def _exploration(env: Mapping[str, str]) -> Check:
     )
 
 
+def _playbooks(env: Mapping[str, str]) -> Check:
+    """Regime routing as the container reads it; on by default, informational either way."""
+    from quant_ai.agents.atlas import atlas_policy_from_env
+    from quant_ai.agents.playbook import FLOOR_SIZE_SHARE, FULL_SIZE_CONFIDENCE, describe
+
+    try:
+        policy = atlas_policy_from_env(env)
+    except RuntimeError as error:
+        return Check("regime_playbooks", "FAIL", str(error)[:160])
+    sizing = f"conviction sizing x{FLOOR_SIZE_SHARE} at the floor to x1 at {FULL_SIZE_CONFIDENCE}"
+    if not policy.regime_playbooks:
+        return Check("regime_playbooks", "INFO", f"off (PRAMANA_REGIME_PLAYBOOKS=off); {sizing}")
+    return Check("regime_playbooks", "INFO", f"on: {describe()}; {sizing}")
+
+
 def _market_data(payload: Mapping, now: datetime) -> Check:
     integrity = payload.get("marketDataIntegrity") or {}
     accepted = integrity.get("accepted")
@@ -258,6 +273,7 @@ def premarket_checks(
         _risk_gates_armed(payload),
         _event_calendar(env),
         _exploration(env),
+        _playbooks(env),
         _market_data(payload, now),
     ]
 
