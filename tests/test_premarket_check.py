@@ -145,6 +145,57 @@ def test_an_unarmed_gate_and_a_halted_engine_are_fails():
     assert "halt_reason=operator" in next(c for c in checks if c.id == "engine_running").detail
 
 
+HOST_GATES_21_SEPTEMBER = [
+    {"id": "sector_concentration", "setting": "PRAMANA_SECTOR_MAP_JSON", "armed": True},
+    {"id": "correlation_adjusted_gross", "setting": "PRAMANA_BOOK_RISK_HISTORY", "armed": True},
+    {"id": "book_expected_shortfall", "setting": "PRAMANA_BOOK_RISK_HISTORY", "armed": True},
+    {"id": "overnight_exposure", "setting": "PRAMANA_OVERNIGHT_GROSS_CAP", "armed": False},
+    {"id": "overnight_gap_monitor", "setting": "PRAMANA_OVERNIGHT_GAP_MONITOR", "armed": False},
+    {"id": "event_blackout", "setting": "PRAMANA_EVENT_CALENDAR", "armed": True},
+    {"id": "corporate_actions", "setting": "PRAMANA_CORPORATE_ACTIONS", "armed": False, "records": 0},
+]
+
+
+def test_operator_armed_gates_left_off_are_information_that_names_the_setting():
+    # The host's own record at 10:25 IST on 21 September: the book gates armed, the two
+    # overnight controls at their documented off default, nothing declared for actions.
+    checks = premarket_checks(payload(riskGates={"gates": HOST_GATES_21_SEPTEMBER}), manifest(), env(), NOW)
+    gate = next(c for c in checks if c.id == "risk_gates_armed")
+    assert gate.state == "INFO"
+    assert gate.detail == (
+        "armed sector_concentration,correlation_adjusted_gross,book_expected_shortfall,event_blackout; "
+        "off overnight_exposure (set PRAMANA_OVERNIGHT_GROSS_CAP), "
+        "overnight_gap_monitor (set PRAMANA_OVERNIGHT_GAP_MONITOR), "
+        "corporate_actions (no ex-dates declared)"
+    )
+    assert render(checks).endswith("READY TO TRADE")
+
+
+def test_arming_the_overnight_controls_turns_the_gate_line_green():
+    armed = [{**g, "armed": g["id"] != "corporate_actions"} for g in HOST_GATES_21_SEPTEMBER]
+    gate = next(c for c in premarket_checks(payload(riskGates={"gates": armed}), manifest(), env(), NOW) if c.id == "risk_gates_armed")
+    assert gate.state == "INFO"
+    assert gate.detail.endswith("; off corporate_actions (no ex-dates declared)")
+    declared = [{**g, "armed": True} for g in HOST_GATES_21_SEPTEMBER]
+    gate = next(c for c in premarket_checks(payload(riskGates={"gates": declared}), manifest(), env(), NOW) if c.id == "risk_gates_armed")
+    assert gate.state == "OK"
+    assert "off" not in gate.detail
+
+
+def test_a_book_gate_unarmed_is_a_fail_even_when_the_optional_ones_are_only_off():
+    gates = [{**g, "armed": False if g["id"] == "sector_concentration" else g["armed"]} for g in HOST_GATES_21_SEPTEMBER]
+    checks = premarket_checks(payload(riskGates={"gates": gates}), manifest(), env(), NOW)
+    gate = next(c for c in checks if c.id == "risk_gates_armed")
+    assert gate.state == "FAIL"
+    assert "; unarmed sector_concentration; off overnight_exposure" in gate.detail
+    assert render(checks).endswith("NOT READY: fix risk_gates_armed")
+
+
+def test_no_gates_published_at_all_is_a_fail():
+    gate = next(c for c in premarket_checks(payload(riskGates={"gates": []}), manifest(), env(), NOW) if c.id == "risk_gates_armed")
+    assert gate.state == "FAIL" and gate.detail == "armed none"
+
+
 def test_a_stale_heartbeat_is_a_fail():
     stale = payload(updatedAt=(NOW - timedelta(minutes=5)).astimezone(timezone.utc).isoformat())
     assert states(premarket_checks(stale, manifest(), env(), NOW))["engine_running"] == "FAIL"
