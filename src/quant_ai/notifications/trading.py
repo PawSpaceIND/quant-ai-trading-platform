@@ -36,6 +36,8 @@ class TradingAlertCode(str, Enum):
     POST_MORTEM_PENDING = "POST_MORTEM_PENDING"
     # The weekly specialist skill weights were recomputed from the journal.
     SPECIALIST_WEIGHTS_UPDATED = "SPECIALIST_WEIGHTS_UPDATED"
+    # The pre-open session plan was written: the day's focus, stand-down and posture.
+    SESSION_PLAN_READY = "SESSION_PLAN_READY"
     # A price step across a session boundary that the engine could not explain. Its own
     # code because an operator has to be able to find these without reading every stop
     # alert: they are the cases where a corporate action and a catastrophic gap are

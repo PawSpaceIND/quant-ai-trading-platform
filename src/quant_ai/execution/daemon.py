@@ -6,7 +6,7 @@ import os
 import signal
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, DecimalException
 from pathlib import Path
 from time import monotonic
@@ -71,6 +71,7 @@ class AutonomousTradingDaemon:
         missed_opportunity_dir: str | Path | None = None,
         post_mortem_dir: str | Path | None = None,
         specialist_reweighting: bool = True,
+        session_plan_dir: str | Path | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -145,6 +146,11 @@ class AutonomousTradingDaemon:
         self.specialist_reweighting = bool(specialist_reweighting)
         self._post_mortems_built: set[str] = set()
         self._skill_week: str | None = None
+        # The pre-open strategist: one plan per trading day under this directory, built on
+        # the first tick from 08:30 local on a trading day and read out as the morning
+        # brief. None keeps it off. The plan informs; it changes no gate, size or floor.
+        self.session_plan_dir = Path(session_plan_dir) if session_plan_dir is not None else None
+        self._plans_written: set[str] = set()
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -638,6 +644,7 @@ class AutonomousTradingDaemon:
             self._write_decision_quality(timestamp)
             self._write_missed_opportunities(timestamp)
             self._write_post_mortem(timestamp)
+            self._write_session_plan(timestamp)
             return brief
         finally:
             self._in_flight = False
@@ -813,6 +820,100 @@ class AutonomousTradingDaemon:
             self._notify_post_mortem(report, path)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("post_mortem_build_failed")
+
+    def _write_session_plan(self, timestamp: datetime) -> None:
+        """Build today's pre-open plan once, from 08:30 local on a trading day, and read it out.
+
+        A tick during regular hours with no plan yet (the engine booted late) still builds
+        one, marked late; after the close the day is over and nothing is built. A file that
+        already exists is never rebuilt.
+        """
+        if self.session_plan_dir is None:
+            return
+        try:
+            from quant_ai.agents import strategist
+
+            calendar = self.scheduler.calendar
+            market, exchange = self.instrument.market, self.instrument.exchange
+            session = calendar.session(market, exchange=exchange)
+            zone = ZoneInfo(session.timezone)
+            local = timestamp.astimezone(zone)
+            stamp = local.date().isoformat()
+            if stamp in self._plans_written:
+                return
+            path = strategist.plan_path(self.session_plan_dir, stamp)
+            if path.exists():
+                self._plans_written.add(stamp)
+                return
+            noon = datetime.combine(local.date(), time(12), tzinfo=zone)
+            if calendar.state(market, noon, exchange=exchange) == MarketState.CLOSED:
+                return  # not a trading day
+            state = calendar.state(market, timestamp, exchange=exchange)
+            if state == MarketState.CLOSED and local.time() < strategist.PLAN_FROM:
+                return  # too early
+            if state == MarketState.POST_MARKET or (
+                state == MarketState.CLOSED and local.time() >= session.regular_open
+            ):
+                self._plans_written.add(stamp)  # the day is over; nothing to plan
+                return
+            plan = self._build_session_plan(timestamp, local.date(), late=state == MarketState.REGULAR_HOURS)
+            strategist.write_plan(path, plan)
+            self._plans_written.add(stamp)
+            self._notify_session_plan(plan, path)
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("session_plan_failed")
+
+    def _build_session_plan(self, timestamp: datetime, session_date, *, late: bool) -> dict:
+        from quant_ai.agents import strategist
+        from quant_ai.analytics import post_mortem as review
+        from quant_ai.intelligence.regime import classify
+
+        pipeline = self.scheduler.pipeline
+        names = []
+        for instrument in self.instruments:
+            bars = pipeline._daily_history(instrument, timestamp) if hasattr(pipeline, "_daily_history") else ()
+            summary = classify(tuple(bars), timeframe="1d")
+            blackout = (
+                self.event_calendar.blackout_reason(instrument.symbol, timestamp)
+                if self.event_calendar is not None else None
+            )
+            names.append(strategist.NameInputs(
+                instrument.symbol, bool(instrument.tradable), summary.label, len(bars), blackout,
+            ))
+        policy = pipeline.runtime.cio.atlas.policy
+        previous = [
+            day for day in review.session_dates(self.tracker.broker, tenant_id=self.tenant_id)
+            if day < session_date
+        ]
+        yesterday = missed = None
+        if previous:
+            last = previous[-1]
+            rows = review.session_rows(self.tracker.broker, tenant_id=self.tenant_id, session_date=last)
+            yesterday = strategist.yesterday_summary(rows, last)
+            missed = strategist.missed_summary(self.missed_opportunity_dir, last)
+        lessons = 0
+        if self.post_mortem_dir is not None:
+            lessons = len(review.approved_lessons(self.post_mortem_dir, timestamp))
+        return strategist.build_session_plan(
+            tenant_id=self.tenant_id, now=timestamp, session_date=session_date, names=tuple(names),
+            policy=policy, yesterday=yesterday, missed_yesterday=missed, lessons_in_force=lessons,
+            skill_weights=pipeline.runtime.attribution.skill_weights, late=late,
+        )
+
+    def _notify_session_plan(self, plan: dict, path: Path) -> None:
+        from quant_ai.agents.strategist import morning_brief
+        from quant_ai.notifications.trading import AlertPriority
+
+        self.notifications.dispatch(
+            TradingAlertCode.SESSION_PLAN_READY, morning_brief(plan),
+            tenant_id=self.tenant_id, priority=AlertPriority.INFO,
+            metadata={
+                "session_date": str(plan["session_date"]), "posture": str(plan["posture"]),
+                "focus": str(len(plan["focus"])), "standdown": str(len(plan["standdown"])),
+                "blackout": str(len(plan["blackout"])), "late": str(plan["late"]).lower(),
+                "path": str(path),
+            },
+        )
 
     def _notify_post_mortem(self, report: dict, path: Path) -> None:
         from quant_ai.notifications.trading import AlertPriority

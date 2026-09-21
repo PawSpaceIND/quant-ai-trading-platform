@@ -86,6 +86,23 @@ of at most 200 characters, reach the LLM consensus, and they reach it inside the
 evidence block that is labelled as data, not instructions. The dashboard shows both
 states; approval is an operator action on the host, never a dashboard button.
 
+## Pre-open session plan
+
+Before each session Atlas writes one plan for the day to `session-plans/<IST date>.json`
+(`pramana.session_plan.v1`, `PRAMANA_SESSION_PLAN_DIR`) and sends it as the morning brief
+(`SESSION_PLAN_READY`). It is built on the first cadence tick from 08:30 IST on a trading
+day (a late boot during regular hours builds it late, marked so; nothing is built after the
+close). For every watched name it records the regime read from closed daily bars, the
+playbook that regime selects with its floor, size multiplier and probe permission, and any
+operator blackout; from those it names the focus list (playbooks that trade at the plan
+floor), the stand-down list, the blackouts and a posture for the book (normal, selective,
+cautious, defensive, observe). It also quotes the last session's counts and 60-minute hit
+rate, its missed moves when the file exists, the probe budget, the lessons in force and the
+week's skill weights. The plan comes from the same regime and playbook code the decisions
+run on, so it can never promise a stance the engine would not take; it informs the founder
+and the record and changes no gate, size or floor. `python scripts/pilot_ops.py plan
+--database <ledger> [--date YYYY-MM-DD]` prints it.
+
 ## Specialist skill weights
 
 Realised-P&L credit (below, "What actually learns") needs closed entries, and a book that
@@ -206,6 +223,7 @@ PRAMANA_DECISION_QUALITY_REPORT=          # default: decision-quality.json next 
 PRAMANA_POST_MORTEM_DIR=                  # default: post-mortems/ next to the ledger
 PRAMANA_MISSED_OPPORTUNITY_DIR=           # unset: off; Compose sets /data/missed-opportunities
 PRAMANA_SPECIALIST_REWEIGHTING=on         # weekly skill weights applied; off writes the report only
+PRAMANA_SESSION_PLAN_DIR=                 # default: session-plans/ next to the ledger
 ```
 
 Compose forwards all four; the daemon writes and the dashboard reads the same

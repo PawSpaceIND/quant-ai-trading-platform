@@ -498,6 +498,7 @@ def build_ghost_runner(
     decision_quality_report: str | Path | None = None,
     missed_opportunity_dir: str | Path | None = None,
     specialist_reweighting: bool = True,
+    session_plan_dir: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
     require_book_risk_gates: bool = False,
@@ -654,6 +655,7 @@ def build_ghost_runner(
         missed_opportunity_dir=missed_opportunity_dir,
         post_mortem_dir=_post_mortem_dir(database, post_mortem_directory),
         specialist_reweighting=specialist_reweighting,
+        session_plan_dir=_session_plan_dir(database, session_plan_dir),
     )
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
@@ -702,6 +704,15 @@ def _post_mortem_dir(database: str | Path, configured: str | Path | None) -> Pat
     if str(database) == ":memory:":
         return None
     return Path(database).parent / "post-mortems"
+
+
+def _session_plan_dir(database: str | Path, configured: str | Path | None) -> Path | None:
+    """Pre-open plans beside the ledger unless configured; none for an in-memory ledger."""
+    if configured is not None:
+        return Path(configured)
+    if str(database) == ":memory:":
+        return None
+    return Path(database).parent / paths.DEFAULT_SESSION_PLAN_DIRECTORY_NAME
 
 
 def _decision_quality_path(database: str | Path, configured: str | Path | None) -> Path | None:
@@ -998,6 +1009,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         decision_quality_report=paths.decision_quality_report("PRAMANA_PAPER_DB"),
         missed_opportunity_dir=paths.missed_opportunity_directory(),
         specialist_reweighting=reweighting_enabled(),
+        session_plan_dir=paths.session_plan_directory("PRAMANA_PAPER_DB"),
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),

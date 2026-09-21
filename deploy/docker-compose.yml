@@ -100,6 +100,9 @@ services:
       # plus one end-of-session note. Unset means off, so it has to be forwarded here.
       PRAMANA_MISSED_OPPORTUNITY_DIR: /data/missed-opportunities
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
+      # One pre-open plan per trading day: focus, stand-down and posture, read out as the
+      # morning brief. The dashboard reads the same files.
+      PRAMANA_SESSION_PLAN_DIR: /data/session-plans
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
       # Every dispatched alert is appended to this file in the shared volume, so an alert
       # outlives the container that `up -d --build` replaces. Telegram is optional push
@@ -181,6 +184,7 @@ services:
       # plus one end-of-session note. Unset means off, so it has to be forwarded here.
       PRAMANA_MISSED_OPPORTUNITY_DIR: /data/missed-opportunities
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
+      PRAMANA_SESSION_PLAN_DIR: /data/session-plans
       PRAMANA_DASHBOARD_SECRET: ${PRAMANA_DASHBOARD_SECRET:?required at least 32 characters}
       PRAMANA_PUBLIC_ORIGIN: ${PRAMANA_PUBLIC_ORIGIN:-http://localhost:3000}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?required}

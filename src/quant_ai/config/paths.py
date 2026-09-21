@@ -28,6 +28,7 @@ HALT_FILE_ENV = "PRAMANA_HALT_FILE"
 DECISION_QUALITY_ENV = "PRAMANA_DECISION_QUALITY_REPORT"
 MISSED_OPPORTUNITY_DIR_ENV = "PRAMANA_MISSED_OPPORTUNITY_DIR"
 POST_MORTEM_DIR_ENV = "PRAMANA_POST_MORTEM_DIR"
+SESSION_PLAN_DIR_ENV = "PRAMANA_SESSION_PLAN_DIR"
 HALT_OVERRIDE_LOG_ENV = "PRAMANA_HALT_OVERRIDE_LOG"
 TRIAL_REGISTER_ENV = "PRAMANA_TRIAL_REGISTER"
 ALERT_LOG_ENV = "PRAMANA_ALERT_LOG"
@@ -38,6 +39,7 @@ DEFAULT_TENANT_ID = "default"
 DEFAULT_HALT_FILE_NAME = "PRAMANA_HALT"
 DEFAULT_DECISION_QUALITY_NAME = "decision-quality.json"
 DEFAULT_POST_MORTEM_DIRECTORY_NAME = "post-mortems"
+DEFAULT_SESSION_PLAN_DIRECTORY_NAME = "session-plans"
 DEFAULT_HALT_OVERRIDE_LOG_NAME = "halt-overrides.jsonl"
 DEFAULT_TRIAL_REGISTER_NAME = "trial-register.jsonl"
 DEFAULT_ALERT_LOG_NAME = "alerts.jsonl"
@@ -135,6 +137,14 @@ def post_mortem_directory(*legacy_env: str) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return ledger_path(*legacy_env).parent / DEFAULT_POST_MORTEM_DIRECTORY_NAME
+
+
+def session_plan_directory(*legacy_env: str) -> Path:
+    """Directory of pre-open session plans; ``session-plans`` next to the ledger by default."""
+    configured = _from_env(SESSION_PLAN_DIR_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ledger_path(*legacy_env).parent / DEFAULT_SESSION_PLAN_DIRECTORY_NAME
 
 
 def alert_log(*legacy_env: str) -> Path:
