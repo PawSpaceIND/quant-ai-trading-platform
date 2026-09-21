@@ -211,6 +211,24 @@ def _event_calendar(env: Mapping[str, str]) -> Check:
     return Check("event_calendar", "OK", f"{len(calendar.events)} events, timezone {calendar.timezone}")
 
 
+def _exploration(env: Mapping[str, str]) -> Check:
+    """The exploration budget as the container reads it; informational either way."""
+    from quant_ai.agents.atlas import atlas_policy_from_env
+
+    try:
+        policy = atlas_policy_from_env(env)
+    except RuntimeError as error:
+        return Check("exploration", "FAIL", str(error)[:160])
+    if policy.exploration_max_per_day <= 0:
+        return Check("exploration", "INFO", "off (set PRAMANA_EXPLORATION_MAX_PER_DAY)")
+    percent = policy.exploration_notional_fraction * 100
+    return Check(
+        "exploration", "INFO",
+        f"up to {policy.exploration_max_per_day} probes/day at {percent:.2f}% of equity when "
+        f"specialists lean BUY at >= {policy.exploration_min_confidence} confidence",
+    )
+
+
 def _market_data(payload: Mapping, now: datetime) -> Check:
     integrity = payload.get("marketDataIntegrity") or {}
     accepted = integrity.get("accepted")
@@ -239,6 +257,7 @@ def premarket_checks(
         _providers_configured(manifest, env),
         _risk_gates_armed(payload),
         _event_calendar(env),
+        _exploration(env),
         _market_data(payload, now),
     ]
 

@@ -425,7 +425,7 @@ def test_report_carries_the_exact_schema_and_flags_a_thin_sample(tmp_path):
     assert report["insufficient_sample"] is True
     assert report["counts"] == {
         "decisions": 5, "filled": 4, "rejected": 0, "abstained": 1,
-        "resolved_60m": 5, "closed_trades": 0,
+        "resolved_60m": 5, "closed_trades": 0, "probes": 0,
     }
     assert report["directional"] == {
         "horizon_minutes": 60, "evaluated": 4, "hit_rate": 0.5, "mean_forward_return": 0.0,
@@ -559,7 +559,7 @@ def test_recent_is_newest_first_and_bounded(tmp_path):
     assert recent[-1]["decision_id"] == "row-010"
     assert sorted(recent[0]) == [
         "confidence", "decided_at", "decision_id", "exit_trigger", "forward_return_60m",
-        "governance", "mode", "net_pnl", "order_id", "reason", "regime", "stance", "symbol",
+        "governance", "mode", "net_pnl", "order_id", "probe", "reason", "regime", "stance", "symbol",
     ]
 
 

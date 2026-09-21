@@ -113,6 +113,10 @@ def session_date_of(row: dict[str, Any]) -> str | None:
 # ----------------------------------------------------------------- sections
 
 
+def is_probe(row: dict[str, Any]) -> bool:
+    return row.get("probe") in (1, "1", True)
+
+
 def counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     governance = Counter(row.get("governance") for row in rows)
     return {
@@ -122,6 +126,9 @@ def counts(rows: list[dict[str, Any]]) -> dict[str, int]:
         "abstained": governance.get(GOVERNANCE_ABSTAINED, 0),
         "resolved_60m": sum(parse_decimal(row.get(HORIZON_COLUMN)) is not None for row in rows),
         "closed_trades": sum(parse_decimal(row.get("realized_net_pnl")) is not None for row in rows),
+        # Exploration probes: directional decisions the daily budget allowed below the
+        # conviction floor. Counted apart so a reader can tell conviction from exploration.
+        "probes": sum(1 for row in rows if is_probe(row)),
     }
 
 
@@ -382,6 +389,7 @@ def recent(rows: list[dict[str, Any]], limit: int = RECENT_LIMIT) -> list[dict[s
             "forward_return_60m": number(parse_decimal(row.get(HORIZON_COLUMN))),
             "net_pnl": number(parse_decimal(row.get("realized_net_pnl"))),
             "exit_trigger": row.get("exit_trigger"),
+            "probe": is_probe(row),
         }
         for row in reversed(newest[-limit:])
     ]

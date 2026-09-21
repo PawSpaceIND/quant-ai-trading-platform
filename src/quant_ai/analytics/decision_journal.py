@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from quant_ai.agents.contracts import Stance
 from quant_ai.domain.models import Side
@@ -24,6 +25,7 @@ from quant_ai.domain.models import Side
 LOGGER = logging.getLogger("quant_ai.decision_journal")
 
 TABLE = "paper_decision_journal"
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 HORIZON_COLUMNS = (
     "forward_return_10m",
@@ -55,6 +57,7 @@ COLUMNS = (
     "agents",
     "features",
     "feature_schema_version",
+    "probe",
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -103,6 +106,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     agents TEXT NOT NULL,
     features TEXT,
     feature_schema_version INTEGER,
+    probe INTEGER,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -153,6 +157,10 @@ MODE_UNVERIFIED = "unverified_inference"
 MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("features", "TEXT"),
     ("feature_schema_version", "INTEGER"),
+    # 1 when the decision was an exploration probe: a hold the specialists' lean turned
+    # into a bounded entry under the policy's daily budget. The budget is counted from
+    # this column, so a restart cannot reset it.
+    ("probe", "INTEGER"),
 )
 
 
@@ -297,6 +305,26 @@ def decision_mode(result, *, llm_available: bool) -> str:
     return MODE_DETERMINISTIC if not llm_available else MODE_UNVERIFIED
 
 
+def probe_of(proposal) -> bool:
+    """Whether the proposal is an exploration probe, read from its provenance."""
+    provenance = getattr(proposal, "provenance", None)
+    exploration = provenance.get("exploration") if isinstance(provenance, dict) else None
+    return isinstance(exploration, dict) and bool(exploration.get("probe"))
+
+
+def count_probes(broker, *, tenant_id: str, now: datetime) -> int:
+    """Probes journaled in the IST session that contains ``now``.
+
+    The exploration budget is a per-session count, and the journal is the only record
+    that survives a restart, so Atlas asks here rather than trusting its own memory.
+    """
+    local = aware(now).astimezone(INDIA_TZ)
+    start = datetime.combine(local.date(), time.min, tzinfo=INDIA_TZ)
+    end = datetime.combine(local.date(), time.max, tzinfo=INDIA_TZ)
+    rows = load_rows(broker, tenant_id=tenant_id, since=start, until=end, where="probe = 1")
+    return len(rows)
+
+
 def agents_of(trace) -> dict[str, dict[str, str]]:
     """Specialist stances and confidences from the trace's input matrix."""
     agents: dict[str, dict[str, str]] = {}
@@ -359,6 +387,7 @@ def decision_row(
         # after the fact from anything the ledger keeps.
         "features": (encoded := feature_json(features)),
         "feature_schema_version": FEATURE_SCHEMA_VERSION if encoded else None,
+        "probe": 1 if probe_of(proposal) else 0,
     }
 
 
