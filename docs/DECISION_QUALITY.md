@@ -104,6 +104,16 @@ run on, so it can never promise a stance the engine would not take; it informs t
 and the record and changes no gate, size or floor. `python scripts/pilot_ops.py plan
 --database <ledger> [--date YYYY-MM-DD]` prints it.
 
+With `PRAMANA_SCAN_UNIVERSE_JSON` naming NSE cash symbols, the plan also carries an
+**opportunity scan outside the book**: each candidate not already watched is read from
+closed daily bars, classified and routed through the same playbooks, and the ones whose
+playbook would trade today are listed as opportunities with the gates a promotion has to
+pass (a websocket token mapping and a sector group, both operator settings). Nothing is
+promoted or ordered by the scan; the watchlist cap and every risk gate apply to a promoted
+name exactly as to the rest. Wider venues stay where the operator settings put them: MCX,
+NFO, CDS and the other derivative segments are observation-only until contract
+qualification and margin sourcing are reviewed, and US names wait on IBKR.
+
 ## Specialist skill weights
 
 Realised-P&L credit (below, "What actually learns") needs closed entries, and a book that

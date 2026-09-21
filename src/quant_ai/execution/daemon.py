@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, DecimalException
@@ -72,6 +72,8 @@ class AutonomousTradingDaemon:
         post_mortem_dir: str | Path | None = None,
         specialist_reweighting: bool = True,
         session_plan_dir: str | Path | None = None,
+        scan_universe: Iterable[Instrument] = (),
+        scan_gates: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -151,6 +153,11 @@ class AutonomousTradingDaemon:
         # brief. None keeps it off. The plan informs; it changes no gate, size or floor.
         self.session_plan_dir = Path(session_plan_dir) if session_plan_dir is not None else None
         self._plans_written: set[str] = set()
+        # Names to scan for opportunity outside the book each pre-open, and the operator
+        # gates (token mapping, sector group) a promotion has to pass. Read-only rows.
+        self.scan_universe = tuple(scan_universe)
+        self.scan_gates = {name: frozenset(str(s).upper() for s in symbols)
+                           for name, symbols in (scan_gates or {}).items()}
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -894,10 +901,19 @@ class AutonomousTradingDaemon:
         lessons = 0
         if self.post_mortem_dir is not None:
             lessons = len(review.approved_lessons(self.post_mortem_dir, timestamp))
+        outside = None
+        if self.scan_universe:
+            from quant_ai.agents.scanner import scan
+
+            outside = scan(
+                self.scan_universe, history=getattr(pipeline, "history", None), now=timestamp,
+                watched=(item.symbol for item in self.instruments), gates=self.scan_gates,
+                regime_playbooks=policy.regime_playbooks,
+            )
         return strategist.build_session_plan(
             tenant_id=self.tenant_id, now=timestamp, session_date=session_date, names=tuple(names),
             policy=policy, yesterday=yesterday, missed_yesterday=missed, lessons_in_force=lessons,
-            skill_weights=pipeline.runtime.attribution.skill_weights, late=late,
+            skill_weights=pipeline.runtime.attribution.skill_weights, late=late, outside_book=outside,
         )
 
     def _notify_session_plan(self, plan: dict, path: Path) -> None:
@@ -911,6 +927,7 @@ class AutonomousTradingDaemon:
                 "session_date": str(plan["session_date"]), "posture": str(plan["posture"]),
                 "focus": str(len(plan["focus"])), "standdown": str(len(plan["standdown"])),
                 "blackout": str(len(plan["blackout"])), "late": str(plan["late"]).lower(),
+                "opportunities": str(len((plan.get("outside_book") or {}).get("opportunities") or ())),
                 "path": str(path),
             },
         )

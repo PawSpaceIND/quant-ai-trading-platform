@@ -145,6 +145,7 @@ def build_session_plan(
     lessons_in_force: int = 0,
     skill_weights: Mapping[str, Decimal] | None = None,
     late: bool = False,
+    outside_book: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One plan for the session, from the same regime and playbook code the decisions use."""
     stamp = session_date.isoformat() if isinstance(session_date, date) else str(session_date)
@@ -192,6 +193,9 @@ def build_session_plan(
         "missed_yesterday": dict(missed_yesterday) if missed_yesterday else None,
         "lessons_in_force": int(lessons_in_force),
         "skill_weights": {str(k): str(v) for k, v in sorted((skill_weights or {}).items())},
+        # The opportunity scan (quant_ai.agents.scanner): what would trade today outside
+        # the book, and the operator gates a promotion has to pass. None when no scan ran.
+        "outside_book": dict(outside_book) if outside_book else None,
         "limitations": [
             (
                 "The plan is read from closed daily bars and the operator's calendar before the "
@@ -274,6 +278,10 @@ def morning_brief(plan: Mapping[str, Any]) -> str:
     missed = plan.get("missed_yesterday")
     if missed and missed.get("missed"):
         lines.append(f"Missed yesterday: {missed['missed']} moves; " + "; ".join(missed.get("top") or [])[:300])
+    if plan.get("outside_book"):
+        from quant_ai.agents.scanner import brief_lines
+
+        lines.extend(brief_lines(plan["outside_book"]))
     exploration = plan["exploration"]
     budget = (f"{exploration['max_per_day']}/day across {exploration['eligible_names']} eligible names"
               if exploration["max_per_day"] else "off")
@@ -294,6 +302,16 @@ def render(plan: Mapping[str, Any]) -> str:
             f"{item['playbook']:<16}  {item['floor']:<5}  {item['size_multiplier']:<5}  "
             f"{'yes' if item['probes_allowed'] else 'no':<6}  {item['blackout'] or '-'}"
         )
+    outside = plan.get("outside_book")
+    if outside and outside.get("names"):
+        lines.append("")
+        lines.append(f"OUTSIDE THE BOOK ({outside['scanned']} scanned, gates: {', '.join(outside.get('gates') or []) or 'unknown'})")
+        for item in outside["names"]:
+            gates = "promotable" if item["promotable"] else ("needs " + ", ".join(item["gates_missing"]) if item["gates_missing"] else "gates unknown")
+            lines.append(
+                f"{item['symbol']:<12}  {item['role']:<11}  {item['regime']:<20}  {item['playbook']:<16}  "
+                f"trend {item['trend_strength']:<8}  {gates}"
+            )
     return "\n".join(lines)
 
 
