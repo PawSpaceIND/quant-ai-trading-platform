@@ -3,6 +3,18 @@ import {useEffect,useRef,useState} from "react";
 import {RECOVERY_CONFIRMATION,recoveryId,type RecoveryOutcome,type RecoveryPreview} from "@/lib/institutional-recovery-contract";
 const storedAttempt="pramana.bookkeeping-recovery.attempt.v1";
 type Attempt={tenant_id:string;program_id:string;request_id:string;expected_context_sha256:string};
+class Rejected extends Error {constructor(public code:string){super(code);}}
+/** Refusals the server raises before it contacts the recovery gateway. For these the
+ * request id was never created, so no reconciliation can be outstanding. */
+const NOT_DISPATCHED:Record<string,string>={
+  recovery_context_changed:"The programme changed since you inspected it. Nothing was submitted. Inspect it again to review the current state.",
+  recovery_configuration_changed:"The recovery configuration changed since you inspected it. Nothing was submitted. Inspect the programme again.",
+  sign_in_required:"Your session expired before the request was sent. Nothing was submitted. Sign in again, then inspect the programme.",
+  invalid_request_origin:"The request origin was rejected. Nothing was submitted.",
+  invalid_recovery_request:"The request was rejected as invalid. Nothing was submitted.",
+  recovery_credential_unavailable:"Recovery credentials are unavailable on this server. Nothing was submitted.",
+  recovery_not_configured:"Recovery is not configured on this server. Nothing was submitted.",
+};
 export function InstitutionalRecoveryPanel() {
   const [program,setProgram]=useState(""),[preview,setPreview]=useState<RecoveryPreview|null>(null);
   const [confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
@@ -18,10 +30,10 @@ export function InstitutionalRecoveryPanel() {
       }else{throw new Error("Invalid saved request");}}
   }catch{setTrackingBlocked(true);setError("Local request tracking is unavailable. Recovery cannot be submitted until tracking works.");}
     return()=>{mounted.current=false;};},[]);
-  async function perform<T,>(action:()=>Promise<T>,apply:(value:T)=>void) {
+  async function perform<T,>(action:()=>Promise<T>,apply:(value:T)=>void,onError?:(error:unknown)=>string|undefined) {
     if(inProgress.current)return;inProgress.current=true;setBusy(true);setError("");
     try{const value=await action();if(mounted.current)apply(value);}
-    catch{if(mounted.current)setError("Observation unavailable. No clean-account or no-change claim is made.");}
+    catch(failure){if(mounted.current)setError(onError?.(failure)||"Observation unavailable. No clean-account or no-change claim is made.");}
     finally{inProgress.current=false;if(mounted.current)setBusy(false);}
   }
   async function inspect(){
@@ -39,8 +51,17 @@ export function InstitutionalRecoveryPanel() {
     await perform(async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
       try {const r=await fetch("/api/institutional-recovery",{method:"POST",cache:"no-store",signal:controller.signal,
           headers:{"Content-Type":"application/json"},body:JSON.stringify({program_id:next.program_id,request_id:next.request_id,expected_context_sha256:next.expected_context_sha256,confirmation:RECOVERY_CONFIRMATION})});
-        if(!r.ok)throw new Error();return await r.json() as RecoveryOutcome;
-      }finally{clearTimeout(timer);}},value=>setOutcome(value));
+        if(!r.ok){let code="";try{code=((await r.json()) as {error?:string}).error||"";}catch{/* body is not JSON: treat as unknown */}
+          throw new Rejected(code);}
+        return await r.json() as RecoveryOutcome;
+      }finally{clearTimeout(timer);}},value=>setOutcome(value),failure=>{
+      // Only release the saved attempt when the refusal proves the gateway was never
+      // reached. An unknown outcome keeps the lock: a reconciliation may be in flight.
+      if(!(failure instanceof Rejected)||!NOT_DISPATCHED[failure.code])return undefined;
+      try{sessionStorage.removeItem(storedAttempt);}catch{return undefined;}
+      setAttempt(null);setLookup("");
+      return NOT_DISPATCHED[failure.code];
+    });
   }
   async function checkOutcome(){
     setOutcome(null);

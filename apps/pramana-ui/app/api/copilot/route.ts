@@ -2,6 +2,7 @@ import {spendStatus} from "@/lib/ai-spend";
 import { NextRequest, NextResponse } from "next/server";
 import { boundedJson } from "@/lib/auth";
 import { audit, dailyBudget, rateLimit } from "@/lib/console-db";
+import { runComparisonContext } from "@/lib/run-comparison";
 import { conversations, generateAnswer } from "@/lib/copilot";
 import { tenantId } from "@/lib/db";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,11 @@ export async function POST(req: NextRequest) {
       throw new Error("Invalid request ID");
     if (body.companyAsOf !== undefined && typeof body.companyAsOf !== "string")
       throw new Error("Invalid company evidence cutoff");
+    // Resolve pinned evidence before the budget is consumed. A pinned report that has
+    // been republished fails the request, and charging a daily question for a call that
+    // never happened spends the operator's allowance on nothing.
+    if (typeof body.runComparisonSha256 === "string" && body.runComparisonSha256)
+      runComparisonContext(body.runComparisonSha256);
     const limit = dailyLimit();
     if (limit > 0) {
       let budget: ReturnType<typeof dailyBudget>;

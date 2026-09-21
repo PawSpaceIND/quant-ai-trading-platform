@@ -1,6 +1,7 @@
 "use client";
 import {useMemo, useState} from "react";
 import {companyEventQuestion} from "../lib/company-event-prompt";
+import {watchlisted} from "../lib/symbols";
 import type {CompanyEvent, CompanyEventsState, EventMapping} from "../lib/company-events";
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "Unavailable";
 async function request(url: string, options?: RequestInit) {
@@ -44,13 +45,13 @@ export function CompanyEventsPanel({state, symbols, favorites, onAsk, onRefresh}
   const [at, setAt] = useState(""); const [historical, setHistorical] = useState<CompanyEventsState | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const data = historical || state;
-  const filtered = useMemo(() => (data?.events || []).filter(e => (!savedOnly || !!e.mapping && favorites.includes(e.mapping.symbol)) && `${e.title} ${e.mapping?.symbol || ""} ${e.description}`.toLowerCase().includes(search.toLowerCase())), [data, savedOnly, favorites, search]);
+  const filtered = useMemo(() => (data?.events || []).filter(e => (!savedOnly || (!!e.mapping && !e.ambiguous && watchlisted(e.mapping.symbol, favorites))) && `${e.title} ${e.mapping?.symbol || ""} ${e.description}`.toLowerCase().includes(search.toLowerCase())), [data, savedOnly, favorites, search]);
   const page = Math.min(requestedPage, Math.max(0, Math.ceil(filtered.length / 10) - 1));
   const event = filtered.find(e => e.id === selected) || filtered[page * 10];
   async function loadTime() {
     setBusy(true); setError(""); setReviewNotice("");
     try {const instant = new Date(at).toISOString(); setHistorical(await request(`/api/company-events?at=${encodeURIComponent(instant)}`)); setPage(0); setSelected("");}
-    catch (e) {setError(e instanceof Error ? e.message : "Evidence could not be loaded.");}
+    catch (e) {setHistorical(null); setError(e instanceof RangeError ? "That cutoff could not be read. Enter a full date and time." : e instanceof Error ? e.message : "Evidence could not be loaded.");}
     finally {setBusy(false);}
   }
   return <section className="panel company-events-panel">
@@ -62,7 +63,7 @@ export function CompanyEventsPanel({state, symbols, favorites, onAsk, onRefresh}
       {data.captureStale && <p className="research-notice">No successful capture within 24 hours of this view’s cutoff. This age threshold does not establish full market-session coverage.</p>}
       <p className="muted">Known by {when(data.asOf)} · {data.excludedFutureRevisions} later revisions excluded. Refresh reads stored evidence; it does not fetch the exchange feed.</p>
       <div className="event-controls"><label>Search company or symbol<input aria-label="Search company announcements" value={search} onChange={e => {setSearch(e.target.value); setPage(0);}} /></label><label className="event-confirm"><input type="checkbox" checked={savedOnly} onChange={e => {setSavedOnly(e.target.checked); setPage(0);}} /> Watchlist only</label></div>
-      <div className="event-controls"><label>Known at<input aria-label="Company evidence cutoff" type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label><button disabled={busy || !at} onClick={() => void loadTime()}>{busy ? "Loading…" : "Apply time"}</button><button onClick={() => {setHistorical(null); setAt(""); setError(""); setReviewNotice(""); void onRefresh();}}>Current evidence</button><a href={`/api/company-events?download=1${historical ? `&at=${encodeURIComponent(historical.asOf)}` : ""}`} download>Export event evidence ↓</a></div>
+      <div className="event-controls"><label>Known at<input aria-label="Company evidence cutoff" type="datetime-local" step="1" value={at} onChange={e => setAt(e.target.value)} /></label><button disabled={busy || !at} onClick={() => void loadTime()}>{busy ? "Loading…" : "Apply time"}</button><button onClick={() => {setHistorical(null); setAt(""); setError(""); setReviewNotice(""); void onRefresh();}}>Current evidence</button><a href={`/api/company-events?download=1&at=${encodeURIComponent(data.asOf)}`} download>Export event evidence ↓</a></div>
       {error && <p role="alert">{error}</p>}
       {reviewNotice && <p role="status" className="research-notice">{reviewNotice}</p>}
       <div className="event-workspace"><div><div className="event-list" aria-label="Company event results">{filtered.slice(page * 10, page * 10 + 10).map(e => <button key={e.id} aria-pressed={e.id === event?.id} onClick={() => setSelected(e.id)}><strong>{e.title}</strong><span>{e.mapping?.symbol || (e.mappingAmbiguous ? "Mapping conflict" : e.latestMapping?.status === "revoked" ? "Mapping withdrawn" : "Unmapped")} · {e.ambiguous ? "Conflicting revisions" : e.captureKind === "imported" ? "Imported" : "Recorded HTTPS capture"}</span><span>First seen {when(e.firstSeenAt)}</span></button>)}</div>{!filtered.length && <p>No announcements match these filters.</p>}

@@ -12,6 +12,6 @@ export async function GET(request:Request) {
   try {
     const market=await readMarket(), state=readPortfolioSnapshot(market.riskHistory).benchmarkPerformance;
     return new NextResponse(JSON.stringify({...state,comparison:state.report ? compareBenchmark(state.report,benchmark as Benchmark,Number(lookback) as Lookback) : null},null,2),
-      {status:state.report ? 200 : state.status==="invalid" ? 503 : 422,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff",...(state.report ? {"Content-Disposition":'attachment; filename="pramana-account-benchmark.json"'} : {})}});
+      {status:state.report ? 200 : state.status==="invalid" ? 503 : 422,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff",...(state.report ? {"Content-Disposition":'attachment; filename="pramana-account-benchmark.json"'} : {"Content-Disposition":'attachment; filename="pramana-account-benchmark-unavailable.json"'})}});
   } catch {return NextResponse.json({error:"Account benchmark evidence is unavailable."},{status:503,headers:{"Cache-Control":"no-store"}});}
 }

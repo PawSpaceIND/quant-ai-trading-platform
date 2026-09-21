@@ -79,7 +79,19 @@ export function ageWorkspace(snapshot:Workspace,now=Date.now()):Workspace {
   });
   const contribution=snapshot.paperContribution;
   const contributionCurrent=responseCurrent&&within(sourceAge(portfolio.updatedAt,now),30,5)&&contribution?.report?.rows.every(r=>r.markState!=="fresh"||portfolio.holdings.some(h=>h.market===r.market&&h.assetClass===r.assetClass&&h.symbol===r.symbol&&h.fresh));
+  // Both of these carry a server-side "newer than 120 seconds" verdict fixed at fetch
+  // time. Left untouched they keep claiming a current observation while the rest of the
+  // workspace is already marked expired, which reads as mixed fresh and stale evidence.
+  const broker=snapshot.brokerObservation;
+  const brokerAged=broker?.report&&broker.status==="available"&&!within(sourceAge(broker.report.finishedAt,now),120,5)
+    ?{...broker,status:"stale" as const,detail:"Historical observation: older than 120 seconds. Current broker state is unverified."}
+    :broker;
+  const account=snapshot.externalAccount;
+  const accountAged=account?.report&&account.status==="available"&&!within(sourceAge(account.report.finishedAt,now),120,5)
+    ?{...account,status:"stale" as const,detail:"Historical selected-account snapshot; current broker state is unverified."}
+    :account;
   return {...snapshot,runtime,portfolio,market,checks,
+    brokerObservation:brokerAged,externalAccount:accountAged,
     attribution:currentBook?snapshot.attribution:snapshot.attribution?{status:"unavailable",detail:"Portfolio marks expired or are incomplete. Refresh before using sector/factor exposure."}:undefined,
     historicalRisk:currentBook?snapshot.historicalRisk:snapshot.historicalRisk?{status:"unavailable",detail:"Current portfolio evidence expired or is incomplete. Refresh before using current-holding historical risk estimates.",rows:[],report:null}:undefined,
     paperContribution:contribution?.report&&!contributionCurrent?{status:"incomplete",detail:"Current contribution evidence expired. Refresh source valuations before using current P&L totals.",report:null}:contribution};

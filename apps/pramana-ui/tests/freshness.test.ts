@@ -84,3 +84,25 @@ test("runtime API and saved Atlas context re-evaluate source freshness rather th
  const context=JSON.parse(conversations(answer.id)[0].context!);assert.equal(context.runtime.watchlist[0].fresh,false);assert.equal(context.runtime.watchlist[0].freshnessReason,"tick_expired");
  for(const bad of ["null",'{"status":"running"}',"x".repeat(1000001)]) {db.prepare("UPDATE pilot_runtime SET payload=?").run(bad);assert.equal(readRuntime().status,"invalid");}
 });
+
+test("broker and external-account observations expire with the workspace snapshot",()=>{
+ // Both carry a server-side "newer than 120 seconds" verdict fixed at fetch time. Left
+ // untouched they keep claiming a current observation beside an expired-evidence banner.
+ const base={generatedAt:stamp(),runtime:runtime(),portfolio:portfolio(),
+  market:{status:"ok",fetchedAt:stamp(),rows:[],collectorStale:false},checks:[]} as unknown as Workspace;
+ base.brokerObservation={status:"available",detail:"Repeated broker order/trade reads only.",
+  report:{finishedAt:stamp()},inspection:null} as unknown as Workspace["brokerObservation"];
+ base.externalAccount={status:"available",detail:"Repeated selected-account reads only.",
+  report:{finishedAt:stamp()}} as unknown as Workspace["externalAccount"];
+ assert.equal(ageWorkspace(base,now).brokerObservation?.status,"available");
+ assert.equal(ageWorkspace(base,now).externalAccount?.status,"available");
+ const expired=ageWorkspace(base,now+130000);
+ assert.equal(expired.brokerObservation?.status,"stale");
+ assert.equal(expired.externalAccount?.status,"stale");
+ assert.match(expired.brokerObservation!.detail,/older than 120 seconds/);
+ assert.match(expired.externalAccount!.detail,/Historical selected-account snapshot/);
+ // A state that was never available is not relabelled by ageing.
+ const missing={...base,brokerObservation:{status:"unavailable",detail:"No selected broker observation.",
+  report:null,inspection:null}} as unknown as Workspace;
+ assert.equal(ageWorkspace(missing,now+130000).brokerObservation?.status,"unavailable");
+});

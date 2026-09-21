@@ -100,3 +100,24 @@ for (const width of [1280, 390]) {
     await expect(page).toHaveURL(/\/login$/);
   });
 }
+
+test("a refused halt reports inside the dialog instead of behind its backdrop", async ({page, context, baseURL}) => {
+  await signIn(context, baseURL!);
+  await page.setViewportSize({width: 1280, height: 900});
+  await page.route("**/api/control", route => route.fulfill({status: 503, json: {error: "Synthetic control failure."}}));
+  await page.goto("/?view=overview");
+  await page.getByRole("button", {name: "Halt entries", exact: true}).click();
+  const dialog = page.getByRole("dialog", {name: "Halt new paper entries?"});
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Reason").fill("synthetic browser check");
+  await dialog.getByRole("button", {name: "Request halt", exact: true}).click();
+  // The notice banner lives in the shell that is inert and covered while the dialog is
+  // open, so a failure reported there is neither seen nor announced.
+  const failure = dialog.getByRole("alert");
+  await expect(failure).toContainText("The halt was not acknowledged. Entries are not halted.");
+  await expect(dialog).toBeVisible();
+  // Re-opening the dialog must not carry the previous failure back.
+  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
+  await page.getByRole("button", {name: "Halt entries", exact: true}).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
+});

@@ -19,6 +19,7 @@ import { CopilotPanel } from "./copilot-panel";
 import {BenchmarkAttributionPanel} from "./benchmark-attribution";
 import { ResearchComparison } from "./research-comparison";
 import { ResearchLabPanel } from "./research-lab-panel";
+import {instrumentIdentity} from "../lib/symbols";
 import {CompanyEventsPanel} from "./company-events";
 import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
@@ -71,7 +72,12 @@ function download(name: string, content: string, type = "application/json") {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  // An anchor that was never inserted is ignored by embedded browsers that only honour
+  // in-document activation, so the click silently produces no download at all.
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function PilotWorkspace() {
@@ -92,8 +98,10 @@ export function PilotWorkspace() {
   const [halt, setHalt] = useState(false);
   const [reason, setReason] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [controlError, setControlError] = useState("");
   async function signOut() {
     if (signingOut) return;
     setSigningOut(true);
@@ -111,6 +119,7 @@ export function PilotWorkspace() {
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setRefreshing(true);
     try {
       const results = await Promise.allSettled([
         api("/api/workspace"),
@@ -129,6 +138,7 @@ export function PilotWorkspace() {
       setError(e instanceof Error ? e.message : "Connection failed");
     } finally {
       setLoading(false);
+      setRefreshing(false);
       inFlight.current = false;
     }
   }, []);
@@ -181,6 +191,7 @@ export function PilotWorkspace() {
   }
   async function requestHalt() {
     setControlBusy(true);
+    setControlError("");
     try {
       const r = await api("/api/control", {
         method: "POST",
@@ -192,7 +203,9 @@ export function PilotWorkspace() {
       setReason("");
       await refresh();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Request failed");
+      setControlError(
+        `${e instanceof Error ? e.message : "Request failed"} The halt was not acknowledged. Entries are not halted.`,
+      );
     } finally {
       setControlBusy(false);
     }
@@ -291,6 +304,7 @@ export function PilotWorkspace() {
             <button
               onClick={() => void refresh()}
               aria-label="Refresh workspace"
+              disabled={refreshing}
             >
               ↻
             </button>
@@ -316,7 +330,10 @@ export function PilotWorkspace() {
               }
               ref={haltTrigger}
               className="halt-button"
-              onClick={() => setHalt(true)}
+              onClick={() => {
+                setControlError("");
+                setHalt(true);
+              }}
             >
               Halt entries
             </button>
@@ -373,7 +390,9 @@ export function PilotWorkspace() {
           {error && (
             <div className="banner error" role="alert">
               {error}. Last displayed data may be stale.{" "}
-              <button onClick={() => void refresh()}>Retry</button>
+              <button onClick={() => void refresh()} disabled={refreshing}>
+                {refreshing ? "Retrying…" : "Retry"}
+              </button>
             </div>
           )}
           {snapshot&&!within(sourceAge(snapshot.generatedAt,clock),30,5)?<div className="banner warning" role="status">Workspace evidence expired. Current readiness and valuation claims are withheld until a successful refresh. Historical research remains dated evidence.</div>:null}
@@ -520,7 +539,7 @@ export function PilotWorkspace() {
                       onAsk={ask}
                     />
                     <News data={data} />
-                    {!hosted && <CompanyEventsPanel state={data.companyEvents} symbols={data.market.rows.map(r => r.symbol).filter(s => /^NSE:[A-Z0-9][A-Z0-9&._-]{0,35}$/.test(s))} favorites={favorites} onAsk={ask} onRefresh={refresh} />}
+                    {!hosted && <CompanyEventsPanel state={data.companyEvents} symbols={data.market.rows.map(instrumentIdentity).filter(s => /^NSE:[A-Z0-9][A-Z0-9&._-]{0,35}$/.test(s))} favorites={favorites} onAsk={ask} onRefresh={refresh} />}
                   </>
                 )}
                 {view === "portfolio" && (
@@ -742,8 +761,19 @@ export function PilotWorkspace() {
               rows={3}
               placeholder="For example: reviewing data freshness"
             />
+            {controlError && (
+              <p className="banner error" role="alert">
+                {controlError}
+              </p>
+            )}
             <div className="modal-actions">
-              <button onClick={() => setHalt(false)} disabled={controlBusy}>
+              <button
+                onClick={() => {
+                  setControlError("");
+                  setHalt(false);
+                }}
+                disabled={controlBusy}
+              >
                 Cancel
               </button>
               <button
@@ -1104,7 +1134,7 @@ function RiskLab({
           <Metric label="Largest holding / equity" value={pct(risk.largestEquityWeight)} note="Denominator includes cash" />
           <Metric label="Gross exposure / equity" value={pct(risk.grossEquityWeight)} note="Displayed cash-equity holdings" />
           <Metric label="Effective holding count" value={risk.effectiveHoldings?.toFixed(2) ?? "—"} note="Inverse sum of squared invested weights" />
-          <Metric label="Downside to recorded stops" value={money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
+          <Metric label="Downside to recorded stops" value={risk.recordedStopDownside === null ? "Unavailable" : money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
         </div>
         <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. Portfolio valuation status: {p.status}.</p>
         <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector/factor exposure appears below when reviewed metadata is complete; options Greeks and margin remain unavailable. The separate historical diagnostic below estimates correlations only when its data-coverage checks pass.</p>

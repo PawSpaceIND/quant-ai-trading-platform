@@ -6,6 +6,15 @@ import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, rat
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
 
+/** Relative age of a report, so a verdict is never read as current by default. */
+const age = (value: string | null | undefined) => {
+  const at = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(at)) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+  if (minutes < 60) return ` \u00b7 ${minutes} min old`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? ` \u00b7 ${hours} h old` : ` \u00b7 ${Math.round(hours / 24)} days old`;
+};
 const when = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "—";
 const day = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—";
 const signedClass = (v: number | null | undefined) => v == null || !Number.isFinite(v) ? "" : v >= 0 ? "positive" : "negative";
@@ -47,7 +56,7 @@ export function DecisionQuality() {
       <VerdictBanner verdict={verdict} />
       {report.ai_budget && <AiBudgetNotice budget={report.ai_budget} />}
       <div className="quality-meta">
-        <span>Report generated {when(report.generated_at)}</span>
+        <span>Report generated {when(report.generated_at)}{age(report.generated_at)}</span>
         <span>Window {day(report.window.since)} → {day(report.window.until)} · {count(report.window.sessions)} sessions</span>
         <span>Tenant {report.tenant_id}</span>
         {report.by_mode.length > 0 && <span>By mode: {report.by_mode.map((m) => `${m.mode} ${count(m.decisions)}`).join(" · ")}</span>}

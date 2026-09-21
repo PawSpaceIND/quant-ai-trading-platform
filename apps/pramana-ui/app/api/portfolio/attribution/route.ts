@@ -13,7 +13,7 @@ export async function GET() {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
-        ...(state.status === "available" ? {"Content-Disposition": 'attachment; filename="pramana-portfolio-attribution.json"'} : {}),
+        ...(state.status === "available" ? {"Content-Disposition": 'attachment; filename="pramana-portfolio-attribution.json"'} : {"Content-Disposition": 'attachment; filename="pramana-portfolio-attribution-unavailable.json"'}),
       },
     });
   } catch {
