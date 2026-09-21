@@ -22,6 +22,7 @@ from quant_ai.agents.contracts import (
 from quant_ai.agents.swarm import (
     AgentAnalysisRequest,
     CommodityYieldAgent,
+    ETFValueReferenceAgent,
     GeopoliticalAnalystAgent,
     IndianEquitiesAgent,
     InstrumentBoundAnalysisRequest,
@@ -34,6 +35,7 @@ from quant_ai.agents.swarm_runtime import SwarmExecutionResult, SwarmPaperTradin
 from quant_ai.analytics.metrics import PerformanceMetrics, summarize_performance
 from quant_ai.domain.models import Instrument, PortfolioSnapshot, Side
 from quant_ai.execution.session import intraday_periods_per_year
+from quant_ai.intelligence.etf_reference import ETFReferenceReader
 from quant_ai.intelligence.freshness import (
     DataCategory,
     FreshnessResult,
@@ -206,10 +208,12 @@ class SwarmMarketAnalysisPipeline:
         intraday_window: timedelta = INTRADAY_HISTORY_WINDOW,
         headline_scorer: HeadlineSentimentScorer | None = None,
         bind_order_instruments: bool = False,
+        etf_reference: ETFReferenceReader | None = None,
     ) -> None:
         if type(bind_order_instruments) is not bool:
             raise TypeError("bind_order_instruments_must_be_boolean")
         self.bind_order_instruments = bind_order_instruments
+        self.etf_reference = etf_reference or ETFReferenceReader()
         if news_window <= timedelta(0):
             raise ValueError("news_window must be positive")
         if intraday_window <= timedelta(0):
@@ -237,7 +241,8 @@ class SwarmMarketAnalysisPipeline:
         self.sizer = sizer or PositionSizer()
         self.cache = IntelligenceDataCache()
         self.regime_observations = RegimeObservationStore()
-        # Five directional specialists and two desks. The desks are gates (see
+        # Five directional specialists, two desks and one non-voting ETF reference.
+        # The desks are gates (see
         # ``AtlasPolicy.gate_domains``): they can veto a cycle and are never counted as
         # votes. The technical agent stays last: its request is the root request the CIO
         # is handed, and it is the one whose freshness is the price feed alone.
@@ -248,6 +253,7 @@ class SwarmMarketAnalysisPipeline:
             USEquitiesAgent(),
             LiquidityDeskAgent(),
             RiskDeskAgent(),
+            ETFValueReferenceAgent(),
             TechnicalQuantAgent(),
         )
         self._macro_current_at: datetime | None = None
@@ -380,6 +386,9 @@ class SwarmMarketAnalysisPipeline:
         common["news_sentiment"] = geopolitical_sentiment
         common["conflict_risk"] = max(Decimal(0), -geopolitical_sentiment)
         common["sanctions_risk"] = max(Decimal(0), -geopolitical_sentiment / Decimal(2))
+        reference_tick, _ = self._market_tick_status(instrument.symbol, now)
+        asset_reference = self.etf_reference.read(instrument, now, reference_tick)
+        common.update(asset_reference)
 
         requests = []
         for agent in self.agents:
@@ -406,7 +415,8 @@ class SwarmMarketAnalysisPipeline:
         stop, take_profit = self._protective_levels(effective_plan, reference_price)
         # The deterministic path builds no prompt, but the proof still records which
         # regime the decision was made in.
-        evidence_context = EvidenceContext(regime=market.regime_evidence())
+        evidence_context = EvidenceContext(regime=market.regime_evidence(),
+                                           asset_reference=tuple(sorted(asset_reference.items())))
         execution = self.runtime.execute(
             root_request,
             evidence,
@@ -521,6 +531,8 @@ class SwarmMarketAnalysisPipeline:
         common.update(
             self._desk_metrics(instrument.symbol, candles, effective_plan, portfolio, market_tick)
         )
+        asset_reference = self.etf_reference.read(instrument, now, market_tick)
+        common.update(asset_reference)
 
         requests = []
         for agent in self.agents:
@@ -552,6 +564,7 @@ class SwarmMarketAnalysisPipeline:
             timeframes=market.timeframe_evidence(), regime=market.regime_evidence(),
             lessons=self._approved_lessons(),
         )
+        evidence_context = replace(evidence_context, asset_reference=tuple(sorted(asset_reference.items())))
         execution = await self.runtime.execute_async(
             root_request,
             evidence,

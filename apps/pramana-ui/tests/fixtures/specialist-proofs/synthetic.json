@@ -1,0 +1,92 @@
+{
+  "decision_id": "synthetic-specialist-participation",
+  "subject": "SILVERBEES",
+  "generated_at": "2026-09-21T08:00:00+00:00",
+  "input_matrix": [
+    {
+      "agent_id": "geopolitical-analyst",
+      "domain": "NEWS",
+      "confidence": "0.76",
+      "stance": "NEUTRAL",
+      "participation": "ready",
+      "reason_code": "informed_neutral",
+      "role": "directional"
+    },
+    {
+      "agent_id": "commodity-yield",
+      "domain": "MACRO",
+      "confidence": "0",
+      "stance": "NEUTRAL",
+      "participation": "not_applicable",
+      "reason_code": "non_equity_macro_model",
+      "role": "directional"
+    },
+    {
+      "agent_id": "indian-equities",
+      "domain": "COUNTRY",
+      "confidence": "0",
+      "stance": "NEUTRAL",
+      "participation": "not_applicable",
+      "reason_code": "non_equity_instrument",
+      "role": "directional"
+    },
+    {
+      "agent_id": "us-equities",
+      "domain": "COUNTRY",
+      "confidence": "0",
+      "stance": "NEUTRAL",
+      "participation": "not_applicable",
+      "reason_code": "non_us_market",
+      "role": "directional"
+    },
+    {
+      "agent_id": "liquidity-desk",
+      "domain": "LIQUIDITY",
+      "confidence": "0",
+      "stance": "NEUTRAL",
+      "participation": "missing_data",
+      "reason_code": "desk_inputs_missing",
+      "role": "gate"
+    },
+    {
+      "agent_id": "risk-desk",
+      "domain": "RISK",
+      "confidence": "0.7",
+      "stance": "NEUTRAL",
+      "participation": "ready",
+      "reason_code": "gate_clear",
+      "role": "gate"
+    },
+    {
+      "agent_id": "etf-value-reference",
+      "domain": "RISK",
+      "confidence": "0",
+      "stance": "NEUTRAL",
+      "participation": "missing_data",
+      "reason_code": "etf_reference_unconfigured",
+      "role": "reference"
+    },
+    {
+      "agent_id": "technical-quant-mas",
+      "domain": "TECHNICAL",
+      "confidence": "0.84",
+      "stance": "NEUTRAL",
+      "participation": "ready",
+      "reason_code": "informed_neutral",
+      "role": "directional"
+    }
+  ],
+  "declared_rationales": [
+    "Synthetic browser fixture; no provider call or order."
+  ],
+  "provenance": {
+    "schema": "pramana.decision_provenance.v1",
+    "mode": "llm_unavailable",
+    "inference": {
+      "provider": "anthropic",
+      "status": "unavailable",
+      "failure_code": "provider_auth",
+      "requested_model": "synthetic-model"
+    }
+  }
+}

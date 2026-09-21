@@ -410,7 +410,8 @@ def test_metal_etfs_ignore_the_equity_tape():
     stressed = evidence({"india_vix": Decimal(30), "fii_net_crore": Decimal(-5000)}, AssetClass.ETF)
     calm = evidence({}, AssetClass.ETF)
     assert score_of(stressed) == score_of(calm)
-    assert stressed.rationale[0] == "india_valuation_balance_sheet_margin_and_news"
+    assert stressed.rationale[0] == "non_equity_instrument"
+    assert stressed.confidence == calm.confidence == 0
 
 
 # --- Wiring: daemon, inspector, manifest ---------------------------------------------------

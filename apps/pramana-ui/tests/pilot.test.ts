@@ -298,7 +298,10 @@ test("canonical swarm evidence survives absent/conflicting file projections and 
     schema: "pramana.swarm_fill.v1", event_type: "swarm_fill", tenant_id: "default",
     order_id: "PAPER-SWARM-QA", decision_id: "synthetic-canonical", subject: "INFY",
     generated_at: new Date().toISOString(), filled_at: new Date().toISOString(),
-    input_matrix: [{agent_id:"synthetic-agent",stance:"BUY",confidence:"0.8",domain:"TECHNICAL"}],
+    input_matrix: [
+      {agent_id:"synthetic-agent",stance:"BUY",confidence:"0.8",domain:"TECHNICAL"},
+      {agent_id:"risk-desk",stance:"AVOID",confidence:"1.0",domain:"RISK", participation:"veto",reason_code:"specialist_veto",role:"gate",rationale_json:"private control details"},
+    ],
     declared_rationales: ["Synthetic canonical rationale"],
   };
   const insert = db.prepare("INSERT INTO paper_decision_evidence VALUES (?,?,?)");
@@ -309,6 +312,9 @@ test("canonical swarm evidence survives absent/conflicting file projections and 
   db.close();
   assert.equal(latestSwarmIntelligence().proof?.decisionId, proof.decision_id);
   assert.equal(latestSwarmIntelligence().agents[0].agentId, "synthetic-agent");
+  assert.equal(latestSwarmIntelligence().consensus, "BULLISH");
+  assert.equal(latestSwarmIntelligence().agents[1].participation.label, "Veto");
+  assert(!JSON.stringify(latestSwarmIntelligence()).includes("private control details"));
   const index = proofsByOrderId();
   assert.equal(index.get(proof.order_id)?.file,"ledger:paper_decision_evidence");
   for (const id of ["WRONG-TENANT","MISMATCH","INVALID-MATRIX"]) assert(!index.has(id));
@@ -332,4 +338,14 @@ test("decision provenance exposes bounded identifiers and never raw provider req
   assert.equal(missing.resolvedModel,null);
   assert.equal(missing.requestSha256,null);
   assert.equal(missing.status,"unrecorded");
+});
+
+
+test("provider failure labels expose finite codes, never exception messages", async () => {
+  const {provenanceSummary} = await import("../lib/proofs");
+  for (const code of ["provider_auth", "provider_timeout", "private key or exception", "toString"]) {
+    const value = provenanceSummary({provenance:{schema:"pramana.decision_provenance.v1",mode:"llm",inference:{failure_code:code,failure:"private key or exception"}}});
+    assert.equal(value.failureCode, code.startsWith("provider_") ? code : null);
+    assert(!JSON.stringify(value).includes("private key or exception"));
+  }
 });

@@ -44,6 +44,7 @@ from quant_ai.governance.runtime_identity import (
     configure_runtime_identity,
     validate_identity_storage,
 )
+from quant_ai.intelligence.etf_reference import ETFReferenceReader
 from quant_ai.intelligence.external.fred import FredMacroProvider
 from quant_ai.intelligence.external.india_macro import (
     CompositeMacroProvider,
@@ -608,6 +609,7 @@ def build_ghost_runner(
         macro_provider or SandboxMacroIndicatorProvider(),
         runtime=runtime,
         bind_order_instruments=order_identity_mode == "bound_v1",
+        etf_reference=ETFReferenceReader(os.getenv("PRAMANA_ETF_INAV_FILE")),
         tick_reader=CadenceMarketReader(buffer),
         history=history_provider,
         lessons_provider=_lessons_provider(database, post_mortem_directory),

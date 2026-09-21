@@ -124,7 +124,8 @@ def test_prompt_contains_each_section_when_provided() -> None:
     assert f"fundamentals=observed_at={NOW.isoformat()};pe=31" in block
     assert ("freshness=price=FRESH(age_seconds=30);news=STALE(age_seconds=7200);"
             "macro=FRESH(age_seconds=0);fundamentals=MISSING") in block
-    assert "unavailable" not in block
+    assert "asset_reference=unavailable" in block
+    assert "unavailable" not in block.replace("asset_reference=unavailable", "")
     # The pre-existing lines are intact and outside the block.
     assert prompt.startswith("subject=AAPL\nexecution_mode=PAPER_ONLY\nfounder_directives=keep it small\n")
     assert "\nlive_tick=unavailable\n" in prompt

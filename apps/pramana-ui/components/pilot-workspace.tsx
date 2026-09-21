@@ -1,4 +1,5 @@
 "use client";
+import { providerFailures } from "@/lib/specialist-participation";
 import {ExternalAccountPanel} from "./external-account";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {ageWorkspace,sourceAge,within} from "@/lib/freshness";
@@ -1169,6 +1170,7 @@ function DecisionSource({ value, compact = false }: { value?: DecisionProvenance
   return <div className="footnote">
     <p>{value.mode === "deterministic" ? "Decision source: deterministic rules. No model call." :
       `Decision source: ${value.transport === "injected_client" ? "Test/custom transport · " : ""}${value.provider ?? "unverified provider"} · ${value.status.replaceAll("_", " ")}. Requested: ${value.requestedModel ?? "unrecorded"}. Returned: ${value.resolvedModel ?? "identity unavailable"}.`}</p>
+    {value.failureCode && Object.hasOwn(providerFailures, value.failureCode) && <p>Recorded issue: {providerFailures[value.failureCode]}</p>}
     {!compact && <dl className="details">
       <div><dt>Request fingerprint</dt><dd style={{overflowWrap:"anywhere"}}>{value.requestSha256 ?? "Not recorded"}</dd></div>
       <div><dt>Atlas configuration fingerprint</dt><dd style={{overflowWrap:"anywhere"}}>{value.configurationSha256 ?? "Not recorded"}</dd></div>
@@ -1201,7 +1203,8 @@ function IntelligencePanel({
               : "Time unavailable"}
           </p>
           {i.agents.map((a) => (
-            <div className="agent-row" key={a.agentId}>
+            <div key={a.agentId}>
+            <div className="agent-row">
               <span>{a.agentId}</span>
               <span className="agent-bar">
                 <span
@@ -1210,13 +1213,20 @@ function IntelligencePanel({
                   }}
                 />
               </span>
-              <strong>{pct(a.confidence)}</strong>
+              <strong>{a.participation?.role === "reference" ? "—" : pct(a.confidence)}</strong>
               <small>{a.stance}</small>
+            </div>
+            <p className="footnote" style={{marginTop: 4}}>
+              <strong>{a.participation?.label ?? "Reason not recorded"}</strong>
+              {a.participation?.role === "gate" ? " · Risk control" : a.participation?.role === "reference" ? " · No vote" : ""}
+              {" · "}{a.participation?.reason ?? "This proof does not explain specialist participation."}
+            </p>
             </div>
           ))}
           <p className="footnote">
-            Confidence scores are model outputs, not measured success
-            probabilities.
+            Confidence scores come from configured specialist rules and evidence quality;
+            they are not measured success probabilities. Risk controls and references
+            do not count as directional votes. This is the recorded decision, not a live provider-health check.
           </p>
           <DecisionSource value={i.proof?.provenance} compact />
           <button
