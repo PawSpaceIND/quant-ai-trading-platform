@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import logging
 import os
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -125,6 +126,7 @@ def test_bad_token_never_reaches_daemon_assembly(tmp_path, monkeypatch):
     monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", TOKEN)
     monkeypatch.delenv(renewal.ISSUED_AT, raising=False)
     monkeypatch.setattr(renewal, "_kite_client", lambda _: FakeKite(error=RuntimeError(TOKEN)))
+    monkeypatch.setenv("PRAMANA_ALERT_LOG", str(tmp_path / "alerts.jsonl"))
     dispatcher = TradingNotificationDispatcher((JsonlFileSink(tmp_path / "alerts.jsonl"),))
     monkeypatch.setattr(daemon, "_env_notifications", lambda: dispatcher)
     def forbidden(_):
@@ -133,6 +135,14 @@ def test_bad_token_never_reaches_daemon_assembly(tmp_path, monkeypatch):
     with pytest.raises(renewal.RenewalError, match="rejected_or_unavailable"):
         daemon.build_ghost_runner_from_env()
     assert dispatcher.pending()[0].priority.value == "CRITICAL"
+    # The boot check dedupes through the record beside the alert log, so a restart a
+    # minute later says nothing new; the record never carries the token.
+    record_text = (tmp_path / renewal.SESSION_ALERT_STATE_NAME).read_text()
+    assert json.loads(record_text)["reason"] == "zerodha_profile_rejected_or_unavailable"
+    assert TOKEN not in record_text
+    with pytest.raises(renewal.RenewalError, match="rejected_or_unavailable"):
+        daemon.build_ghost_runner_from_env()
+    assert len(dispatcher.pending()) == 1
 
 
 def test_atomic_env_publication_preserves_unrelated_bytes_and_old_open_reader(tmp_path):
@@ -380,3 +390,82 @@ def test_owner_helper_wires_private_login_atomic_publish_and_refresh(tmp_path, m
     assert calls == ["gate", "login", "gate", "refresh"]
     assert renewal._fields(path.read_text())["ZERODHA_ACCESS_TOKEN"] == TOKEN
     assert TOKEN not in str(capsys.readouterr())
+
+
+# --- boot-loop alert dedupe ----------------------------------------------------------------
+# 183 identical CRITICAL alerts between 05:31 and 08:39 IST on 21 September 2026: the
+# engine's boot found the token expired, alerted, exited, and Docker restarted it a minute
+# later. One alert per reason per half hour is the contract now; the pre-open reminders,
+# which pass no record, keep alerting every five minutes on purpose.
+
+EXPIRED_AT = NOW + timedelta(days=1)  # the 17 September token, seen after the 18th's cutoff
+
+
+def _refuse(dispatcher, state, at, **overrides):
+    with pytest.raises(renewal.RenewalError):
+        renewal.check_runtime_token(
+            env={**ENV, **overrides}, now=at, dispatcher=dispatcher, alert_state=state,
+            client_factory=lambda _: FakeKite(error=RuntimeError(TOKEN)),
+        )
+
+
+def test_a_refused_boot_alerts_once_then_again_after_thirty_minutes(tmp_path, caplog):
+    log = tmp_path / "alerts.jsonl"
+    state = tmp_path / "zerodha-session-alert.json"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    with caplog.at_level(logging.WARNING, logger="quant_ai.zerodha_renewal"):
+        for minutes in (0, 1, 2, 29):
+            _refuse(dispatcher, state, EXPIRED_AT + timedelta(minutes=minutes))
+    assert [json.loads(line)["metadata"]["reason"] for line in log.read_text().splitlines()] == ["zerodha_session_expired"]
+    suppressed = [r.getMessage() for r in caplog.records if r.getMessage().startswith("zerodha_session_alert_suppressed")]
+    assert suppressed == ["zerodha_session_alert_suppressed phase=boot reason=zerodha_session_expired repeat_after_s=1800"] * 3
+    _refuse(dispatcher, state, EXPIRED_AT + timedelta(minutes=30))
+    assert len(log.read_text().splitlines()) == 2
+    record = json.loads(state.read_text())
+    assert record == {"reason": "zerodha_session_expired", "phase": "boot",
+                      "alerted_at": (EXPIRED_AT + timedelta(minutes=30)).isoformat()}
+    assert TOKEN not in state.read_text()
+
+
+def test_a_changed_reason_alerts_immediately(tmp_path):
+    log = tmp_path / "alerts.jsonl"
+    state = tmp_path / "zerodha-session-alert.json"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    _refuse(dispatcher, state, EXPIRED_AT)
+    # A fresh token the provider then rejects is a different failure, one minute later.
+    fresh = {renewal.ISSUED_AT: (EXPIRED_AT - timedelta(minutes=5)).isoformat()}
+    _refuse(dispatcher, state, EXPIRED_AT + timedelta(minutes=1), **fresh)
+    reasons = [json.loads(line)["metadata"]["reason"] for line in log.read_text().splitlines()]
+    assert reasons == ["zerodha_session_expired", "zerodha_profile_rejected_or_unavailable"]
+    assert json.loads(state.read_text())["reason"] == "zerodha_profile_rejected_or_unavailable"
+
+
+def test_an_unreadable_or_malformed_record_alerts_rather_than_stays_silent(tmp_path):
+    log = tmp_path / "alerts.jsonl"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    directory = tmp_path / "is-a-directory"
+    directory.mkdir()
+    _refuse(dispatcher, directory, EXPIRED_AT)
+    _refuse(dispatcher, directory, EXPIRED_AT + timedelta(minutes=1))
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text('{"reason": "zerodha_session_expired", "alerted_at": "not-a-time"}')
+    _refuse(dispatcher, malformed, EXPIRED_AT + timedelta(minutes=2))
+    naive = tmp_path / "naive.json"
+    naive.write_text(json.dumps({"reason": "zerodha_session_expired", "alerted_at": "2026-09-18T03:00:00"}))
+    _refuse(dispatcher, naive, EXPIRED_AT + timedelta(minutes=3))
+    assert len(log.read_text().splitlines()) == 4
+
+
+def test_without_a_record_every_refusal_alerts_as_the_preopen_reminders_rely_on(tmp_path):
+    log = tmp_path / "alerts.jsonl"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    for minutes in (0, 5, 10):
+        with pytest.raises(renewal.RenewalError):
+            renewal.check_runtime_token(env=ENV, now=EXPIRED_AT + timedelta(minutes=minutes),
+                                        dispatcher=dispatcher, phase="preopen")
+    assert len(log.read_text().splitlines()) == 3
+
+
+def test_the_default_record_sits_beside_the_alert_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRAMANA_ALERT_LOG", str(tmp_path / "alerts" / "alerts.jsonl"))
+    assert renewal.default_alert_state() == (tmp_path / "alerts" / "zerodha-session-alert.json").resolve()

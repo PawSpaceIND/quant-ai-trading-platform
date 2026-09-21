@@ -145,7 +145,7 @@ def test_ghost_boot_probes_macro_right_after_the_token() -> None:
     from quant_ai import daemon
 
     source = inspect.getsource(daemon.build_ghost_runner_from_env)
-    token_at = source.index("check_runtime_token(dispatcher=dispatcher)")
+    token_at = source.index("check_runtime_token(dispatcher=dispatcher, alert_state=default_alert_state())")
     probe_at = source.index("check_macro_provider(dispatcher=dispatcher)")
     assert token_at < probe_at
     assert macro_probe.PROBE_INDICATORS == MACRO_CORE_INDICATORS

@@ -78,7 +78,7 @@ from quant_ai.marketdata.ticker_stream import (
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.operations.macro_probe import check_macro_provider
-from quant_ai.operations.zerodha_renewal import check_runtime_token
+from quant_ai.operations.zerodha_renewal import check_runtime_token, default_alert_state
 from quant_ai.orchestration.cadence import CadenceMarketReader
 from quant_ai.orders.oms import DurableOms
 from quant_ai.planning.capital import CapitalGoalEngine
@@ -927,7 +927,9 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     validate_identity_storage(order_identity_mode, pilot_mode=pilot_mode,
         database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
     dispatcher = _env_notifications()
-    credentials = check_runtime_token(dispatcher=dispatcher)
+    # Deduplicated: Docker restarts a refused boot every minute until the token is renewed,
+    # and each retry alerted before this.
+    credentials = check_runtime_token(dispatcher=dispatcher, alert_state=default_alert_state())
     # Asked once, like the token: a macro provider that refuses is otherwise invisible
     # until someone reads a journal row. This never blocks the boot - macro is optional -
     # but a rejected key is a CRITICAL alert, because it silences three specialists.
