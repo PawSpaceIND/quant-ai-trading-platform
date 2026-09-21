@@ -12,6 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover - annotation only
     # imports the agent stack for the engine itself - see ``datasets`` for the reading path
     # that does not.
     from quant_ai.agents.swarm import TradeProposal
+from quant_ai.agents.atlas import AtlasPolicy
 from quant_ai.agents.swarm_runtime import SwarmPaperTradingService
 from quant_ai.agents.traded_runtime import (
     DETERMINISTIC_CONSENSUS,
@@ -215,6 +216,7 @@ class HistoricalReplayHarness:
         book_risk_history=None,
         event_calendar: EventCalendar | None = None,
         decision_maker: str = DETERMINISTIC_CONSENSUS,
+        atlas_policy: AtlasPolicy | None = None,
     ) -> None:
         if decision_maker != DETERMINISTIC_CONSENSUS:
             # Refusing is the honest answer, not a missing feature: a curve drawn by a
@@ -237,7 +239,21 @@ class HistoricalReplayHarness:
         self.book_risk_history = book_risk_history
         self.event_calendar = event_calendar
         self.decision_maker = decision_maker
+        # An explicit consensus policy replaces the one the daemon reads from its
+        # environment; the difference is recorded on the run like every other knob.
+        self.atlas_policy = atlas_policy
         self.traded_configuration_differences = TRADED_CONFIGURATION_DIFFERENCES
+        if atlas_policy is not None:
+            self.traded_configuration_differences += ({
+                "knob": "atlasPolicy",
+                "traded": "read_from_environment",
+                "replayed": "explicit",
+                "reason": (
+                    "The replay was handed its consensus policy (regime routing, exploration "
+                    "budget) instead of reading the daemon's environment; the run evidence "
+                    "carries the policy that decided."
+                ),
+            },)
         self._decision_time: datetime | None = None
 
     def build_runtime(self) -> SwarmPaperTradingService:
@@ -251,6 +267,7 @@ class HistoricalReplayHarness:
             directives=self.directives,
             xai_logger=self.xai_logger,
             book_risk_history=self.book_risk_history,
+            atlas_policy=self.atlas_policy,
             # No attribution restore here; see TRADED_CONFIGURATION_DIFFERENCES.
         )
         if self.event_calendar is not None:

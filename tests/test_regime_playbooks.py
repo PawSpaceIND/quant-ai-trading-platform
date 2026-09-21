@@ -15,6 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 
+# Sibling test modules by name: pytest puts tests/ on sys.path, the repository root it
+# does not (the console script CI runs), so a ``tests.`` package import fails there.
+from test_exploration_budget import LEAN, NOW, budget, consensus_client, evidence
+from test_premarket_check import env, manifest, payload
+
 from quant_ai.agents.atlas import (
     REGIME_PLAYBOOKS_ENV,
     AtlasInvestmentAgent,
@@ -42,8 +47,6 @@ from quant_ai.analytics import decision_quality as quality
 from quant_ai.domain.models import AssetClass, Market, Side
 from quant_ai.intelligence.regime import REGIME_LABELS
 from quant_ai.operations.premarket import premarket_checks
-from tests.test_exploration_budget import LEAN, NOW, budget, consensus_client, evidence
-from tests.test_premarket_check import env, manifest, payload
 
 
 def context(label: str | None) -> EvidenceContext | None:
@@ -86,7 +89,7 @@ def test_playbook_lookup_routes_known_labels_and_falls_back_cautiously() -> None
     assert playbook_for("ranging").name == "range_trading"
     assert playbook_for("trending_down").name == "defensive"
     assert playbook_for("high_volatility").name == "crisis_standdown"
-    assert playbook_for("insufficient_history").name == "cautious_default"
+    assert playbook_for("insufficient_history").name == "plan_default"
     assert playbook_for(None) is DEFAULT_PLAYBOOK
     assert playbook_for("sideways_ish") is DEFAULT_PLAYBOOK
     assert playbook_for("high_volatility", enabled=False) is UNROUTED_PLAYBOOK
@@ -104,6 +107,7 @@ def test_the_provenance_block_names_the_floor_the_decision_was_judged_against() 
     line = describe()
     assert line.startswith("trending_up=trend_following x1.00; ranging=range_trading x0.75 floor+0.05;")
     assert "high_volatility=crisis_standdown x0.35 floor+0.15 no-probes" in line
+    assert line.endswith("insufficient_history=plan_default x1.00")
 
 
 # ----------------------------------------------------------------- sizing
@@ -147,8 +151,12 @@ def proposal(quantity: int, confidence: str, provenance: dict | None, side: Side
                          Decimal("0.01"), Decimal("0.02"), ("r",), provenance)
 
 
+def planned(playbook: str) -> dict:
+    return {"playbook": PLAYBOOKS[playbook].provenance(Decimal("0.55")), "quantity_source": "plan"}
+
+
 def test_the_runtime_sizes_a_buy_from_the_playbook_the_decision_recorded() -> None:
-    routed = proposal(100, "0.70", {"playbook": PLAYBOOKS["trending_down"].provenance(Decimal("0.55"))})
+    routed = proposal(100, "0.70", planned("trending_down"))
     sized = SwarmPaperTradingService._conviction_sized(routed)
     assert sized.quantity == 31  # 100 x 0.625 conviction (0.70 a quarter of the way from 0.65 to 0.85) x 0.50
     assert sized.provenance["sizing"]["conviction_multiplier"] == "0.6250"
@@ -157,8 +165,13 @@ def test_the_runtime_sizes_a_buy_from_the_playbook_the_decision_recorded() -> No
     # A proposal without a playbook (not an Atlas decision) is left exactly as it came.
     plain = proposal(100, "0.70", None)
     assert SwarmPaperTradingService._conviction_sized(plain) is plain
+    # A quantity a caller fixed (a replay's size, an operator's request) is honoured whole.
+    fixed = proposal(100, "0.70", {**planned("trending_down"), "quantity_source": "explicit"})
+    assert SwarmPaperTradingService._conviction_sized(fixed) is fixed
+    unmarked = proposal(100, "0.70", {"playbook": PLAYBOOKS["trending_down"].provenance(Decimal("0.55"))})
+    assert SwarmPaperTradingService._conviction_sized(unmarked) is unmarked
     # Full conviction under the trend playbook keeps the plan quantity.
-    trend = proposal(100, "0.90", {"playbook": PLAYBOOKS["trending_up"].provenance(Decimal("0.55"))})
+    trend = proposal(100, "0.90", planned("trending_up"))
     assert SwarmPaperTradingService._conviction_sized(trend).quantity == 100
 
 
@@ -188,16 +201,20 @@ def test_the_regime_raises_the_floor_a_moderate_lean_must_clear() -> None:
     assert crisis.provenance["playbook"]["name"] == "crisis_standdown"
 
     unread = atlas.decide("TRENT", MODERATE, NOW)
-    assert unread.action is Stance.BUY  # no regime read: cautious_default's 0.60 floor, met exactly
-    assert unread.provenance["playbook"]["name"] == "cautious_default"
+    assert unread.action is Stance.BUY  # no regime read: the plan floor, as the runtime always decided
+    assert unread.provenance["playbook"]["name"] == "plan_default"
+    assert unread.provenance["playbook"]["floor"] == "0.5500"
     assert unread.provenance["regime"] is None
 
 
-def test_cautious_default_floor_is_met_at_exactly_the_adjusted_floor() -> None:
-    # 0.60 average against 0.55 + 0.05: at the floor is enough, the comparison is strict below.
-    decision = AtlasInvestmentAgent().decide("TRENT", MODERATE, NOW, evidence_context=context("insufficient_history"))
-    assert decision.provenance["playbook"]["floor"] == "0.6000"
-    assert decision.action is Stance.BUY
+def test_a_floor_met_exactly_is_enough_and_an_unread_regime_keeps_the_plan_floor() -> None:
+    # 0.60 average against ranging's 0.55 + 0.05: at the floor is enough, the comparison is strict below.
+    at_floor = AtlasInvestmentAgent().decide("TRENT", MODERATE, NOW, evidence_context=context("ranging"))
+    assert at_floor.provenance["playbook"]["floor"] == "0.6000" and at_floor.action is Stance.BUY
+    # Too few bars to read a regime is not a regime: nothing tightens.
+    unread = AtlasInvestmentAgent().decide("TRENT", MODERATE, NOW, evidence_context=context("insufficient_history"))
+    assert unread.provenance["playbook"] == PLAYBOOKS["insufficient_history"].provenance(Decimal("0.55"))
+    assert unread.provenance["playbook"]["floor"] == "0.5500" and unread.action is Stance.BUY
 
 
 def test_routing_off_judges_every_regime_at_the_plan_floor() -> None:
@@ -228,7 +245,9 @@ def test_defensive_and_crisis_playbooks_withhold_probes_and_say_so() -> None:
     ranging = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=10), evidence_context=context("ranging"))
     assert ranging.provenance["exploration"]["budget_used"] == 2
     unread = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=15))
-    assert "exploration_suppressed=playbook:cautious_default" in unread.rationale
+    assert unread.provenance["exploration"]["budget_used"] == 3  # an unread regime keeps the budget's own rules
+    crisis = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=20), evidence_context=context("high_volatility"))
+    assert "exploration_suppressed=playbook:crisis_standdown" in crisis.rationale
 
 
 def test_the_llm_path_carries_the_playbook_and_a_model_buy_is_sized_not_vetoed() -> None:
@@ -238,8 +257,28 @@ def test_the_llm_path_carries_the_playbook_and_a_model_buy_is_sized_not_vetoed()
     assert decision.provenance["playbook"]["name"] == "defensive"
     # The runtime then halves the plan quantity for the defensive book and sizes the
     # model's 0.62 against the 0.65 floor as if at it.
-    sized = SwarmPaperTradingService._conviction_sized(proposal(100, "0.62", decision.provenance))
+    sized = SwarmPaperTradingService._conviction_sized(
+        proposal(100, "0.62", {**decision.provenance, "quantity_source": "plan"})
+    )
     assert sized.quantity == 25
+
+
+def test_the_replay_harness_can_be_handed_a_policy_and_records_the_difference(tmp_path) -> None:
+    from quant_ai.backtesting.replay import HistoricalReplayHarness
+    from quant_ai.domain.models import RiskMode
+    from quant_ai.execution.paper_ledger import PaperBrokerService
+    from quant_ai.planning.capital import CapitalGoalEngine, CapitalPlanRequest
+
+    plan = CapitalGoalEngine().recommend(CapitalPlanRequest(Decimal(100000), Decimal("0.8"), Decimal("0.2"),
+                                                            expected_edge=Decimal("0.02"), requested_mode=RiskMode.BALANCED))
+    broker = PaperBrokerService(tmp_path / "replay.sqlite")
+    routed = HistoricalReplayHarness(broker, plan)
+    assert routed.build_runtime().cio.atlas.policy.regime_playbooks is True
+    assert all(item["knob"] != "atlasPolicy" for item in routed.traded_configuration_differences)
+    explicit = HistoricalReplayHarness(broker, plan, atlas_policy=AtlasPolicy(regime_playbooks=False))
+    assert explicit.build_runtime().cio.atlas.policy.regime_playbooks is False
+    assert explicit.traded_configuration_differences[-1]["knob"] == "atlasPolicy"
+    broker.close()
 
 
 # ----------------------------------------------------------------- env, journal, report, pre-market

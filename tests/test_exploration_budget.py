@@ -61,8 +61,8 @@ def budget(max_per_day: int = 3, **overrides) -> AtlasPolicy:
     return AtlasPolicy(exploration_max_per_day=max_per_day, **overrides)
 
 
-# The regime the probe tests run in: a trend, whose playbook allows probes. A decision with
-# no regime read falls under the cautious playbook and never probes (test_regime_playbooks).
+# The regime the probe tests run in: a trend, whose playbook allows probes. Defensive and
+# crisis playbooks withhold probes (test_regime_playbooks); an unread regime tightens nothing.
 TREND = EvidenceContext(regime=(("label", "trending_up"), ("timeframe", "1d")))
 
 
@@ -248,7 +248,7 @@ def test_the_journal_records_the_probe_and_counts_the_session(tmp_path) -> None:
 
 
 def test_the_premarket_check_reports_the_budget_as_information(tmp_path) -> None:
-    from tests.test_premarket_check import env, manifest, payload
+    from test_premarket_check import env, manifest, payload  # pytest puts tests/ on sys.path
 
     checks = premarket_checks(payload(), manifest(), env(), datetime(2026, 9, 21, 3, 20, tzinfo=timezone.utc))
     line = next(c for c in checks if c.id == "exploration")

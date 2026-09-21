@@ -26,6 +26,13 @@ from quant_ai.risk.warden import RiskWarden, WardenDecision
 LOGGER = logging.getLogger(__name__)
 
 
+def _with_quantity_source(proposal: TradeProposal, source: str) -> TradeProposal:
+    """Record whether the plan sized this quantity or a caller fixed it; sizing reads it."""
+    if source not in {"plan", "explicit"}:
+        raise ValueError("quantity_source must be 'plan' or 'explicit'")
+    return replace(proposal, provenance={**(proposal.provenance or {}), "quantity_source": source})
+
+
 def _regime_of(context: EvidenceContext | None) -> str | None:
     """The regime label the supplied evidence carried, when it carried one."""
     if context is None:
@@ -97,6 +104,7 @@ class SwarmPaperTradingService:
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
         evidence_context: EvidenceContext | None = None,
+        quantity_source: str = "explicit",
     ) -> SwarmExecutionResult:
         weighted = self.attribution.weight_evidence(evidence, now=request.observed_at)
         proposal = self.cio.propose(
@@ -105,7 +113,8 @@ class SwarmPaperTradingService:
             evidence_context=evidence_context,
         )
         return self._execute_proposal(
-            request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
+            request, weighted, _with_quantity_source(proposal, quantity_source), plan, portfolio,
+            country_exposure, tenant_id,
         )
 
     async def execute_async(
@@ -125,6 +134,7 @@ class SwarmPaperTradingService:
         country_exposure: dict[str, Decimal] | None = None,
         tenant_id: str = "default",
         evidence_context: EvidenceContext | None = None,
+        quantity_source: str = "explicit",
     ) -> SwarmExecutionResult:
         weighted = self.attribution.weight_evidence(
             evidence, _regime_of(evidence_context), now=request.observed_at
@@ -147,7 +157,8 @@ class SwarmPaperTradingService:
             market_tick=market_tick, evidence_context=evidence_context,
         )
         return self._execute_proposal(
-            request, weighted, proposal, plan, portfolio, country_exposure, tenant_id
+            request, weighted, _with_quantity_source(proposal, quantity_source), plan, portfolio,
+            country_exposure, tenant_id,
         )
 
     def _execute_proposal(self, request, weighted_evidence, proposal, plan, portfolio,
@@ -255,10 +266,15 @@ class SwarmPaperTradingService:
     def _conviction_sized(proposal: TradeProposal) -> TradeProposal:
         """Scale a plan-sized BUY by the decision's conviction and its regime playbook.
 
-        Only a proposal whose provenance names a playbook (every Atlas decision does) is
-        touched; the plan's caps were applied first and scaling can only take less. The
+        Only a quantity the plan sized is scaled: a caller's explicit quantity (a replay's
+        fixed size, an operator's request) is honoured whole, the way the sizer honours it.
+        And only a proposal whose provenance names a playbook (every Atlas decision does)
+        is touched; the plan's caps were applied first and scaling can only take less. The
         sizing is written back into the provenance so the proof shows both quantities.
         """
+        provenance = proposal.provenance if isinstance(proposal.provenance, dict) else {}
+        if provenance.get("quantity_source") != "plan":
+            return proposal
         sized = sized_from_provenance(proposal.quantity, proposal.confidence, proposal.provenance)
         if sized is None:
             return proposal
