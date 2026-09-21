@@ -12,8 +12,10 @@ comparable to hold them to.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from datetime import datetime
 
-from quant_ai.agents.atlas import AtlasInvestmentAgent
+from quant_ai.agents.atlas import AtlasInvestmentAgent, AtlasPolicy, atlas_policy_from_env
 from quant_ai.agents.institutional_runtime import (
     InstitutionalRuntimeInputs,
     InstitutionalSwarmPaperTradingService,
@@ -93,6 +95,8 @@ def build_traded_runtime(
     attribution_journal_tenant: str | None = None,
     institutional_inputs: InstitutionalRuntimeInputs | None = None,
     oms: DurableOms | None = None,
+    atlas_policy: AtlasPolicy | None = None,
+    exploration_used: Callable[[datetime], int] | None = None,
 ) -> SwarmPaperTradingService:
     """The sanctioned execution runtime under one set of founder directives.
 
@@ -114,7 +118,11 @@ def build_traded_runtime(
         oms=oms,
         cio=AtlasCIOAgent(
             AtlasInvestmentAgent(
-                llm_client=llm_client, founder_instructions=directives.instructions
+                # The exploration budget is read from the environment here, like the
+                # overnight limits, so the replay can never probe differently from the daemon.
+                policy=atlas_policy or atlas_policy_from_env(),
+                llm_client=llm_client, founder_instructions=directives.instructions,
+                exploration_used=exploration_used,
             )
         ),
         warden=RiskWarden(

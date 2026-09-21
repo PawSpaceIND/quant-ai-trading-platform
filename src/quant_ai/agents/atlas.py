@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from quant_ai.agents.contracts import (
     AgentDomain,
@@ -63,9 +66,83 @@ class AtlasPolicy:
     # to be allowed a stance at all. Two publication weeks.
     slow_domains: tuple[AgentDomain, ...] = (AgentDomain.MACRO, AgentDomain.PORTFOLIO)
     slow_domain_stale_seconds: int = 14 * 24 * 60 * 60
+    # Exploration budget, paper only. On 21 September 2026, the first twelve-name session,
+    # every decision was a hold: the specialists leaned but never with the conviction the
+    # floor above demands, so the decision-quality loop received nothing it could score.
+    # When the final answer is a hold and the specialists' weighted lean is a BUY at this
+    # smaller confidence, a bounded number of probe entries a day go through at this
+    # fraction of equity, labelled as exploration in the proof. Every gate downstream
+    # (stress, warden, overnight cap, blackout, halt) still applies to a probe. Zero is off.
+    exploration_max_per_day: int = 0
+    exploration_min_confidence: Decimal = Decimal("0.40")
+    exploration_min_weighted_score: Decimal = Decimal("0.45")
+    exploration_notional_fraction: Decimal = Decimal("0.01")
+
+    def __post_init__(self) -> None:
+        if self.exploration_max_per_day < 0:
+            raise ValueError("exploration_max_per_day cannot be negative")
+        if not Decimal(0) < self.exploration_min_confidence <= self.min_consensus_confidence:
+            raise ValueError("exploration_min_confidence must be in (0, min_consensus_confidence]")
+        if self.exploration_min_weighted_score <= 0:
+            raise ValueError("exploration_min_weighted_score must be positive")
+        if not Decimal(0) < self.exploration_notional_fraction <= Decimal("0.05"):
+            raise ValueError("exploration_notional_fraction must be in (0, 0.05]")
 
     def stale_budget_seconds(self, domain: AgentDomain) -> int:
         return self.slow_domain_stale_seconds if domain in self.slow_domains else self.stale_evidence_seconds
+
+
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
+# Consensus figures in provenance are written at a fixed precision so two readers (the
+# journal, the dashboard, a test) compare the same string for the same lean.
+PROVENANCE_PLACES = Decimal("0.0001")
+
+
+def _fixed(value: Decimal) -> str:
+    return str(value.quantize(PROVENANCE_PLACES))
+
+EXPLORATION_MAX_ENV = "PRAMANA_EXPLORATION_MAX_PER_DAY"
+EXPLORATION_MIN_CONFIDENCE_ENV = "PRAMANA_EXPLORATION_MIN_CONFIDENCE"
+EXPLORATION_FRACTION_ENV = "PRAMANA_EXPLORATION_NOTIONAL_FRACTION"
+
+
+def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPolicy:
+    """The consensus policy with the operator's exploration budget, off unless named.
+
+    Read here so the daemon and the historical replay arm exploration identically, the
+    way the overnight limits are. A malformed value is a boot failure, not a silently
+    disabled budget: an operator who typed one meant to have it.
+    """
+    source = os.environ if environ is None else environ
+    raw_max = source.get(EXPLORATION_MAX_ENV, "").strip()
+    raw_confidence = source.get(EXPLORATION_MIN_CONFIDENCE_ENV, "").strip()
+    raw_fraction = source.get(EXPLORATION_FRACTION_ENV, "").strip()
+    overrides: dict[str, object] = {}
+    try:
+        if raw_max:
+            overrides["exploration_max_per_day"] = int(raw_max)
+        if raw_confidence:
+            overrides["exploration_min_confidence"] = Decimal(raw_confidence)
+        if raw_fraction:
+            overrides["exploration_notional_fraction"] = Decimal(raw_fraction)
+        return AtlasPolicy(**overrides)
+    except (ValueError, InvalidOperation) as error:
+        raise RuntimeError(f"unsupported exploration budget setting: {error}") from error
+
+
+def probe_quantity(equity: Decimal, fraction: object, reference_price: Decimal) -> int:
+    """Whole units for a probe: ``fraction`` of equity at the reference price, rounded down.
+
+    Zero when one unit already costs more than the probe budget; the sizer's refusal then
+    records a directional decision that was priced out, which is still evidence.
+    """
+    try:
+        share = Decimal(str(fraction))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
+    if share <= 0 or equity <= 0 or reference_price <= 0:
+        return 0
+    return int((equity * share) / reference_price)
 
 
 class AtlasInvestmentAgent:
@@ -75,6 +152,7 @@ class AtlasInvestmentAgent:
         founder_policy: FounderPolicy | None = None,
         llm_client: AnthropicSwarmClient | None = None,
         founder_instructions: str = "",
+        exploration_used: Callable[[datetime], int] | None = None,
     ) -> None:
         self.policy = policy or AtlasPolicy()
         self.founder_policy = founder_policy or FounderPolicy()
@@ -82,8 +160,97 @@ class AtlasInvestmentAgent:
         # Free-text guidance from the founder. It shapes the consensus and is recorded
         # on every proof; it can never lift a firewall limit.
         self.founder_instructions = founder_instructions.strip()
+        # Probes already journaled for the session that contains ``now``, so a restart
+        # cannot reset the day's budget. None means this process's own count is all there is.
+        self.exploration_used = exploration_used
+        self._probes_issued: dict[str, int] = {}
 
     def decide(
+        self,
+        subject: str,
+        evidence: tuple[AgentEvidence, ...],
+        now: datetime,
+        country_opportunities: tuple[CountryOpportunity, ...] = (),
+        incumbent_country: str = "India",
+        market_tick: LiveTick | None = None,
+        evidence_context: EvidenceContext | None = None,
+        knowledge_context: DecisionKnowledgeContext | None = None,
+    ) -> AtlasDecision:
+        decision = self._decide_core(
+            subject, evidence, now, country_opportunities, incumbent_country,
+            market_tick, evidence_context, knowledge_context,
+        )
+        return self._explore(decision, now)
+
+    def _session_key(self, now: datetime) -> str:
+        return now.astimezone(INDIA_TZ).date().isoformat()
+
+    def _probes_used(self, now: datetime) -> int:
+        """Probes already taken this session: the journal's count, or this process's when none."""
+        issued = self._probes_issued.get(self._session_key(now), 0)
+        if self.exploration_used is None:
+            return issued
+        try:
+            recorded = int(self.exploration_used(now))
+        except Exception:  # noqa: BLE001 - an unreadable budget spends nothing
+            return self.policy.exploration_max_per_day
+        return max(issued, recorded)
+
+    def _explore(self, decision: AtlasDecision, now: datetime) -> AtlasDecision:
+        """Turn a hold into a bounded probe when the specialists lean and budget remains.
+
+        Only a final NEUTRAL with a recorded consensus qualifies: a hard hold (veto, stale
+        evidence, missing coverage) carries no consensus block and is never probed. Only
+        BUY probes exist; this is a long-only cash book and a naked SELL is refused later.
+        """
+        policy = self.policy
+        if policy.exploration_max_per_day <= 0 or decision.action is not Stance.NEUTRAL:
+            return decision
+        consensus = (decision.provenance or {}).get("consensus")
+        if not isinstance(consensus, dict):
+            return decision
+        try:
+            score = Decimal(str(consensus["weighted_score"]))
+            confidence = Decimal(str(consensus["average_confidence"]))
+            expected_risk = Decimal(str(consensus["expected_risk"]))
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            return decision
+        if (
+            score < policy.exploration_min_weighted_score
+            or confidence < policy.exploration_min_confidence
+            or expected_risk > policy.max_expected_risk
+        ):
+            return decision
+        used = self._probes_used(now)
+        if used >= policy.exploration_max_per_day:
+            return replace(decision, rationale=decision.rationale + (
+                f"exploration_budget_exhausted={used}/{policy.exploration_max_per_day}",
+            ))
+        key = self._session_key(now)
+        self._probes_issued[key] = used + 1
+        exploration = {
+            "probe": True,
+            "weighted_score": _fixed(score),
+            "average_confidence": _fixed(confidence),
+            "budget_used": used + 1,
+            "budget_max": policy.exploration_max_per_day,
+            "notional_fraction": str(policy.exploration_notional_fraction),
+            "overrode": decision.action.value,
+        }
+        note = (
+            f"exploration_probe:weighted_consensus={_fixed(score)};average_confidence={_fixed(confidence)};"
+            f"budget={used + 1}/{policy.exploration_max_per_day}"
+        )
+        rationale = (note,) + decision.rationale
+        return replace(
+            decision,
+            action=Stance.BUY,
+            confidence=confidence,
+            rationale=rationale,
+            provenance={**(decision.provenance or {}), "exploration": exploration},
+        )
+
+    def _decide_core(
         self,
         subject: str,
         evidence: tuple[AgentEvidence, ...],
@@ -206,7 +373,17 @@ class AtlasInvestmentAgent:
             recommendations,
             escalations,
             False,
-            self._provenance(subject, evidence, now, market_tick, evidence_context, knowledge_context),
+            {
+                **self._provenance(subject, evidence, now, market_tick, evidence_context, knowledge_context),
+                # The specialists' lean and its conviction, kept beside the action so the
+                # exploration budget and any later reader can see what the floor refused.
+                "consensus": {
+                    "weighted_score": _fixed(weighted_score),
+                    "average_confidence": _fixed(confidence),
+                    "expected_risk": _fixed(expected_risk),
+                    "participating": len(participating),
+                },
+            },
         )
 
     async def decide_with_llm(
@@ -218,7 +395,22 @@ class AtlasInvestmentAgent:
         evidence_context: EvidenceContext | None = None,
         knowledge_context: DecisionKnowledgeContext | None = None,
     ) -> AtlasDecision:
-        deterministic = self.decide(
+        decision = await self._decide_with_llm_core(
+            subject, evidence, now, market_tick=market_tick,
+            evidence_context=evidence_context, knowledge_context=knowledge_context,
+        )
+        return self._explore(decision, now)
+
+    async def _decide_with_llm_core(
+        self,
+        subject: str,
+        evidence: tuple[AgentEvidence, ...],
+        now: datetime,
+        market_tick: LiveTick | None = None,
+        evidence_context: EvidenceContext | None = None,
+        knowledge_context: DecisionKnowledgeContext | None = None,
+    ) -> AtlasDecision:
+        deterministic = self._decide_core(
             subject, evidence, now, market_tick=market_tick,
             evidence_context=evidence_context, knowledge_context=knowledge_context
         )

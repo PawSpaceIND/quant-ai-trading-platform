@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from quant_ai.agents.atlas import probe_quantity
 from quant_ai.agents.contracts import AgentEvidence, EvidenceContext
 from quant_ai.agents.swarm import AgentAnalysisRequest, AtlasCIOAgent, TradeProposal
 from quant_ai.analytics.attribution import AgentAttributionEngine
@@ -168,6 +169,13 @@ class SwarmPaperTradingService:
         tenant_id: str,
     ) -> SwarmExecutionResult:
         lifecycle = OrderLifecycle()
+        exploration = (proposal.provenance or {}).get("exploration") if isinstance(proposal.provenance, dict) else None
+        if isinstance(exploration, dict) and exploration.get("probe") and proposal.side == Side.BUY:
+            # A probe is sized from the book, not the plan: the fraction of equity the
+            # policy named, in whole units, and zero when one unit already costs more.
+            proposal = replace(proposal, quantity=probe_quantity(
+                portfolio.equity, exploration.get("notional_fraction"), proposal.reference_price,
+            ))
         held = self._held_quantity(proposal, tenant_id)
         if proposal.side == Side.SELL and held > 0:
             # A SELL never exceeds the holding, and an unsized SELL (the sizer found no

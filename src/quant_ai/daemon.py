@@ -14,6 +14,7 @@ from typing import Any
 
 from quant_ai.agents.institutional_runtime import InstitutionalRuntimeInputs
 from quant_ai.agents.traded_runtime import build_traded_runtime
+from quant_ai.analytics.decision_journal import count_probes
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market
@@ -585,6 +586,8 @@ def build_ghost_runner(
         # engine could never learn anything that outlived one session.
         attribution_journal_tenant=tenant_id,
         institutional_inputs=institutional_inputs, oms=oms,
+        # The day's probes so far, from the journal, so a restart cannot reset the budget.
+        exploration_used=lambda now: count_probes(broker, tenant_id=tenant_id, now=now),
     )
     runtime.oms = oms
     if require_book_risk_gates:

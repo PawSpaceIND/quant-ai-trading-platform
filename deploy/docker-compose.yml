@@ -63,6 +63,12 @@ services:
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
       # Per-response allowance only; legacy default and daily spend limits are unchanged.
       PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
+      # Exploration budget (paper): probe entries a day below the conviction floor, their
+      # minimum specialist confidence and their size as a fraction of equity. 0 is off.
+      # docs and defaults in .env.example; read by the engine and the replay alike.
+      PRAMANA_EXPLORATION_MAX_PER_DAY: ${PRAMANA_EXPLORATION_MAX_PER_DAY:-0}
+      PRAMANA_EXPLORATION_MIN_CONFIDENCE: ${PRAMANA_EXPLORATION_MIN_CONFIDENCE:-0.40}
+      PRAMANA_EXPLORATION_NOTIONAL_FRACTION: ${PRAMANA_EXPLORATION_NOTIONAL_FRACTION:-0.01}
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       # Mandatory entry gates; provider absence must never mean permission to trade.
       PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"

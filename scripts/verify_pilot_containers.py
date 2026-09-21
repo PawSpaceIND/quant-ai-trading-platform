@@ -131,6 +131,10 @@ def main():
         # The overnight controls and the corporate-action file reach the engine through
         # Compose; off by default, armed by a value in .env, never by a container rebuild.
         assert services["pramana-ghost"]["environment"]["PRAMANA_OVERNIGHT_GAP_MONITOR"] == "none"
+        # Exploration is off unless the operator names a daily budget in .env.
+        assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_MAX_PER_DAY"] == "0"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_MIN_CONFIDENCE"] == "0.40"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_EXPLORATION_NOTIONAL_FRACTION"] == "0.01"
         assert services["pramana-ghost"]["environment"]["PRAMANA_CORPORATE_ACTIONS"] == "/app/corporate-actions.json"
         limits = {}
         for name, service in services.items():
