@@ -9,12 +9,15 @@ import {
   hourLabel,
   money,
   parseDecisionQuality,
+  parseMissedOpportunities,
   percent,
   ratio,
   readDecisionQuality,
+  readMissedOpportunities,
   readPostMortems,
   signedMoney,
   signedPercent,
+  stancesSummary,
   truncateLesson,
   verdictFor,
 } from "../lib/decision-quality";
@@ -26,6 +29,7 @@ process.env.PRAMANA_LEDGER_PATH = path.join(dir, "ledger.sqlite");
 process.env.PRAMANA_CONSOLE_DB = path.join(dir, "console.sqlite");
 delete process.env.PRAMANA_DECISION_QUALITY_REPORT;
 delete process.env.PRAMANA_POST_MORTEM_DIR;
+delete process.env.PRAMANA_MISSED_OPPORTUNITY_DIR;
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const fixturePath = new URL("./fixtures/decision-quality.json", import.meta.url).pathname;
@@ -211,6 +215,67 @@ test("formatting helpers use the workspace placeholder and en-IN money style", (
   assert.equal(truncateLesson("short"), "short");
 });
 
+/* ---------- missed opportunities ---------- */
+
+// The 21 September 2026 shape: every decision a hold, scored on the 60-minute horizon.
+const missedFixture = () => ({
+  schema: "pramana.missed_opportunities.v1",
+  generated_at: "2026-09-21T10:30:00+00:00",
+  tenant_id: "ghost",
+  session_date: "2026-09-21",
+  threshold: 0.01,
+  horizon: "forward_return_60m",
+  decisions: 13,
+  holds: 11,
+  evaluated: 10,
+  missed: 4,
+  avoided: 3,
+  unresolved: 1,
+  symbols: [
+    { symbol: "RELIANCE", missed: 2, avoided: 0, evaluated: 3, best: {
+      decision_id: "rel-2", decided_at: "2026-09-21T11:20:00+05:30", reference_price: 2950, forward_return: 0.018,
+      regime: "BULL_TRENDING", mode: "llm", reason: null,
+      agents: { "technical-quant-mas": { stance: "BUY", confidence: "0.71" }, "indian-equities": { stance: "NEUTRAL", confidence: "0.40" } },
+    } },
+    { symbol: "TCS", missed: 0, avoided: 2, evaluated: 3, best: null },
+  ],
+  limitations: ["Measured on the feed's last traded price; costs ignored."],
+});
+const missedDir = path.join(dir, "missed-opportunities");
+
+test("missed-opportunity files parse fail-closed and the session date must match the file name", () => {
+  const parsed = parseMissedOpportunities(JSON.stringify(missedFixture()));
+  assert(parsed);
+  assert.equal(parsed.missed, 4);
+  assert.equal(parsed.symbols[0].best?.forward_return, 0.018);
+  assert.equal(parsed.symbols[0].best?.agents["technical-quant-mas"].stance, "BUY");
+  assert.equal(parsed.symbols[1].best, null);
+  assert.equal(stancesSummary(parsed.symbols[0].best!.agents), "technical-quant-mas BUY, 1 neutral");
+  assert.equal(stancesSummary({ a: { stance: "NEUTRAL", confidence: "0.4" } }), "specialists neutral");
+  assert.equal(stancesSummary({}), "no specialist votes");
+  assert.equal(parseMissedOpportunities("{not json"), null);
+  assert.equal(parseMissedOpportunities(JSON.stringify({ ...missedFixture(), schema: "pramana.missed_opportunities.v0" })), null);
+  assert.equal(parseMissedOpportunities(JSON.stringify({ ...missedFixture(), missed: "4" })), null);
+  assert.equal(parseMissedOpportunities(JSON.stringify(missedFixture()), "2026-09-20"), null);
+  const broken = missedFixture();
+  broken.symbols[0].best!.forward_return = Number.NaN;
+  assert.equal(parseMissedOpportunities(JSON.stringify(broken)), null);
+});
+
+test("the newest readable session file wins and the notified markers are ignored", () => {
+  assert.equal(readMissedOpportunities(), null);
+  fs.mkdirSync(missedDir);
+  const write = (name: string, body: unknown) => fs.writeFileSync(path.join(missedDir, name), typeof body === "string" ? body : JSON.stringify(body));
+  write("2026-09-21.json", missedFixture());
+  write("2026-09-22.json", "{not json");
+  write("2026-09-23.json", { ...missedFixture(), session_date: "2026-09-21" });
+  write(".notified-2026-09-21", "2026-09-21T10:30:00+00:00");
+  assert.equal(readMissedOpportunities()?.session_date, "2026-09-21");
+  process.env.PRAMANA_MISSED_OPPORTUNITY_DIR = path.join(dir, "missing-missed");
+  assert.equal(readMissedOpportunities(), null);
+  delete process.env.PRAMANA_MISSED_OPPORTUNITY_DIR;
+});
+
 test("the API route returns report, post-mortems and verdict with no-store", async () => {
   writeReport(fixture());
   const { GET } = await import("../app/api/decision-quality/route");
@@ -219,6 +284,7 @@ test("the API route returns report, post-mortems and verdict with no-store", asy
   assert.equal(response.headers.get("Cache-Control"), "no-store");
   const body = await response.json();
   assert.equal(body.report.tenant_id, "ghost");
+  assert.equal(body.missed.session_date, "2026-09-21");
   assert.equal(body.verdict.state, "edge_candidate");
   assert.deepEqual(body.postMortems.map((p: { session_date: string }) => p.session_date), ["2026-09-14", "2026-09-12"]);
   assert.equal(body.postMortems[1].evidence, undefined);

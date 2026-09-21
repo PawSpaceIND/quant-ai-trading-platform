@@ -11,6 +11,7 @@ The server reads only:
 - `PRAMANA_TENANT_ID` (default `default`)
 - `PRAMANA_DECISION_QUALITY_REPORT` (default `decision-quality.json` beside the ledger)
 - `PRAMANA_POST_MORTEM_DIR` (default `post-mortems/` beside the ledger; read-only, approval stays on the host CLI)
+- `PRAMANA_MISSED_OPPORTUNITY_DIR` (default `missed-opportunities/` beside the ledger; the newest session file feeds the Missed moves panel)
 
 SQLite is opened with `readonly: true`, `fileMustExist: true`, and `PRAGMA query_only=ON`.
 No API route mutates the ledger, proof files, risk parameters, or orders.

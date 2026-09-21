@@ -26,6 +26,7 @@ PROOF_ENV = "PRAMANA_PROOF_DIR"
 TENANT_ENV = "PRAMANA_TENANT_ID"
 HALT_FILE_ENV = "PRAMANA_HALT_FILE"
 DECISION_QUALITY_ENV = "PRAMANA_DECISION_QUALITY_REPORT"
+MISSED_OPPORTUNITY_DIR_ENV = "PRAMANA_MISSED_OPPORTUNITY_DIR"
 POST_MORTEM_DIR_ENV = "PRAMANA_POST_MORTEM_DIR"
 HALT_OVERRIDE_LOG_ENV = "PRAMANA_HALT_OVERRIDE_LOG"
 TRIAL_REGISTER_ENV = "PRAMANA_TRIAL_REGISTER"
@@ -100,6 +101,16 @@ def decision_quality_report(*legacy_env: str) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return ledger_path(*legacy_env).parent / DEFAULT_DECISION_QUALITY_NAME
+
+
+def missed_opportunity_directory() -> Path | None:
+    """Per-session missed-opportunity files; None when unset, which keeps them off.
+
+    No default beside the ledger, unlike the decision-quality report: these files come
+    with an end-of-session alert, and an operator opts into that by naming the directory.
+    """
+    configured = _from_env(MISSED_OPPORTUNITY_DIR_ENV)
+    return Path(configured).expanduser().resolve() if configured else None
 
 
 def halt_override_log(*legacy_env: str) -> Path:
