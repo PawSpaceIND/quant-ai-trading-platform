@@ -38,9 +38,18 @@ def health(database: Path, tenant: str) -> dict:
     return protection_health(database, tenant)
 
 
+def premarket(database: Path, tenant: str, env=None, now=None) -> tuple[str, bool]:
+    """One line per pre-market condition; True when nothing failed."""
+    from quant_ai.operations.premarket import load_engine_records, premarket_checks, render
+    payload, manifest = load_engine_records(database, tenant)
+    checks = premarket_checks(payload, manifest, os.environ if env is None else env,
+                              now or datetime.now(timezone.utc))
+    return render(checks), all(check.state != "FAIL" for check in checks)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["health", "reconcile", "backup", "restore-drill", "pilot-check"])
+    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
@@ -73,6 +82,10 @@ if __name__ == "__main__":
         result = health(args.database, args.tenant)
         print(json.dumps(result, indent=2))
         raise SystemExit(0 if result["status"] == "observation_ok" else 2)
+    if args.action == "premarket":
+        report, ready = premarket(args.database, args.tenant)
+        print(report)
+        raise SystemExit(0 if ready else 2)
     else:
         if not args.destination:
             parser.error("--destination required; use a new path")
