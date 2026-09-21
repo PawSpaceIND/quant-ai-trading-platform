@@ -41,6 +41,38 @@ const mortemDir = path.join(dir, "post-mortems");
 const writeReport = (body: unknown) => fs.writeFileSync(reportFile, JSON.stringify(body));
 const report = (): DecisionQualityReport => { const parsed = parseDecisionQuality(JSON.stringify(fixture())); assert(parsed); return parsed; };
 
+test("quality, lessons and missed opportunities reject another account's evidence", () => {
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "quality-account-boundary-"));
+  const keys = ["PRAMANA_TENANT_ID", "PRAMANA_DECISION_QUALITY_REPORT", "PRAMANA_POST_MORTEM_DIR", "PRAMANA_MISSED_OPPORTUNITY_DIR"] as const;
+  const previous = keys.map(key => process.env[key]);
+  try {
+    process.env.PRAMANA_TENANT_ID = "current-account";
+    process.env.PRAMANA_DECISION_QUALITY_REPORT = path.join(isolated, "quality.json");
+    process.env.PRAMANA_POST_MORTEM_DIR = path.join(isolated, "lessons");
+    process.env.PRAMANA_MISSED_OPPORTUNITY_DIR = path.join(isolated, "missed");
+    fs.mkdirSync(process.env.PRAMANA_POST_MORTEM_DIR);
+    fs.mkdirSync(process.env.PRAMANA_MISSED_OPPORTUNITY_DIR);
+    const q = fixture(), p = postMortem(), m = missedFixture();
+    const publish = () => {
+      fs.writeFileSync(process.env.PRAMANA_DECISION_QUALITY_REPORT!, JSON.stringify(q));
+      fs.writeFileSync(path.join(process.env.PRAMANA_POST_MORTEM_DIR!, `${p.session_date}.json`), JSON.stringify(p));
+      fs.writeFileSync(path.join(process.env.PRAMANA_MISSED_OPPORTUNITY_DIR!, `${m.session_date}.json`), JSON.stringify(m));
+    };
+    publish();
+    assert.equal(readDecisionQuality(), null);
+    assert.deepEqual(readPostMortems(), []);
+    assert.equal(readMissedOpportunities(), null);
+    q.tenant_id = p.tenant_id = m.tenant_id = "current-account";
+    publish();
+    assert.equal(readDecisionQuality()?.tenant_id, "current-account");
+    assert.equal(readPostMortems()[0]?.tenant_id, "current-account");
+    assert.equal(readMissedOpportunities()?.tenant_id, "current-account");
+  } finally {
+    keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+    fs.rmSync(isolated, {recursive: true, force: true});
+  }
+});
+
 test("reader returns null when no report has been written", () => {
   assert.equal(fs.existsSync(reportFile), false);
   assert.equal(readDecisionQuality(), null);

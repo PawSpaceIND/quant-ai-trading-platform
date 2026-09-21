@@ -1,0 +1,100 @@
+import {test, expect, type BrowserContext} from "@playwright/test";
+import {makeSession, SESSION_COOKIE} from "../lib/auth";
+
+async function signIn(context: BrowserContext, baseURL: string) {
+  const previous = process.env.PRAMANA_DASHBOARD_SECRET;
+  let session: string;
+  try {
+    process.env.PRAMANA_DASHBOARD_SECRET = "synthetic-browser-fixture-secret-at-least-32-characters";
+    session = makeSession();
+  } finally {
+    if (previous === undefined) delete process.env.PRAMANA_DASHBOARD_SECRET;
+    else process.env.PRAMANA_DASHBOARD_SECRET = previous;
+  }
+  await context.addCookies([{name: SESSION_COOKIE, value: session, url: baseURL, httpOnly: true, sameSite: "Strict"}]);
+}
+
+for (const width of [1280, 390]) {
+  test(`market detail and Atlas question follow visible search results at ${width}px`, async ({page, context, baseURL}) => {
+    await signIn(context, baseURL!);
+    await page.setViewportSize({width, height: 720});
+    let paidRequests = 0;
+    await page.route("**/api/copilot", async route => {
+      if (route.request().method() !== "GET") paidRequests++;
+      await route.fulfill({json: {conversations: [], dailyRemaining: 10, dailyLimit: 10}});
+    });
+    await page.goto("/?view=markets");
+    await page.getByRole("button", {name: "NSE:INFY NSE · INR · EQUITY", exact: true}).click();
+    await expect(page.getByRole("heading", {name: "NSE:INFY", exact: true})).toBeVisible();
+    await page.getByRole("textbox", {name: "Search instruments", exact: true}).fill("TCS");
+    await expect(page.getByRole("heading", {name: "NSE:TCS", exact: true})).toBeVisible();
+    await expect(page.getByRole("heading", {name: "NSE:INFY", exact: true})).toHaveCount(0);
+    await page.getByRole("button", {name: "Ask Atlas ↗", exact: true}).click();
+    await expect(page.getByRole("textbox", {name: "Ask Atlas", exact: true})).toHaveValue(/TCS/);
+    await page.getByRole("button", {name: width < 1100 ? "Close copilot ×" : "✳ Atlas copilot", exact: true}).click();
+    await page.getByRole("textbox", {name: "Search instruments", exact: true}).fill("NO-MATCH");
+    await expect(page.getByText("No instruments match this filter.", {exact: true})).toBeVisible();
+    await expect(page.getByRole("button", {name: "Ask Atlas ↗", exact: true})).toHaveCount(0);
+    expect(paidRequests).toBe(0);
+  });
+
+  test(`new conversation clears old URL and remains new on reopen at ${width}px`, async ({page, context, baseURL}) => {
+    await signIn(context, baseURL!);
+    await page.setViewportSize({width, height: 720});
+    const id = "11111111-1111-4111-8111-111111111111";
+    const conversation = {id, tenant: "default", prompt: "Synthetic saved question", answer: "Synthetic saved answer", status: "complete", model: "synthetic", usage: "{}", created_at: "2026-09-21T00:00:00Z"};
+    let paidRequests = 0;
+    await page.route("**/api/copilot", async route => {
+      if (route.request().method() !== "GET") paidRequests++;
+      await route.fulfill({json: {conversations: [conversation], dailyRemaining: 10, dailyLimit: 10}});
+    });
+    await page.route(`**/api/copilot/${id}`, route => route.fulfill({json: conversation}));
+    await page.goto(`/?view=markets&chat=${id}`);
+    await expect(page.getByText("Synthetic saved answer", {exact: true})).toBeVisible();
+    await page.getByText("Saved conversations (1)", {exact: true}).click();
+    await page.getByRole("button", {name: "+ New conversation", exact: true}).click();
+    expect(new URL(page.url()).searchParams.has("chat")).toBe(false);
+    expect(new URL(page.url()).searchParams.get("view")).toBe("markets");
+    await page.getByRole("button", {name: width < 1100 ? "Close copilot ×" : "✳ Atlas copilot", exact: true}).click();
+    await page.getByRole("button", {name: "✳ Atlas copilot", exact: true}).click();
+    await expect(page.getByRole("heading", {name: "Start with a better question.", exact: true})).toBeVisible();
+    await expect(page.getByText("Synthetic saved answer", {exact: true})).toHaveCount(0);
+    expect(paidRequests).toBe(0);
+  });
+}
+
+test("desktop chat history remains pointer reachable on a short screen", async ({page, context, baseURL}) => {
+  await signIn(context, baseURL!);
+  await page.setViewportSize({width: 1280, height: 720});
+  await page.route("**/api/copilot", route => route.fulfill({json: {
+    conversations: [{id: "synthetic", prompt: "Saved fixture", status: "complete"}],
+    dailyRemaining: 10, dailyLimit: 10,
+    dollarBudget: {status: "activation_hold", limitUsd: 2.5, remainingUsd: 0},
+  }}));
+  await page.goto("/?view=markets");
+  await page.getByRole("button", {name: "✳ Atlas copilot", exact: true}).click();
+  await page.getByText("Saved conversations (1)", {exact: true}).click();
+  await expect(page.getByRole("button", {name: "+ New conversation", exact: true})).toBeVisible();
+  const panel = page.locator(".copilot");
+  expect(await panel.evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(680);
+  expect(await panel.evaluate(el => getComputedStyle(el).overflowY)).toBe("auto");
+});
+
+for (const width of [1280, 390]) {
+  test(`sign out is reachable and reports failures at ${width}px`, async ({page, context, baseURL}) => {
+    await signIn(context, baseURL!);
+    await page.setViewportSize({width, height: 844});
+    await page.goto("/?view=markets");
+    const logout = page.getByRole("button", {name: "↪ Sign out", exact: true});
+    await expect(logout).toBeVisible();
+    await page.route("**/api/session", route => route.fulfill({status: 503, json: {error: "Synthetic failure"}}));
+    await logout.click();
+    await expect(page.getByText("Sign out could not be confirmed. Your session may still be active; try Sign out again.", {exact: true})).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/");
+    await page.unroute("**/api/session");
+    await logout.click();
+    await expect(page).toHaveURL(/\/login$/);
+    await page.goto("/?view=quality");
+    await expect(page).toHaveURL(/\/login$/);
+  });
+}

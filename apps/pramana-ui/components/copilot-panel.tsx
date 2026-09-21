@@ -55,7 +55,7 @@ export function CopilotPanel({
       })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (alive && d) setActive(d);
+          if (alive && d && new URLSearchParams(window.location.search).get("chat") === id) setActive(d);
         })
         .catch(() => {
           if (alive)
@@ -241,15 +241,20 @@ export function CopilotPanel({
         <details className="conversation-history">
           <summary>Saved conversations ({history.length})</summary>
           <button
+            disabled={busy}
             onClick={() => {
               setActive(null);
+              setError("");
               onDraft("");
+              const url = new URL(window.location.href);
+              url.searchParams.delete("chat");
+              window.history.replaceState(null, "", url);
             }}
           >
             + New conversation
           </button>
           {history.map((c) => (
-            <button key={c.id} onClick={() => choose(c)}>
+            <button key={c.id} disabled={busy} onClick={() => choose(c)}>
               <span>{c.prompt}</span>
               <small>{c.status}</small>
             </button>

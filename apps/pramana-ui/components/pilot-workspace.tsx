@@ -93,6 +93,19 @@ export function PilotWorkspace() {
   const [reason, setReason] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const response = await fetch("/api/session", { method: "DELETE", signal: AbortSignal.timeout(12000) });
+      if (!response.ok) throw new Error("Sign out failed");
+      window.location.assign("/login");
+    } catch {
+      setNotice("Sign out could not be confirmed. Your session may still be active; try Sign out again.");
+      setSigningOut(false);
+    }
+  }
   const inFlight = useRef(false);
   const haltTrigger = useRef<HTMLButtonElement>(null);
   const refresh = useCallback(async () => {
@@ -245,6 +258,7 @@ export function PilotWorkspace() {
               {s.id === "research" && <small>GATES</small>}
             </button>
           ))}
+          {!hosted && <button className="mobile-sign-out" disabled={signingOut} onClick={() => void signOut()}>{signingOut ? "Signing out…" : "↪ Sign out"}</button>}
         </nav>
         <div className="sidebar-bottom">
           <div className="pilot-card">
@@ -259,12 +273,10 @@ export function PilotWorkspace() {
           <button
             hidden={hosted}
             className="sign-out"
-            onClick={async () => {
-              await fetch("/api/session", { method: "DELETE" });
-              window.location.assign("/login");
-            }}
+            disabled={signingOut}
+            onClick={() => void signOut()}
           >
-            ↪ Sign out
+            {signingOut ? "Signing out…" : "↪ Sign out"}
           </button>
           <small>PRAMANA · PILOT EDITION</small>
         </div>
