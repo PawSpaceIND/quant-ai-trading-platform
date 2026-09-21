@@ -125,8 +125,15 @@ class AnthropicSwarmClient:
                 "risk_factors."
             ),
             "messages": [{"role": "user", "content": prompt}],
+            # ``strict`` makes the API guarantee the tool input matches the schema, so the
+            # model can no longer answer with a field missing, renamed or added. On
+            # 21 September 2026 every consensus reply of the session came back complete
+            # (stop_reason tool_use, well under the output cap) and was still refused by the
+            # parser below for exactly those reasons, so no cycle could reach a decision.
+            # The strict grammar accepts a subset of JSON Schema; the numeric and length
+            # bounds it cannot express stay enforced by ``parse_consensus``.
             "tools": [{"name": TOOL_NAME, "description": "Structured Pramana trading consensus and XAI proof",
-                       "input_schema": _consensus_schema()}],
+                       "strict": True, "input_schema": _strict_input_schema(_consensus_schema())}],
             "tool_choice": {"type": "tool", "name": TOOL_NAME},
         }
         # An explicit larger allowance also asks for compact structured evidence; the
@@ -224,6 +231,10 @@ class AnthropicSwarmClient:
         blocks = getattr(response, "content", ())
         tools = [b for b in blocks if getattr(b, "type", None) == "tool_use"] if isinstance(blocks, (list, tuple)) else []
         if not tools:
+            LOGGER.warning(
+                "anthropic_consensus_invalid_schema code=missing_consensus_tool block_types=%s",
+                ",".join(provenance.get("content_block_types") or []) or "none",
+            )
             raise invalid("Anthropic response did not contain structured trading consensus", "missing_consensus_tool")
         if len(tools) != 1:
             raise invalid("Consensus requires exactly one tool block", "multiple_tool_blocks")
@@ -236,7 +247,13 @@ class AnthropicSwarmClient:
             self.parse_consensus(payload)
         except ConsensusSchemaError as error:
             # Only fixed codes enter durable evidence; unknown provider field names,
-            # returned text and raw exception strings are never copied into it.
+            # returned text and raw exception strings are never copied into it. The field
+            # names alone go to the process log, so a shape the model keeps returning can be
+            # read from the container without touching the proofs.
+            LOGGER.warning(
+                "anthropic_consensus_invalid_schema code=%s keys=%s",
+                consensus_failure_code(error), _payload_key_names(payload),
+            )
             raise invalid("Consensus payload failed validation", consensus_failure_code(error)) from None
         return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
 
@@ -590,6 +607,40 @@ def _string_list(value: Any, field: str, *, require_nonempty: bool = False) -> t
     if require_nonempty and not value:
         raise ConsensusSchemaError(f"{field} must not be empty")
     return tuple(value)
+
+
+# JSON Schema keywords the API's strict tool grammar does not accept. They are removed from
+# the schema sent with ``strict: true`` and stay enforced client-side by the parser.
+STRICT_UNSUPPORTED_KEYWORDS = frozenset(
+    {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+     "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems"}
+)
+MAX_LOGGED_KEYS = 16
+
+
+def _strict_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """The same contract with the keywords the strict grammar rejects removed, recursively."""
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {key: strip(value) for key, value in node.items()
+                    if key not in STRICT_UNSUPPORTED_KEYWORDS}
+        if isinstance(node, list):
+            return [strip(item) for item in node]
+        return node
+
+    return strip(schema)
+
+
+def _payload_key_names(payload: Any) -> str:
+    """Top-level field names of a refused payload, bounded, for the process log only."""
+    if not isinstance(payload, dict):
+        return type(payload).__name__
+    names = sorted(str(key)[:40] if isinstance(key, str) else type(key).__name__ for key in payload)
+    shown = names[:MAX_LOGGED_KEYS]
+    if len(names) > MAX_LOGGED_KEYS:
+        shown.append(f"+{len(names) - MAX_LOGGED_KEYS}")
+    return ",".join(shown) or "none"
 
 
 def _consensus_schema() -> dict[str, Any]:
