@@ -313,6 +313,23 @@ test("canonical swarm evidence survives absent/conflicting file projections and 
   assert.equal(latestSwarmIntelligence().proof?.decisionId, proof.decision_id);
   assert.equal(latestSwarmIntelligence().agents[0].agentId, "synthetic-agent");
   assert.equal(latestSwarmIntelligence().consensus, "BULLISH");
+  const cases: Array<[typeof proof.input_matrix, string]> = [
+    [[{...proof.input_matrix[0],stance:"NEUTRAL"}, proof.input_matrix[1]], "NEUTRAL"],
+    [[proof.input_matrix[0], {...proof.input_matrix[0],agent_id:"opposing-agent",stance:"SELL"}], "MIXED"],
+    [[proof.input_matrix[1]], "NEUTRAL"],
+  ];
+  const edits = new DatabaseSync(process.env.PRAMANA_LEDGER_PATH!);
+  try {
+    for (const [input_matrix, expected] of cases) {
+      edits.prepare("UPDATE paper_decision_evidence SET payload=? WHERE order_id=?")
+        .run(JSON.stringify({...proof,input_matrix}), proof.order_id);
+      assert.equal(latestSwarmIntelligence().consensus, expected);
+    }
+  } finally {
+    edits.prepare("UPDATE paper_decision_evidence SET payload=? WHERE order_id=?")
+      .run(JSON.stringify(proof), proof.order_id);
+    edits.close();
+  }
   assert.equal(latestSwarmIntelligence().agents[1].participation.label, "Veto");
   assert(!JSON.stringify(latestSwarmIntelligence()).includes("private control details"));
   const index = proofsByOrderId();

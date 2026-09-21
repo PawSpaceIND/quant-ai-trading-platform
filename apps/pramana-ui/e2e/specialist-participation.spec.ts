@@ -20,6 +20,14 @@ for (const width of [1440, 390]) {
     await context.addCookies([{name:SESSION_COOKIE,value:session,url:baseURL!,httpOnly:true,sameSite:"Strict"}]);
     await page.goto("/");
     await expect(page).toHaveURL(/\/$/);
+    const nav = page.getByRole("navigation",{name:"Main navigation"});
+    if (width < 780) {
+      // Keep a native scrollbar's hit area below the buttons, including platforms
+      // where overlay scrollbars are normally absent in headless Chromium.
+      expect(await nav.evaluate(el => el.clientHeight - Math.max(...Array.from(el.querySelectorAll("button"), b => b.getBoundingClientRect().height)))).toBeGreaterThanOrEqual(16);
+    }
+    await nav.getByRole("button",{name:"Markets",exact:true}).click();
+    await expect(page.getByRole("heading",{name:"Markets",exact:true})).toBeVisible();
     await page.getByRole("navigation",{name:"Main navigation"}).getByRole("button",{name:/Research/}).click();
     const panel = page.locator("section").filter({has:page.getByRole("heading",{name:"Swarm intelligence",exact:true})});
     await expect(panel.getByText("Company valuation does not apply to this asset type.",{exact:false})).toBeVisible();
