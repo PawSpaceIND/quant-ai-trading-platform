@@ -306,6 +306,11 @@ def test_workload_uses_calendar_and_reports_budget_shortfall_without_currency_gu
     assert report["callLimitCoversFiftyConsensus"] is False
     assert report["currencyCost"] is None and report["actualTokenDemand"] is None
     assert report["budgetChanged"] is False
+    assert report["dailyCallLimitShared"] == 500
+    assert report["dailyTokenLimitShared"] == 2_000_000
+    assert "shares the daily ceiling" in report["headlineScope"]
+    assert "dailyCallLimitPerScope" not in report
+    assert any("reserved before requests" in note for note in report["limitations"])
     assert nse.workload_report(date(2026, 9, 19), 500, 2_000_000)["scheduledRegularTicks"] == 0
     assert nse.workload_report(date(2026, 9, 14), 500, 2_000_000)["scheduledRegularTicks"] == 0
 

@@ -52,10 +52,15 @@ export type DecisionQualityReport = {
   ai_budget: AiBudget | null;
 };
 
-export type AiBudget = {
-  day: string; scope: string; calls: number; tokens: number;
-  daily_call_limit: number; daily_token_limit: number;
+export type AiBudgetUsage = {
+  calls: number; tokens: number; reserved_tokens: number | null;
   remaining_calls: number; remaining_tokens: number; exhausted: boolean;
+};
+export type AiBudget = AiBudgetUsage & {
+  day: string; scope: string;
+  daily_call_limit: number; daily_token_limit: number;
+  /** Shared ledger across scopes; null for older or malformed reports. */
+  aggregate: AiBudgetUsage | null;
 };
 
 export type PostMortemStatus = "pending" | "approved";
@@ -166,18 +171,33 @@ const optText = (v: unknown, max = 200): string | null => v === null ? null : te
 const stamp = (v: unknown): string => { const s = text(v, 80); return Number.isFinite(Date.parse(s)) ? s : fail(); };
 const governance = (v: unknown): Governance => v === "filled" || v === "rejected" || v === "abstained" ? v : fail();
 
+function budgetUsage(value: unknown): AiBudgetUsage {
+  const d = record(value);
+  const counter = (v: unknown) => {
+    const n = num(v);
+    return Number.isSafeInteger(n) && n >= 0 ? n : fail();
+  };
+  return {
+    calls: counter(d.calls), tokens: counter(d.tokens),
+    reserved_tokens: d.reserved_tokens == null ? null : counter(d.reserved_tokens),
+    remaining_calls: counter(d.remaining_calls), remaining_tokens: counter(d.remaining_tokens),
+    exhausted: bool(d.exhausted),
+  };
+}
+
 function optAiBudget(value: unknown): AiBudget | null {
   // Absent on an engine without a budget, and older engines never wrote it at all, so a
   // missing or malformed block yields null instead of failing the whole report.
   if (value === null || value === undefined) return null;
   try {
     const d = record(value);
+    let aggregate: AiBudgetUsage | null = null;
+    try { aggregate = budgetUsage(d.aggregate); } catch { /* Scope evidence remains usable. */ }
     return {
+      ...budgetUsage(d),
       day: text(d.day, 20), scope: text(d.scope, 40),
-      calls: num(d.calls), tokens: num(d.tokens),
       daily_call_limit: num(d.daily_call_limit), daily_token_limit: num(d.daily_token_limit),
-      remaining_calls: num(d.remaining_calls), remaining_tokens: num(d.remaining_tokens),
-      exhausted: bool(d.exhausted),
+      aggregate,
     };
   } catch {
     return null;
