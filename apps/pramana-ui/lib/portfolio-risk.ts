@@ -1,5 +1,43 @@
 import type { Portfolio } from "./types";
 
+/**
+ * The engine's own daily-loss breaker, reproduced exactly so the page cannot draw a
+ * different line from the one that halts trading. The daemon computes
+ * `opening = total_equity - daily_total_pnl` and engages the kill switch when
+ * `-daily_total_pnl / opening >= limit`, so a profitable day consumes none of it.
+ *
+ * Null whenever opening equity is not a positive number, or the engine withheld the day's
+ * P&L: with no denominator there is no fraction, and the engine does not test the breaker
+ * there either. The telemetry publishes a null dailyPnl whenever totals are withheld, so
+ * this is a real state and not a defensive check.
+ */
+export function dailyLossUsed(p: Pick<Portfolio, "totalEquity" | "dailyPnl">): number | null {
+  const daily = p.dailyPnl;
+  if (!Number.isFinite(p.totalEquity) || typeof daily !== "number" || !Number.isFinite(daily)) return null;
+  const opening = p.totalEquity - daily;
+  if (!Number.isFinite(opening) || opening <= 0) return null;
+  return Math.max(0, -daily / opening);
+}
+
+/**
+ * Next per-holding overrides after the operator types `raw` into one shock box.
+ *
+ * An empty box is not a shock of zero. `Number("")` is 0 and finite, so reading the box
+ * with Number() pinned the holding at 0% the moment it was cleared to be retyped: the
+ * holding silently left the scenario, the P&L moved, and the override stuck until Reset.
+ * An empty or unparseable box means no override, so the holding follows the common shock
+ * until a number is actually entered. Out-of-range input is clamped, as it always was.
+ */
+export function applyShockEdit(overrides: Record<string, number>, key: string, raw: string): Record<string, number> {
+  const value = raw.trim() === "" ? Number.NaN : Number(raw);
+  if (!Number.isFinite(value)) {
+    if (!Object.hasOwn(overrides, key)) return overrides;
+    const {[key]: _cleared, ...rest} = overrides;
+    return rest;
+  }
+  return {...overrides, [key]: Math.max(-100, Math.min(100, value))};
+}
+
 export function holdingKey(h: Portfolio["holdings"][number]) {
   return `${h.market}:${h.assetClass}:${h.symbol}`;
 }

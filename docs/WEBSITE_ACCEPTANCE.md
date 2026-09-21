@@ -29,10 +29,30 @@ by generating fixtures from the producer rather than by hand.
 | Workspace freshness | Broker and external-account panels claimed a current reading beside an expired banner | Both re-aged with the snapshot | `tests/freshness.test.ts` |
 | Workspace | Refresh and Retry were silent no-ops while a poll was outstanding | Both show that a refresh is running | `components/pilot-workspace.tsx` |
 | Atlas chat | A republished pinned run comparison spent a daily question on a call that never ran | The pinned report resolves before the budget is consumed | `app/api/copilot/route.ts` |
+| Overview | The daily-loss breaker was published by the engine and drawn nowhere, although breaching it engages the kill switch | A bar beside drawdown and gross exposure, computed with the daemon's own arithmetic | `tests/portfolio-risk.test.ts` daily-loss cases, `e2e/workspace-controls.spec.ts` |
+| Risk lab | "Portfolio valuation status: ok" for a ledger-marked or replayed book, beside its own count of stale marks | The panel names the mark mode and says a non-engine status is the one the book was written with, not a currency check | `e2e/workspace-controls.spec.ts`, verified failing without the fix |
+| Risk lab | Clearing a per-holding shock box wrote an explicit 0% override, dropping that holding from the scenario until Reset | An empty or unparseable box means no override; the holding follows the common shock | `tests/portfolio-risk.test.ts` edit-rule cases |
 
 Note on tenancy: both containers running as the same tenant is a deployment fact and does
 not establish ownership of a file. That is why the proof fix is at the write and read
 layers and not an argument from the deployment.
+
+## Checked and found sound
+
+Recording these so they are not re-investigated as if they were open.
+
+- `agePortfolio` treating a missing `holdings` key as an empty book is deliberate: older
+  cash-only snapshots did not serialize the array, and an explicitly malformed value is
+  still invalid and cannot claim a current mark.
+
+## Note on browser tests and the sign-in limit
+
+The sign-in route allows ten attempts per minute and the browser suite runs as one worker
+against one server, so specs that drive the login form spend that budget and a new one can
+push an unrelated spec over it. `e2e/workspace-controls.spec.ts` shows the answer: mint the
+session cookie with `makeSession()` and add it to the context. A browser test should drive
+the form only when the login flow itself is what it is testing. Raising the limit for tests
+would weaken a real control.
 
 ## Open, not yet audited
 

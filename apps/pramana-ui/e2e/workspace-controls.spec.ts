@@ -121,3 +121,17 @@ test("a refused halt reports inside the dialog instead of behind its backdrop", 
   await page.getByRole("button", {name: "Halt entries", exact: true}).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
 });
+
+test("the guardrail panel shows the daily-loss breaker and the risk lab names its mark mode", async ({page, context, baseURL}) => {
+  await signIn(context, baseURL!);
+  await page.goto("/");
+  // The engine publishes limits.dailyLoss and breaching it engages the kill switch, yet
+  // the guardrail panel drew bars for drawdown and gross exposure only.
+  await expect(page.locator("section.risk-summary").getByText("Daily loss", {exact: true})).toBeVisible();
+
+  await page.goto("/?view=risk");
+  // Only an engine_live book is aged by the freshness pass, so a ledger-marked or
+  // replayed book kept whatever status it was written with. The footnote has to say which
+  // marks it is reporting on rather than presenting that status as a current check.
+  await expect(page.getByText(/Ledger fill prices, not a current market valuation\. The freshness pass only ages engine valuations/)).toBeVisible();
+});
