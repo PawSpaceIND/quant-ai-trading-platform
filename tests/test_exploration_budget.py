@@ -61,8 +61,8 @@ def budget(max_per_day: int = 3, **overrides) -> AtlasPolicy:
     return AtlasPolicy(exploration_max_per_day=max_per_day, **overrides)
 
 
-# The regime the probe tests run in: a trend, whose playbook allows probes. A decision with
-# no regime read falls under the cautious playbook and never probes (test_regime_playbooks).
+# The regime the probe tests run in: a trend, whose playbook allows probes. Defensive and
+# crisis playbooks withhold probes (test_regime_playbooks); an unread regime tightens nothing.
 TREND = EvidenceContext(regime=(("label", "trending_up"), ("timeframe", "1d")))
 
 

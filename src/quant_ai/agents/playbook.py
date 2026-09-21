@@ -92,14 +92,17 @@ PLAYBOOKS: dict[str, RegimePlaybook] = {
         "stand down: only an exceptional consensus trades, at a third of size, and never probes",
     ),
     INSUFFICIENT_HISTORY: RegimePlaybook(
-        INSUFFICIENT_HISTORY, "cautious_default", Decimal("0.05"), Decimal("0.50"), False,
-        "no regime read yet: a higher floor at half size, no probes until the bars exist",
+        INSUFFICIENT_HISTORY, "plan_default", Decimal(0), Decimal("1.00"), True,
+        "no regime read yet: the plan floor and plan size until the bars exist; a regime "
+        "routes, its absence tightens nothing",
     ),
 }
 # A label the classifier does not produce, or no evidence context at all, is treated the
-# way missing history is: cautiously.
+# way missing history is: the plan as written. The regime is strategy evidence, not a risk
+# gate; the gates that must fail closed on missing evidence live in the warden, and a
+# replay or a fresh boot with no bars must decide the way the traded runtime always did.
 DEFAULT_PLAYBOOK = RegimePlaybook(
-    UNKNOWN_REGIME, "cautious_default", Decimal("0.05"), Decimal("0.50"), False,
+    UNKNOWN_REGIME, "plan_default", Decimal(0), Decimal("1.00"), True,
     PLAYBOOKS[INSUFFICIENT_HISTORY].note,
 )
 # The routing switched off: the policy floor, full plan size, probes as the budget allows.
