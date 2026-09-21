@@ -483,6 +483,16 @@ def record_decision(
     return inserted
 
 
+def ordered_decision_ids(broker, *, tenant_id: str) -> set[str]:
+    """Decision ids that produced an order. Their proofs are fill evidence and are kept."""
+    with broker._lock:
+        rows = broker._connection.execute(
+            f"SELECT decision_id FROM {TABLE} WHERE tenant_id = ? AND order_id IS NOT NULL",
+            (tenant_id,),
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def update_decision(broker, decision_id: str, **fields: Any) -> bool:
     """Write resolver-owned columns of one row. Unknown columns are refused."""
     unknown = set(fields) - RESOLVABLE_COLUMNS

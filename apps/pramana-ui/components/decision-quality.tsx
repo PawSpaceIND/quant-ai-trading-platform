@@ -275,7 +275,14 @@ function MissedMoves({ report }: { report: MissedOpportunities | null }) {
 }
 
 function PostMortems({ items }: { items: PostMortem[] }) {
-  const scalar = (v: string | number | boolean | null) => v === null ? "—" : typeof v === "boolean" ? (v ? "yes" : "no") : String(v);
+  // Every section the engine writes is shown. The counts, rejection reasons and regime
+  // split are what explain a session, and a no-trade session is explained only by those.
+  const COUNT_ORDER = ["decisions", "filled", "rejected", "abstained", "probes", "closed_trades", "resolved_60m"];
+  const ordered = (counts: Record<string, number>) => {
+    const keys = Object.keys(counts);
+    return [...COUNT_ORDER.filter((key) => key in counts), ...keys.filter((key) => !COUNT_ORDER.includes(key))];
+  };
+  const rate = (value: number | null) => value === null ? "Unavailable" : percent(value);
   return <section className="panel" aria-label="Session post-mortems">
     <div className="panel-title"><div><span className="eyebrow">OPERATOR REVIEW</span><h2>Session post-mortems</h2></div>{items.length > 0 && <span className="muted">Latest {count(items.length)}</span>}</div>
     <p className="readiness-explanation quality-note">Approval happens on the host with <code>pramana post-mortem --approve &lt;date&gt;</code>. This dashboard reads the files; it does not approve them.</p>
@@ -283,9 +290,34 @@ function PostMortems({ items }: { items: PostMortem[] }) {
       <header>
         <strong>{pm.session_date}</strong>
         <span className={`pill ${pm.status === "approved" ? "green" : "amber"}`}>{pm.status === "approved" ? "APPROVED" : "PENDING"}</span>
-        <small>Generated {when(pm.generated_at)}{pm.approved_at ? ` · approved ${when(pm.approved_at)}` : ""} · {pm.tenant_id}</small>
+        <small>Generated {when(pm.generated_at)}{pm.approved_at ? ` \u00b7 approved ${when(pm.approved_at)}` : ""} \u00b7 {pm.tenant_id}</small>
       </header>
-      {Object.keys(pm.summary).length > 0 && <dl className="details post-mortem-summary">{Object.entries(pm.summary).map(([key, value]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{scalar(value)}</dd></div>)}</dl>}
+      <dl className="details post-mortem-summary">
+        {ordered(pm.summary.counts).map((key) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{count(pm.summary.counts[key])}</dd></div>)}
+        <div><dt>net p&amp;l</dt><dd className={signedClass(pm.summary.net_pnl)}>{signedMoney(pm.summary.net_pnl)}</dd></div>
+        <div><dt>hit rate 60m</dt><dd>{rate(pm.summary.hit_rate_60m)}</dd></div>
+      </dl>
+      <h4>Why decisions did not become trades</h4>
+      {pm.summary.rejections.length
+        ? <div className="research-table-scroll" role="region" tabIndex={0}><table><thead><tr><th scope="col">Rejection reason</th><th scope="col">Decisions</th></tr></thead>
+            <tbody>{pm.summary.rejections.map((item) => <tr key={item.reason}><td>{item.reason.replaceAll("_", " ")}</td><td>{count(item.count)}</td></tr>)}</tbody></table></div>
+        : <p className="muted">No governed rejection in this session. A session with no fills and no rejection abstained at the consensus, not at a gate.</p>}
+      <h4>By regime</h4>
+      {pm.summary.by_regime.length
+        ? <div className="research-table-scroll" role="region" tabIndex={0}><table><thead><tr><th scope="col">Regime</th><th scope="col">Decisions</th><th scope="col">Filled</th><th scope="col">Hit rate</th><th scope="col">Net P&amp;L</th></tr></thead>
+            <tbody>{pm.summary.by_regime.map((item) => <tr key={item.regime}><td>{item.regime.replaceAll("_", " ")}</td><td>{count(item.decisions)}</td><td>{count(item.filled)}</td><td>{rate(item.hit_rate)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
+        : <p className="muted">No regime was recorded for this session.</p>}
+      <details><summary>Exit triggers ({count(pm.summary.exits.length)})</summary>
+        {pm.summary.exits.length
+          ? <ul>{pm.summary.exits.map((item) => <li key={item.trigger}>{item.trigger.replaceAll("_", " ")} \u00b7 {count(item.count)}</li>)}</ul>
+          : <p className="muted">Nothing was exited in this session.</p>}
+      </details>
+      <details><summary>Hourly results ({count(pm.summary.by_hour_ist.length)})</summary>
+        {pm.summary.by_hour_ist.length
+          ? <div className="research-table-scroll" role="region" tabIndex={0}><table><thead><tr><th scope="col">Hour IST</th><th scope="col">Decisions</th><th scope="col">Hit rate</th><th scope="col">Net P&amp;L</th></tr></thead>
+              <tbody>{pm.summary.by_hour_ist.map((item) => <tr key={item.hour}><td>{hourLabel(item.hour)}</td><td>{count(item.decisions)}</td><td>{rate(item.hit_rate)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
+          : <p className="muted">No hourly breakdown was recorded.</p>}
+      </details>
       {pm.lessons.length ? <ul>{pm.lessons.map((lesson, i) => <li key={i}>{lesson}</li>)}</ul> : <p className="muted">No lessons recorded for this session.</p>}
     </article>) : <div className="empty">No session post-mortems yet; the engine writes one per completed session.</div>}
   </section>;

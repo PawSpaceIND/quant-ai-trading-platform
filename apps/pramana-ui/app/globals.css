@@ -1603,6 +1603,10 @@ td .pill {
 .post-mortem header strong { font-size: 13px; }
 .post-mortem-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 2px 18px; margin: 8px 0 0; }
 .post-mortem-summary > div { margin: 5px 0; }
+.post-mortem h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.post-mortem details { margin-top: 10px; }
+.post-mortem details summary { cursor: pointer; font-size: 12px; }
+.post-mortem .research-table-scroll { margin-top: 4px; }
 .post-mortem ul, .quality-limitations { margin: 10px 0 0; padding-left: 18px; font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
 .quality-limitations { color: #b3c6d0; }
 @media (max-width: 780px) { .calibration-bin { grid-template-columns: 52px minmax(0, 1fr) 48px; gap: 8px; } .quality-meta { margin-top: 0; } }

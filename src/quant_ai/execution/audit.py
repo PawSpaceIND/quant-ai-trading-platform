@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import deque
+from collections.abc import Container, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -22,6 +24,56 @@ PRAMANA_PROOF_DIRECTORY = Path("pramana-proofs")
 # memory. Only the tail is ever read (``traces()[-1]`` for attribution, the unwritten
 # tail for proof capture); the durable copy of every trace is the proof directory.
 RETAINED_TRACES = 2_000
+
+
+PROOF_RETENTION_ENV = "PRAMANA_PROOF_RETENTION_DAYS"
+# Long enough that a quarter of evidence is always on disk, short enough that a directory
+# growing by two files per decision does not outlive the instance. A proof that produced
+# an order is never removed by age.
+DEFAULT_PROOF_RETENTION_DAYS = 90
+
+
+def retention_days(environ: Mapping[str, str] | None = None) -> int:
+    """Configured retention in days; 0 disables pruning entirely."""
+    raw = (environ if environ is not None else os.environ).get(PROOF_RETENTION_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PROOF_RETENTION_DAYS
+    if not raw.isdigit():
+        raise ValueError("proof retention days must be a whole number of days")
+    return int(raw)
+
+
+def prune_proofs(
+    directory: str | Path, *, protected: Container[str], older_than: datetime
+) -> dict[str, int]:
+    """Remove proof files that are neither recent nor referenced evidence.
+
+    Nothing else removes these, and the directory grows by two files per decision. A
+    proof is kept when its decision id is in ``protected`` - the caller passes every
+    decision that produced an order, which is what a fill inspection or an audit needs -
+    or when the file is newer than ``older_than``. Recovery does not read this directory:
+    the institutional path carries its source trace inside the programme record, so a
+    pruned file cannot break a reconciliation. Files whose names are not decision ids are
+    left alone, and an unreadable entry is skipped rather than guessed at.
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        return {"scanned": 0, "removed": 0, "kept": 0}
+    cutoff = older_than.timestamp()
+    scanned = removed = kept = 0
+    for entry in sorted(root.iterdir()):
+        if entry.suffix not in {".json", ".md"} or not entry.is_file():
+            continue
+        scanned += 1
+        try:
+            if entry.stem in protected or entry.stat().st_mtime >= cutoff:
+                kept += 1
+                continue
+            entry.unlink()
+            removed += 1
+        except OSError:
+            kept += 1
+    return {"scanned": scanned, "removed": removed, "kept": kept}
 
 
 @dataclass(frozen=True)
@@ -50,11 +102,18 @@ class XAITraceLogger:
     """Decision-evidence logger. Records declared inputs/rationales, not hidden chain-of-thought."""
 
     def __init__(
-        self, directory: str | Path | None = None, *, retained: int = RETAINED_TRACES
+        self, directory: str | Path | None = None, *, retained: int = RETAINED_TRACES,
+        tenant_id: str | None = None,
     ) -> None:
         if retained < 1:
             raise ValueError("retained traces must be positive")
         self.directory = Path(directory) if directory is not None else None
+        # The account this logger writes for. Recorded on the file, never on XAITrace:
+        # the institutional recovery path compares a stored source trace against the
+        # dataclass's exact field set, so a new field there would refuse every programme
+        # recorded before it. The proof directory is shared, so a file that does not name
+        # its account cannot be treated as this account's evidence.
+        self.tenant_id = tenant_id
         self._traces: deque[XAITrace] = deque(maxlen=retained)
         self._recorded = 0
         if self.directory is not None:
@@ -145,7 +204,7 @@ class XAITraceLogger:
         self._recorded += 1
         if self.directory is not None:
             stem = self.directory / trace.decision_id
-            stem.with_suffix(".json").write_text(self.to_json(trace))
+            stem.with_suffix(".json").write_text(self.file_payload(trace))
             stem.with_suffix(".md").write_text(self.to_markdown(trace))
 
     def traces(self) -> tuple[XAITrace, ...]:
@@ -176,7 +235,16 @@ class XAITraceLogger:
         return value
 
     def to_json(self, trace: XAITrace) -> str:
+        """The trace itself. Consumers compare this against ``fields(XAITrace)``, so it
+        carries the dataclass's keys and nothing else."""
         return json.dumps(self._normalize(asdict(trace)), sort_keys=True, separators=(",", ":"))
+
+    def file_payload(self, trace: XAITrace) -> str:
+        """The on-disk proof: the trace plus the account that produced it."""
+        payload = self._normalize(asdict(trace))
+        if self.tenant_id is not None:
+            payload["tenant_id"] = self.tenant_id
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def to_markdown(self, trace: XAITrace) -> str:
         lines = [
@@ -189,6 +257,7 @@ class XAITraceLogger:
             f"- Risk: {trace.risk_verdict['approved']} ({trace.risk_verdict['reason']})",
             f"- Order: {trace.order_id or 'none (not filled)'}",
             f"- Regime: {trace.regime or 'unrecorded'}",
+            f"- Account: {self.tenant_id or 'unrecorded'}",
             "",
             "## Specialist evidence",
         ]

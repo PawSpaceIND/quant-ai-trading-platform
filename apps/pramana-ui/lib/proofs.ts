@@ -18,7 +18,19 @@ export type Proof = Record<string, unknown> & {
   market_regime?: string;
   regime?: string;
   order_id?: string;
+  tenant_id?: string;
 };
+
+/**
+ * Whether a proof file belongs to this account.
+ *
+ * The proof directory is shared and a trace written before this field existed does not
+ * name its account, so a file alone cannot establish ownership. Both containers running
+ * as the same tenant is a deployment fact, not a property of the file. "verified" means
+ * the file names this account, or a tenant-scoped ledger row links the same order id.
+ */
+export type ProofOwnership = "verified" | "unverified";
+export type ReadProof = { file: string; mtimeMs: number; proof: Proof; ownership: ProofOwnership };
 
 export function proofDirectory(): string {
   const configured = process.env.PRAMANA_PROOF_DIR;
@@ -45,10 +57,12 @@ const PROOF_LIMIT_BYTES = 1_000_000;
 /** Newest files considered when linking fills to traces. The directory only grows. */
 const PROOF_INDEX_FILES = 2000;
 
-export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; proof: Proof }> {
+export function readProofs(limit = 50): ReadProof[] {
   const directory = proofDirectory();
   const canonical = ledgerProofs().filter(({ proof }) => Array.isArray(proof.input_matrix));
   const orderIds = new Set(canonical.map(({ proof }) => proof.order_id));
+  // A ledger-backed proof is already tenant-scoped in SQL, so it is owned by definition.
+  const ledgerOrderIds = new Set(ledgerProofs().map(({ proof }) => proof.order_id).filter(Boolean));
   const files = !fs.existsSync(/* turbopackIgnore: true */ directory) ? [] : fs.readdirSync(/* turbopackIgnore: true */ directory)
     .filter((file) => file.endsWith(".json") && file !== "latest-backtest-tearsheet.json")
     .map((file) => {
@@ -63,19 +77,33 @@ export function readProofs(limit = 50): Array<{ file: string; mtimeMs: number; p
       try {
         const proof = JSON.parse(fs.readFileSync(/* turbopackIgnore: true */ full, "utf8")) as Proof;
         if (proof.order_id && orderIds.has(proof.order_id)) return [];
-        return [{ file, mtimeMs, proof }];
+        // A file naming another account is not this workspace's evidence at all.
+        if (typeof proof.tenant_id === "string" && proof.tenant_id !== tenantId) return [];
+        return [{ file, mtimeMs, proof, ownership: fileOwnership(proof, ledgerOrderIds) }];
       } catch {
         return [];
       }
     });
-  return [...canonical, ...files].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
+  return [...canonical.map((item) => ({ ...item, ownership: "verified" as const })), ...files]
+    .sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
+}
+
+/** Owned when the file names this account, or a tenant-scoped ledger row links its order. */
+function fileOwnership(proof: Proof, ledgerOrderIds: Set<unknown>): ProofOwnership {
+  if (proof.tenant_id === tenantId) return "verified";
+  if (proof.order_id && ledgerOrderIds.has(proof.order_id)) return "verified";
+  return "unverified";
 }
 
 export function latestSwarmIntelligence() {
   const proofs = readProofs();
-  const latest = proofs.find(({ proof }) => Array.isArray(proof.input_matrix));
+  const usable = proofs.filter(({ proof }) => Array.isArray(proof.input_matrix));
+  // This panel states what THIS account last decided, so an unowned trace cannot fill it.
+  const latest = usable.find((item) => item.ownership === "verified");
   if (!latest) {
-    return { status: "empty", regime: "UNKNOWN", regimeSource: "not_persisted", consensus: "NO_PROOF", agents: [], proof: null };
+    return usable.length
+      ? { status: "ownership_unverified", regime: "UNKNOWN", regimeSource: "not_persisted", consensus: "NO_PROOF", agents: [], proof: null }
+      : { status: "empty", regime: "UNKNOWN", regimeSource: "not_persisted", consensus: "NO_PROOF", agents: [], proof: null };
   }
   const agents = (latest.proof.input_matrix ?? [])
     .filter((row): row is NonNullable<typeof row> => !!row && typeof row === "object" && !Array.isArray(row))
@@ -147,7 +175,8 @@ function ledgerProofs(): Array<{ file: string; mtimeMs: number; proof: Proof }> 
 /** Exact fill links across the complete ledger and legacy file history, without a recency cap. */
 export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
   const index = new Map<string, { file: string; proof: Proof }>();
-  for (const item of ledgerProofs()) index.set(item.proof.order_id!, item);
+  const ledgerLinked = new Set<string>();
+  for (const item of ledgerProofs()) { index.set(item.proof.order_id!, item); ledgerLinked.add(String(item.proof.order_id)); }
   const directory = proofDirectory();
   if (!fs.existsSync(/* turbopackIgnore: true */ directory)) return index;
   const candidates = fs.readdirSync(/* turbopackIgnore: true */ directory)
@@ -170,7 +199,9 @@ export function proofsByOrderId(): Map<string, { file: string; proof: Proof }> {
     if (!/"order_id"\s*:\s*"/.test(raw)) continue;
     try {
       const proof = JSON.parse(raw) as Proof;
-      if (typeof proof.order_id === "string" && proof.order_id && !index.has(proof.order_id)) index.set(proof.order_id, { file, proof });
+      // Only an owned trace may be labelled an exact proof of this account's fill.
+      if (typeof proof.order_id === "string" && proof.order_id && !index.has(proof.order_id)
+          && (proof.tenant_id === tenantId || ledgerLinked.has(proof.order_id))) index.set(proof.order_id, { file, proof });
     } catch {
       // unreadable proof: leave the fill unlinked rather than guess
     }

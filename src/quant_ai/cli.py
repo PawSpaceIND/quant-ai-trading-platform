@@ -81,7 +81,7 @@ def build_runtime() -> AutonomousTradingDaemon:
     runtime = build_traded_runtime(
         broker=broker,
         directives=directives,
-        xai_logger=XAITraceLogger(xai_dir),
+        xai_logger=XAITraceLogger(xai_dir, tenant_id=tenant_id),
         attribution_journal_tenant=tenant_id,
     )
     pipeline = SwarmMarketAnalysisPipeline(
@@ -434,7 +434,7 @@ def _replayed(args: argparse.Namespace, command: str):
         quantity=None,  # dynamic: sized per bar from equity and the capital plan
         country="India" if market == Market.INDIA else "USA",
         tenant_id=tenant,
-        xai_logger=XAITraceLogger(proof_dir),
+        xai_logger=XAITraceLogger(proof_dir, tenant_id=tenant),
         # The founder's own scope and blackout calendar, so the backtested engine is the
         # deployed engine rather than a more permissive relative of it.
         directives=FounderDirectives.from_env() or FounderDirectives(),

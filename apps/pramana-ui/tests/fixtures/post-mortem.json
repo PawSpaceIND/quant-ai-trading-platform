@@ -1,25 +1,122 @@
 {
-  "schema": "pramana.post_mortem.v1",
-  "tenant_id": "ghost",
-  "session_date": "2026-09-12",
-  "generated_at": "2026-09-12T10:35:00Z",
-  "status": "approved",
-  "approved_at": "2026-09-12T16:02:00Z",
-  "summary": {
-    "decisions": 6,
-    "filled": 3,
-    "net_pnl": -142.5,
-    "regime": "RANGE_BOUND",
-    "reviewed": true,
-    "notes": null,
-    "nested": {"ignored": "objects are not scalar summary entries"}
+ "schema": "pramana.post_mortem.v1",
+ "tenant_id": "ghost",
+ "session_date": "2026-09-18",
+ "generated_at": "2026-09-18T11:00:00+00:00",
+ "status": "pending",
+ "approved_at": null,
+ "summary": {
+  "counts": {
+   "decisions": 12,
+   "filled": 3,
+   "rejected": 3,
+   "abstained": 6,
+   "resolved_60m": 9,
+   "closed_trades": 3,
+   "probes": 0
   },
-  "lessons": [
-    "Two of three fills were exited by session close rather than a stop or target; the holding-time assumption is too long for a range-bound morning.",
-    "Quote-staleness rejections clustered between 09:15 and 09:30 IST."
+  "net_pnl": 272.0,
+  "hit_rate_60m": 0.666667,
+  "exits": [
+   {
+    "trigger": "session_close",
+    "count": 1
+   },
+   {
+    "trigger": "stop_loss",
+    "count": 1
+   },
+   {
+    "trigger": "take_profit",
+    "count": 1
+   }
   ],
-  "evidence": {
-    "decision_ids": ["d-0101", "d-0102", "d-0103", "d-0104", "d-0105", "d-0106"],
-    "order_ids": ["o-0090", "o-0091", "o-0092"]
-  }
+  "rejections": [
+   {
+    "reason": "paper_naked_sell_disabled",
+    "count": 2
+   },
+   {
+    "reason": "pilot_price_moved_during_analysis",
+    "count": 1
+   }
+  ],
+  "by_regime": [
+   {
+    "regime": "ranging",
+    "decisions": 7,
+    "filled": 1,
+    "hit_rate": 0.0,
+    "net_pnl": -96.4
+   },
+   {
+    "regime": "high_volatility",
+    "decisions": 3,
+    "filled": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "regime": "trending_up",
+    "decisions": 2,
+    "filled": 2,
+    "hit_rate": 1.0,
+    "net_pnl": 368.4
+   }
+  ],
+  "by_hour_ist": [
+   {
+    "hour": 9,
+    "decisions": 4,
+    "hit_rate": 1.0,
+    "net_pnl": 184.2
+   },
+   {
+    "hour": 10,
+    "decisions": 2,
+    "hit_rate": 1.0,
+    "net_pnl": 184.2
+   },
+   {
+    "hour": 11,
+    "decisions": 2,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 12,
+    "decisions": 2,
+    "hit_rate": 0.0,
+    "net_pnl": -96.4
+   },
+   {
+    "hour": 13,
+    "decisions": 2,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 14,
+    "decisions": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 15,
+    "decisions": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   }
+  ]
+ },
+ "lessons": [
+  "Closed trades netted 272.00 after fees over 3 trades (win rate 0.67, expectancy 90.67 per trade)."
+ ],
+ "evidence": {
+  "0": [
+   "d-fill-0",
+   "d-fill-1",
+   "d-fill-2"
+  ]
+ }
 }

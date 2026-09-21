@@ -8,6 +8,19 @@ export type AttributionState = {
   asOf?: string;
   sectors?: {name: string; marketValue: number; weight: number}[];
   factors?: {name: string; exposure: number}[];
+  /** What the sector weights are a share of, stated rather than implied.
+   *
+   * Sector weight is market value over total equity, and total equity includes cash, so
+   * the sector column alone cannot sum to one. Cash is reported as its own line and any
+   * remainder is reported as unreconciled. Nothing is rescaled to reach 100%: a column
+   * that does not add up is evidence, not something to normalise away. */
+  reconciliation?: {
+    totalEquity: number;
+    invested: number; investedWeight: number;
+    cash: number; cashWeight: number;
+    unreconciled: number; unreconciledWeight: number;
+    reconciled: boolean;
+  };
   detail: string;
 };
 
@@ -60,8 +73,20 @@ export function portfolioAttribution(portfolio: Portfolio, raw = configuredMetad
     sectors.set(item.sector, (sectors.get(item.sector) ?? 0) + holding.marketValue);
     for (const [name, beta] of Object.entries(item.factors)) factors.set(name, (factors.get(name) ?? 0) + beta * holding.marketValue / portfolio.totalEquity);
   }
+  const invested = portfolio.holdings.reduce((sum, h) => sum + h.marketValue, 0);
+  const cash = Number.isFinite(portfolio.cash) ? portfolio.cash : 0;
+  const unreconciled = portfolio.totalEquity - invested - cash;
+  // A hundredth of a currency unit per holding is rounding; anything more is a real gap.
+  const tolerance = Math.max(0.01, portfolio.totalEquity * 1e-9);
   return {
     status: "available", asOf: metadata.asOf,
+    reconciliation: {
+      totalEquity: portfolio.totalEquity,
+      invested, investedWeight: invested / portfolio.totalEquity,
+      cash, cashWeight: cash / portfolio.totalEquity,
+      unreconciled, unreconciledWeight: unreconciled / portfolio.totalEquity,
+      reconciled: Math.abs(unreconciled) <= tolerance,
+    },
     sectors: [...sectors].sort((a, b) => b[1] - a[1]).map(([name, marketValue]) => ({name, marketValue, weight: marketValue / portfolio.totalEquity})),
     factors: [...factors].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([name, exposure]) => ({name, exposure})),
     detail: "Exposure uses reviewed metadata and current marked market values; it is not a return attribution or a margin/Greeks model.",
