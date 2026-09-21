@@ -62,6 +62,11 @@ COLUMNS = (
     "feature_schema_version",
     "probe",
     "playbook",
+    "forecast_probability_up",
+    "forecast_horizon_seconds",
+    "forecast_resolves_at",
+    "forecast_cost_bps",
+    "forecast_basis",
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -114,6 +119,11 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     feature_schema_version INTEGER,
     probe INTEGER,
     playbook TEXT,
+    forecast_probability_up TEXT,
+    forecast_horizon_seconds INTEGER,
+    forecast_resolves_at TEXT,
+    forecast_cost_bps TEXT,
+    forecast_basis TEXT,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -173,6 +183,15 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
     # The regime playbook the decision was judged under (quant_ai.agents.playbook), so
     # decision quality can score trend_following apart from defensive.
     ("playbook", "TEXT"),
+    # The claim the decision made, written before its outcome exists. Probability that the
+    # forward return over the horizon is positive, the horizon it refers to, the cost the
+    # move must clear, and the named mapping that produced it. A refit ships a new basis so
+    # a stored number's meaning never moves under it. See quant_ai.agents.forecast.
+    ("forecast_probability_up", "TEXT"),
+    ("forecast_horizon_seconds", "INTEGER"),
+    ("forecast_resolves_at", "TEXT"),
+    ("forecast_cost_bps", "TEXT"),
+    ("forecast_basis", "TEXT"),
 )
 
 
@@ -340,6 +359,29 @@ def probe_of(proposal) -> bool:
     return isinstance(exploration, dict) and bool(exploration.get("probe"))
 
 
+def forecast_of(proposal) -> dict[str, Any]:
+    """The decision's recorded forecast, flattened to its journal columns."""
+    from quant_ai.agents.forecast import SCHEMA as FORECAST_SCHEMA
+
+    provenance = getattr(proposal, "provenance", None)
+    block = provenance.get("forecast") if isinstance(provenance, dict) else None
+    if not isinstance(block, dict) or block.get("schema") != FORECAST_SCHEMA:
+        return {"forecast_probability_up": None, "forecast_horizon_seconds": None,
+                "forecast_resolves_at": None, "forecast_cost_bps": None, "forecast_basis": None}
+    horizon = block.get("horizon_seconds")
+    return {
+        "forecast_probability_up": _text(block.get("probability_up")),
+        "forecast_horizon_seconds": horizon if isinstance(horizon, int) else None,
+        "forecast_resolves_at": _text(block.get("resolves_at")),
+        "forecast_cost_bps": _text(block.get("cost_bps")),
+        "forecast_basis": _text(block.get("basis")),
+    }
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
 def playbook_of(proposal) -> str | None:
     """The regime playbook name the proposal's decision recorded, when it recorded one."""
     provenance = getattr(proposal, "provenance", None)
@@ -428,6 +470,7 @@ def decision_row(
         "feature_schema_version": FEATURE_SCHEMA_VERSION if encoded else None,
         "probe": 1 if probe_of(proposal) else 0,
         "playbook": playbook_of(proposal),
+        **forecast_of(proposal),
     }
 
 
