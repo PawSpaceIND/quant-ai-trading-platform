@@ -81,7 +81,7 @@ FIELDS = {
     "quant_ai.intelligence.sandbox.SandboxNewsSentimentProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.sandbox.SandboxFundamentalDataProvider": ("provider_id", "age_seconds"),
     "quant_ai.intelligence.sandbox.SandboxMacroIndicatorProvider": ("provider_id", "age_seconds"),
-    "quant_ai.intelligence.external.fred.FredMacroProvider": ("series",),
+    "quant_ai.intelligence.external.fred.FredMacroProvider": ("series", "cache_ttl", "abstain_ttl", "stale_grace"),
     # The default fundamentals source. Which symbols it serves and how long it holds an
     # answer are strategy-relevant; the cookie and crumb it negotiates are not recorded.
     "quant_ai.intelligence.external.yahoo_fundamentals.YahooFundamentalsProvider": (
