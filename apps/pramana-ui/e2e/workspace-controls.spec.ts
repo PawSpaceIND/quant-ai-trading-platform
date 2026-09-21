@@ -89,7 +89,9 @@ for (const width of [1280, 390]) {
     await expect(logout).toBeVisible();
     await page.route("**/api/session", route => route.fulfill({status: 503, json: {error: "Synthetic failure"}}));
     await logout.click();
-    await expect(page.getByText("Sign out could not be confirmed. Your session may still be active; try Sign out again.", {exact: true})).toBeVisible();
+    // The banner also carries the dismiss control, so match the status region, not the exact text.
+    const failure = page.getByRole("status").filter({hasText: "Sign out could not be confirmed"});
+    await expect(failure).toContainText("Your session may still be active; try Sign out again.");
     expect(new URL(page.url()).pathname).toBe("/");
     await page.unroute("**/api/session");
     await logout.click();
