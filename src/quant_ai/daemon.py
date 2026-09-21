@@ -494,6 +494,7 @@ def build_ghost_runner(
     order_identity_mode: str = "legacy_cash",
     oms_database: str | Path | None = None,
     decision_quality_report: str | Path | None = None,
+    missed_opportunity_dir: str | Path | None = None,
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
     require_book_risk_gates: bool = False,
@@ -645,6 +646,7 @@ def build_ghost_runner(
         halt_file=halt_file,
         instruments=instruments,
         event_calendar=event_calendar,
+        missed_opportunity_dir=missed_opportunity_dir,
     )
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
@@ -978,6 +980,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         ib_client_id=int(os.getenv("PRAMANA_IB_CLIENT_ID", "17")),
         database=str(paths.ledger_path("PRAMANA_PAPER_DB")),
         decision_quality_report=paths.decision_quality_report("PRAMANA_PAPER_DB"),
+        missed_opportunity_dir=paths.missed_opportunity_directory(),
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),

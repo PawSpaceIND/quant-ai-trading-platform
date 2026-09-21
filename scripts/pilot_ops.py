@@ -1,4 +1,6 @@
 """Read-only health and consistent SQLite backups; restore drill never overwrites source."""
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -6,7 +8,9 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import RLock
 
 
 def backup(source: Path, destination: Path) -> dict:
@@ -47,13 +51,70 @@ def premarket(database: Path, tenant: str, env=None, now=None) -> tuple[str, boo
     return render(checks), all(check.state != "FAIL" for check in checks)
 
 
+class ReadOnlyLedger:
+    """The two attributes ``decision_journal.load_rows`` needs, over a read-only connection.
+
+    ``PaperBrokerService`` switches the ledger to WAL and creates its schema on open, so it
+    cannot be pointed at the live ledger from an operator shell without writing to it. This
+    opens ``mode=ro`` and deliberately not ``query_only``: the journal's ``CREATE ... IF NOT
+    EXISTS`` is a no-op on a table that exists and SQLite tolerates it on a read-only
+    connection, while any genuine write still fails.
+    """
+
+    def __init__(self, database: Path) -> None:
+        self._lock = RLock()
+        self._connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=1)
+        self._connection.row_factory = sqlite3.Row
+
+    def has_table(self, name: str) -> bool:
+        return self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+def missed(database: Path, tenant: str, session_date: str | None = None,
+           threshold: Decimal | None = None, now: datetime | None = None) -> str:
+    """The session's holds scored against their 60-minute forward returns, as terminal text."""
+    from quant_ai.analytics import missed_opportunities as report
+    from quant_ai.analytics.decision_journal import TABLE
+    moment = now or datetime.now(timezone.utc)
+    threshold = report.DEFAULT_THRESHOLD if threshold is None else threshold
+    ledger = ReadOnlyLedger(database)
+    try:
+        if ledger.has_table(TABLE):
+            built = report.build_report(ledger, tenant_id=tenant, now=moment,
+                                        session_date=session_date, threshold=threshold)
+        else:
+            # A ledger that never journaled: nothing was held, so nothing was missed.
+            built = report.summarize(
+                [], tenant_id=tenant, now=moment, threshold=threshold,
+                session_date=session_date or moment.astimezone(report.IST).date().isoformat(),
+            )
+    finally:
+        ledger.close()
+    return report.render(built)
+
+
+def fraction(text: str) -> Decimal:
+    """A ``--threshold`` such as 0.01; argparse only reports ValueError-family failures."""
+    try:
+        return Decimal(text)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError(f"not a decimal fraction: {text}") from error
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check"])
+    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check", "missed"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed`; default today")
+    parser.add_argument("--threshold", type=fraction, help="missed-move threshold as a fraction; default 0.01")
     args = parser.parse_args()
     if args.action == "pilot-check":
         if not args.evidence:
@@ -71,6 +132,9 @@ if __name__ == "__main__":
         raise SystemExit(0 if result["ready"] else 2)
     if not args.database:
         parser.error(f"{args.action} requires --database")
+    if args.action == "missed":
+        print(missed(args.database, args.tenant, session_date=args.date, threshold=args.threshold))
+        raise SystemExit(0)
     if args.action == "reconcile":
         from quant_ai.execution.reconciliation import reconcile_paper
         with sqlite3.connect(f"{args.database.resolve().as_uri()}?mode=ro", uri=True) as db:

@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { AiBudget, CalibrationBin, DecisionQualityReport, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
-import { count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, MissedOpportunities, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
+import { count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, stancesSummary } from "@/lib/decision-quality-model";
 
-type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; verdict: Verdict | null };
+type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
 
 const when = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "—";
 const day = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—";
@@ -84,6 +84,7 @@ export function DecisionQuality() {
       </div>
       <RecentDecisions rows={report.recent} horizon={report.directional.horizon_minutes} />
     </>}
+    {state && <MissedMoves report={state.missed ?? null} />}
     {state && <PostMortems items={state.postMortems} />}
     {report && <section className="panel" aria-label="Report limitations">
       <span className="eyebrow">REPORT LIMITATIONS</span>
@@ -206,6 +207,36 @@ function RecentDecisions({ rows, horizon }: { rows: RecentDecision[]; horizon: n
       </table>
       {!rows.length && <div className="empty">No decisions in this window</div>}
     </div>
+  </section>;
+}
+
+function MissedMoves({ report }: { report: MissedOpportunities | null }) {
+  // On 21 September 2026 every decision was a hold, and this page could only say the
+  // sample was insufficient. The holds are scored here: an up-move past the threshold
+  // after a hold is a missed move, a down-move of the same size an avoided one.
+  const clock = (value: string) => Number.isFinite(Date.parse(value))
+    ? new Date(value).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false })
+    : "—";
+  return <section className="panel" aria-label="Missed moves">
+    <div className="panel-title">
+      <div><span className="eyebrow">WHAT THE HOLDS LET GO BY</span><h2>Missed moves</h2></div>
+      {report && <span className="muted">Session {report.session_date} · threshold {signedPercent(report.threshold)} on {report.horizon.replace("forward_return_", "")}</span>}
+    </div>
+    {report ? <>
+      <p className="readiness-explanation quality-note">
+        {count(report.holds)} holds, {count(report.evaluated)} evaluated: {count(report.missed)} missed, {count(report.avoided)} avoided, {count(report.unresolved)} unresolved.
+        Measured on the feed&apos;s mark at the horizon, before costs; evidence of what the swarm saw, not a trade that would have filled.
+      </p>
+      <DataTable label="Missed moves by instrument"
+        columns={[{ name: "Instrument" }, { name: "Missed", numeric: true }, { name: "Avoided", numeric: true }, { name: "Evaluated", numeric: true }, { name: "Best missed move" }]}
+        rows={report.symbols.map((s) => [
+          <strong>{s.symbol}</strong>, count(s.missed), count(s.avoided), count(s.evaluated),
+          s.best
+            ? <span><span className="positive">{signedPercent(s.best.forward_return)}</span> at {clock(s.best.decided_at)} IST · {s.best.regime?.replaceAll("_", " ") ?? "regime unknown"} · {stancesSummary(s.best.agents)}</span>
+            : "—",
+        ])}
+        empty="No holds journaled for this session" />
+    </> : <div className="empty">No missed-move file yet; the engine writes one per session when PRAMANA_MISSED_OPPORTUNITY_DIR is set.</div>}
   </section>;
 }
 
