@@ -70,6 +70,7 @@ from quant_ai.intelligence.sandbox import (
 )
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.llm.budget import budget_from_env
+from quant_ai.llm.challenger import with_astra_challenger
 from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
@@ -1022,7 +1023,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),
         # One client and one budget ledger for the consensus and for headline scoring,
         # which counts under its own scope inside that same daily cap.
-        llm_client=AnthropicSwarmClient(budget=budget),
+        llm_client=with_astra_challenger(AnthropicSwarmClient(budget=budget), budget),
         event_calendar=event_calendar_from_env(),
         instrument=instrument,
         include_ibkr=_env_flag("PRAMANA_IBKR_ENABLED"),
