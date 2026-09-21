@@ -569,6 +569,12 @@ class AutonomousTradingDaemon:
             with self.tracker.broker._lock:
                 self.apply_operator_halt()
                 self.protective_exits = self.sweep_protective_exits(timestamp)
+            # Restore the accepted policy before the first decision after restart or
+            # weekly rollover. Reporting after the tick is too late to do this.
+            try:
+                self._refresh_specialist_skill(timestamp)
+            except Exception:
+                self._logger.exception("specialist_skill_restore_failed")
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []
@@ -713,6 +719,7 @@ class AutonomousTradingDaemon:
             except Exception:  # the skill report is optional evidence; the quality report still writes
                 self._logger.exception("specialist_skill_refresh_failed")
                 skill = None
+                report["specialist_skill"] = {"state": "unavailable", "applied_to_engine": False}
             if skill is not None:
                 from quant_ai.analytics.specialist_skill import summary as skill_summary
 
@@ -731,12 +738,7 @@ class AutonomousTradingDaemon:
             self._logger.exception("decision_quality_report_failed")
 
     def _refresh_specialist_skill(self, timestamp: datetime) -> dict | None:
-        """Once per IST week: score the specialists, write the report, apply the weights.
-
-        The window ends where the week began, so every tick of the week (and a restart in
-        the middle of it) computes the same weights from the same rows. Returns the report
-        this tick used, or None when no report file is configured.
-        """
+        """Load the accepted weekly policy before applying weights, including on restart."""
         if self.decision_quality_report_path is None:
             return None
         from quant_ai.analytics import specialist_skill as skill
@@ -745,10 +747,16 @@ class AutonomousTradingDaemon:
         cached = getattr(self, "_skill_report", None)
         if week == self._skill_week and cached is not None:
             return cached
-        report = skill.build_skill_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp, until=skill.week_start(timestamp))
         path = skill.report_path(self.decision_quality_report_path)
-        skill.write_skill_report(path, report)
         engine = self.scheduler.pipeline.runtime.attribution
+        try:
+            report = skill.accepted_weekly_report(path, self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            skill.write_skill_report(path, report)
+        except Exception:
+            # A failed rollover must not leave the previous week's weights in force.
+            engine.clear_skill()
+            self._skill_week, self._skill_report = None, None
+            raise
         weights = skill.weights_of(report)
         if self.specialist_reweighting and weights:
             engine.apply_skill(weights, basis=report["basis_sha256"])
