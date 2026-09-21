@@ -417,3 +417,31 @@ test("an unowned file proof is never labelled an exact proof of a fill", async (
   process.env.PRAMANA_LEDGER_PATH = ledger;
   fs.rmSync(proofs, { recursive: true, force: true });
 });
+
+test("another account's newer proofs cannot crowd this account out of its own panel", async () => {
+  const { latestSwarmIntelligence, readProofs } = await import("../lib/proofs");
+  const proofs = path.join(dir, "ownership-cap-proofs");
+  fs.mkdirSync(proofs, { recursive: true });
+  process.env.PRAMANA_PROOF_DIR = proofs;
+  const ledger = process.env.PRAMANA_LEDGER_PATH;
+  process.env.PRAMANA_LEDGER_PATH = path.join(dir, "ownership-cap-ledger.sqlite");
+  const base = {
+    subject: "NSE:INFY", regime: "ranging", declared_rationales: ["synthetic"],
+    input_matrix: [{ agent_id: "indian-equities", domain: "EQUITY", stance: "BUY", confidence: "0.62" }],
+  };
+  // One proof of ours, then more foreign proofs than the reader's own recency cap.
+  const ours = path.join(proofs, "ours.json");
+  fs.writeFileSync(ours, JSON.stringify({ ...base, decision_id: "ours", tenant_id: "default" }));
+  fs.utimesSync(ours, new Date(Date.now() - 600_000), new Date(Date.now() - 600_000));
+  for (let i = 0; i < 80; i += 1) {
+    fs.writeFileSync(path.join(proofs, `foreign-${i}.json`),
+      JSON.stringify({ ...base, decision_id: `foreign-${i}`, tenant_id: "other" }));
+  }
+  // Capping before the ownership filter would report that this account has no decisions.
+  const found = readProofs();
+  assert.equal(found.length, 1);
+  assert.equal(found[0].file, "ours.json");
+  assert.equal(latestSwarmIntelligence().proof?.decisionId, "ours");
+  process.env.PRAMANA_LEDGER_PATH = ledger;
+  fs.rmSync(proofs, { recursive: true, force: true });
+});

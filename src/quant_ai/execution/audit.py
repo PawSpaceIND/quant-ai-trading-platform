@@ -43,8 +43,19 @@ def retention_days(environ: Mapping[str, str] | None = None) -> int:
     return int(raw)
 
 
+def _proof_tenant(root: Path, stem: str) -> str | None:
+    """The account named by a proof, or None when the file cannot say."""
+    try:
+        payload = json.loads((root / f"{stem}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tenant = payload.get("tenant_id") if isinstance(payload, dict) else None
+    return tenant if isinstance(tenant, str) and tenant else None
+
+
 def prune_proofs(
-    directory: str | Path, *, protected: Container[str], older_than: datetime
+    directory: str | Path, *, protected: Container[str], older_than: datetime,
+    tenant_id: str | None = None,
 ) -> dict[str, int]:
     """Remove proof files that are neither recent nor referenced evidence.
 
@@ -55,24 +66,38 @@ def prune_proofs(
     the institutional path carries its source trace inside the programme record, so a
     pruned file cannot break a reconciliation. Files whose names are not decision ids are
     left alone, and an unreadable entry is skipped rather than guessed at.
+
+    ``protected`` is one account's decision ids, and the directory is shared, so with a
+    ``tenant_id`` this removes only proofs that name that account. Anything it cannot
+    attribute - another account's file, or one written before proofs named their account
+    - is kept. Deleting evidence we cannot attribute would be the worse error, so the
+    backlog written before this field existed is never pruned by age.
     """
     root = Path(directory)
     if not root.is_dir():
         return {"scanned": 0, "removed": 0, "kept": 0}
     cutoff = older_than.timestamp()
-    scanned = removed = kept = 0
+    # Decide once per decision, not once per file: the JSON is what names the account, and
+    # removing it first would orphan its Markdown sibling.
+    decisions: dict[str, list[Path]] = {}
     for entry in sorted(root.iterdir()):
-        if entry.suffix not in {".json", ".md"} or not entry.is_file():
-            continue
-        scanned += 1
+        if entry.suffix in {".json", ".md"} and entry.is_file():
+            decisions.setdefault(entry.stem, []).append(entry)
+    scanned = removed = kept = 0
+    for stem, entries in decisions.items():
+        scanned += len(entries)
         try:
-            if entry.stem in protected or entry.stat().st_mtime >= cutoff:
-                kept += 1
+            if stem in protected or any(entry.stat().st_mtime >= cutoff for entry in entries):
+                kept += len(entries)
                 continue
-            entry.unlink()
-            removed += 1
+            if tenant_id is not None and _proof_tenant(root, stem) != tenant_id:
+                kept += len(entries)
+                continue
+            for entry in entries:
+                entry.unlink()
+                removed += 1
         except OSError:
-            kept += 1
+            kept += len(entries)
     return {"scanned": scanned, "removed": removed, "kept": kept}
 
 

@@ -93,3 +93,35 @@ def test_retention_is_configurable_and_refuses_a_value_it_cannot_read():
         retention_days({PROOF_RETENTION_ENV: "ninety"})
     with pytest.raises(ValueError):
         retention_days({PROOF_RETENTION_ENV: "-1"})
+
+
+def test_pruning_never_removes_a_proof_it_cannot_attribute_to_this_account(tmp_path):
+    """The directory is shared, so one account's protected set must not delete another's."""
+    ours = XAITraceLogger(tmp_path, tenant_id="ghost")
+    theirs = XAITraceLogger(tmp_path, tenant_id="other")
+    legacy = XAITraceLogger(tmp_path)
+    ours.record(trace("ours-old"))
+    theirs.record(trace("theirs-old", order_id="PAPER-2"))
+    legacy.record(trace("legacy-old"))
+    old = (NOW - timedelta(days=200)).timestamp()
+    for stem in ("ours-old", "theirs-old", "legacy-old"):
+        for suffix in (".json", ".md"):
+            os.utime(tmp_path / f"{stem}{suffix}", (old, old))
+
+    result = prune_proofs(tmp_path, protected=set(),
+                          older_than=NOW - timedelta(days=90), tenant_id="ghost")
+    assert result["removed"] == 2
+    assert not (tmp_path / "ours-old.json").exists()
+    # Another account's fill evidence is not this account's to delete.
+    assert (tmp_path / "theirs-old.json").exists() and (tmp_path / "theirs-old.md").exists()
+    # A proof written before proofs named their account cannot be attributed, so it stays.
+    assert (tmp_path / "legacy-old.json").exists() and (tmp_path / "legacy-old.md").exists()
+
+
+def test_pruning_without_an_account_still_removes_only_aged_unprotected_files(tmp_path):
+    XAITraceLogger(tmp_path, tenant_id="ghost").record(trace("aged"))
+    old = (NOW - timedelta(days=200)).timestamp()
+    for suffix in (".json", ".md"):
+        os.utime(tmp_path / f"aged{suffix}", (old, old))
+    assert prune_proofs(tmp_path, protected=set(),
+                        older_than=NOW - timedelta(days=90))["removed"] == 2

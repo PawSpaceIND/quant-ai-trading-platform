@@ -732,6 +732,7 @@ class AutonomousTradingDaemon:
                 directory,
                 protected=ordered_decision_ids(self.tracker.broker, tenant_id=self.tenant_id),
                 older_than=timestamp - timedelta(days=days),
+                tenant_id=self.tenant_id,
             )
             self._pruned_day = day
             if result["removed"]:
