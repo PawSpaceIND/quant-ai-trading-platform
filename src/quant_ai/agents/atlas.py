@@ -484,6 +484,16 @@ class AtlasInvestmentAgent:
         action = signal.stance
         if signal.expected_risk > self.policy.max_expected_risk:
             action = Stance.NEUTRAL
+        # New risk needs the conviction the plan demands, whoever proposes it. On 21
+        # September 2026 the model took stances at 0.42 that no specialist lean could have
+        # taken: a model BUY under the regime's floor is now held the way a specialist lean
+        # under it is held, and the exploration budget may still turn the hold into a
+        # labelled probe. A SELL is de-risking on a long-only book and is never held here.
+        floor = self.policy.playbook(evidence_context).floor(self.policy.min_consensus_confidence)
+        model_floor = None
+        if STANCE_SCORE[action] > 0 and signal.confidence < floor:
+            model_floor = {"confidence": _fixed(signal.confidence), "floor": _fixed(floor), "held": True}
+            action = Stance.NEUTRAL
         supporting = tuple(
             item.agent_id for item in evidence
             if STANCE_SCORE[item.stance] * STANCE_SCORE[action] > 0
@@ -493,6 +503,8 @@ class AtlasInvestmentAgent:
             if STANCE_SCORE[item.stance] * STANCE_SCORE[action] < 0
         )
         rationale = signal.rationale + (
+            *((f"model_confidence_below_floor={model_floor['confidence']}:{model_floor['floor']}",)
+              if model_floor else ()),
             f"anthropic_model={proof.model}",
             f"xai_summary={proof.summary}",
             *(f"xai_support={item}" for item in proof.supporting_factors),
@@ -512,7 +524,8 @@ class AtlasInvestmentAgent:
             deterministic.country_recommendations,
             deterministic.founder_escalations,
             False,
-            {**deterministic.provenance, "mode": mode, "inference": inference},
+            {**deterministic.provenance, "mode": mode, "inference": inference,
+             **({"model_floor": model_floor} if model_floor else {})},
         )
 
     def _provenance(self, subject, evidence, now, market_tick, context=None, knowledge=None) -> dict:

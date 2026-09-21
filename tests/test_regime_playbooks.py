@@ -250,17 +250,18 @@ def test_defensive_and_crisis_playbooks_withhold_probes_and_say_so() -> None:
     assert "exploration_suppressed=playbook:crisis_standdown" in crisis.rationale
 
 
-def test_the_llm_path_carries_the_playbook_and_a_model_buy_is_sized_not_vetoed() -> None:
-    atlas = AtlasInvestmentAgent(llm_client=consensus_client("BUY", 0.62))
+def test_the_llm_path_carries_the_playbook_and_a_model_buy_above_the_floor_is_sized() -> None:
+    atlas = AtlasInvestmentAgent(llm_client=consensus_client("BUY", 0.70))
     decision = asyncio.run(atlas.decide_with_llm("TRENT", MODERATE, NOW, evidence_context=context("trending_down")))
     assert decision.action is Stance.BUY and decision.provenance["mode"] == "llm"
     assert decision.provenance["playbook"]["name"] == "defensive"
+    assert "model_floor" not in decision.provenance
     # The runtime then halves the plan quantity for the defensive book and sizes the
-    # model's 0.62 against the 0.65 floor as if at it.
+    # model's 0.70 a quarter of the way from the 0.65 floor to full conviction.
     sized = SwarmPaperTradingService._conviction_sized(
-        proposal(100, "0.62", {**decision.provenance, "quantity_source": "plan"})
+        proposal(100, "0.70", {**decision.provenance, "quantity_source": "plan"})
     )
-    assert sized.quantity == 25
+    assert sized.quantity == 31
 
 
 def test_the_replay_harness_can_be_handed_a_policy_and_records_the_difference(tmp_path) -> None:
