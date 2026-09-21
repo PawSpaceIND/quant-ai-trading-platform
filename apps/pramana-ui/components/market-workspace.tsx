@@ -89,7 +89,7 @@ export function MarketWorkspace({
         ),
     [data.rows, query, savedOnly, favorites, sort],
   );
-  const detail = data.rows.find((r) => rowIdentity(r) === selected) || rows[0];
+  const detail = rows.find((r) => rowIdentity(r) === selected) || rows[0];
   const history = (detail?.history || []).slice(-range);
   async function favorite(symbol: string) {
     setSaving(true);

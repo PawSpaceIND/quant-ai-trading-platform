@@ -283,6 +283,9 @@ a {
   font-size: 7px;
   margin-left: auto;
 }
+.sidebar nav .mobile-sign-out {
+  display: none;
+}
 .sidebar-bottom {
   margin-top: auto;
 }
@@ -836,6 +839,8 @@ td .pill {
 .copilot {
   position: sticky;
   top: 20px;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   padding: 18px;
 }
 .copilot .panel-title {
@@ -1357,6 +1362,8 @@ td .pill {
   }
   .copilot {
     position: static;
+    max-height: none;
+    overflow-y: visible;
   }
   .mobile-chat-close {
     display: block;
@@ -1416,6 +1423,9 @@ td .pill {
     gap: 6px;
     white-space: nowrap;
     font-size: 10px;
+  }
+  .sidebar nav .mobile-sign-out {
+    display: flex;
   }
   .sidebar nav button > span,
   .sidebar nav small {

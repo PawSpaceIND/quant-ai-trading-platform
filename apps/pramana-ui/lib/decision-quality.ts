@@ -37,7 +37,8 @@ export function readDecisionQuality(): DecisionQualityReport | null {
   try {
     const file = decisionQualityPath();
     if (fs.statSync(/* turbopackIgnore: true */ file).size > REPORT_LIMIT_BYTES) return null;
-    return parseDecisionQuality(fs.readFileSync(/* turbopackIgnore: true */ file, "utf8"));
+    const report = parseDecisionQuality(fs.readFileSync(/* turbopackIgnore: true */ file, "utf8"));
+    return report?.tenant_id === (process.env.PRAMANA_TENANT_ID || "default") ? report : null;
   } catch {
     return null;
   }
@@ -59,7 +60,7 @@ export function readPostMortems(limit = POST_MORTEM_FILE_LIMIT): PostMortem[] {
       const full = path.join(/* turbopackIgnore: true */ directory, name);
       if (fs.statSync(/* turbopackIgnore: true */ full).size > POST_MORTEM_LIMIT_BYTES) continue;
       const parsed = parsePostMortem(fs.readFileSync(/* turbopackIgnore: true */ full, "utf8"), name.slice(0, 10));
-      if (parsed) result.push(parsed);
+      if (parsed?.tenant_id === (process.env.PRAMANA_TENANT_ID || "default")) result.push(parsed);
     } catch {
       // Unreadable file: skipped, never guessed.
     }
@@ -89,7 +90,7 @@ export function readMissedOpportunities(): MissedOpportunities | null {
       const full = path.join(/* turbopackIgnore: true */ directory, name);
       if (fs.statSync(/* turbopackIgnore: true */ full).size > MISSED_LIMIT_BYTES) continue;
       const parsed = parseMissedOpportunities(fs.readFileSync(/* turbopackIgnore: true */ full, "utf8"), name.slice(0, 10));
-      if (parsed) return parsed;
+      if (parsed?.tenant_id === (process.env.PRAMANA_TENANT_ID || "default")) return parsed;
     } catch {
       // Unreadable file: skipped, never guessed.
     }

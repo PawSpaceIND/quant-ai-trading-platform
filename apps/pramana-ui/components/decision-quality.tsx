@@ -41,7 +41,7 @@ export function DecisionQuality() {
     {!state && !error && <div className="loading-state" role="status">Loading decision quality…</div>}
     {state && !report && <section className="panel" aria-label="Decision quality">
       <div className="panel-title"><div><span className="eyebrow">CALIBRATION · OUTCOMES</span><h2>Decision quality</h2></div><button onClick={() => void load()} disabled={busy}>↻ Refresh</button></div>
-      <div className="empty">No decision-quality report yet; it is written after the first cadence tick.</div>
+      <div className="empty">No usable decision-quality report for this workspace. The report may be missing, invalid or belong to another account; no performance verdict is inferred.</div>
     </section>}
     {report && verdict && <>
       <VerdictBanner verdict={verdict} />
