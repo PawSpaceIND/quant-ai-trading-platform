@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import re
 import stat
@@ -115,6 +116,54 @@ def validate_token(
     return VerifiedToken(key, token, user)
 
 
+LOGGER = logging.getLogger("quant_ai.zerodha_renewal")
+# A container that finds the token expired at boot exits, and Docker restarts it a minute
+# later; the boot check used to dispatch the same CRITICAL alert on every retry, 183 times
+# between 05:31 and 08:39 IST on 21 September 2026. One alert says it. The next says the
+# same thing only after this interval, unless the reason changes. The pre-open reminders
+# the token watch sends every five minutes from 08:30 are deliberate and do not use this.
+SESSION_ALERT_REPEAT = timedelta(minutes=30)
+SESSION_ALERT_STATE_NAME = "zerodha-session-alert.json"
+
+
+def default_alert_state() -> Path:
+    """The dedupe record, beside the durable alert log so every container shares it."""
+    return paths.alert_log("PRAMANA_PAPER_DB").parent / SESSION_ALERT_STATE_NAME
+
+
+def _alert_due(state: Path | None, reason: str, at: datetime) -> bool:
+    """Dispatch when there is no record, the reason changed, or the interval has passed.
+
+    A missing, unreadable or malformed record counts as due: a fault here can only ever
+    alert more, never less.
+    """
+    if state is None:
+        return True
+    try:
+        payload = json.loads(state.read_text(encoding="utf-8"))
+        last = datetime.fromisoformat(str(payload["alerted_at"]))
+    except (OSError, ValueError, TypeError, KeyError):
+        return True
+    if last.tzinfo is None or last.utcoffset() is None:
+        return True
+    return payload.get("reason") != reason or at < last or at - last >= SESSION_ALERT_REPEAT
+
+
+def _record_alert(state: Path | None, reason: str, phase: str, at: datetime) -> None:
+    if state is None:
+        return
+    try:
+        state.parent.mkdir(parents=True, exist_ok=True)
+        scratch = state.with_name(state.name + ".tmp")
+        scratch.write_text(
+            json.dumps({"reason": reason, "phase": phase, "alerted_at": at.isoformat()}),
+            encoding="utf-8",
+        )
+        os.replace(scratch, state)
+    except OSError:
+        LOGGER.warning("zerodha_session_alert_state_unwritable path=%s", state)
+
+
 def notifications() -> TradingNotificationDispatcher:
     sinks = [ConsoleLogSink(), JsonlFileSink(paths.alert_log("PRAMANA_PAPER_DB"))]
     bot = os.environ.get("PRAMANA_TELEGRAM_BOT_TOKEN", "").strip()
@@ -129,21 +178,37 @@ def check_runtime_token(
     *, env: Mapping[str, str] | None = None, now: datetime | None = None,
     dispatcher: TradingNotificationDispatcher | None = None, phase: str = "boot",
     client_factory: Callable[[str], Any] | None = None,
+    alert_state: Path | None = None,
 ) -> VerifiedToken:
+    """Validate the runtime token; on refusal alert, then re-raise.
+
+    ``alert_state`` names the dedupe record: with it, a refusal for the same reason within
+    ``SESSION_ALERT_REPEAT`` of the last alert is logged but not dispatched again. Without
+    it every refusal alerts, which is what the pre-open reminders want.
+    """
     source = os.environ if env is None else env
     if phase not in {"boot", "preopen", "watch_start"}:
         raise RenewalError("zerodha_check_phase_invalid")
     try:
         return validate_token(source, now=now, client_factory=client_factory)
     except RenewalError as error:
-        (dispatcher or notifications()).dispatch(
-            TradingAlertCode.ZERODHA_SESSION_INVALID,
-            "Zerodha session unavailable. Paper startup/new data cannot be trusted. "
-            "Complete interactive login with scripts/renew_pilot_token.py before the open.",
-            tenant_id=source.get("PRAMANA_TENANT_ID", "ghost"),
-            priority=AlertPriority.CRITICAL,
-            metadata={"phase": phase, "reason": str(error)},
-        )
+        at = now or _now()
+        reason = str(error)
+        if _alert_due(alert_state, reason, at):
+            (dispatcher or notifications()).dispatch(
+                TradingAlertCode.ZERODHA_SESSION_INVALID,
+                "Zerodha session unavailable. Paper startup/new data cannot be trusted. "
+                "Complete interactive login with scripts/renew_pilot_token.py before the open.",
+                tenant_id=source.get("PRAMANA_TENANT_ID", "ghost"),
+                priority=AlertPriority.CRITICAL,
+                metadata={"phase": phase, "reason": reason},
+            )
+            _record_alert(alert_state, reason, phase, at)
+        else:
+            LOGGER.warning(
+                "zerodha_session_alert_suppressed phase=%s reason=%s repeat_after_s=%d",
+                phase, reason, int(SESSION_ALERT_REPEAT.total_seconds()),
+            )
         raise
 
 
@@ -353,12 +418,12 @@ def main(argv: list[str] | None = None) -> int:
             publish_to_env(args.env_file, read_session(args.session_file))
             print("Verified session published atomically. Recreate token-consuming services.")
         elif args.action == "check":
-            check_runtime_token()
+            check_runtime_token(alert_state=default_alert_state())
             print("Zerodha profile check passed; no credential values displayed.")
         else:
             previous = None
             try:
-                check_runtime_token(phase="watch_start")
+                check_runtime_token(phase="watch_start", alert_state=default_alert_state())
             except RenewalError:
                 pass
             heartbeat = paths.alert_log("PRAMANA_PAPER_DB").parent / "zerodha-watch.json"
