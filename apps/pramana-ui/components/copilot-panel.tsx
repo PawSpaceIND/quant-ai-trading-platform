@@ -84,7 +84,9 @@ export function CopilotPanel({
   }
   // Every state but "available" refuses a paid call server-side, so the compose form must
   // say so rather than let the operator spend a daily question discovering it.
-  const paidPaused = !!dollarBudget && dollarBudget.status !== "available";
+  // The budget line still reports the shared guard, but it only blocks sending when a
+  // paid call is possible: with no key configured nothing can be charged.
+  const paidPaused = configured && !!dollarBudget && dollarBudget.status !== "available";
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!draft.trim() || busy) return;

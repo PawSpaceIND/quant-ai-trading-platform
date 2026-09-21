@@ -68,7 +68,11 @@ export async function POST(req: NextRequest) {
         Date.parse(body.companyAsOf) > Date.now() + 1000)
     )
       throw new Error("Invalid company evidence cutoff");
-    const spend = spendStatus();
+    // Only a request that can actually reach the provider can spend a dollar. With no key
+    // configured the answer is a free, locally generated refusal that still saves the
+    // question and its evidence, so refusing it on budget grounds would both withhold
+    // that record and state a reason that is not the real one.
+    const spend = process.env.ANTHROPIC_API_KEY ? spendStatus() : null;
     if (spend && spend.status !== "available")
       return NextResponse.json(
         {
