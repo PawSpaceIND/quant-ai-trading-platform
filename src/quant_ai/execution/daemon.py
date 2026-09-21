@@ -148,6 +148,7 @@ class AutonomousTradingDaemon:
         self.specialist_reweighting = bool(specialist_reweighting)
         self._post_mortems_built: set[str] = set()
         self._skill_week: str | None = None
+        self._pruned_day: str | None = None
         # The pre-open strategist: one plan per trading day under this directory, built on
         # the first tick from 08:30 local on a trading day and read out as the morning
         # brief. None keeps it off. The plan informs; it changes no gate, size or floor.
@@ -658,6 +659,7 @@ class AutonomousTradingDaemon:
             self._write_missed_opportunities(timestamp)
             self._write_post_mortem(timestamp)
             self._write_session_plan(timestamp)
+            self._prune_proofs(timestamp)
             return brief
         finally:
             self._in_flight = False
@@ -701,6 +703,45 @@ class AutonomousTradingDaemon:
             )
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_outcome_resolution_failed")
+
+    def _prune_proofs(self, timestamp: datetime) -> None:
+        """Once per IST day, drop proof files that are neither recent nor fill evidence.
+
+        The proof directory grows by two files per decision and nothing else removes
+        them. Recovery never reads it - the institutional path carries its source trace
+        inside the programme record - so age-based removal cannot break a reconciliation,
+        and any decision that produced an order is kept whatever its age.
+        """
+        from quant_ai.execution.audit import prune_proofs, retention_days
+
+        try:
+            day = timestamp.astimezone(timezone(timedelta(hours=5, minutes=30))).date().isoformat()
+            if day == self._pruned_day:
+                return
+            directory = getattr(self.scheduler.pipeline.runtime.xai_logger, "directory", None)
+            if directory is None:
+                self._pruned_day = day
+                return
+            days = retention_days()
+            if days <= 0:
+                self._pruned_day = day
+                return
+            from quant_ai.analytics.decision_journal import ordered_decision_ids
+
+            result = prune_proofs(
+                directory,
+                protected=ordered_decision_ids(self.tracker.broker, tenant_id=self.tenant_id),
+                older_than=timestamp - timedelta(days=days),
+                tenant_id=self.tenant_id,
+            )
+            self._pruned_day = day
+            if result["removed"]:
+                self._logger.info(
+                    "proofs_pruned removed=%s kept=%s retention_days=%s",
+                    result["removed"], result["kept"], days,
+                )
+        except Exception:  # evidence housekeeping never interrupts the cadence
+            self._logger.exception("proof_pruning_failed")
 
     def _write_decision_quality(self, timestamp: datetime) -> None:
         """Rewrite the decision-quality report file, when the factory configured one."""

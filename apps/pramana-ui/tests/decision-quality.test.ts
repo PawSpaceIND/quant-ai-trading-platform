@@ -10,6 +10,7 @@ import {
   money,
   parseDecisionQuality,
   parseMissedOpportunities,
+  parsePostMortem,
   percent,
   ratio,
   readDecisionQuality,
@@ -143,15 +144,16 @@ test("post-mortems read newest first, skip malformed files and truncate lessons 
   assert.deepEqual(readPostMortems(), []);
   fs.mkdirSync(mortemDir);
   const write = (name: string, body: unknown) => fs.writeFileSync(path.join(mortemDir, name), typeof body === "string" ? body : JSON.stringify(body));
-  write("2026-09-12.json", postMortem());
+  const at = (date: string, extra: Record<string, unknown> = {}) => ({...postMortem(), session_date: date, ...extra});
+  write("2026-09-12.json", at("2026-09-12", {status: "approved", approved_at: "2026-09-12T16:02:00Z"}));
   const long = `Line one\nline two${String.fromCharCode(7)} ${"detail ".repeat(60)}`;
-  write("2026-09-14.json", { ...postMortem(), session_date: "2026-09-14", generated_at: "2026-09-14T10:40:00Z", status: "pending", approved_at: null, summary: {}, lessons: [long, "Short lesson."], evidence: {} });
+  write("2026-09-14.json", at("2026-09-14", {generated_at: "2026-09-14T10:40:00Z", status: "pending", approved_at: null, lessons: [long, "Short lesson."], evidence: {}}));
   write("2026-09-13.json", "{not json");
-  write("2026-09-11.json", { ...postMortem(), session_date: "2026-09-11", schema: "pramana.post_mortem.v0" });
-  write("2026-09-10.json", { ...postMortem(), session_date: "2026-09-09" });
-  write("2026-09-08.json", { ...postMortem(), session_date: "2026-09-08", lessons: ["ok", 42] });
-  write("2026-09-06.json", { ...postMortem(), session_date: "2026-09-06", status: "rejected" });
-  write("2026-09-05.json", { ...postMortem(), session_date: "2026-09-05", lessons: ["y".repeat(600_000)] });
+  write("2026-09-11.json", at("2026-09-11", {schema: "pramana.post_mortem.v0"}));
+  write("2026-09-10.json", at("2026-09-09"));
+  write("2026-09-08.json", at("2026-09-08", {lessons: ["ok", 42]}));
+  write("2026-09-06.json", at("2026-09-06", {status: "rejected"}));
+  write("2026-09-05.json", at("2026-09-05", {lessons: ["y".repeat(600_000)]}));
   write("notes.txt", "ignored");
   write("latest.json", postMortem());
   const items = readPostMortems();
@@ -165,9 +167,18 @@ test("post-mortems read newest first, skip malformed files and truncate lessons 
   assert.equal(items[0].lessons[0].includes("\n") || items[0].lessons[0].includes(String.fromCharCode(7)), false);
   assert.equal(items[1].status, "approved");
   assert.equal(items[1].approved_at, "2026-09-12T16:02:00Z");
-  assert.deepEqual(items[1].summary, { decisions: 6, filled: 3, net_pnl: -142.5, regime: "RANGE_BOUND", reviewed: true, notes: null });
+  assert.deepEqual(items[1].summary.counts,
+    { decisions: 12, filled: 3, rejected: 3, abstained: 6, resolved_60m: 9, closed_trades: 3, probes: 0 });
+  assert.equal(items[1].summary.net_pnl, 272);
+  assert.equal(items[1].summary.hit_rate_60m, 0.666667);
+  assert.deepEqual(items[1].summary.rejections,
+    [{ reason: "paper_naked_sell_disabled", count: 2 }, { reason: "pilot_price_moved_during_analysis", count: 1 }]);
+  assert.deepEqual(items[1].summary.exits.map((e) => e.trigger), ["session_close", "stop_loss", "take_profit"]);
+  assert.deepEqual(items[1].summary.by_regime.map((r) => r.regime), ["ranging", "high_volatility", "trending_up"]);
+  assert.equal(items[1].summary.by_regime[1].hit_rate, null);
+  assert.equal(items[1].summary.by_hour_ist.length, 7);
   assert.equal("evidence" in items[1], false);
-  assert.equal(items[1].lessons[1], "Quote-staleness rejections clustered between 09:15 and 09:30 IST.");
+  assert.match(items[1].lessons[0], /Closed trades netted/);
 });
 
 test("post-mortem reads are capped at the newest files and a missing directory is empty", () => {
@@ -362,3 +373,25 @@ function budgetBlock() {
     remaining_calls: 488, remaining_tokens: 1952000, exhausted: false,
   };
 }
+
+test("a no-trade session still explains itself through counts, rejections and regimes", () => {
+  // The session of 21 September 2026 produced no fill at all. A post-mortem that carried
+  // only net P&L and hit rate would show a blank card for exactly the day that needs one.
+  const raw = fs.readFileSync(new URL("./fixtures/post-mortem-no-trade.json", import.meta.url).pathname, "utf8");
+  const parsed = parsePostMortem(raw, "2026-09-21");
+  assert(parsed);
+  assert.equal(parsed.summary.counts.filled, 0);
+  assert.equal(parsed.summary.counts.decisions, 12);
+  assert.equal(parsed.summary.counts.abstained, 9);
+  assert.equal(parsed.summary.net_pnl, 0);
+  // No closed trade means no hit rate. Zero would read as "every call was wrong".
+  assert.equal(parsed.summary.hit_rate_60m, null);
+  assert.deepEqual(parsed.summary.exits, []);
+  assert.deepEqual(parsed.summary.rejections, [{ reason: "paper_naked_sell_disabled", count: 3 }]);
+  assert(parsed.summary.by_regime.length > 0);
+  assert(parsed.summary.by_regime.every((r) => r.filled === 0));
+  assert(parsed.summary.by_hour_ist.length > 0);
+  // The engine's own lessons name the two causes an operator needs on a flat day.
+  assert(parsed.lessons.some((l) => l.includes("paper_naked_sell_disabled")));
+  assert(parsed.lessons.some((l) => l.includes("without a completed LLM consensus")));
+});

@@ -580,7 +580,7 @@ def build_ghost_runner(
         broker=broker,
         directives=directives,
         llm_client=llm_client,
-        xai_logger=XAITraceLogger(xai_directory),
+        xai_logger=XAITraceLogger(xai_directory, tenant_id=tenant_id),
         book_risk_history=book_history,
         # Tradable rows only. A watched instrument holds no position, so demanding a
         # daily-close history for it would gate the book on risk that cannot exist.

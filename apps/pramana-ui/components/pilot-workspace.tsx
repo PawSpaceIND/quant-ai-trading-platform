@@ -1143,14 +1143,16 @@ function RiskLab({
         <span className="eyebrow">PORTFOLIO ATTRIBUTION</span>
         <h2>Sector and factor exposure</h2>
         {data.attribution?.status === "available" ? <>
-          <p className="muted">Reviewed metadata as of {data.attribution.asOf}. These are exposure diagnostics, not realized return attribution or a margin model.</p>
-          <div className="table-scroll"><table><thead><tr><th>Sector</th><th>Market value</th><th>Weight</th></tr></thead><tbody>{data.attribution.sectors?.map(row => <tr key={row.name}><td>{row.name}</td><td>{money(row.marketValue)}</td><td>{pct(row.weight)}</td></tr>)}</tbody></table></div>
+          <p className="muted">Reviewed metadata as of {data.attribution.asOf}. Weight is market value divided by total equity, and total equity includes cash. These are exposure diagnostics, not realized return attribution or a margin model.</p>
+          <div className="table-scroll"><table><thead><tr><th>Sector</th><th>Market value</th><th>Weight</th></tr></thead><tbody>{data.attribution.sectors?.map(row => <tr key={row.name}><td>{row.name}</td><td>{money(row.marketValue)}</td><td>{pct(row.weight)}</td></tr>)}{data.attribution.reconciliation && <><tr><td>Cash</td><td>{money(data.attribution.reconciliation.cash)}</td><td>{pct(data.attribution.reconciliation.cashWeight)}</td></tr>{!data.attribution.reconciliation.reconciled && <tr><td>Unreconciled</td><td>{money(data.attribution.reconciliation.unreconciled)}</td><td>{pct(data.attribution.reconciliation.unreconciledWeight)}</td></tr>}</>}</tbody>{data.attribution.reconciliation && <tfoot><tr><th scope="row">Total</th><th>{money(data.attribution.reconciliation.totalEquity)}</th><th>{pct((data.attribution.reconciliation.investedWeight + data.attribution.reconciliation.cashWeight + (data.attribution.reconciliation.reconciled ? 0 : data.attribution.reconciliation.unreconciledWeight)))}</th></tr></tfoot>}</table></div>
           <div className="tag-list">{data.attribution.factors?.map(row => <span className="pill neutral" key={row.name}>{row.name}: {row.exposure.toFixed(2)}</span>)}</div>
           <div className="research-actions">
             <a href="/api/portfolio/attribution" download="pramana-portfolio-attribution.json">Download attribution ↗</a>
             <button onClick={() => onAsk(`Explain the reviewed sector and factor exposure snapshot dated ${data.attribution?.asOf}. Sectors: ${JSON.stringify(data.attribution?.sectors)}. Factors: ${JSON.stringify(data.attribution?.factors)}. State clearly that this is marked exposure, not realized return attribution, margin, Greeks or a forecast.`)}>Discuss with Atlas ↗</button>
           </div>
         </> : <p className="empty">{data.attribution?.detail || "Attribution is unavailable until reviewed metadata is configured."}</p>}
+        {data.attribution?.status === "available" && data.attribution.reconciliation && !data.attribution.reconciliation.reconciled
+          && <p className="footnote">Sector market values and cash do not account for total equity. The remainder is shown as unreconciled and is not redistributed across sectors.</p>}
         <p className="footnote">{data.attribution?.detail}</p>
       </section>
       {!hosted && <HistoricalRisk state={data.historicalRisk} onAsk={onAsk} />}
@@ -1281,6 +1283,13 @@ function IntelligencePanel({
             Explain this decision ↗
           </button>
         </>
+      ) : i.status === "ownership_unverified" ? (
+        <div className="empty">
+          Ownership unverified. A recorded decision proof exists but does not
+          name this account and no ledger entry links it, so it is not shown as
+          this account&apos;s decision. Proofs written from now on name their
+          account; an older one is recovered only through a ledger-linked fill.
+        </div>
       ) : (
         <div className="empty">
           No recorded decision proof yet. Decisions appear after an eligible

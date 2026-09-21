@@ -1,0 +1,105 @@
+{
+ "schema": "pramana.post_mortem.v1",
+ "tenant_id": "ghost",
+ "session_date": "2026-09-21",
+ "generated_at": "2026-09-21T11:00:00+00:00",
+ "status": "pending",
+ "approved_at": null,
+ "summary": {
+  "counts": {
+   "decisions": 12,
+   "filled": 0,
+   "rejected": 3,
+   "abstained": 9,
+   "resolved_60m": 9,
+   "closed_trades": 0,
+   "probes": 0
+  },
+  "net_pnl": 0.0,
+  "hit_rate_60m": null,
+  "exits": [],
+  "rejections": [
+   {
+    "reason": "paper_naked_sell_disabled",
+    "count": 3
+   }
+  ],
+  "by_regime": [
+   {
+    "regime": "ranging",
+    "decisions": 9,
+    "filled": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "regime": "high_volatility",
+    "decisions": 3,
+    "filled": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   }
+  ],
+  "by_hour_ist": [
+   {
+    "hour": 9,
+    "decisions": 2,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 10,
+    "decisions": 3,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 11,
+    "decisions": 3,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 12,
+    "decisions": 2,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 13,
+    "decisions": 1,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 14,
+    "decisions": 1,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   },
+   {
+    "hour": 15,
+    "decisions": 0,
+    "hit_rate": null,
+    "net_pnl": 0.0
+   }
+  ]
+ },
+ "lessons": [
+  "3 of 12 decisions were rejected for paper_naked_sell_disabled.",
+  "4 of 12 decisions ran without a completed LLM consensus (llm_invalid_schema, llm_unavailable); their outcomes reflect the deterministic fallback."
+ ],
+ "evidence": {
+  "0": [
+   "n-rej-0",
+   "n-rej-1",
+   "n-rej-2"
+  ],
+  "1": [
+   "n-abs-1",
+   "n-abs-2",
+   "n-abs-5",
+   "n-abs-6"
+  ]
+ }
+}

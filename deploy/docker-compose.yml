@@ -64,6 +64,9 @@ services:
       PRAMANA_AI_DAILY_CALL_LIMIT: ${PRAMANA_AI_DAILY_CALL_LIMIT:-500}
       PRAMANA_AI_DAILY_TOKEN_LIMIT: ${PRAMANA_AI_DAILY_TOKEN_LIMIT:-2000000}
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
+      # Decision proofs older than this are removed once a day. A decision that
+      # produced an order is kept whatever its age; 0 disables pruning.
+      PRAMANA_PROOF_RETENTION_DAYS: ${PRAMANA_PROOF_RETENTION_DAYS:-90}
       # Per-response allowance only; legacy default and daily spend limits are unchanged.
       PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
       PRAMANA_ASTRA_SHADOW_ENABLED: ${PRAMANA_ASTRA_SHADOW_ENABLED:-false}

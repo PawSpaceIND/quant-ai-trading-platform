@@ -75,6 +75,22 @@ export type AiBudget = AiBudgetUsage & {
 };
 
 export type PostMortemStatus = "pending" | "approved";
+/** Named tallies as the engine wrote them. Parsed as an open record of finite numbers so
+ * a report written before a counter existed still reads, rather than being rejected. */
+export type PostMortemCounts = Record<string, number>;
+export type PostMortemExit = {trigger: string; count: number};
+export type PostMortemRejection = {reason: string; count: number};
+export type PostMortemRegime = {regime: string; decisions: number; filled: number; hit_rate: number | null; net_pnl: number};
+export type PostMortemHour = {hour: number; decisions: number; hit_rate: number | null; net_pnl: number};
+export type PostMortemSummary = {
+  counts: PostMortemCounts;
+  net_pnl: number;
+  hit_rate_60m: number | null;
+  exits: PostMortemExit[];
+  rejections: PostMortemRejection[];
+  by_regime: PostMortemRegime[];
+  by_hour_ist: PostMortemHour[];
+};
 export type PostMortem = {
   schema: typeof POST_MORTEM_SCHEMA;
   tenant_id: string;
@@ -82,8 +98,10 @@ export type PostMortem = {
   generated_at: string;
   status: PostMortemStatus;
   approved_at: string | null;
-  /** Scalar summary entries only; nested evidence stays in the file on the host. */
-  summary: Record<string, string | number | boolean | null>;
+  /** The engine's own session summary. Every section it writes is carried, because
+   * dropping the counts, rejection reasons and regime split leaves a post-mortem that
+   * cannot explain the session it reviews. */
+  summary: PostMortemSummary;
   /** Operator-reviewed plain text, each entry at most LESSON_LIMIT characters. */
   lessons: string[];
 };
@@ -330,11 +348,19 @@ function normalizePostMortem(value: unknown, expectedDate?: string): PostMortem 
   const status = r.status === "pending" || r.status === "approved" ? r.status : fail();
   const approved_at = r.approved_at === null ? null : stamp(r.approved_at);
   record(r.evidence);
-  const summary: PostMortem["summary"] = {};
-  for (const [key, entry] of Object.entries(record(r.summary)).slice(0, 12)) {
-    if (entry === null || typeof entry === "boolean" || (typeof entry === "number" && Number.isFinite(entry))) summary[key.slice(0, 60)] = entry;
-    else if (typeof entry === "string") summary[key.slice(0, 60)] = truncateLesson(entry);
-  }
+  const s = record(r.summary);
+  const counts: PostMortemCounts = {};
+  for (const [key, entry] of Object.entries(record(s.counts)).slice(0, 16))
+    if (typeof entry === "number" && Number.isFinite(entry)) counts[key.slice(0, 60)] = entry;
+  const summary: PostMortemSummary = {
+    counts,
+    net_pnl: num(s.net_pnl),
+    hit_rate_60m: optNum(s.hit_rate_60m),
+    exits: list(s.exits, 20).map((item) => { const d = record(item); return {trigger: text(d.trigger, 60), count: num(d.count)}; }),
+    rejections: list(s.rejections, 30).map((item) => { const d = record(item); return {reason: text(d.reason, 120), count: num(d.count)}; }),
+    by_regime: list(s.by_regime, 20).map((item) => { const d = record(item); return {regime: text(d.regime, 60), decisions: num(d.decisions), filled: num(d.filled), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
+    by_hour_ist: list(s.by_hour_ist, 24).map((item) => { const d = record(item); return {hour: num(d.hour), decisions: num(d.decisions), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
+  };
   return {
     schema: POST_MORTEM_SCHEMA,
     tenant_id: text(r.tenant_id, 80),
