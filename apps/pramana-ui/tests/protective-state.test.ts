@@ -214,3 +214,15 @@ test("journaled refusals are read per decision, and a missing journal says so in
     db.close();
   }
 });
+
+test("the protective-controls badge is green only when every gate is armed", async () => {
+  const {gateTone} = await import("../lib/risk-gates");
+  // One armed gate out of seven used to show green while six controls were switched off.
+  assert.equal(gateTone({armed: 1, unverified: 0, total: 7}), "amber");
+  assert.equal(gateTone({armed: 6, unverified: 0, total: 7}), "amber");
+  assert.equal(gateTone({armed: 7, unverified: 0, total: 7}), "green");
+  assert.equal(gateTone({armed: 0, unverified: 0, total: 7}), "neutral");
+  // An unverified gate outranks everything: it is not a claim either way.
+  assert.equal(gateTone({armed: 7, unverified: 1, total: 8}), "amber");
+  assert.equal(gateTone({armed: 0, unverified: 0, total: 0}), "neutral");
+});

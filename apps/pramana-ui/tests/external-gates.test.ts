@@ -38,3 +38,40 @@ test("external gate UI accepts only a release-matched reviewed report",()=>{
   delete process.env.PRAMANA_EXTERNAL_GATE_REPORT;
   delete process.env.PRAMANA_RELEASE_REVISION;
 });
+
+test("the market payload carries no host path and no engine-only close history", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "market-leak-"));
+  const snapshot = path.join(directory, "market.json");
+  const previous = process.env.PRAMANA_MARKET_SNAPSHOT;
+  process.env.PRAMANA_MARKET_SNAPSHOT = snapshot;
+  try {
+    // A real collector file, so the parser accepts it and the assertions are not vacuous.
+    const valid = JSON.parse(fs.readFileSync(
+      new URL("./fixtures/browser-market.json", import.meta.url).pathname, "utf8"));
+    fs.writeFileSync(snapshot, JSON.stringify({
+      ...valid,
+      riskHistory: {"NSE:INFY": [{date: "2026-09-18", close: 1500}]},
+      // status + total are what the parser requires before it builds the universe at all.
+      instrumentUniverse: {status: "available", total: 1, source: "synthetic",
+        recordsPath: "/home/operator/private/instrument-universe.json"},
+    }));
+    const {readMarket} = await import("../lib/market");
+    const market = await readMarket();
+    // An absolute path names the engine host's directory layout and its user. Nothing
+    // renders it, and /api/market is on the hosted worker's public allow-list.
+    // The universe must actually parse, or the next assertion proves nothing.
+    assert.equal(market.instrumentUniverse?.status, "available");
+    assert.equal((market.instrumentUniverse as Record<string, unknown>).recordsPath, undefined);
+    assert.equal(JSON.stringify(market).includes("/home/operator/private"), false);
+    // The route withholds the engine-only daily closes the other two consumers strip.
+    const {GET} = await import("../app/api/market/route");
+    const body = await (await GET()).json();
+    assert.equal("riskHistory" in body, false);
+    // The rows themselves still arrive, so the strip is targeted and not a blanket empty.
+    assert(body.rows.length > 0);
+  } finally {
+    if (previous === undefined) delete process.env.PRAMANA_MARKET_SNAPSHOT;
+    else process.env.PRAMANA_MARKET_SNAPSHOT = previous;
+    fs.rmSync(directory, {recursive: true, force: true});
+  }
+});

@@ -1,6 +1,6 @@
 "use client";
 import {useState} from "react";
-import {gateTally, riskGateViews, type GateState} from "@/lib/risk-gates";
+import {gateTally, gateTone, riskGateViews, type GateState} from "@/lib/risk-gates";
 import type {ProtectionAlertState} from "@/lib/protection-sweep";
 import type {ProtectionSweep, Runtime} from "@/lib/pilot";
 import type {GateRefusalState} from "@/lib/types";
@@ -65,7 +65,7 @@ export function ProtectiveState({runtime, tenant, alert}: {runtime: Runtime; ten
   return <section className="panel gate-panel">
     <div className="panel-title">
       <div><span className="eyebrow">WHAT IS WATCHING THE BOOK</span><h2>Protective controls</h2></div>
-      {views.length ? <span className={`pill ${tally.unverified ? "amber" : tally.armed ? "green" : "neutral"}`}>
+      {views.length ? <span className={`pill ${gateTone(tally)}`}>
         {tally.armed}/{tally.total} armed{tally.unverified ? ` · ${tally.unverified} unverified` : ""}
       </span> : <span className="pill amber">Unpublished</span>}
     </div>
