@@ -78,12 +78,13 @@ export function latestSwarmIntelligence() {
     expectedRisk: Number(row.expected_risk ?? "0"),
     participation: specialistParticipation(row),
   }));
-  const score = agents.reduce((sum, agent) => {
-    if (["RISK", "LIQUIDITY"].includes(agent.domain)) return sum;
+  const directional = agents.filter(agent => !["RISK", "LIQUIDITY"].includes(agent.domain));
+  const score = directional.reduce((sum, agent) => {
     const direction = agent.stance.includes("BUY") ? 1 : agent.stance.includes("SELL") || agent.stance === "AVOID" ? -1 : 0;
     return sum + direction * agent.confidence;
   }, 0);
-  const consensus = score > 0.35 ? "BULLISH" : score < -0.35 ? "BEARISH" : "MIXED";
+  const consensus = directional.every(agent => agent.stance === "NEUTRAL") ? "NEUTRAL"
+    : score > 0.35 ? "BULLISH" : score < -0.35 ? "BEARISH" : "MIXED";
   const regime = String(latest.proof.market_regime ?? latest.proof.regime ?? "UNKNOWN");
   return {
     status: "ok",

@@ -1408,6 +1408,8 @@ td .pill {
     flex-direction: row;
     overflow: auto;
     gap: 3px;
+    /* Native overlay scrollbars must not cover the short navigation buttons. */
+    padding-bottom: 16px;
   }
   .sidebar nav button {
     padding: 8px;

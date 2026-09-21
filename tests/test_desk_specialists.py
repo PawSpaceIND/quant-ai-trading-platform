@@ -276,7 +276,8 @@ def test_roster_carries_both_desks_and_keeps_the_technical_agent_as_root() -> No
     ids = [agent.agent_id for agent in pipeline().agents]
     assert "liquidity-desk" in ids and "risk-desk" in ids
     assert ids[-1] == TechnicalQuantAgent.agent_id
-    assert len(ids) == 7
+    assert "etf-value-reference" in ids
+    assert len(ids) == len(set(ids)) == 8
 
 
 def test_desk_metrics_are_derived_from_bars_quote_plan_and_book() -> None:
