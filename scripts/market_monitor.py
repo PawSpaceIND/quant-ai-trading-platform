@@ -208,14 +208,19 @@ def provider_status(news_available):
     """Describe configured providers without claiming that they are healthy."""
     fundamentals = os.environ.get("PRAMANA_FUNDAMENTALS_PROVIDER", "yahoo").strip().lower() or "yahoo"
     daily_history = os.environ.get("PRAMANA_DAILY_HISTORY_PROVIDER", "yahoo").strip().lower() or "yahoo"
+    history_status = {
+        "yahoo": "Yahoo daily bars configured; availability checked per history request",
+        "kite": "Kite daily bars configured; availability checked per history request",
+        "none": "Disabled by configuration; intraday-only regime",
+    }.get(daily_history, "Unsupported daily-history configuration; engine selection rejects it")
     ibkr = os.environ.get("PRAMANA_IBKR_ENABLED", "false").strip().lower() in {"true", "1", "yes", "on"}
     return {
         "Claude": "Availability is checked per copilot request",
         "Technical": "Real daily candle history",
         "News": "Economic Times RSS; rule-based sentiment" if news_available else "RSS unavailable; no fabricated opinions",
         "Macro": "FRED configured (FRED_API_KEY present)" if os.environ.get("FRED_API_KEY", "").strip() else "Unavailable; FRED_API_KEY not configured",
-        "Fundamentals": "Yahoo quoteSummary; agents abstain unless all four ratios return" if fundamentals == "yahoo" else f"Disabled (PRAMANA_FUNDAMENTALS_PROVIDER={fundamentals}); valuation agents abstain",
-        "Regime history": "Yahoo daily bars" if daily_history == "yahoo" else f"Disabled (PRAMANA_DAILY_HISTORY_PROVIDER={daily_history}); intraday-only regime",
+        "Fundamentals": "Yahoo quoteSummary configured; available ratios are scored and missing ratios are disclosed" if fundamentals == "yahoo" else f"Disabled (PRAMANA_FUNDAMENTALS_PROVIDER={fundamentals}); valuation agents abstain",
+        "Regime history": history_status,
         "US equities": "IBKR enabled" if ibkr else "No IBKR connection",
     }
 

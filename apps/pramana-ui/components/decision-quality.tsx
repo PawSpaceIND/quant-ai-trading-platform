@@ -94,18 +94,25 @@ export function DecisionQuality() {
   </>;
 }
 
-function AiBudgetNotice({ budget }: { budget: AiBudget }) {
-  // An exhausted budget is the difference between "the engine saw nothing worth trading"
-  // and "the engine stopped asking". Say which, on the page, before a founder reads a
-  // quiet day as a verdict on the strategy.
-  const tone = budget.exhausted ? "warning" : "muted";
+export function AiBudgetNotice({ budget }: { budget: AiBudget }) {
+  const shared = budget.aggregate;
+  const usage = shared ?? budget;
+  const exhausted = budget.exhausted || usage.exhausted
+    || budget.remaining_calls === 0 || budget.remaining_tokens === 0
+    || usage.remaining_calls === 0 || usage.remaining_tokens === 0;
+  const incomplete = !shared || usage.reserved_tokens === null;
+  const tone = exhausted || incomplete ? "warning" : "muted";
   return <div className={`banner quality-budget ${tone}`} role="status">
-    <strong>{budget.exhausted ? "AI budget exhausted today" : "AI budget"}</strong>
+    <strong>{exhausted ? "AI budget exhausted in this report" : incomplete ? "AI budget · incomplete shared usage" : "AI budget · shared usage"}</strong>
     <p>
-      {budget.exhausted
-        ? `The daily consensus cap was reached on ${budget.day}, so consensus degrades to NEUTRAL and every tick ends in PRESERVE_CAPITAL until 00:00 UTC. Decisions after that point are not evidence about the strategy.`
-        : `${count(budget.calls)} of ${count(budget.daily_call_limit)} consensus calls and ${count(budget.tokens)} of ${count(budget.daily_token_limit)} tokens used on ${budget.day}.`}
+      {`${count(usage.calls)} of ${count(budget.daily_call_limit)} ${shared ? "shared" : budget.scope} calls and ${count(usage.tokens)} of ${count(budget.daily_token_limit)} tokens used on ${budget.day} (UTC). `}
+      {usage.reserved_tokens !== null ? `${count(usage.reserved_tokens)} tokens reserved for pending or unreported usage. ` : "Token reservations were not reported. "}
+      {shared && `${count(Math.min(budget.remaining_calls, shared.remaining_calls))} calls and ${count(Math.min(budget.remaining_tokens, shared.remaining_tokens))} tokens remain for ${budget.scope} after shared limits. `}
+      {exhausted
+        ? "New model calls for this scope are blocked while the cap is exhausted. Budget-limited decisions do not measure strategy quality. Daily counters reset at 00:00 UTC."
+        : shared ? "Each request must still fit its token reservation; headroom does not guarantee admission." : "Account-wide headroom is unknown; these scope counters cannot establish that Atlas can call the model."}
     </p>
+    {shared && <p>{`${budget.scope}: ${count(budget.calls)} calls and ${count(budget.tokens)} tokens used. Other scopes share the same daily ceiling.`}</p>}
   </div>;
 }
 
