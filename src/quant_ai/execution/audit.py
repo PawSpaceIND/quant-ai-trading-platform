@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_ai.agents.contracts import AgentEvidence
+from quant_ai.agents.participation import participation
 from quant_ai.agents.swarm import AgentAnalysisRequest, TradeProposal
 from quant_ai.brokers.base import ExecutionResult
 from quant_ai.intelligence.adversarial import StressVerdict
@@ -91,6 +92,8 @@ class XAITraceLogger:
                 "expected_return": str(item.expected_return),
                 "expected_risk": str(item.expected_risk),
                 "freshness_seconds": str(item.source_freshness_seconds),
+                **participation(item),
+                "rationale_json": json.dumps(item.rationale, ensure_ascii=False),
             }
             for item in evidence
         )

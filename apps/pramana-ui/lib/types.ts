@@ -43,6 +43,7 @@ export type Portfolio = {
   updatedAt: string | null;
 };
 export type DecisionProvenance = {
+  failureCode?: string | null;
   mode: string; status: string; provider: string | null; transport: string | null;
   requestedModel: string | null; resolvedModel: string | null;
   requestSha256: string | null; configurationSha256: string | null;
@@ -52,6 +53,7 @@ export type Intelligence = {
   regime: string;
   consensus: string;
   agents: {
+    participation?: import("./specialist-participation").Participation;
     agentId: string;
     stance: string;
     confidence: number;

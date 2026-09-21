@@ -58,6 +58,8 @@ services:
       # refuses the paid call and records `credential_missing` rather than guessing.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PRAMANA_FUNDAMENTALS_PROVIDER: ${PRAMANA_FUNDAMENTALS_PROVIDER:-yahoo}
+      # Optional fresh, source-labelled iNAV observations in the existing /data volume.
+      PRAMANA_ETF_INAV_FILE: ${PRAMANA_ETF_INAV_FILE:-}
       PRAMANA_AI_DAILY_CALL_LIMIT: ${PRAMANA_AI_DAILY_CALL_LIMIT:-500}
       PRAMANA_AI_DAILY_TOKEN_LIMIT: ${PRAMANA_AI_DAILY_TOKEN_LIMIT:-2000000}
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite

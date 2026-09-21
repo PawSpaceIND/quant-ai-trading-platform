@@ -198,8 +198,19 @@ class EvidenceContext:
     timeframes: tuple[tuple[str, tuple[EvidenceBar, ...]], ...] = ()
     regime: tuple[tuple[str, Decimal | str], ...] = ()
     lessons: tuple[str, ...] = ()
+    asset_reference: tuple[tuple[str, Decimal | str], ...] = ()
 
     def __post_init__(self) -> None:
+        if len(self.asset_reference) > 12:
+            raise ValueError("asset_reference_too_large")
+        for name, value in self.asset_reference:
+            if not name.startswith("etf_") or len(name) > 64 or any(c in name for c in "\r\n;="):
+                raise ValueError("asset_reference_name_invalid")
+            if isinstance(value, str):
+                if len(value) > 160 or any(c in value for c in "\r\n;="):
+                    raise ValueError("asset_reference_value_invalid")
+            elif not isinstance(value, Decimal) or not value.is_finite():
+                raise ValueError("asset_reference_value_invalid")
         if len(self.bars) > MAX_EVIDENCE_BARS:
             raise ValueError(f"evidence context holds at most {MAX_EVIDENCE_BARS} bars")
         if len(self.headlines) > MAX_EVIDENCE_HEADLINES:
