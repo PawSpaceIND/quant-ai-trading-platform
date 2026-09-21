@@ -122,34 +122,91 @@ def test_us_symbol_stays_bare() -> None:
     assert transport.summary_urls() == [f"{YahooFundamentalsProvider.quote_summary_url}/AAPL"]
 
 
-def test_missing_field_abstains_and_names_it(caplog: pytest.LogCaptureFixture) -> None:
+def test_missing_field_is_left_out_and_named(caplog: pytest.LogCaptureFixture) -> None:
     result = summary_result()
     del result["financialData"]["debtToEquity"]
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
+    with caplog.at_level(logging.INFO, logger=LOGGER):
         snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
+    assert snapshot.metrics == {
+        "pe": Decimal("24.5"),
+        "operating_margin": Decimal("0.21"),
+        "fcf_yield": Decimal(230000000000) / Decimal(6500000000000),
+    }
+    assert snapshot.observed_at == MARKET_TIME
+    assert not [record for record in caplog.records if record.levelno == logging.WARNING]
+    partial = [record for record in caplog.records if record.levelno == logging.INFO]
+    assert len(partial) == 1
+    message = partial[0].getMessage()
+    assert "yahoo fundamentals partial: symbol=INFY.NS" in message
+    assert "ratios=pe,operating_margin,fcf_yield" in message
+    assert "missing=financialData.debtToEquity" in message
+
+
+def test_non_numeric_field_is_left_out(caplog: pytest.LogCaptureFixture) -> None:
+    result = summary_result()
+    result["summaryDetail"]["trailingPE"] = {"raw": "n/a"}
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
+    assert set(snapshot.metrics) == {"debt_equity", "operating_margin", "fcf_yield"}
+    assert "missing=summaryDetail.trailingPE" in caplog.text
+
+
+def test_missing_module_leaves_its_ratios_out(caplog: pytest.LogCaptureFixture) -> None:
+    result = summary_result()
+    del result["financialData"]
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
+    assert snapshot.metrics == {"pe": Decimal("24.5")}
+    assert (
+        "missing=financialData.debtToEquity,financialData.operatingMargins,"
+        "financialData.freeCashflow" in caplog.text
+    )
+
+
+def test_nse_listing_without_free_cashflow_keeps_the_other_three() -> None:
+    # The shape Yahoo returned for eight of the pilot's nine NSE equities on 21 September
+    # 2026: every ratio but free cash flow.
+    result = summary_result()
+    result["financialData"]["freeCashflow"] = {}
+    snapshot = provider(YahooTransport(ok(envelope(result))), {"TRENT": Market.INDIA}).fetch("TRENT", NOW)
+    assert set(snapshot.metrics) == {"pe", "debt_equity", "operating_margin"}
+    assert snapshot.observed_at == MARKET_TIME
+
+
+def test_fcf_yield_needs_a_positive_market_cap(caplog: pytest.LogCaptureFixture) -> None:
+    result = summary_result()
+    result["summaryDetail"]["marketCap"] = {"raw": 0}
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
+    assert set(snapshot.metrics) == {"pe", "debt_equity", "operating_margin"}
+    assert "missing=summaryDetail.marketCap:non_positive" in caplog.text
+    absent = summary_result()
+    del absent["summaryDetail"]["marketCap"]
+    snapshot = provider(YahooTransport(ok(envelope(absent)))).fetch("INFY", NOW)
+    assert set(snapshot.metrics) == {"pe", "debt_equity", "operating_margin"}
+
+
+def test_no_ratio_at_all_abstains_and_names_every_field(caplog: pytest.LogCaptureFixture) -> None:
+    # A metal ETF: a market cap and a price, no earnings, no balance sheet, no cash flow.
+    result = summary_result()
+    result["summaryDetail"] = {"marketCap": {"raw": 120000000000}}
+    del result["financialData"]
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        snapshot = provider(YahooTransport(ok(envelope(result))), {"GOLDBEES": Market.INDIA}).fetch("GOLDBEES", NOW)
     assert snapshot.metrics == {}
     assert snapshot.observed_at == NOW
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 1
-    assert "financialData.debtToEquity" in warnings[0].getMessage()
-
-
-def test_non_numeric_field_abstains(caplog: pytest.LogCaptureFixture) -> None:
-    result = summary_result()
-    result["summaryDetail"]["trailingPE"] = {"raw": "n/a"}
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
-        snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
-    assert snapshot.metrics == {}
-    assert "summaryDetail.trailingPE" in caplog.text
-
-
-def test_missing_module_abstains(caplog: pytest.LogCaptureFixture) -> None:
-    result = summary_result()
-    del result["financialData"]
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
-        snapshot = provider(YahooTransport(ok(envelope(result)))).fetch("INFY", NOW)
-    assert snapshot.metrics == {}
-    assert "missing_module: financialData" in caplog.text
+    message = warnings[0].getMessage()
+    assert message.startswith("yahoo fundamentals abstain: symbol=GOLDBEES.NS reason=no_ratio_available: ")
+    for name in (
+        "summaryDetail.trailingPE",
+        "financialData.debtToEquity",
+        "financialData.operatingMargins",
+        "financialData.freeCashflow",
+    ):
+        assert name in message
+    assert not [record for record in caplog.records if record.levelno == logging.INFO]
 
 
 def test_http_error_abstains(caplog: pytest.LogCaptureFixture) -> None:

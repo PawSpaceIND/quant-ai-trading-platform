@@ -32,11 +32,15 @@ class YahooFundamentalsProvider:
     the crumb for that cookie. Both are fetched lazily on the first ``fetch`` (constructing
     the provider performs no I/O) and refreshed once when Yahoo rejects the crumb (401/403).
 
-    Honesty. The valuation agents score a missing ratio as zero, so a partial dict would be
-    read as a verdict. The provider therefore returns either all four canonical metrics or an
-    empty snapshot, which the pipeline treats as MISSING and the agents abstain on. Any HTTP
-    failure, envelope error, absent module, absent or non-numeric field, or a non-positive
-    market cap abstains and logs one WARNING naming the cause. Nothing is ever estimated.
+    Honesty. Yahoo carries the four ratios unevenly: most NSE listings publish no
+    ``freeCashflow``, a loss-making company has no trailing P/E, and a metal ETF has none of
+    them. The provider therefore returns every ratio the payload supports and leaves the
+    rest out; the valuation agents score only the ratios present, name the missing ones in
+    their rationale, scale confidence by coverage and abstain below two. A payload with no
+    ratio at all, an HTTP failure or an envelope error abstains with an empty snapshot,
+    which the pipeline treats as MISSING, and logs one WARNING naming every field behind
+    it; a partial snapshot logs the missing fields at INFO. Nothing is ever estimated:
+    ``fcf_yield`` needs both ``freeCashflow`` and a positive ``marketCap``.
 
     Units. Yahoo reports ``debtToEquity`` as a percentage (``89.0`` means 0.89x) and
     ``operatingMargins`` as a fraction; ``fcf_yield`` is ``freeCashflow / marketCap``. Every
@@ -112,11 +116,25 @@ class YahooFundamentalsProvider:
     def _fetch_uncached(self, subject: str, symbol: str, now: datetime) -> FundamentalSnapshot:
         try:
             result = self._result(self._quote_summary(symbol))
-            metrics = self._metrics(result)
         except (TimeoutError, OSError, RuntimeError, ValueError, TypeError) as exc:
             detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             LOGGER.warning("yahoo fundamentals abstain: symbol=%s reason=%s", symbol, detail)
             return FundamentalSnapshot(subject, {}, now)
+        metrics, missing = self._metrics(result)
+        if not metrics:
+            LOGGER.warning(
+                "yahoo fundamentals abstain: symbol=%s reason=no_ratio_available: %s",
+                symbol,
+                ", ".join(missing),
+            )
+            return FundamentalSnapshot(subject, {}, now)
+        if missing:
+            LOGGER.info(
+                "yahoo fundamentals partial: symbol=%s ratios=%s missing=%s",
+                symbol,
+                ",".join(metrics),
+                ",".join(missing),
+            )
         return FundamentalSnapshot(subject, metrics, self._observed_at(result, now))
 
     def _quote_summary(self, symbol: str) -> object:
@@ -173,33 +191,53 @@ class YahooFundamentalsProvider:
         return results[0]
 
     @classmethod
-    def _metrics(cls, result: Mapping[str, object]) -> dict[str, Decimal]:
-        pe = cls._number(result, "summaryDetail", "trailingPE")
-        debt_equity = cls._number(result, "financialData", "debtToEquity") / Decimal(100)
-        operating_margin = cls._number(result, "financialData", "operatingMargins")
-        free_cashflow = cls._number(result, "financialData", "freeCashflow")
-        market_cap = cls._number(result, "summaryDetail", "marketCap")
-        if market_cap <= 0:
-            raise ValueError("non_positive_field: summaryDetail.marketCap")
-        return {
-            "pe": pe,
-            "debt_equity": debt_equity,
-            "operating_margin": operating_margin,
-            "fcf_yield": free_cashflow / market_cap,
-        }
+    def _metrics(cls, result: Mapping[str, object]) -> tuple[dict[str, Decimal], tuple[str, ...]]:
+        """Every ratio the payload supports, and the ``module.field`` names behind the rest.
+
+        A ratio is present only when every field it needs is numeric; nothing is filled in.
+        The returned order is the canonical one (``pe``, ``debt_equity``,
+        ``operating_margin``, ``fcf_yield``) so logs and proofs read the same way each time.
+        """
+        missing: list[str] = []
+
+        def field(module: str, name: str) -> Decimal | None:
+            value = cls._number(result, module, name)
+            if value is None:
+                missing.append(f"{module}.{name}")
+            return value
+
+        metrics: dict[str, Decimal] = {}
+        pe = field("summaryDetail", "trailingPE")
+        if pe is not None:
+            metrics["pe"] = pe
+        debt_equity = field("financialData", "debtToEquity")
+        if debt_equity is not None:
+            metrics["debt_equity"] = debt_equity / Decimal(100)
+        operating_margin = field("financialData", "operatingMargins")
+        if operating_margin is not None:
+            metrics["operating_margin"] = operating_margin
+        free_cashflow = field("financialData", "freeCashflow")
+        market_cap = field("summaryDetail", "marketCap")
+        if market_cap is not None and market_cap <= 0:
+            missing.append("summaryDetail.marketCap:non_positive")
+            market_cap = None
+        if free_cashflow is not None and market_cap is not None:
+            metrics["fcf_yield"] = free_cashflow / market_cap
+        return metrics, tuple(missing)
 
     @staticmethod
-    def _number(result: Mapping[str, object], module: str, field: str) -> Decimal:
+    def _number(result: Mapping[str, object], module: str, field: str) -> Decimal | None:
+        """The field as a Decimal, or None when the module or field is absent or not numeric."""
         section = result.get(module)
         if not isinstance(section, dict):
-            raise TypeError(f"missing_module: {module}")
+            return None
         value = section.get(field)
         if isinstance(value, dict):
             # ``formatted=true`` shape: {"raw": 24.5, "fmt": "24.50"}; absent fields are {}.
             value = value.get("raw")
         number = _finite_number(value)
         if number is None:
-            raise ValueError(f"missing_or_non_numeric_field: {module}.{field}")
+            return None
         return Decimal(str(number))
 
     @staticmethod

@@ -13,7 +13,7 @@ controls that exist today.
 | Equity, unrealized P&L, drawdown, peak | Marked from the live tick; peak persisted in `paper_accounts.peak_equity` | **Real** |
 | News sentiment | `PRAMANA_NEWS_RSS_URLS` through the production failover registry | Configured does not mean retrieved. Missing configuration or provider failure returns no headlines, never sandbox constants. |
 | Macro (US10Y, INDIA10Y, BRENT, GOLD, USD_BROAD) | `FRED_API_KEY` and the declared FRED series map | Missing configuration or provider failure returns an empty snapshot. `USD_BROAD` is the configured FRED broad-dollar index; it must not be described as ICE DXY. Returned series, dates, semantics and freshness still require qualification. |
-| Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real when Yahoo returns all four ratios for a watchlist/target symbol; otherwise valuation agents abstain. `none` disables |
+| Fundamentals (trailing P/E, debt/equity, operating margin, FCF yield) | `PRAMANA_FUNDAMENTALS_PROVIDER=yahoo` (default): Yahoo Finance `quoteSummary`, no key, cached 6 h per symbol | Real for every ratio Yahoo returns for a watchlist/target symbol (most NSE listings lack FCF yield); valuation agents score the ratios present, scale confidence by coverage and abstain below two. `none` disables |
 | Consensus | Five specialist agents → Atlas; LLM refinement with `ANTHROPIC_API_KEY` | Real only when the XAI trace for the current cadence records `mode=llm`; malformed tool payloads fail closed. The prompt explicitly requires `rationale` as a string array and mandatory `xai_proof`. |
 | Execution | Local paper ledger only; no live order code path exists | Paper, by design |
 
@@ -339,12 +339,14 @@ After an action, reconcile the affected position manually before resuming it.
 ## Known limits of this build
 
 - Fundamentals come from Yahoo Finance's public `quoteSummary` endpoint (crumb-and-cookie
-  session, no API key, no data licence). The provider returns all four ratios or nothing:
-  valuation agents abstain when Yahoo omits a field (trailing P/E is absent for loss-making
-  companies), when the endpoint changes shape or rate-limits, or when the symbol is outside
-  the watchlist/target. Snapshots are cached six hours per symbol, so a new filing reaches
-  the engine up to six hours late. A licensed fundamentals provider remains a founder
-  decision.
+  session, no API key, no data licence). The provider returns every ratio Yahoo carries and
+  leaves the rest out: most NSE listings publish no free cash flow, and trailing P/E is absent
+  for loss-making companies. Valuation agents score the ratios present, name the missing
+  ones in their rationale, scale confidence by coverage (0.80 at four of four, 0.60 at three)
+  and abstain below two. They also abstain when the endpoint changes shape or rate-limits, or
+  when the symbol is outside the watchlist/target. Snapshots are cached six hours per symbol,
+  so a new filing reaches the engine up to six hours late. A licensed fundamentals provider
+  remains a founder decision.
 - RSS sentiment is keyword-based. It is real data, not a strong signal.
 - Exposure is keyed by symbol; the directives reject duplicate symbols across markets
   for that reason.

@@ -44,6 +44,37 @@ class InstrumentBoundAnalysisRequest(AgentAnalysisRequest):
 # as if it had a bad one.
 EQUITY_LIKE = frozenset({AssetClass.EQUITY, AssetClass.ETF, AssetClass.INDEX})
 
+# The valuation ratios each specialist scores, in rationale order. The fundamentals
+# provider returns only the ratios its source carries (most NSE listings publish no free
+# cash flow; a loss-maker has no trailing P/E), so a specialist scores the ratios it was
+# given, names the ones it was not, scales its confidence by coverage and abstains below
+# two: one ratio is a hint, not a valuation. An absent ratio is never scored as a bad one.
+INDIA_VALUATION_RATIOS = ("pe", "debt_equity", "operating_margin", "fcf_yield")
+US_VALUATION_RATIOS = ("pe", "operating_margin", "fcf_yield")
+MIN_VALUATION_RATIOS = 2
+VALUATION_CONFIDENCE = Decimal("0.80")
+
+
+def _valuation_ratios(
+    metrics: Mapping[str, Decimal | str], names: tuple[str, ...]
+) -> tuple[dict[str, Decimal], Decimal, str]:
+    """The ratios present, the confidence their coverage earns and the rationale note.
+
+    Full coverage earns the full confidence and an empty note, so a complete valuation
+    reads exactly as it always has. Partial coverage earns ``0.80 * seen / needed`` and a
+    note naming the count and the missing ratios.
+    """
+    observed = {
+        name: value
+        for name in names
+        if isinstance(value := metrics.get(name), Decimal)
+    }
+    if len(observed) == len(names):
+        return observed, VALUATION_CONFIDENCE, ""
+    missing = ",".join(name for name in names if name not in observed)
+    confidence = VALUATION_CONFIDENCE * Decimal(len(observed)) / Decimal(len(names))
+    return observed, confidence, f";fundamentals={len(observed)}/{len(names)}:missing={missing}"
+
 # India VIX regime, from the index's own history since 2010: the median sits near 15, the
 # top quintile begins around 20, and readings above 25 belong to shocks (March 2020, the
 # June 2024 count). A stressed tape is a headwind for a new long in a single name; a calm
@@ -183,18 +214,23 @@ class IndianEquitiesAgent(SwarmAgent):
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_india_market")
         if request.asset_class not in EQUITY_LIKE:
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_equity_instrument")
-        pe = request.metrics.get("pe", Decimal(0))
-        debt = request.metrics.get("debt_equity", Decimal(0))
-        margin = request.metrics.get("operating_margin", Decimal(0))
-        fcf = request.metrics.get("fcf_yield", Decimal(0))
+        ratios, confidence, coverage = _valuation_ratios(request.metrics, INDIA_VALUATION_RATIOS)
+        if len(ratios) < MIN_VALUATION_RATIOS:
+            return self._evidence(
+                request, Decimal(0), Decimal(0), "india_fundamentals_insufficient" + coverage
+            )
         news = request.metrics.get("equity_news_sentiment", Decimal(0))
         score = Decimal(0)
-        score += Decimal("0.30") if 0 < pe <= 30 else Decimal("-0.15")
-        score += Decimal("0.20") if debt <= Decimal("0.75") else Decimal("-0.20")
-        score += Decimal("0.25") if margin >= Decimal("0.15") else Decimal("-0.10")
-        score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
+        if (pe := ratios.get("pe")) is not None:
+            score += Decimal("0.30") if 0 < pe <= 30 else Decimal("-0.15")
+        if (debt := ratios.get("debt_equity")) is not None:
+            score += Decimal("0.20") if debt <= Decimal("0.75") else Decimal("-0.20")
+        if (margin := ratios.get("operating_margin")) is not None:
+            score += Decimal("0.25") if margin >= Decimal("0.15") else Decimal("-0.10")
+        if (fcf := ratios.get("fcf_yield")) is not None:
+            score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
         score += news * Decimal("0.30")
-        rationale = "india_valuation_balance_sheet_margin_and_news"
+        rationale = "india_valuation_balance_sheet_margin_and_news" + coverage
         if request.asset_class is AssetClass.EQUITY:
             # The regime and flow terms read the Indian equity tape, so they apply to single
             # names only: the metal ETFs in the same book move with gold and silver, which a
@@ -203,7 +239,7 @@ class IndianEquitiesAgent(SwarmAgent):
             adjustment, notes = self._india_tape(request.metrics)
             score += adjustment
             rationale += notes
-        return self._evidence(request, score, Decimal("0.80"), rationale)
+        return self._evidence(request, score, confidence, rationale)
 
     @staticmethod
     def _india_tape(metrics: Mapping[str, Decimal]) -> tuple[Decimal, str]:
@@ -244,18 +280,25 @@ class USEquitiesAgent(SwarmAgent):
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_us_market")
         if request.asset_class not in EQUITY_LIKE:
             return self._evidence(request, Decimal(0), Decimal("0.30"), "non_equity_instrument")
-        pe = request.metrics.get("pe", Decimal(0))
-        margin = request.metrics.get("operating_margin", Decimal(0))
-        fcf = request.metrics.get("fcf_yield", Decimal(0))
+        ratios, confidence, coverage = _valuation_ratios(request.metrics, US_VALUATION_RATIOS)
+        if len(ratios) < MIN_VALUATION_RATIOS:
+            return self._evidence(
+                request, Decimal(0), Decimal(0), "us_fundamentals_insufficient" + coverage
+            )
         us10y = request.metrics.get("us10y", Decimal(0))
         news = request.metrics.get("equity_news_sentiment", Decimal(0))
         score = Decimal(0)
-        score += Decimal("0.25") if 0 < pe <= 35 else Decimal("-0.20")
-        score += Decimal("0.30") if margin >= Decimal("0.20") else Decimal("-0.10")
-        score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
+        if (pe := ratios.get("pe")) is not None:
+            score += Decimal("0.25") if 0 < pe <= 35 else Decimal("-0.20")
+        if (margin := ratios.get("operating_margin")) is not None:
+            score += Decimal("0.30") if margin >= Decimal("0.20") else Decimal("-0.10")
+        if (fcf := ratios.get("fcf_yield")) is not None:
+            score += Decimal("0.15") if fcf >= Decimal("0.025") else Decimal("-0.05")
         score += Decimal("0.15") if us10y <= Decimal("4.5") else Decimal("-0.20")
         score += news * Decimal("0.30")
-        return self._evidence(request, score, Decimal("0.80"), "us_tech_valuation_margin_fcf_and_rates")
+        return self._evidence(
+            request, score, confidence, "us_tech_valuation_margin_fcf_and_rates" + coverage
+        )
 
 
 class TechnicalQuantAgent(SwarmAgent):
