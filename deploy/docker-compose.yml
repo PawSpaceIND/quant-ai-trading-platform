@@ -63,6 +63,8 @@ services:
       PRAMANA_AI_BUDGET_DB: /data/ai-budget.sqlite
       # Per-response allowance only; legacy default and daily spend limits are unchanged.
       PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PRAMANA_ASTRA_SHADOW_ENABLED: ${PRAMANA_ASTRA_SHADOW_ENABLED:-false}
       # Exploration budget (paper): probe entries a day below the conviction floor, their
       # minimum specialist confidence and their size as a fraction of equity. 0 is off.
       # docs and defaults in .env.example; read by the engine and the replay alike.
