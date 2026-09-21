@@ -43,7 +43,7 @@ from quant_ai.intelligence.headline_sentiment import (
     scorer_for,
 )
 from quant_ai.intelligence.pipeline import SwarmMarketAnalysisPipeline
-from quant_ai.intelligence.providers import NewsSignal
+from quant_ai.intelligence.providers import FundamentalSnapshot, NewsSignal
 from quant_ai.intelligence.sandbox import (
     SandboxFundamentalDataProvider,
     SandboxMacroIndicatorProvider,
@@ -264,6 +264,23 @@ class _Headlines(SandboxNewsSentimentProvider):
                            "rss-news", now - timedelta(minutes=5)),)
 
 
+class _Fundamentals(SandboxFundamentalDataProvider):
+    """A weak balance sheet for INFY, which the sandbox does not know.
+
+    The valuation specialist scores only the ratios it is given and abstains outright
+    below two, so without this the headline could not reach it at all. Every ratio here
+    earns its penalty, which parks the valuation below zero and leaves the news term as
+    the only thing that moves the score.
+    """
+
+    def fetch(self, subject, now):
+        if subject.upper() != "INFY":
+            return super().fetch(subject, now)
+        metrics = {"pe": Decimal(40), "debt_equity": Decimal("1.0"),
+                   "operating_margin": Decimal("0.10"), "fcf_yield": Decimal("0.01")}
+        return FundamentalSnapshot(subject, metrics, now - timedelta(seconds=self.age_seconds))
+
+
 def _pipeline(tmp_path, transport: _Transport | None, scorer=None):
     from quant_ai.agents.atlas import AtlasInvestmentAgent
     from quant_ai.agents.swarm import AtlasCIOAgent
@@ -287,7 +304,7 @@ def _pipeline(tmp_path, transport: _Transport | None, scorer=None):
     runtime = SwarmPaperTradingService(cio=AtlasCIOAgent(AtlasInvestmentAgent(llm_client=llm)),
                                        broker=broker)
     return SwarmMarketAnalysisPipeline(
-        feed, _Headlines(), SandboxFundamentalDataProvider(), SandboxMacroIndicatorProvider(),
+        feed, _Headlines(), _Fundamentals(), SandboxMacroIndicatorProvider(),
         runtime=runtime, tick_reader=CadenceMarketReader(buffer), headline_scorer=scorer,
     )
 
