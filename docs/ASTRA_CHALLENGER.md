@@ -31,6 +31,12 @@ medium reasoning and an 8,192-token ceiling including reasoning. No retry or mod
 substitution is performed. Incomplete/refused/invalid output fails closed; unknown
 spend retains its reservation. API errors are reduced to finite codes, not raw text.
 
+The runtime strategy manifest binds the primary/challenger roles, model and request
+settings, endpoints and both budget limits/database identities. It excludes keys and
+changing usage counters. A custom transport, non-durable challenger budget or a
+challenger disconnected from the primary's shared budget leaves the binding unverified;
+changing the configured comparison after boot requires a new reviewed binding.
+
 ## Budget and timing
 
 Astra has a persistent allowance of at most **20 requests and 300,000 reserved/used

@@ -136,6 +136,12 @@ FIELDS = {
         "transport_kind",
         "consensus_max_tokens",
     ),
+    "quant_ai.llm.openai_client.OpenAIConsensusClient": (
+        "model", "timeout_seconds", "max_output_tokens", "reasoning_effort",
+    ),
+    "quant_ai.llm.challenger.ChallengerConsensusClient": (),
+    "quant_ai.llm.challenger._ChallengerBudget": (),
+    "quant_ai.llm.budget.SqliteAIBudget": ("daily_call_limit", "daily_token_limit"),
     "quant_ai.marketdata.ticker_stream.ZerodhaKiteTicker": ("instrument_tokens", "symbol_by_token"),
     "quant_ai.marketdata.ticker_stream.IBKRAsyncTicker": (
         "connect_host",
@@ -202,6 +208,44 @@ def describe(obj, issues: list[str]) -> dict | None:
         issues.append(f"unsupported_component:{name}")
         return {"type": name, "supported": False}
     result = {"type": name, "parameters": {key: stable(getattr(obj, key)) for key in FIELDS[name]}}
+    if name.endswith("SqliteAIBudget"):
+        from quant_ai.governance.runtime_identity import path_digest
+
+        result["database_sha256"] = path_digest(obj.database)
+    if name.endswith("_ChallengerBudget"):
+        from quant_ai.llm.budget import SqliteAIBudget
+
+        if type(obj.sample) is not SqliteAIBudget or type(obj.shared) is not SqliteAIBudget:
+            issues.append("unsupported_challenger_budget")
+        else:
+            result["sample"] = describe(obj.sample, issues)
+            result["shared"] = describe(obj.shared, issues)
+            if obj.shared.database == ":memory:" or obj.sample.database == ":memory:":
+                issues.append("challenger_budget_not_durable")
+    if name.endswith("ChallengerConsensusClient"):
+        from quant_ai.llm.anthropic_client import AnthropicSwarmClient
+        from quant_ai.llm.budget import SqliteAIBudget
+        from quant_ai.llm.challenger import _ChallengerBudget
+        from quant_ai.llm.openai_client import OpenAIConsensusClient
+
+        result["execution_authority"] = "primary_only"
+        if type(obj.primary) is not AnthropicSwarmClient or type(obj.challenger) is not OpenAIConsensusClient:
+            issues.append("unsupported_challenger_pair")
+        else:
+            result["primary"] = describe(obj.primary, issues)
+            result["challenger"] = describe(obj.challenger, issues)
+            if (type(obj.primary.budget) is not SqliteAIBudget
+                    or type(obj.challenger.budget) is not _ChallengerBudget
+                    or obj.challenger.budget.shared is not obj.primary.budget
+                    or obj.budget is not obj.primary.budget):
+                issues.append("challenger_shared_budget_mismatch")
+    if name.endswith("OpenAIConsensusClient"):
+        from quant_ai.llm.openai_client import RESPONSES_URL
+
+        result["endpoint_sha256"] = source_identity(RESPONSES_URL)
+        result["budget"] = describe(obj.budget, issues)
+        if obj._transport is not None:
+            issues.append("unsupported_inference_transport")
     if name.endswith("AutonomousCadenceScheduler"):
         result["calendar"] = describe(obj.calendar, issues)
     if name.endswith("MarketCalendar"):
@@ -220,6 +264,7 @@ def describe(obj, issues: list[str]) -> dict | None:
     if name.endswith("AnthropicSwarmClient"):
         from anthropic import AsyncAnthropic
 
+        result["budget"] = describe(obj.budget, issues)
         client = obj._client
         if type(client) is not AsyncAnthropic or obj.transport_kind != "anthropic_sdk":
             issues.append("unsupported_inference_transport")
