@@ -127,6 +127,16 @@ export function riskGateViews(runtime: Runtime, tenant: string, now = Date.now()
 }
 
 /** Counts for the panel header. `unverified` is reported separately, never folded in. */
+/** The tone the protective-controls badge may claim.
+ *
+ * Green means every gate is armed. Any non-zero count used to be enough, so one armed
+ * gate out of seven showed green while six controls were switched off. */
+export function gateTone(tally: {armed: number; unverified: number; total: number}) {
+  if (tally.unverified) return "amber";
+  if (!tally.total || !tally.armed) return "neutral";
+  return tally.armed === tally.total ? "green" : "amber";
+}
+
 export function gateTally(views: GateView[]) {
   return {
     armed: views.filter((v) => v.state === "armed").length,

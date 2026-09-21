@@ -39,7 +39,6 @@ export type InstrumentUniverse = {
   shortSide?: string;
   entitlement?: string;
   sample?: UniverseInstrument[];
-  recordsPath?: string;
 };
 
 export type MarketRow = {
@@ -162,7 +161,6 @@ export async function readMarket(): Promise<MarketSnapshot> {
           derivativeContracts: cleanCount(rawUniverse.derivativeContracts),
           shortSide: typeof rawUniverse.shortSide === "string" ? rawUniverse.shortSide : undefined,
           entitlement: typeof rawUniverse.entitlement === "string" ? rawUniverse.entitlement : undefined,
-          recordsPath: typeof rawUniverse.recordsPath === "string" ? rawUniverse.recordsPath : undefined,
           sample: Array.isArray(rawUniverse.sample) ? rawUniverse.sample.slice(0,100).filter((item: unknown): item is UniverseInstrument => {
             if (!item || typeof item !== "object") return false;
             const value = item as Record<string, unknown>;
