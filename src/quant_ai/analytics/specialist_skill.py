@@ -7,9 +7,9 @@ its 60-minute forward return. This module reads that scoring: per specialist, ho
 direction it voted matched the forward return over the last ``DEFAULT_SESSIONS`` IST
 sessions before the current week. A specialist scored at least ``MINIMUM_SAMPLE`` times
 gets a weight in the same 0.75 to 1.25 band the attribution engine uses; fewer votes keep
-the weight at one. The weights are recomputed once per IST week from rows strictly before
-the week started, so a restart mid-week reproduces the same numbers, and the report that
-carries them names every decision they came from through ``basis_sha256``.
+the weight at one. The daemon freezes one accepted report per tenant and IST week, so a
+restart cannot silently incorporate corrected history. ``basis_sha256`` binds the input
+values and scoring policy, not just the decision identifiers.
 
 Governed: the band is fixed, the sample floor is fixed, the horizon is the resolver's, the
 report is written before the weights apply, and the switch that applies them is an
@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from collections.abc import Mapping
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -38,6 +39,8 @@ from quant_ai.analytics.decision_quality import (
 )
 
 SCHEMA = "pramana.specialist_skill.v1"
+BASIS_SCHEMA = "pramana.specialist_skill_basis.v2"
+ACCEPTED_SCHEMA = "pramana.accepted_specialist_skill.v1"
 REPORT_NAME = "specialist-skill.json"
 DEFAULT_SESSIONS = 10
 MINIMUM_SAMPLE = 30
@@ -170,10 +173,16 @@ def build_skill_report(
     boundary = (aware(until) if until is not None else week_start(current)).astimezone(IST)
     rows, dates = window_rows(broker, tenant_id=tenant_id, until=boundary, sessions=sessions)
     agents = score_agents(rows, minimum_sample=minimum_sample)
-    basis = hashlib.sha256(json.dumps(
-        [SCHEMA, tenant_id, HORIZON_COLUMN, [item["decision_ids"] for item in agents]],
-        sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
+    basis = _digest({
+        "schema": BASIS_SCHEMA, "tenant_id": tenant_id, "horizon": HORIZON_COLUMN,
+        "week_start": boundary.isoformat(), "sessions": sessions, "minimum_sample": minimum_sample,
+        "policy": {"floor": str(WEIGHT_FLOOR), "ceiling": str(WEIGHT_CEILING),
+                   "places": str(PLACES), "formula": "floor + accuracy / 2; flat is a miss"},
+        "rows": sorted([
+            {key: row.get(key) for key in ("decision_id", "decided_at", "agents", HORIZON_COLUMN)}
+            for row in rows
+        ], key=lambda row: (str(row["decision_id"]), str(row["decided_at"]))),
+    })
     return {
         "schema": SCHEMA,
         "tenant_id": tenant_id,
@@ -192,6 +201,7 @@ def build_skill_report(
         "agents": [{k: v for k, v in item.items() if k != "decision_ids"} for item in agents],
         "applied": sum(1 for item in agents if item["applied"]),
         "basis_sha256": basis,
+        "basis_schema": BASIS_SCHEMA,
         "limitations": limitations(sessions=sessions, minimum_sample=minimum_sample),
     }
 
@@ -223,6 +233,7 @@ def summary(report: Mapping[str, Any]) -> dict[str, Any]:
             for item in report.get("agents") or ()
         ],
         "basis_sha256": report.get("basis_sha256"),
+        "basis_schema": report.get("basis_schema", "legacy_decision_ids_only"),
     }
 
 
@@ -250,3 +261,107 @@ def report_path(decision_quality_report: Path) -> Path:
 
 def write_skill_report(path: str | Path, report: Mapping[str, Any]) -> Path:
     return write_report(path, dict(report))
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode()).hexdigest()
+
+
+def accepted_path(path: Path, tenant_id: str, now: datetime) -> Path:
+    """Tenant-scoped, path-safe history; the latest display file is not the authority."""
+    tenant = hashlib.sha256(tenant_id.encode()).hexdigest()
+    return path.parent / "specialist-skill-history" / tenant / f"{week_start(now).date()}.json"
+
+
+def _validate_report(report: Any, *, tenant_id: str, now: datetime) -> dict:
+    """Reject partial/foreign policies before any stored weight can reach the engine."""
+    if not isinstance(report, dict) or (
+        report.get("schema"), report.get("tenant_id"), report.get("week_start"), report.get("horizon")
+    ) != (SCHEMA, tenant_id, week_start(now).isoformat(), HORIZON_COLUMN):
+        raise ValueError("specialist_skill_identity_invalid")
+    minimum = report.get("minimum_sample")
+    if type(minimum) is not int or minimum != MINIMUM_SAMPLE or report.get("band") != {
+        "floor": str(WEIGHT_FLOOR), "ceiling": str(WEIGHT_CEILING),
+    }:
+        raise ValueError("specialist_skill_policy_invalid")
+    window = report.get("window")
+    if (not isinstance(window, dict) or window.get("sessions") != DEFAULT_SESSIONS
+            or window.get("until") != week_start(now).isoformat()
+            or report.get("basis_schema") not in (None, "legacy_decision_ids_only", BASIS_SCHEMA)):
+        raise ValueError("specialist_skill_window_invalid")
+    basis = report.get("basis_sha256")
+    if not isinstance(basis, str) or len(basis) != 64 or any(c not in "0123456789abcdef" for c in basis):
+        raise ValueError("specialist_skill_basis_invalid")
+    agents = report.get("agents")
+    if not isinstance(agents, list):
+        raise TypeError("specialist_skill_agents_invalid")
+    seen = set()
+    for agent in agents:
+        if not isinstance(agent, dict):
+            raise TypeError("specialist_skill_agent_invalid")
+        name, evaluated, hits = (agent.get(key) for key in ("agent_id", "evaluated", "hits"))
+        if (not isinstance(name, str) or not name or name in seen
+                or type(evaluated) is not int or type(hits) is not int or not 0 <= hits <= evaluated):
+            raise ValueError("specialist_skill_scores_invalid")
+        seen.add(name)
+        applied = evaluated >= minimum
+        accuracy = Decimal(hits) / Decimal(evaluated) if evaluated else None
+        weight = skill_weight(accuracy) if applied else Decimal(1)
+        if (agent.get("applied") is not applied or parse_decimal(agent.get("weight")) != weight
+                or agent.get("directional_accuracy") != (number(accuracy) if accuracy is not None else None)):
+            raise ValueError("specialist_skill_weight_invalid")
+    if type(report.get("applied")) is not int or report["applied"] != sum(a["applied"] for a in agents):
+        raise ValueError("specialist_skill_count_invalid")
+    return report
+
+
+def accepted_weekly_report(path: Path, broker, *, tenant_id: str, now: datetime) -> dict:
+    """Publish once, atomically; restarts and competing processes load the accepted winner.
+
+    A matching legacy display report is adopted on upgrade to preserve weights already
+    in force. Its weaker ID-only basis is explicitly marked, never relabelled as v2.
+    Corrupt accepted reports are errors, not permission to recompute a different policy.
+    """
+    target = accepted_path(path, tenant_id, now)
+
+    def read() -> dict:
+        envelope = json.loads(target.read_text(encoding="utf-8"))
+        if (not isinstance(envelope, dict) or envelope.get("schema") != ACCEPTED_SCHEMA
+                or envelope.get("report_sha256") != _digest(envelope.get("report"))):
+            raise ValueError("specialist_skill_archive_integrity_invalid")
+        return _validate_report(envelope["report"], tenant_id=tenant_id, now=now)
+
+    if target.exists():
+        return read()
+    report = None
+    if path.exists():
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(previous, dict) and previous.get("tenant_id") == tenant_id and previous.get("week_start") == week_start(now).isoformat():
+            report = _validate_report(previous, tenant_id=tenant_id, now=now)
+            report.setdefault("basis_schema", "legacy_decision_ids_only")
+    if report is None:
+        report = build_skill_report(broker, tenant_id=tenant_id, now=now)
+    _validate_report(report, tenant_id=tenant_id, now=now)
+    envelope = {"schema": ACCEPTED_SCHEMA, "report_sha256": _digest(report), "report": report}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".skill-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(envelope, handle, allow_nan=False, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # Unlike replace(), link() cannot overwrite a concurrently accepted week.
+            os.link(temporary, target)
+        except FileExistsError:
+            pass
+        directory = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        os.unlink(temporary)
+    return read()
