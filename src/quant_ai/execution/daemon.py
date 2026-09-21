@@ -506,7 +506,11 @@ class AutonomousTradingDaemon:
     def _briefs_to_dispatch(
         briefs: list[FounderExecutionBrief],
     ) -> tuple[FounderExecutionBrief, ...]:
-        """One brief per instrument in session; a single closed-market sweep otherwise."""
+        """The in-session briefs, or the single closed-market sweep.
+
+        Several in-session briefs go out as one cycle digest, never one message each:
+        twelve digests in one burst drew Telegram's rate limit on 21 September 2026.
+        """
         if len(briefs) == 1:
             return tuple(briefs)
         in_session = tuple(
@@ -579,9 +583,19 @@ class AutonomousTradingDaemon:
                     self.scheduler.pipeline.runtime.attribution.record(
                         agent_ids, realized_delta, getattr(traces[-1], "regime", None)
                     )
-            for item in self._briefs_to_dispatch(briefs):
+            to_dispatch = self._briefs_to_dispatch(briefs)
+            if len(to_dispatch) == 1:
                 self.notifications.dispatch_brief(
-                    item,
+                    to_dispatch[0],
+                    total_equity=metrics.total_equity,
+                    realized_pnl=metrics.realized_pnl,
+                    unrealized_pnl=metrics.unrealized_pnl,
+                    drawdown_fraction=metrics.drawdown_fraction,
+                    tenant_id=self.tenant_id,
+                )
+            else:
+                self.notifications.dispatch_cycle_digest(
+                    to_dispatch,
                     total_equity=metrics.total_equity,
                     realized_pnl=metrics.realized_pnl,
                     unrealized_pnl=metrics.unrealized_pnl,
