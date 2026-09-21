@@ -27,9 +27,15 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _with_quantity_source(proposal: TradeProposal, source: str) -> TradeProposal:
-    """Record whether the plan sized this quantity or a caller fixed it; sizing reads it."""
+    """Record whether the plan sized this quantity or a caller fixed it; sizing reads it.
+
+    Anything that is not a proposal (a test double, a CIO that answered nothing) passes
+    through untouched: the marker is evidence on a proposal, never a gate before one.
+    """
     if source not in {"plan", "explicit"}:
         raise ValueError("quantity_source must be 'plan' or 'explicit'")
+    if not isinstance(proposal, TradeProposal):
+        return proposal
     return replace(proposal, provenance={**(proposal.provenance or {}), "quantity_source": source})
 
 
