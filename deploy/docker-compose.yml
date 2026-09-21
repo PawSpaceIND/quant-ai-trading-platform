@@ -72,6 +72,9 @@ services:
       # Regime playbooks: the regime raises the consensus floor, scales entries and may
       # withhold probes. Every playbook only tightens; off is the looser comparison run.
       PRAMANA_REGIME_PLAYBOOKS: ${PRAMANA_REGIME_PLAYBOOKS:-on}
+      # Weekly specialist skill weights from the scored journal, applied inside a fixed
+      # band. The report is written either way; off keeps every weight at one.
+      PRAMANA_SPECIALIST_REWEIGHTING: ${PRAMANA_SPECIALIST_REWEIGHTING:-on}
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
       # Mandatory entry gates; provider absence must never mean permission to trade.
       PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"

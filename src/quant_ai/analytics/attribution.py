@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -14,6 +15,9 @@ LOGGER = logging.getLogger(__name__)
 # a story, not evidence, and an over-eager weight would amplify noise into conviction.
 MIN_REGIME_OBSERVATIONS = 10
 BLENDED = ""
+# Every multiplier on a specialist's confidence, alone or combined, stays in this band.
+WEIGHT_FLOOR = Decimal("0.75")
+WEIGHT_CEILING = Decimal("1.25")
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,26 @@ class AgentAttributionEngine:
         self._records: dict[tuple[str, str], list[Decimal]] = {}
         self._journal_binding = None
         self.feedback: dict = {"status": "not_refreshed", "credited_entries": 0}
+        # Weekly directional skill weights (quant_ai.analytics.specialist_skill), applied
+        # beside the realised-P&L credit above and combined inside the same band. A journal
+        # refresh rebuilds the credit records and leaves these untouched.
+        self.skill_weights: dict[str, Decimal] = {}
+        self.skill_basis: str | None = None
+
+    def apply_skill(self, weights: Mapping[str, Decimal], *, basis: str | None) -> None:
+        """Replace the skill weights; a value outside the band is refused whole."""
+        accepted: dict[str, Decimal] = {}
+        for agent_id, weight in weights.items():
+            value = Decimal(str(weight))
+            if not WEIGHT_FLOOR <= value <= WEIGHT_CEILING:
+                raise ValueError(f"skill weight out of band for {agent_id}: {value}")
+            accepted[str(agent_id)] = value
+        self.skill_weights = accepted
+        self.skill_basis = basis if accepted else None
+
+    def clear_skill(self) -> None:
+        self.skill_weights = {}
+        self.skill_basis = None
 
     def _refresh_bound(self, now: datetime | None = None) -> None:
         if self._journal_binding is not None:
@@ -117,11 +141,22 @@ class AgentAttributionEngine:
         adjusted = []
         for item in evidence:
             weight, source = self.weight_for(item.agent_id, regime)
+            notes = (f"attribution_weight={weight}:{source}",) + policy_rationale
+            skill = self.skill_weights.get(item.agent_id)
+            if skill is not None:
+                # Realised credit and directional skill compound, but never past the band
+                # either of them is allowed alone.
+                weight = min(WEIGHT_CEILING, max(WEIGHT_FLOOR, weight * skill))
+                notes += (
+                    f"skill_weight={skill}:directional_accuracy",
+                    f"skill_basis_sha256={self.skill_basis}",
+                    f"combined_weight={weight}",
+                )
             confidence = min(Decimal(1), max(Decimal(0), item.confidence * weight))
             adjusted.append(AgentEvidence(
                 item.agent_id, item.domain, item.subject, item.stance, confidence,
                 item.expected_return, item.expected_risk,
-                item.rationale + (f"attribution_weight={weight}:{source}",) + policy_rationale,
+                item.rationale + notes,
                 item.observed_at, item.source_freshness_seconds,
             ))
         return tuple(adjusted)

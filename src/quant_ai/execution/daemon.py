@@ -69,6 +69,8 @@ class AutonomousTradingDaemon:
         event_calendar: EventCalendar | None = None,
         declared_action_lookup: DeclaredActionLookup | None = None,
         missed_opportunity_dir: str | Path | None = None,
+        post_mortem_dir: str | Path | None = None,
+        specialist_reweighting: bool = True,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -134,6 +136,15 @@ class AutonomousTradingDaemon:
             Path(missed_opportunity_dir) if missed_opportunity_dir is not None else None
         )
         self._missed_notified: set[str] = set()
+        # Governed learning. The post-mortem for a session is built once, after the close
+        # and an hour after its last decision, and written pending: its lessons reach a
+        # decision only after `pramana post-mortem --approve`. The specialist skill weights
+        # are recomputed once per IST week from the scored journal and applied inside a
+        # fixed band when the operator's switch is on; the report is written either way.
+        self.post_mortem_dir = Path(post_mortem_dir) if post_mortem_dir is not None else None
+        self.specialist_reweighting = bool(specialist_reweighting)
+        self._post_mortems_built: set[str] = set()
+        self._skill_week: str | None = None
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -626,6 +637,7 @@ class AutonomousTradingDaemon:
             )
             self._write_decision_quality(timestamp)
             self._write_missed_opportunities(timestamp)
+            self._write_post_mortem(timestamp)
             return brief
         finally:
             self._in_flight = False
@@ -682,6 +694,15 @@ class AutonomousTradingDaemon:
 
             observed_at = self.clock()
             self.scheduler.pipeline.runtime.attribution._refresh_bound(observed_at)
+            try:
+                skill = self._refresh_specialist_skill(timestamp)
+            except Exception:  # the skill report is optional evidence; the quality report still writes
+                self._logger.exception("specialist_skill_refresh_failed")
+                skill = None
+            if skill is not None:
+                from quant_ai.analytics.specialist_skill import summary as skill_summary
+
+                report["specialist_skill"] = {**skill_summary(skill), "applied_to_engine": self.specialist_reweighting}
             drift = enrich_learning_report(
                 report, self.scheduler.pipeline.runtime.attribution,
                 config_path=self.decision_quality_report_path.parent / "learning-monitor.json",
@@ -694,6 +715,120 @@ class AutonomousTradingDaemon:
             self._notify_learning_evidence(drift, observed_at)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_quality_report_failed")
+
+    def _refresh_specialist_skill(self, timestamp: datetime) -> dict | None:
+        """Once per IST week: score the specialists, write the report, apply the weights.
+
+        The window ends where the week began, so every tick of the week (and a restart in
+        the middle of it) computes the same weights from the same rows. Returns the report
+        this tick used, or None when no report file is configured.
+        """
+        if self.decision_quality_report_path is None:
+            return None
+        from quant_ai.analytics import specialist_skill as skill
+
+        week = skill.week_start(timestamp).isoformat()
+        cached = getattr(self, "_skill_report", None)
+        if week == self._skill_week and cached is not None:
+            return cached
+        report = skill.build_skill_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp, until=skill.week_start(timestamp))
+        path = skill.report_path(self.decision_quality_report_path)
+        skill.write_skill_report(path, report)
+        engine = self.scheduler.pipeline.runtime.attribution
+        weights = skill.weights_of(report)
+        if self.specialist_reweighting and weights:
+            engine.apply_skill(weights, basis=report["basis_sha256"])
+        else:
+            engine.clear_skill()
+        self._skill_week, self._skill_report = week, report
+        if weights:
+            self._notify_specialist_skill(report, path, timestamp)
+        return report
+
+    def _notify_specialist_skill(self, report: dict, path: Path, timestamp: datetime) -> None:
+        """One note per IST week, across restarts, naming every weight that applies."""
+        from quant_ai.analytics.specialist_skill import notification_message
+        from quant_ai.notifications.trading import AlertPriority
+
+        marker = path.parent / f".skill-notified-{str(report['week_start'])[:10]}"
+        if marker.exists():
+            return
+        self.notifications.dispatch(
+            TradingAlertCode.SPECIALIST_WEIGHTS_UPDATED,
+            notification_message(report, applied=self.specialist_reweighting),
+            tenant_id=self.tenant_id, priority=AlertPriority.INFO,
+            metadata={
+                "week_start": str(report["week_start"]),
+                "applied": str(report["applied"]),
+                "applied_to_engine": str(self.specialist_reweighting).lower(),
+                "basis_sha256": str(report["basis_sha256"]),
+            },
+        )
+        marker.write_text(timestamp.isoformat(), encoding="utf-8")
+
+    def _write_post_mortem(self, timestamp: datetime) -> None:
+        """Build the latest session's post-mortem once, after its close, and ask for approval.
+
+        The latest session with decisions is reviewed when the venue is outside regular
+        hours and an hour has passed since that session's last decision, so the 60-minute
+        outcomes the lessons read have had their chance to resolve. A file that already
+        exists, pending or approved, is never rebuilt here; the operator's CLI owns that.
+        """
+        if self.post_mortem_dir is None:
+            return
+        try:
+            from quant_ai.analytics import post_mortem as review
+
+            session_date = review.latest_session_date(self.tracker.broker, tenant_id=self.tenant_id)
+            if session_date is None:
+                return
+            stamp = session_date.isoformat()
+            if stamp in self._post_mortems_built:
+                return
+            path = review.post_mortem_path(self.post_mortem_dir, session_date)
+            if path.exists():
+                self._post_mortems_built.add(stamp)
+                return
+            if self.scheduler.calendar.state(
+                self.instrument.market, timestamp, exchange=self.instrument.exchange
+            ) == MarketState.REGULAR_HOURS:
+                return
+            rows = review.session_rows(self.tracker.broker, tenant_id=self.tenant_id, session_date=session_date)
+            decided = [review.aware(datetime.fromisoformat(str(row["decided_at"]))) for row in rows if row.get("decided_at")]
+            # The hour runs from the last decision made while the venue was open; a hold
+            # journaled after the close must not keep pushing the review back.
+            in_session = [
+                moment for moment in decided
+                if self.scheduler.calendar.state(
+                    self.instrument.market, moment, exchange=self.instrument.exchange
+                ) == MarketState.REGULAR_HOURS
+            ] or decided
+            if not in_session or timestamp < max(in_session) + timedelta(hours=1):
+                return
+            report = review.build_post_mortem(
+                self.tracker.broker, tenant_id=self.tenant_id, now=timestamp, session_date=session_date
+            )
+            review.write_post_mortem(self.post_mortem_dir, report)
+            self._post_mortems_built.add(stamp)
+            self._notify_post_mortem(report, path)
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("post_mortem_build_failed")
+
+    def _notify_post_mortem(self, report: dict, path: Path) -> None:
+        from quant_ai.notifications.trading import AlertPriority
+
+        lessons = [item for item in report.get("lessons", []) if isinstance(item, str)]
+        stamp = report["session_date"]
+        head = (
+            f"Post-mortem {stamp} written: {len(lessons)} lesson{'s' if len(lessons) != 1 else ''} "
+            f"pending your approval. Review {path}, then approve with: pramana post-mortem --approve {stamp}"
+        )
+        message = "\n".join([head, *lessons[:3]])
+        self.notifications.dispatch(
+            TradingAlertCode.POST_MORTEM_PENDING, message,
+            tenant_id=self.tenant_id, priority=AlertPriority.INFO,
+            metadata={"session_date": stamp, "lessons": str(len(lessons)), "path": str(path)},
+        )
 
     def _notify_learning_evidence(self, drift: dict, timestamp: datetime) -> None:
         """Observation alert only; never halt protection or approve a candidate."""

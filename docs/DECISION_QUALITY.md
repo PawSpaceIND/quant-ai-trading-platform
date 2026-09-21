@@ -73,11 +73,37 @@ exits, rejections, the by-regime and by-hour tables, and up to eight one-line
 lessons derived only from the numbers, each backed by the decision ids behind it. A
 lesson is never drawn from fewer than three observations.
 
+The engine builds the file itself once per session: after the venue's close, an hour
+after the session's last decision so the 60-minute outcomes had their chance to resolve,
+it writes the review `pending` and sends one INFO alert (`POST_MORTEM_PENDING`) with the
+lesson count, the path and the approval command. A file that already exists, pending or
+approved, is never rebuilt by the engine; `pramana post-mortem [--date YYYY-MM-DD]`
+remains the operator's way to rebuild a pending one.
+
 The file starts as `pending`. `pramana post-mortem --approve YYYY-MM-DD` marks it
 `approved`. Only approved lessons from the last five sessions, at most eight lines
 of at most 200 characters, reach the LLM consensus, and they reach it inside the
 evidence block that is labelled as data, not instructions. The dashboard shows both
 states; approval is an operator action on the host, never a dashboard button.
+
+## Specialist skill weights
+
+Realised-P&L credit (below, "What actually learns") needs closed entries, and a book that
+holds all day closes none. The weekly skill report scores every specialist on every
+decision instead: over the last 10 IST sessions before the current week, how often the
+direction it voted matched the 60-minute forward return the outcome resolver stored (a
+flat return is a miss; NEUTRAL votes are not scored). A specialist with at least 30 scored
+votes gets a weight of `0.75 + accuracy / 2`, clamped to 0.75-1.25, on its stated
+confidence; fewer votes keep the weight at 1. The report is `specialist-skill.json`
+beside the decision-quality report (`pramana.specialist_skill.v1`), carries a
+`basis_sha256` over the decision ids it used, and is recomputed once per week from rows
+strictly before the week began, so a restart mid-week reproduces the same weights. With
+`PRAMANA_SPECIALIST_REWEIGHTING=on` (the default) the weights apply in the attribution
+engine, combined with any realised credit inside the same band, and every weighted
+specialist line in a proof carries `skill_weight=…`, `skill_basis_sha256=…` and
+`combined_weight=…`. One INFO alert a week lists the weights. Off writes the report and
+applies nothing. The weights scale confidence only; they never move a gate, a limit or
+the consensus floor.
 
 ## Missed opportunities
 
@@ -179,6 +205,7 @@ PRAMANA_DAILY_HISTORY_PROVIDER=yahoo      # none: intraday-only regime
 PRAMANA_DECISION_QUALITY_REPORT=          # default: decision-quality.json next to the ledger
 PRAMANA_POST_MORTEM_DIR=                  # default: post-mortems/ next to the ledger
 PRAMANA_MISSED_OPPORTUNITY_DIR=           # unset: off; Compose sets /data/missed-opportunities
+PRAMANA_SPECIALIST_REWEIGHTING=on         # weekly skill weights applied; off writes the report only
 ```
 
 Compose forwards all four; the daemon writes and the dashboard reads the same
