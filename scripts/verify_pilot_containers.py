@@ -140,6 +140,7 @@ def main():
         # Regime routing is on unless the operator turns it off for a comparison run.
         assert services["pramana-ghost"]["environment"]["PRAMANA_REGIME_PLAYBOOKS"] == "on"
         assert services["pramana-ghost"]["environment"]["PRAMANA_SPECIALIST_REWEIGHTING"] == "on"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_SCAN_UNIVERSE_JSON"] == "[]"
         assert services["pramana-ghost"]["environment"]["PRAMANA_CORPORATE_ACTIONS"] == "/app/corporate-actions.json"
         limits = {}
         for name, service in services.items():

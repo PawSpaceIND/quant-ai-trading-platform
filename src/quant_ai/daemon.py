@@ -13,6 +13,7 @@ from threading import Event, Thread
 from typing import Any
 
 from quant_ai.agents.institutional_runtime import InstitutionalRuntimeInputs
+from quant_ai.agents.scanner import scan_universe_from_env
 from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.decision_journal import count_probes
 from quant_ai.analytics.post_mortem import approved_lessons
@@ -499,6 +500,7 @@ def build_ghost_runner(
     missed_opportunity_dir: str | Path | None = None,
     specialist_reweighting: bool = True,
     session_plan_dir: str | Path | None = None,
+    scan_universe: tuple[Instrument, ...] = (),
     history_provider: DailyHistoryProvider | None = None,
     book_risk_history: DailyHistoryProvider | None = None,
     require_book_risk_gates: bool = False,
@@ -656,6 +658,10 @@ def build_ghost_runner(
         post_mortem_dir=_post_mortem_dir(database, post_mortem_directory),
         specialist_reweighting=specialist_reweighting,
         session_plan_dir=_session_plan_dir(database, session_plan_dir),
+        # Opportunity scan outside the book: candidates from the environment, gates from
+        # what this boot could actually map (websocket tokens) and group (sector map).
+        scan_universe=scan_universe,
+        scan_gates={"token": frozenset(mapped), "sector": frozenset(directives.sector_map or {})},
     )
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
@@ -1010,6 +1016,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         missed_opportunity_dir=paths.missed_opportunity_directory(),
         specialist_reweighting=reweighting_enabled(),
         session_plan_dir=paths.session_plan_directory("PRAMANA_PAPER_DB"),
+        scan_universe=scan_universe_from_env(),
         tenant_id=paths.tenant_id(default="ghost"),
         log_path=os.getenv("PRAMANA_GHOST_LOG", "/var/log/pramana/pramana-ghost.log"),
         xai_directory=str(paths.proof_directory("PRAMANA_XAI_DIR")),

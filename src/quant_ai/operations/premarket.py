@@ -266,6 +266,26 @@ def _learning(env: Mapping[str, str]) -> Check:
     return Check("learning", "INFO", f"{weights}; post-mortems built after the close, approval manual")
 
 
+def _scan_universe(env: Mapping[str, str], payload: Mapping) -> Check:
+    """The names scanned for opportunity outside the book; informational either way."""
+    from quant_ai.agents.scanner import scan_universe_from_env
+
+    try:
+        candidates = scan_universe_from_env(env)
+    except RuntimeError as error:
+        return Check("scan_universe", "FAIL", str(error)[:160])
+    if not candidates:
+        return Check("scan_universe", "INFO", "off (set PRAMANA_SCAN_UNIVERSE_JSON to NSE symbols)")
+    watch = payload.get("watchlist") or []
+    watched = {str(item.get("symbol")).upper() for item in watch if isinstance(item, dict) and item.get("symbol")}
+    outside = [item.symbol for item in candidates if item.symbol not in watched]
+    return Check(
+        "scan_universe", "INFO",
+        f"{len(outside)} NSE names scanned outside the book each pre-open"
+        + (f", {len(candidates) - len(outside)} already watched" if len(outside) != len(candidates) else ""),
+    )
+
+
 def _market_data(payload: Mapping, now: datetime) -> Check:
     integrity = payload.get("marketDataIntegrity") or {}
     accepted = integrity.get("accepted")
@@ -297,6 +317,7 @@ def premarket_checks(
         _exploration(env),
         _playbooks(env),
         _learning(env),
+        _scan_universe(env, payload),
         _market_data(payload, now),
     ]
 

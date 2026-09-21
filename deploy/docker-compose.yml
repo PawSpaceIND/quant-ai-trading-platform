@@ -103,6 +103,9 @@ services:
       # One pre-open plan per trading day: focus, stand-down and posture, read out as the
       # morning brief. The dashboard reads the same files.
       PRAMANA_SESSION_PLAN_DIR: /data/session-plans
+      # NSE cash names scanned for opportunity outside the book each pre-open; read-only,
+      # reported in the session plan with the gates a promotion has to pass. [] is off.
+      PRAMANA_SCAN_UNIVERSE_JSON: ${PRAMANA_SCAN_UNIVERSE_JSON:-[]}
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
       # Every dispatched alert is appended to this file in the shared volume, so an alert
       # outlives the container that `up -d --build` replaces. Telegram is optional push
