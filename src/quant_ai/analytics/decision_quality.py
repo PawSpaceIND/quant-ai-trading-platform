@@ -31,6 +31,7 @@ from quant_ai.analytics.metrics import (
     MINIMUM_SIGNIFICANCE_OBSERVATIONS,
     mean_return_significance,
 )
+from quant_ai.llm.diagnostics import normalized_diagnostic
 
 SCHEMA = "pramana.decision_quality.v1"
 HORIZON_MINUTES = 60
@@ -393,6 +394,24 @@ def by_mode(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def inference_health(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Decision-level diagnostics, not request counts or a provider API failure rate."""
+    statuses: Counter = Counter()
+    failures: Counter = Counter()
+    for row in rows:
+        status, code = normalized_diagnostic(row.get("inference_status"), row.get("inference_failure_code"))
+        if status is not None:
+            statuses[status] += 1
+        if code is not None:
+            failures[code] += 1
+    recorded = sum(statuses.values())
+    return {
+        "decisions": len(rows), "recorded": recorded, "not_recorded": len(rows) - recorded,
+        "statuses": [{"status": key, "decisions": value} for key, value in sorted(statuses.items())],
+        "failures": [{"code": key, "decisions": value} for key, value in sorted(failures.items(), key=lambda item: (-item[1], item[0]))],
+    }
+
+
 def recent(rows: list[dict[str, Any]], limit: int = RECENT_LIMIT) -> list[dict[str, Any]]:
     newest = sorted(rows, key=lambda row: (str(row.get("decided_at")), str(row.get("decision_id"))))
     return [
@@ -491,6 +510,7 @@ def summarize(
         "by_hour_ist": by_hour_ist(rows),
         "by_agent": by_agent(rows),
         "by_mode": by_mode(rows),
+        "inference_health": inference_health(rows),
         "recent": recent(rows),
         "limitations": limitations(insufficient_sample=insufficient, minimum_sample=minimum_sample),
     }

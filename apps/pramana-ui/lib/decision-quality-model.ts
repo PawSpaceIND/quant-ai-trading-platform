@@ -21,6 +21,16 @@ export type RegimeRow = { regime: string; decisions: number; filled: number; hit
 export type HourRow = { hour: number; decisions: number; hit_rate: number | null; net_pnl: number };
 export type AgentRow = { agent_id: string; evaluated: number; directional_accuracy: number | null };
 export type ModeRow = { mode: string; decisions: number };
+export const INFERENCE_STATUS_LABELS = {
+  completed: "Model response completed", invalid_schema: "Response failed validation",
+  unavailable: "Provider unavailable", budget_exhausted: "Budget blocked",
+  unverified: "Model evidence unverified", not_requested: "No model requested",
+} as const;
+export type InferenceHealth = {
+  decisions: number; recorded: number; not_recorded: number;
+  statuses: Array<{ status: keyof typeof INFERENCE_STATUS_LABELS; decisions: number }>;
+  failures: Array<{ code: string; decisions: number }>;
+};
 export type RecentDecision = {
   decision_id: string; decided_at: string; symbol: string; stance: string; confidence: number;
   regime: string | null; mode: string | null; governance: Governance; reason: string | null; order_id: string | null;
@@ -50,6 +60,7 @@ export type DecisionQualityReport = {
   limitations: string[];
   /** Today's consensus spend headroom. Absent when the engine runs without a budget. */
   ai_budget: AiBudget | null;
+  inference_health: InferenceHealth | null;
 };
 
 export type AiBudgetUsage = {
@@ -204,6 +215,39 @@ function optAiBudget(value: unknown): AiBudget | null {
   }
 }
 
+function optInferenceHealth(value: unknown, expectedDecisions: number): InferenceHealth | null {
+  if (value == null) return null;
+  try {
+    const d = record(value);
+    const counter = (v: unknown) => { const n = num(v); return Number.isSafeInteger(n) && n >= 0 ? n : fail(); };
+    const decisions = counter(d.decisions), recorded = counter(d.recorded), not_recorded = counter(d.not_recorded);
+    const statuses = list(d.statuses, 6).map((value) => {
+      const row = record(value), status = text(row.status, 40);
+      if (!Object.hasOwn(INFERENCE_STATUS_LABELS, status)) fail();
+      return { status: status as keyof typeof INFERENCE_STATUS_LABELS, decisions: counter(row.decisions) };
+    });
+    const allowed = new Set([
+      "provider_timeout", "provider_overloaded", "provider_auth", "provider_rate_limited", "provider_unavailable",
+      "budget_exhausted", "unverified_inference", "output_truncated", "model_refusal", "context_limit", "incomplete_turn",
+      "completion_unverified", "missing_consensus_tool", "multiple_tool_blocks", "unexpected_tool", "tool_input_not_object",
+      "missing_consensus_fields", "unknown_consensus_fields", "confidence_out_of_range", "negative_expected_risk",
+      "stance_not_string", "unsupported_stance", "rationale_empty", "proof_not_object", "proof_fields_invalid",
+      "proof_summary_empty", "invalid_consensus_schema",
+      ...["confidence", "expected_return", "expected_risk"].flatMap((f) => [`${f}_not_numeric`, `${f}_nonfinite`]),
+      ...["rationale", "supporting_factors", "risk_factors"].map((f) => `${f}_not_string_array`),
+    ]);
+    const failures = list(d.failures, 40).map((value) => {
+      const row = record(value), code = text(row.code, 80);
+      return { code: allowed.has(code) ? code : "unclassified_failure", decisions: counter(row.decisions) };
+    });
+    if (decisions !== expectedDecisions || recorded + not_recorded !== decisions
+      || statuses.reduce((sum, row) => sum + row.decisions, 0) !== recorded
+      || new Set(statuses.map((row) => row.status)).size !== statuses.length
+      || failures.reduce((sum, row) => sum + row.decisions, 0) > recorded) fail();
+    return { decisions, recorded, not_recorded, statuses, failures };
+  } catch { return null; }
+}
+
 function normalizeReport(value: unknown): DecisionQualityReport {
   const r = record(value);
   if (r.schema !== DECISION_QUALITY_SCHEMA) fail();
@@ -264,6 +308,7 @@ function normalizeReport(value: unknown): DecisionQualityReport {
     recent,
     limitations: list(r.limitations, 50).map((item) => text(item, 500)),
     ai_budget: optAiBudget(r.ai_budget),
+    inference_health: optInferenceHealth(r.inference_health, num(counts.decisions)),
   };
 }
 
