@@ -16,6 +16,7 @@ from anthropic import AsyncAnthropic
 from quant_ai.agents.contracts import Stance
 from quant_ai.llm.budget import SqliteAIBudget
 from quant_ai.llm.provenance import ConsensusPayload, content_hash
+from quant_ai.llm.spend import SpendRefused, initialize, require_reservation, settle
 
 LOGGER = logging.getLogger("quant_ai.anthropic")
 
@@ -114,7 +115,8 @@ class AnthropicSwarmClient:
         self.model = model or os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
         self.timeout_seconds = timeout_seconds
         self.transport_kind = "injected_client" if client is not None else "anthropic_sdk"
-        self._client = client or AsyncAnthropic(api_key=key)
+        self._client = client or AsyncAnthropic(api_key=key, max_retries=0)
+        initialize()
         # Optional durable daily spend cap. None means unbounded (tests, ad-hoc runs).
         self.budget = budget
         self._budget_warned_day: str | None = None
@@ -123,7 +125,7 @@ class AnthropicSwarmClient:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         request = {
-            "model": self.model, "max_tokens": self.consensus_max_tokens,
+            "model": self.model, "max_tokens": self.consensus_max_tokens, "service_tier": "standard_only",
             "system": CONSENSUS_SYSTEM,
             "messages": [{"role": "user", "content": prompt}],
             # ``strict`` makes the API guarantee the tool input matches the schema, so the
@@ -184,10 +186,14 @@ class AnthropicSwarmClient:
                                risk_factor="ai_budget_exhausted", failure_code="budget_exhausted")
 
         try:
+            spend_ticket = require_reservation(request)
             response = await asyncio.wait_for(
                 self._client.messages.create(**request),
                 timeout=self.timeout_seconds,
             )
+        except SpendRefused:
+            return unavailable("Daily USD budget exhausted or unavailable", status="budget_exhausted",
+                               failure_code="budget_exhausted")
         except (asyncio.TimeoutError, TimeoutError):
             # Logged like every other unavailability: on 21 September 2026 one call in 36
             # timed out and the container log showed nothing, only the proof did.
@@ -222,6 +228,7 @@ class AnthropicSwarmClient:
         usage = getattr(response, "usage", None)
         provenance["usage"] = {name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
                                for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}
+        settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
             # Tokens were spent whether or not the payload passes the schema below.
             self.budget.record(
@@ -304,7 +311,7 @@ class AnthropicSwarmClient:
             ]
         )
         request = {
-            "model": self.model, "max_tokens": 1000, "system": HEADLINE_SYSTEM,
+            "model": self.model, "max_tokens": 1000, "service_tier": "standard_only", "system": HEADLINE_SYSTEM,
             "messages": [{"role": "user", "content": prompt}],
             "tools": [{"name": HEADLINE_TOOL_NAME,
                        "description": "Per-headline sentiment for one instrument, with a short rationale",
@@ -339,9 +346,12 @@ class AnthropicSwarmClient:
             return ConsensusPayload({"scores": []},
                                     finish("budget_exhausted", "AI budget exhausted"))
         try:
+            spend_ticket = require_reservation(request)
             response = await asyncio.wait_for(
                 self._client.messages.create(**request), timeout=self.timeout_seconds
             )
+        except SpendRefused:
+            return ConsensusPayload({"scores": []}, finish("budget_exhausted", "Daily USD budget unavailable or exhausted"))
         except (asyncio.TimeoutError, TimeoutError):
             return ConsensusPayload({"scores": []}, finish("unavailable", "API Timeout"))
         except Exception as error:  # noqa: BLE001 - no provider fault may kill the cadence
@@ -361,6 +371,7 @@ class AnthropicSwarmClient:
             for name in ("input_tokens", "output_tokens",
                          "cache_creation_input_tokens", "cache_read_input_tokens")
         }
+        settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
             self.budget.record(
                 HEADLINE_BUDGET_SCOPE,

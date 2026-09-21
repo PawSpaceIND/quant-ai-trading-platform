@@ -6,6 +6,9 @@ x-shared: &shared
   PRAMANA_HALT_FILE: /data/PRAMANA_HALT
   PRAMANA_MARKET_SNAPSHOT: /data/market-monitor.json
   TRADING_LIVE_MONEY_ACTIVE: "false"
+  # Combined paid inference budget across engine, chat and research; UTC day.
+  PRAMANA_AI_DAILY_USD_LIMIT: ${PRAMANA_AI_DAILY_USD_LIMIT:-2.50}
+  PRAMANA_AI_SPEND_DB: /data/ai-spend.sqlite
 # Container logs are capped so a chatty week cannot fill a small instance's disk and take
 # the engine down with it. The engine's own alert log and proofs live in the volume.
 x-logging: &logging

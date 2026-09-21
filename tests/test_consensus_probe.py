@@ -114,6 +114,15 @@ def test_budget_disabled_refuses_without_network(setup_probe, monkeypatch):
     setup_probe[2].messages.create.assert_not_called()
 
 
+def test_shared_dollar_hold_also_blocks_the_isolated_probe(setup_probe, monkeypatch, tmp_path):
+    monkeypatch.setenv("PRAMANA_AI_DAILY_USD_LIMIT", "2.50")
+    monkeypatch.setenv("PRAMANA_AI_SPEND_DB", str(tmp_path / "dollar.sqlite"))
+    report = asyncio.run(probe.run_probe())
+    assert report["request_attempts"] == 0
+    assert report["validation_status"] == "budget_exhausted"
+    setup_probe[2].messages.create.assert_not_called()
+
+
 def test_missing_budget_does_not_create_it(setup_probe):
     source, _, sdk, _ = setup_probe
     db = source.parent.parent / "ai-budget.sqlite"

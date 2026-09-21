@@ -15,6 +15,7 @@ from pathlib import Path
 
 import httpx
 
+from quant_ai.llm.spend import initialize, require_reservation, settle
 from quant_ai.research.lab import canonical, integer, number
 
 PROMPT_VERSION = "frozen-evidence-v1"
@@ -44,6 +45,7 @@ class Provider:
             raise ValueError("invalid_provider_configuration")
         self.provider, self.model, self.key = provider, model, key
         self.client = client
+        initialize()
 
     def request(self, prompt):
         if not self.key:
@@ -54,6 +56,7 @@ class Provider:
             payload = {
                 "model": self.model,
                 "store": False,
+                "service_tier": "default",
                 "max_output_tokens": 2000,
                 "input": [
                     {"role": "system", "content": SYSTEM},
@@ -74,6 +77,7 @@ class Provider:
             payload = {
                 "model": self.model,
                 "max_tokens": 1200,
+                "service_tier": "standard_only",
                 "system": SYSTEM,
                 "messages": [{"role": "user", "content": prompt}],
                 "tools": [
@@ -85,13 +89,16 @@ class Provider:
                 ],
                 "tool_choice": {"type": "tool", "name": "paper_decision"},
             }
+        spend_ticket = require_reservation(payload)
         if self.client is None:
             with httpx.Client(timeout=45, follow_redirects=False) as client:
                 response = client.post(url, headers=headers, json=payload)
         else:
             response = self.client.post(url, headers=headers, json=payload)
         response.raise_for_status()
-        return response.json()
+        body = response.json()
+        settle(spend_ticket, body.get("usage") if isinstance(body, dict) else None)
+        return body
 
     def parse(self, raw):
         if self.provider == "openai":
