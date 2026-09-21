@@ -15,6 +15,7 @@ from uuid import uuid4
 # record: the JSON-lines alert log is. Keeping the newest few thousand alerts bounds a
 # daemon that is expected to run for months, and every consumer reads the tail.
 RETAINED_NOTIFICATIONS = 5_000
+LOGGER = logging.getLogger("quant_ai.trading_alerts")
 
 
 class TradingAlertCode(str, Enum):
@@ -148,7 +149,16 @@ class TradingNotificationDispatcher:
         )
         self._outbox.append(notification)
         for sink in self.sinks:
-            sink.send(notification)
+            try:
+                sink.send(notification)
+            except Exception:  # deliberately broad: no delivery sink may break the cadence
+                # On 21 September 2026 a Telegram refusal raised out of the cycle that was
+                # reporting a decision; the supervisor counts that as a failed tick, and
+                # enough of them in a row trip the kill switch. Delivery is best effort;
+                # the JSON-lines sink ahead of it already holds the alert.
+                LOGGER.exception(
+                    "alert_sink_failed sink=%s code=%s", type(sink).__name__, code.value
+                )
         return notification
 
     def pending(self, tenant_id: str | None = None) -> tuple[TradingNotification, ...]:
