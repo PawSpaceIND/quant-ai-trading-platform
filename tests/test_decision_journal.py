@@ -413,7 +413,7 @@ def test_report_carries_the_exact_schema_and_flags_a_thin_sample(tmp_path):
 
     assert sorted(report) == [
         "by_agent", "by_hour_ist", "by_mode", "by_playbook", "by_regime", "calibration", "counts",
-        "directional", "generated_at", "insufficient_sample", "limitations",
+        "directional", "generated_at", "inference_health", "insufficient_sample", "limitations",
         "minimum_sample", "recent", "rejections", "schema", "significance", "tenant_id",
         "trades", "window",
     ]

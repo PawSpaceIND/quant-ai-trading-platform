@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from quant_ai.agents.contracts import Stance
 from quant_ai.domain.models import Side
+from quant_ai.llm.diagnostics import normalized_diagnostic
 
 LOGGER = logging.getLogger("quant_ai.decision_journal")
 
@@ -51,6 +52,8 @@ COLUMNS = (
     "take_profit_price",
     "regime",
     "mode",
+    "inference_status",
+    "inference_failure_code",
     "governance",
     "reason",
     "order_id",
@@ -101,6 +104,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     take_profit_price TEXT,
     regime TEXT,
     mode TEXT,
+    inference_status TEXT,
+    inference_failure_code TEXT,
     governance TEXT NOT NULL,
     reason TEXT,
     order_id TEXT,
@@ -157,6 +162,8 @@ MODE_UNVERIFIED = "unverified_inference"
 # exists to prevent. Every entry must be nullable: rows decided before a column existed
 # genuinely have nothing to put in it, and NULL is the honest value.
 MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("inference_status", "TEXT"),
+    ("inference_failure_code", "TEXT"),
     ("features", "TEXT"),
     ("feature_schema_version", "INTEGER"),
     # 1 when the decision was an exploration probe: a hold the specialists' lean turned
@@ -294,13 +301,16 @@ def governance_of(result) -> tuple[str, str | None]:
     return GOVERNANCE_REJECTED, reason or "unspecified"
 
 
-def decision_mode(result, *, llm_available: bool) -> str:
-    """Evidence mode of the decision, labelled the way the Atlas consensus labels its proofs."""
+def decision_provenance(result) -> dict:
     provenance = getattr(result.xai_trace, "provenance", None)
     if not isinstance(provenance, dict):
         provenance = getattr(result.proposal, "provenance", None)
-    if not isinstance(provenance, dict):
-        provenance = {}
+    return provenance if isinstance(provenance, dict) else {}
+
+
+def decision_mode(result, *, llm_available: bool) -> str:
+    """Evidence mode of the decision, labelled the way the Atlas consensus labels its proofs."""
+    provenance = decision_provenance(result)
     mode = provenance.get("mode")
     if isinstance(mode, str) and mode.strip():
         return mode.strip()[:64]
@@ -308,6 +318,19 @@ def decision_mode(result, *, llm_available: bool) -> str:
     if isinstance(inference, dict):
         return MODE_BY_INFERENCE_STATUS.get(str(inference.get("status")), MODE_UNVERIFIED)
     return MODE_DETERMINISTIC if not llm_available else MODE_UNVERIFIED
+
+
+def inference_diagnostic(result) -> tuple[str | None, str | None]:
+    provenance = decision_provenance(result)
+    inference = provenance.get("inference")
+    if not isinstance(inference, dict):
+        inference = {}
+    status, code = inference.get("status"), inference.get("failure_code")
+    if status in (None, "unverified") and provenance.get("mode") == "llm_invalid_schema":
+        status = "invalid_schema"
+    if not inference and provenance.get("mode") == MODE_DETERMINISTIC:
+        status = "not_requested"
+    return normalized_diagnostic(status, code)
 
 
 def probe_of(proposal) -> bool:
@@ -373,6 +396,7 @@ def decision_row(
     )
     regime_label = enum_value(regime_label)
     fill = result.fill
+    inference_status, inference_failure_code = inference_diagnostic(result)
     return {
         "decision_id": str(proposal.decision_id),
         "tenant_id": tenant_id,
@@ -390,6 +414,8 @@ def decision_row(
         "take_profit_price": decimal_text(proposal.take_profit_price),
         "regime": str(regime_label)[:64] if regime_label else None,
         "mode": (mode or decision_mode(result, llm_available=llm_available))[:64],
+        "inference_status": inference_status,
+        "inference_failure_code": inference_failure_code,
         "governance": governance,
         "reason": reason[:200] if reason else None,
         "order_id": str(fill.order_id) if fill is not None and fill.order_id else None,
@@ -409,6 +435,9 @@ def insert_decision(broker, row: dict[str, Any]) -> bool:
     """Insert a journal row; a repeated ``decision_id`` is a no-op. True when inserted."""
     ensure_journal(broker)
     values = {column: row.get(column) for column in COLUMNS}
+    values["inference_status"], values["inference_failure_code"] = normalized_diagnostic(
+        values["inference_status"], values["inference_failure_code"]
+    )
     # ``decision_row`` already encodes this, but a caller building a row by hand naturally
     # puts the mapping here, and SQLite refuses to bind a dict. That raise reaches the
     # daemon's journal guard, which logs and continues - so the mistake would cost the

@@ -162,9 +162,10 @@ class AnthropicSwarmClient:
                     "duration_ms": round((time.monotonic() - start) * 1000, 3)}
 
         def unavailable(detail: str, *, status: str = "unavailable",
-                        risk_factor: str = "anthropic_api_unavailable") -> ConsensusPayload:
+                        risk_factor: str = "anthropic_api_unavailable",
+                        failure_code: str = "provider_unavailable") -> ConsensusPayload:
             return ConsensusPayload(self._unavailable_payload(detail, risk_factor),
-                                    {**finish(status), "failure": detail})
+                                    {**finish(status), "failure": detail, "failure_code": failure_code})
 
         def invalid(detail: str, code: str) -> ConsensusSchemaError:
             return ConsensusSchemaError(detail, {**finish("invalid_schema"), "failure_code": code})
@@ -180,7 +181,7 @@ class AnthropicSwarmClient:
             # to PRESERVE_CAPITAL with the reason visible in the proof.
             self._warn_budget_exhausted(self.budget)
             return unavailable("AI budget exhausted", status="budget_exhausted",
-                               risk_factor="ai_budget_exhausted")
+                               risk_factor="ai_budget_exhausted", failure_code="budget_exhausted")
 
         try:
             response = await asyncio.wait_for(
@@ -194,7 +195,7 @@ class AnthropicSwarmClient:
                 "anthropic_consensus_unavailable detail=API Timeout timeout_seconds=%s",
                 self.timeout_seconds,
             )
-            return unavailable("API Timeout")
+            return unavailable("API Timeout", failure_code="provider_timeout")
         except ConsensusSchemaError:
             raise
         except Exception as error:  # noqa: BLE001 - no provider fault may kill the cadence
@@ -206,10 +207,13 @@ class AnthropicSwarmClient:
             if status == 529:
                 # Overload is transient unavailability; keep the established timeout label.
                 LOGGER.warning("anthropic_consensus_unavailable detail=HTTP 529")
-                return unavailable("API Timeout")
+                return unavailable("API Timeout", failure_code="provider_overloaded")
             label = f"HTTP {status}" if status is not None else type(error).__name__
             LOGGER.warning("anthropic_consensus_unavailable detail=%s", label)
-            return unavailable(label)
+            code = {401: "provider_auth", 403: "provider_auth", 429: "provider_rate_limited"}.get(
+                status if isinstance(status, int) else None, "provider_unavailable"
+            )
+            return unavailable(label, failure_code=code)
 
         for attribute in ("model", "id"):
             value = getattr(response, attribute, None)
