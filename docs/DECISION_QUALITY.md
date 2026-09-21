@@ -79,6 +79,26 @@ of at most 200 characters, reach the LLM consensus, and they reach it inside the
 evidence block that is labelled as data, not instructions. The dashboard shows both
 states; approval is an operator action on the host, never a dashboard button.
 
+## Missed opportunities
+
+On 21 September 2026, the first twelve-name session, every decision was a hold, and
+nothing above could say what the holds had let go by: hit rates and calibration score
+directional calls, and there were none. The missed-opportunity report scores the holds
+instead. With `PRAMANA_MISSED_OPPORTUNITY_DIR` set, the daemon rewrites
+`<dir>/<IST date>.json` (`pramana.missed_opportunities.v1`) after every cadence tick:
+each hold of the session is judged on its 60-minute forward return, `>= +1%` is a
+*missed* move a long-only book could have bought, `<= -1%` is an *avoided* one, a null
+horizon is *unresolved*. Per symbol it keeps the counts and the largest missed move with
+the regime, the evidence mode and the specialists' stances at that decision. After the
+close, once per session with at least one hold, one INFO alert summarises the day and
+the top five missed lines. `python scripts/pilot_ops.py missed --database <ledger>
+--tenant ghost [--date YYYY-MM-DD] [--threshold 0.01]` prints the same report from a
+read-only connection.
+
+A missed move is measured on the feed's last traded price at the horizon, ignores costs
+and slippage, and is evidence about what the swarm saw, not a claim that the trade
+would have been proposed, approved or filled.
+
 ## Regime and timeframes
 
 Each proof now carries `regime`: `trending_up`, `trending_down`, `ranging`,
@@ -158,7 +178,8 @@ rules and rerun the burn-in, not to go live anyway.
 PRAMANA_DAILY_HISTORY_PROVIDER=yahoo      # none: intraday-only regime
 PRAMANA_DECISION_QUALITY_REPORT=          # default: decision-quality.json next to the ledger
 PRAMANA_POST_MORTEM_DIR=                  # default: post-mortems/ next to the ledger
+PRAMANA_MISSED_OPPORTUNITY_DIR=           # unset: off; Compose sets /data/missed-opportunities
 ```
 
-Compose forwards all three; the daemon writes and the dashboard reads the same
+Compose forwards all four; the daemon writes and the dashboard reads the same
 files in the `pramana-data` volume.

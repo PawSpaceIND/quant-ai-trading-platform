@@ -290,3 +290,99 @@ export function parsePostMortem(raw: string, expectedDate?: string): PostMortem 
     return null;
   }
 }
+
+/* ---------- missed opportunities ---------- */
+
+/**
+ * The engine's per-session missed-opportunity file: every hold scored against its forward
+ * return. On 21 September 2026, the first twelve-name session, every decision was a hold
+ * and nothing above could say what the holds had let go by. Same fail-closed parsing as
+ * the report: a malformed file yields null, never a guessed number.
+ */
+export const MISSED_OPPORTUNITIES_SCHEMA = "pramana.missed_opportunities.v1";
+export const MISSED_LIMIT_BYTES = 512 * 1024;
+
+export type SpecialistVote = { stance: string; confidence: string };
+export type MissedBest = {
+  decision_id: string; decided_at: string; reference_price: number | null; forward_return: number;
+  regime: string | null; mode: string | null; reason: string | null; agents: Record<string, SpecialistVote>;
+};
+export type MissedSymbol = { symbol: string; missed: number; avoided: number; evaluated: number; best: MissedBest | null };
+export type MissedOpportunities = {
+  schema: typeof MISSED_OPPORTUNITIES_SCHEMA;
+  tenant_id: string;
+  generated_at: string;
+  session_date: string;
+  threshold: number;
+  horizon: string;
+  decisions: number;
+  holds: number;
+  evaluated: number;
+  missed: number;
+  avoided: number;
+  unresolved: number;
+  symbols: MissedSymbol[];
+  limitations: string[];
+};
+
+/** `specialists neutral`, or the dissenters by name, the way the engine's own note words it. */
+export function stancesSummary(agents: Record<string, SpecialistVote>): string {
+  const entries = Object.entries(agents);
+  if (!entries.length) return "no specialist votes";
+  const dissent = entries.filter(([, vote]) => vote.stance !== "NEUTRAL").sort(([a], [b]) => a.localeCompare(b));
+  if (!dissent.length) return "specialists neutral";
+  const clause = dissent.map(([agent, vote]) => `${agent} ${vote.stance}`).join(", ");
+  const quiet = entries.length - dissent.length;
+  return quiet ? `${clause}, ${quiet} neutral` : clause;
+}
+
+function normalizeMissed(value: unknown, expectedDate?: string): MissedOpportunities {
+  const r = record(value);
+  if (r.schema !== MISSED_OPPORTUNITIES_SCHEMA) fail();
+  const session_date = text(r.session_date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(session_date) || !Number.isFinite(Date.parse(session_date))) fail();
+  if (expectedDate && session_date !== expectedDate) fail();
+  const symbols = list(r.symbols, 100).map((item) => {
+    const d = record(item);
+    let best: MissedBest | null = null;
+    if (d.best !== null) {
+      const b = record(d.best);
+      const agents: Record<string, SpecialistVote> = {};
+      for (const [agent, vote] of Object.entries(record(b.agents)).slice(0, 50)) {
+        const v = record(vote);
+        agents[agent.slice(0, 120)] = { stance: text(v.stance, 40), confidence: text(v.confidence, 40) };
+      }
+      best = {
+        decision_id: text(b.decision_id, 120), decided_at: stamp(b.decided_at), reference_price: optNum(b.reference_price),
+        forward_return: num(b.forward_return), regime: optText(b.regime, 60), mode: optText(b.mode, 60),
+        reason: optText(b.reason, 300), agents,
+      };
+    }
+    return { symbol: text(d.symbol, 40), missed: num(d.missed), avoided: num(d.avoided), evaluated: num(d.evaluated), best };
+  });
+  return {
+    schema: MISSED_OPPORTUNITIES_SCHEMA,
+    tenant_id: text(r.tenant_id, 80),
+    generated_at: stamp(r.generated_at),
+    session_date,
+    threshold: num(r.threshold),
+    horizon: text(r.horizon, 40),
+    decisions: num(r.decisions),
+    holds: num(r.holds),
+    evaluated: num(r.evaluated),
+    missed: num(r.missed),
+    avoided: num(r.avoided),
+    unresolved: num(r.unresolved),
+    symbols,
+    limitations: list(r.limitations, 50).map((item) => text(item, 500)),
+  };
+}
+
+/** Parse one session file; null when malformed. `expectedDate` ties the file name to its session. */
+export function parseMissedOpportunities(raw: string, expectedDate?: string): MissedOpportunities | null {
+  try {
+    return normalizeMissed(JSON.parse(raw), expectedDate);
+  } catch {
+    return null;
+  }
+}

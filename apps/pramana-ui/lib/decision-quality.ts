@@ -2,13 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { ledgerPath } from "./db";
 import {
+  MISSED_LIMIT_BYTES,
   POST_MORTEM_FILE_LIMIT,
   POST_MORTEM_LIMIT_BYTES,
   REPORT_LIMIT_BYTES,
   parseDecisionQuality,
+  parseMissedOpportunities,
   parsePostMortem,
 } from "./decision-quality-model";
-import type { DecisionQualityReport, PostMortem } from "./decision-quality-model";
+import type { DecisionQualityReport, MissedOpportunities, PostMortem } from "./decision-quality-model";
 
 /**
  * Server-side readers for the decision-quality report the engine writes after
@@ -63,4 +65,34 @@ export function readPostMortems(limit = POST_MORTEM_FILE_LIMIT): PostMortem[] {
     }
   }
   return result.sort((a, b) => b.session_date.localeCompare(a.session_date));
+}
+
+export function missedOpportunityDirectory(): string {
+  const configured = process.env.PRAMANA_MISSED_OPPORTUNITY_DIR;
+  if (configured) return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured);
+  return path.join(/* turbopackIgnore: true */ path.dirname(ledgerPath()), "missed-opportunities");
+}
+
+/** The newest session's missed-opportunity file, or null when none is readable. */
+export function readMissedOpportunities(): MissedOpportunities | null {
+  const directory = missedOpportunityDirectory();
+  let names: string[];
+  try {
+    names = fs.readdirSync(/* turbopackIgnore: true */ directory);
+  } catch {
+    return null;
+  }
+  // Date-named files only; the engine's `.notified-<date>` markers sit in the same directory.
+  const dated = names.filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort((a, b) => b.localeCompare(a)).slice(0, 5);
+  for (const name of dated) {
+    try {
+      const full = path.join(/* turbopackIgnore: true */ directory, name);
+      if (fs.statSync(/* turbopackIgnore: true */ full).size > MISSED_LIMIT_BYTES) continue;
+      const parsed = parseMissedOpportunities(fs.readFileSync(/* turbopackIgnore: true */ full, "utf8"), name.slice(0, 10));
+      if (parsed) return parsed;
+    } catch {
+      // Unreadable file: skipped, never guessed.
+    }
+  }
+  return null;
 }

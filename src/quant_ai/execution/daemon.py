@@ -68,6 +68,7 @@ class AutonomousTradingDaemon:
         instruments: Iterable[Instrument] | None = None,
         event_calendar: EventCalendar | None = None,
         declared_action_lookup: DeclaredActionLookup | None = None,
+        missed_opportunity_dir: str | Path | None = None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
@@ -125,6 +126,14 @@ class AutonomousTradingDaemon:
         # factory points at (None keeps the report unwritten). Neither may break a tick.
         self.decision_quality_report_path: Path | None = None
         self.decision_outcomes: dict[str, int] | None = None
+        # Missed-opportunity files, one per IST session date under this directory, and the
+        # end-of-session note that reads them out. None keeps both off. On 21 September
+        # 2026, the first twelve-name session, every decision was a hold, and nothing in
+        # the evidence said what the holds had let go by.
+        self.missed_opportunity_dir = (
+            Path(missed_opportunity_dir) if missed_opportunity_dir is not None else None
+        )
+        self._missed_notified: set[str] = set()
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -616,6 +625,7 @@ class AutonomousTradingDaemon:
                 },
             )
             self._write_decision_quality(timestamp)
+            self._write_missed_opportunities(timestamp)
             return brief
         finally:
             self._in_flight = False
@@ -706,6 +716,60 @@ class AutonomousTradingDaemon:
             metadata={"status": drift["status"], "reasons": ",".join(drift["reasons"])},
         )
         self._learning_alert_signature = signature
+
+    def _write_missed_opportunities(self, timestamp: datetime) -> None:
+        """Rewrite the session's missed-opportunity file, when the factory configured a directory."""
+        if self.missed_opportunity_dir is None:
+            return
+        try:
+            from quant_ai.analytics import missed_opportunities as missed
+
+            report = missed.build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            missed.write_report(self.missed_opportunity_dir / f"{report['session_date']}.json", report)
+            self._notify_missed_opportunities(report, timestamp)
+        except Exception:  # see above: evidence never breaks the cadence
+            self._logger.exception("missed_opportunity_report_failed")
+
+    def _notify_missed_opportunities(self, report: dict, timestamp: datetime) -> None:
+        """Once per session date, after the close: what the day's holds let go by.
+
+        Observation only; nothing here changes a setting. The in-memory set covers the
+        running process and the marker file covers a restart, so the founder never gets
+        the same day twice. A date with no hold has nothing to report.
+        """
+        from quant_ai.analytics.missed_opportunities import notification_message
+        from quant_ai.notifications.trading import AlertPriority
+
+        session_date = report["session_date"]
+        if not report["holds"] or session_date in self._missed_notified:
+            return
+        if self.scheduler.calendar.state(
+            self.instrument.market, timestamp, exchange=self.instrument.exchange
+        ) == MarketState.REGULAR_HOURS:
+            return
+        marker = self.missed_opportunity_dir / f".notified-{session_date}"
+        if marker.exists():
+            self._missed_notified.add(session_date)  # an earlier process already said it
+            return
+        self.notifications.dispatch(
+            TradingAlertCode.CADENCE_BRIEF,
+            notification_message(report),
+            tenant_id=self.tenant_id, priority=AlertPriority.INFO,
+            metadata={
+                "kind": "missed_opportunities",
+                "session_date": session_date,
+                "holds": str(report["holds"]),
+                "evaluated": str(report["evaluated"]),
+                "missed": str(report["missed"]),
+                "avoided": str(report["avoided"]),
+                "unresolved": str(report["unresolved"]),
+                "threshold": str(report["threshold"]),
+            },
+        )
+        # Remembered before the marker is written, so a directory that stops taking writes
+        # costs the marker and not a second copy of the note.
+        self._missed_notified.add(session_date)
+        marker.write_text(timestamp.isoformat(), encoding="utf-8")
 
     def _ai_budget_status(self) -> dict | None:
         """Today's consensus spend headroom, or None when no budget is configured.
