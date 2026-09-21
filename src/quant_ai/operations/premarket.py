@@ -11,6 +11,13 @@ The conditions are the ones that have actually stopped this pilot: the manifest 
 watchlist that does not match the websocket token map, a token that dies at 06:00 IST
 before the session ends, a provider left out of the graph, a risk gate that never armed,
 a calendar that failed to load, and a feed that is not delivering ticks after the open.
+
+Risk gates come in two kinds. The book gates arm from data the deployment always carries
+(the sector map, the return history), so one of them unarmed is a fault. The overnight
+controls and the corporate-action calendar arm by an operator's choice, and their
+documented default is off; one of them unarmed is reported as INFO naming the setting that
+arms it, so the operator sees the choice every morning without the check refusing a
+session over it.
 """
 
 from __future__ import annotations
@@ -26,6 +33,10 @@ from pathlib import Path
 from quant_ai.operations.zerodha_session import INDIA_TZ, latest_cutoff, next_cutoff
 
 MAX_PAYLOAD = 1_000_000
+# Gates whose documented default is off (docs/OVERNIGHT_GAP_POLICY.md, .env.example). The
+# runtime record names the setting that arms each; corporate_actions arms only when an
+# ex-date is declared, so "nothing declared" is its normal state.
+OPTIONAL_GATES = frozenset({"overnight_exposure", "overnight_gap_monitor", "corporate_actions"})
 HEARTBEAT_MAX_AGE_SECONDS = 90
 PRE_OPEN_IST = time(9, 0)
 OPEN_IST = time(9, 15)
@@ -165,13 +176,27 @@ def _providers_configured(manifest: Mapping | None, env: Mapping[str, str]) -> C
     return Check("providers_configured", "FAIL" if missing else "OK", detail)
 
 
+def _off_note(gate: Mapping) -> str:
+    gate_id = str(gate.get("id"))
+    if gate_id == "corporate_actions":
+        return f"{gate_id} (no ex-dates declared)"
+    setting = str(gate.get("setting") or "").strip()
+    return f"{gate_id} (set {setting})" if setting else gate_id
+
+
 def _risk_gates_armed(payload: Mapping) -> Check:
-    gates = (payload.get("riskGates") or {}).get("gates") or []
-    unarmed = [str(g.get("id")) for g in gates if isinstance(g, dict) and not g.get("armed")]
-    armed = [str(g.get("id")) for g in gates if isinstance(g, dict) and g.get("armed")]
-    ok = bool(gates) and not unarmed
-    detail = f"armed {','.join(armed) or 'none'}" + (f"; unarmed {','.join(unarmed)}" if unarmed else "")
-    return Check("risk_gates_armed", "OK" if ok else "FAIL", detail)
+    gates = [g for g in (payload.get("riskGates") or {}).get("gates") or [] if isinstance(g, dict)]
+    armed = [str(g.get("id")) for g in gates if g.get("armed")]
+    off = [_off_note(g) for g in gates if not g.get("armed") and str(g.get("id")) in OPTIONAL_GATES]
+    unarmed = [str(g.get("id")) for g in gates if not g.get("armed") and str(g.get("id")) not in OPTIONAL_GATES]
+    detail = f"armed {','.join(armed) or 'none'}"
+    if unarmed:
+        detail += f"; unarmed {','.join(unarmed)}"
+    if off:
+        detail += f"; off {', '.join(off)}"
+    if not gates or unarmed:
+        return Check("risk_gates_armed", "FAIL", detail)
+    return Check("risk_gates_armed", "INFO" if off else "OK", detail)
 
 
 def _event_calendar(env: Mapping[str, str]) -> Check:

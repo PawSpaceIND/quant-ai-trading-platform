@@ -125,8 +125,13 @@ def main():
         # Operational blindness is a deployment fault: alerts must be durable, logs bounded,
         # memory capped and backups scheduled, in the rendered configuration itself.
         assert services["pramana-ghost"]["environment"]["PRAMANA_ALERT_LOG"] == "/data/alerts.jsonl"
-        for optional in ("PRAMANA_TELEGRAM_BOT_TOKEN", "PRAMANA_TELEGRAM_CHAT_ID"):
+        for optional in ("PRAMANA_TELEGRAM_BOT_TOKEN", "PRAMANA_TELEGRAM_CHAT_ID",
+                         "PRAMANA_OVERNIGHT_GROSS_CAP", "PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES"):
             assert services["pramana-ghost"]["environment"][optional] == ""
+        # The overnight controls and the corporate-action file reach the engine through
+        # Compose; off by default, armed by a value in .env, never by a container rebuild.
+        assert services["pramana-ghost"]["environment"]["PRAMANA_OVERNIGHT_GAP_MONITOR"] == "none"
+        assert services["pramana-ghost"]["environment"]["PRAMANA_CORPORATE_ACTIONS"] == "/app/corporate-actions.json"
         limits = {}
         for name, service in services.items():
             assert service["logging"]["driver"] == "json-file"

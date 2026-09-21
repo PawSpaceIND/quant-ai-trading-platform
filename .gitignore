@@ -43,3 +43,6 @@ var/
 # The operator's real event calendar (deploy/event-calendar.example.json is the template).
 # Untracked files count as a dirty tree for scripts/deploy_pilot_host.sh, so it is ignored.
 deploy/event-calendar.json
+# The operator's real corporate-action declarations (deploy/corporate-actions.example.json
+# is the template), ignored for the same reason.
+deploy/corporate-actions.json

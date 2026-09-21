@@ -73,6 +73,16 @@ services:
       # The mounted file is validated once at boot; a malformed file refuses the boot. The
       # committed example holds no events, so the default is exactly "no blackouts".
       PRAMANA_EVENT_CALENDAR: /app/event-calendar.json
+      # Overnight controls (docs/OVERNIGHT_GAP_POLICY.md). Off by default; the engine reads
+      # them only from its own environment, so they have to be forwarded here or a value in
+      # .env arms nothing. 0.25 and session are the documented values.
+      PRAMANA_OVERNIGHT_GROSS_CAP: ${PRAMANA_OVERNIGHT_GROSS_CAP:-}
+      PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES: ${PRAMANA_OVERNIGHT_CLOSING_WINDOW_MINUTES:-}
+      PRAMANA_OVERNIGHT_GAP_MONITOR: ${PRAMANA_OVERNIGHT_GAP_MONITOR:-none}
+      # Declared corporate-action ex-dates, mounted like the event calendar. The committed
+      # example declares none, which is exactly "nothing known"; the price-step guard still
+      # catches an undeclared action on its own.
+      PRAMANA_CORPORATE_ACTIONS: /app/corporate-actions.json
       PRAMANA_DECISION_QUALITY_REPORT: /data/decision-quality.json
       PRAMANA_POST_MORTEM_DIR: /data/post-mortems
       PRAMANA_HOLIDAYS_JSON: ${PRAMANA_HOLIDAYS_JSON:-}
@@ -99,6 +109,12 @@ services:
       - type: bind
         source: ${PRAMANA_EVENT_CALENDAR_HOST_FILE:-./event-calendar.example.json}
         target: /app/event-calendar.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRAMANA_CORPORATE_ACTIONS_HOST_FILE:-./corporate-actions.example.json}
+        target: /app/corporate-actions.json
         read_only: true
         bind:
           create_host_path: false
