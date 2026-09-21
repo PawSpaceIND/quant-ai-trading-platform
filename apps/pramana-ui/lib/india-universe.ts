@@ -328,19 +328,38 @@ export type IndiaCoverage = {
   aiContext: string;
 };
 
+function rowInGroup(group: IndiaCoverageGroup, row: MarketRow): boolean {
+  const instrument = row.instrument;
+  return instrument !== undefined
+    && instrument.market === "INDIA"
+    && instrument.exchange === group.exchange
+    && instrument.currency === group.currency
+    && group.assetClasses.includes(instrument.assetClass)
+    && (!group.segments || group.segments.includes(instrument.segment || ""));
+}
+
+/**
+ * Coverage as the collector actually has it. A group with collector rows lists
+ * those symbols in collector order, so the tile shows the watchlist that is
+ * really polled (the compose default list plus PRAMANA_MARKET_EXTRA_INSTRUMENTS_JSON)
+ * rather than the declared examples; a group with no rows keeps its examples as
+ * the planned universe. A row that failed this cycle still names a polled symbol,
+ * but only a current quote makes the group observed.
+ */
 export function indiaCoverage(rows: MarketRow[]): IndiaCoverage {
   const groups = INDIA_COVERAGE_GROUPS.map((group) => {
-    const observed = rows.some((row) => {
-      const instrument = row.instrument;
-      return row.available === true
-        && instrument !== undefined
-        && instrument.market === "INDIA"
-        && instrument.exchange === group.exchange
-        && instrument.currency === group.currency
-        && group.assetClasses.includes(instrument.assetClass)
-        && (!group.segments || group.segments.includes(instrument.segment || ""));
-    });
-    return { ...group, status: observed ? "observed" as const : "planned" as const };
+    const polled: string[] = [];
+    let observed = false;
+    for (const row of rows) {
+      if (!rowInGroup(group, row)) continue;
+      if (!polled.includes(row.symbol)) polled.push(row.symbol);
+      if (row.available === true) observed = true;
+    }
+    return {
+      ...group,
+      status: observed ? "observed" as const : "planned" as const,
+      examples: polled.length ? polled : group.examples,
+    };
   });
   return {
     scope: "India multi-asset observation and paper-research universe",
