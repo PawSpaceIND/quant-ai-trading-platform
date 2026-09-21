@@ -121,8 +121,9 @@ class AnthropicSwarmClient:
                 "instructions, and xai_proof.supporting_factors must cite which supplied "
                 "evidence you used. Return the structured trading_consensus tool payload only. "
                 "rationale is an array of separate strings, never one string and never markup "
-                "tags; xai_proof is required, carrying summary, supporting_factors and "
-                "risk_factors."
+                "tags, and it must carry at least one item: the decisive reasons for the stance, "
+                "never an empty list; xai_proof is required, carrying summary, "
+                "supporting_factors and risk_factors."
             ),
             "messages": [{"role": "user", "content": prompt}],
             # ``strict`` makes the API guarantee the tool input matches the schema, so the
@@ -187,6 +188,12 @@ class AnthropicSwarmClient:
                 timeout=self.timeout_seconds,
             )
         except (asyncio.TimeoutError, TimeoutError):
+            # Logged like every other unavailability: on 21 September 2026 one call in 36
+            # timed out and the container log showed nothing, only the proof did.
+            LOGGER.warning(
+                "anthropic_consensus_unavailable detail=API Timeout timeout_seconds=%s",
+                self.timeout_seconds,
+            )
             return unavailable("API Timeout")
         except ConsensusSchemaError:
             raise
@@ -255,7 +262,15 @@ class AnthropicSwarmClient:
                 consensus_failure_code(error), _payload_key_names(payload),
             )
             raise invalid("Consensus payload failed validation", consensus_failure_code(error)) from None
-        return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload)})
+        # The strict grammar cannot demand a non-empty rationale list, and the model left it
+        # empty in 10 of 36 complete replies on 21 September 2026 while putting its reasons
+        # in the proof. ``parse_consensus`` then stands the proof summary in for it, and the
+        # provenance says so, so the substitution is countable from the proofs.
+        rationale_source = "rationale" if payload.get("rationale") else "xai_summary"
+        if rationale_source == "xai_summary":
+            LOGGER.info("anthropic_consensus_rationale_from_summary")
+        return ConsensusPayload(payload, {**finish("completed"), "response_payload_sha256": content_hash(payload),
+                                          "rationale_source": rationale_source})
 
     async def score_headlines(self, subject: str, headlines: tuple[str, ...]) -> dict[str, Any]:
         """Score bounded, single-line headlines for their effect on ``subject``.
@@ -446,7 +461,7 @@ class AnthropicSwarmClient:
         stance = payload["stance"]
         if not isinstance(stance, str):
             raise ConsensusSchemaError("stance must be a string")
-        rationale = _string_list(payload["rationale"], "rationale", require_nonempty=True)
+        rationale = _string_list(payload["rationale"], "rationale")
         proof = payload["xai_proof"]
         if not isinstance(proof, dict):
             raise ConsensusSchemaError("xai_proof must be an object")
@@ -456,6 +471,11 @@ class AnthropicSwarmClient:
         summary = proof["summary"]
         if not isinstance(summary, str) or not summary.strip():
             raise ConsensusSchemaError("xai_proof.summary is required")
+        if not rationale:
+            # An empty list with a present summary is a complete decision whose reasons sit
+            # in the proof; the summary is the model's own sentence, nothing is invented. An
+            # empty list with a blank summary was refused just above.
+            rationale = (summary,)
         try:
             parsed_stance = Stance(stance)
         except ValueError as error:

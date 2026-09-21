@@ -68,7 +68,6 @@ def test_unfinished_reply_refuses_even_if_tool_payload_looks_valid(stop, code):
     ("confidence", float("nan"), "confidence_nonfinite"),
     ("confidence", 1.1, "confidence_out_of_range"),
     ("expected_risk", -0.1, "negative_expected_risk"),
-    ("rationale", [], "rationale_empty"),
     ("stance", "made-up", "unsupported_stance"),
     ("xai_proof", {}, "proof_fields_invalid"),
 ])
@@ -80,6 +79,29 @@ def test_exact_validation_failure_is_recorded_without_payload(field, value, code
         run(llm)
     assert caught.value.provenance["failure_code"] == code
     assert "response_payload" not in caught.value.provenance
+
+
+def test_an_empty_rationale_with_a_summary_completes_with_the_summary_standing_in():
+    # 10 of 36 complete replies on 21 September 2026: reasons in the proof, rationale [].
+    body = payload()
+    body["rationale"] = []
+    llm, _ = client(body=body)
+    result = run(llm)
+    assert result.provenance["status"] == "completed"
+    assert result.provenance["rationale_source"] == "xai_summary"
+    signal, proof = llm.parse_consensus(result)
+    assert signal.rationale == ("synthetic",) == (proof.summary,)
+    assert run(client()[0]).provenance["rationale_source"] == "rationale"
+
+
+def test_an_empty_rationale_with_a_blank_summary_is_still_refused():
+    body = payload()
+    body["rationale"] = []
+    body["xai_proof"]["summary"] = "   "
+    llm, _ = client(body=body)
+    with pytest.raises(ConsensusSchemaError) as caught:
+        run(llm)
+    assert caught.value.provenance["failure_code"] == "proof_summary_empty"
 
 
 @pytest.mark.parametrize("body,code", [({}, "missing_consensus_fields"),

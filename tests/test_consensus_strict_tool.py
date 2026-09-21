@@ -136,3 +136,47 @@ def test_a_conforming_reply_still_completes():
     assert result.provenance["status"] == "completed"
     signal, proof = client.parse_consensus(result)
     assert signal.stance.value == "BUY" and proof.summary == "Paper-only view"
+
+
+def test_an_empty_rationale_is_not_a_refusal_when_the_proof_carries_the_reasons(caplog):
+    # The strict grammar cannot express minItems; on 21 September 2026 the model left
+    # rationale empty in 10 of 36 complete replies and every one was refused for it.
+    body = payload(rationale=[])
+    client = AnthropicSwarmClient(client=sdk(body), model="claude-sonnet-5")
+    with caplog.at_level(logging.INFO, logger=adapter.LOGGER.name):
+        result = asyncio.run(client.generate_trading_consensus("TRENT market context"))
+    assert result.provenance["status"] == "completed"
+    assert result.provenance["rationale_source"] == "xai_summary"
+    signal, proof = client.parse_consensus(result)
+    assert signal.rationale == ("Paper-only view",)
+    assert proof.summary == "Paper-only view"
+    assert not [r for r in caplog.records if r.getMessage().startswith("anthropic_consensus_invalid_schema")]
+    assert any(r.getMessage() == "anthropic_consensus_rationale_from_summary" for r in caplog.records)
+
+
+def test_a_supplied_rationale_is_kept_and_recorded_as_the_source():
+    client = AnthropicSwarmClient(client=sdk(payload()), model="claude-sonnet-5")
+    result = asyncio.run(client.generate_trading_consensus("TRENT market context"))
+    assert result.provenance["rationale_source"] == "rationale"
+    signal, _ = client.parse_consensus(result)
+    assert signal.rationale == ("cited evidence",)
+
+
+def test_the_system_prompt_asks_for_a_non_empty_rationale():
+    client = AnthropicSwarmClient(client=sdk(payload()), model="claude-sonnet-5")
+    asyncio.run(client.generate_trading_consensus("TRENT market context"))
+    system = client.client_request_system() if hasattr(client, "client_request_system") else client._client.messages.create.await_args.kwargs["system"]
+    assert "at least one item" in system
+    assert "never an empty list" in system
+
+
+def test_a_timeout_is_logged_like_every_other_unavailability(caplog):
+    async def never(**_):
+        raise asyncio.TimeoutError
+    transport = SimpleNamespace(messages=SimpleNamespace(create=never))
+    client = AnthropicSwarmClient(client=transport, model="claude-sonnet-5", timeout_seconds=0.5)
+    with caplog.at_level(logging.WARNING, logger=adapter.LOGGER.name):
+        result = asyncio.run(client.generate_trading_consensus("TRENT market context"))
+    assert result.provenance["status"] == "unavailable"
+    assert result["rationale"] == ["Consensus Skipped: API Timeout"]
+    assert "anthropic_consensus_unavailable detail=API Timeout timeout_seconds=0.5" in caplog.text
