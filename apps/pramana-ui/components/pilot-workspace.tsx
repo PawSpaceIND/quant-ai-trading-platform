@@ -412,7 +412,11 @@ export function PilotWorkspace() {
               {data.runtime.halted
                 ? `${hosted ? "Last published halt" : "Engine halt acknowledged"}: ${data.runtime.haltReason || "operator halt"}`
                 : "Halt requested — waiting for engine acknowledgement."}{" "}
-              {hosted ? "Current engine state is not verified by this snapshot." : "Protective exits remain enabled. Resume requires operator review through the CLI."}
+              {hosted
+                ? "Current engine state is not verified by this snapshot."
+                : data.runtime.status === "running"
+                  ? "Protective exits remain enabled. Resume requires operator review through the CLI."
+                  : "Whether protective exits are still sweeping is unverified: the engine is not reporting as running. Resume requires operator review through the CLI."}
             </div>
           )}
           {protection?.severity === "exposed" && (
@@ -471,7 +475,7 @@ export function PilotWorkspace() {
                         <RiskBar
                           label="Drawdown"
                           value={p!.drawdown}
-                          limit={data.runtime.limits?.drawdown ?? 0.1}
+                          limit={data.runtime.limits?.drawdown}
                         />
                         <RiskBar
                           label="Gross exposure"
@@ -483,7 +487,7 @@ export function PilotWorkspace() {
                                 ) / p!.totalEquity
                               : 0
                           }
-                          limit={data.runtime.limits?.grossExposure ?? 0.6}
+                          limit={data.runtime.limits?.grossExposure}
                         />
                         <div className="details">
                           <div>
@@ -923,8 +927,22 @@ function RiskBar({
 }: {
   label: string;
   value: number;
-  limit: number;
+  limit?: number;
 }) {
+  // The engine caps every published limit at the same ceiling the fallbacks used to be,
+  // so a fabricated limit is always the loosest one possible and a tighter configured cap
+  // was silently widened. With nothing published there is no bar to draw.
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0)
+    return (
+      <div className="risk-bar">
+        <div>
+          <span>{label}</span>
+          <strong>
+            {pct(value)} <small>/ limit unpublished</small>
+          </strong>
+        </div>
+      </div>
+    );
   return (
     <div className="risk-bar">
       <div>
