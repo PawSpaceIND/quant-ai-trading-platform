@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { boundedJson } from "@/lib/auth";
 import { audit, dailyBudget, rateLimit } from "@/lib/console-db";
 import { runComparisonContext } from "@/lib/run-comparison";
+import { brokerObservationContext } from "@/lib/broker-observation";
+import { validBrokerSelection } from "@/lib/broker-lifecycle";
 import { conversations, generateAnswer } from "@/lib/copilot";
 import { tenantId } from "@/lib/db";
 export const dynamic = "force-dynamic";
@@ -46,11 +48,39 @@ export async function POST(req: NextRequest) {
       throw new Error("Invalid request ID");
     if (body.companyAsOf !== undefined && typeof body.companyAsOf !== "string")
       throw new Error("Invalid company evidence cutoff");
-    // Resolve pinned evidence before the budget is consumed. A pinned report that has
-    // been republished fails the request, and charging a daily question for a call that
-    // never happened spends the operator's allowance on nothing.
+    // Resolve every pinned selection, and the shared spend guard, BEFORE the daily budget
+    // is consumed. Each of these refuses the request, and charging a daily question for a
+    // call that never happened spends the operator's allowance on nothing. The first pass
+    // of this only covered the run comparison, which left two of the three pins and the
+    // dollar guard still charging for a refusal.
     if (typeof body.runComparisonSha256 === "string" && body.runComparisonSha256)
       runComparisonContext(body.runComparisonSha256);
+    if (body.brokerCapture !== undefined) {
+      if (!validBrokerSelection(body.brokerCapture))
+        throw new Error("Select one valid broker capture or company cutoff");
+      brokerObservationContext(body.brokerCapture);
+    }
+    if (
+      typeof body.companyAsOf === "string" &&
+      (body.companyAsOf.length > 50 ||
+        !/(Z|[+-]\d\d:\d\d)$/.test(body.companyAsOf) ||
+        !Number.isFinite(Date.parse(body.companyAsOf)) ||
+        Date.parse(body.companyAsOf) > Date.now() + 1000)
+    )
+      throw new Error("Invalid company evidence cutoff");
+    const spend = spendStatus();
+    if (spend && spend.status !== "available")
+      return NextResponse.json(
+        {
+          error:
+            spend.status === "activation_hold"
+              ? "Paid Atlas calls are paused until 05:30 IST because earlier spending is unverified."
+              : spend.status === "exhausted"
+                ? "The combined daily AI budget is spent. It resets at 05:30 IST."
+                : "The combined daily AI budget is unavailable, so paid calls are refused.",
+        },
+        { status: spend.status === "exhausted" ? 429 : 503 },
+      );
     const limit = dailyLimit();
     if (limit > 0) {
       let budget: ReturnType<typeof dailyBudget>;

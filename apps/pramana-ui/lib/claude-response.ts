@@ -20,7 +20,8 @@ type Attempt = {
  * CONVERSATION_STALE_MS in lib/copilot.ts must stay well above this: that sweep marks any
  * still-pending row failed, so a shorter one would fail requests that are still running.
  */
-export const REQUEST_DEADLINE_MS = 120_000;
+export {REQUEST_DEADLINE_MS} from "./chat-deadline";
+import {REQUEST_DEADLINE_MS} from "./chat-deadline";
 
 /** Never store raw provider bodies: errors can contain submitted private context. */
 export async function requestClaude(

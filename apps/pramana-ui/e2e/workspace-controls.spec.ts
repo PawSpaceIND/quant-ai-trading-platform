@@ -96,8 +96,11 @@ for (const width of [1280, 390]) {
     await page.unroute("**/api/session");
     await logout.click();
     await expect(page).toHaveURL(/\/login$/);
+    // Signed out, a deep link still lands on sign-in, and now remembers where it was
+    // going so the round trip does not drop the operator on a blank overview.
     await page.goto("/?view=quality");
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?/);
+    expect(new URL(page.url()).searchParams.get("next")).toBe("/?view=quality");
   });
 }
 
