@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -34,6 +35,32 @@ HORIZON_COLUMNS = (
     "forward_return_60m",
     "forward_return_close",
 )
+
+# What the fill was priced against, beside what the market was actually showing. The
+# engine refuses an entry whose mark has left the reference price by more than the
+# tolerance - and then fills the ones it approves AT that reference, never at the mark.
+# So every approved entry books the drift the gate tolerated as a gain or a loss no broker
+# would have given, and nothing recorded how much. These columns are that amount's inputs,
+# kept per decision so it can be measured rather than argued about.
+FILL_COLUMNS = (
+    # The mark the snapshot froze at T0, and the mark the entry gate compared at submit.
+    # reference_price (above) is the third: the last closed one-minute bar the gate used.
+    "mark_at_t0",
+    "mark_at_submit",
+    # Signed, in basis points: (mark_at_submit / reference_price - 1). Recorded on
+    # approvals as well as refusals - refusals alone are every drift above the tolerance
+    # and none below it, which is a censored sample and cannot describe the path.
+    "drift_bps",
+    # The book as of T0. Null when the quote was one-sided, crossed or absent; never zero,
+    # because "no quote" and "a zero spread" are different facts.
+    "bid",
+    "ask",
+    "spread_bps",
+    # What the paper ledger actually charged, and what priced it.
+    "fill_price",
+    "fill_anchor",
+)
+
 
 COLUMNS = (
     "decision_id",
@@ -67,6 +94,7 @@ COLUMNS = (
     "forecast_resolves_at",
     "forecast_cost_bps",
     "forecast_basis",
+    *FILL_COLUMNS,
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -124,6 +152,14 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     forecast_resolves_at TEXT,
     forecast_cost_bps TEXT,
     forecast_basis TEXT,
+    mark_at_t0 TEXT,
+    mark_at_submit TEXT,
+    drift_bps TEXT,
+    bid TEXT,
+    ask TEXT,
+    spread_bps TEXT,
+    fill_price TEXT,
+    fill_anchor TEXT,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -192,6 +228,17 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("forecast_resolves_at", "TEXT"),
     ("forecast_cost_bps", "TEXT"),
     ("forecast_basis", "TEXT"),
+    # What priced the fill against what the market was showing. See FILL_COLUMNS: the
+    # ledger anchors every fill to reference_price, so mark_at_submit beside it is the
+    # only way to see the edge the drift tolerance hands the book on an approval.
+    ("mark_at_t0", "TEXT"),
+    ("mark_at_submit", "TEXT"),
+    ("drift_bps", "TEXT"),
+    ("bid", "TEXT"),
+    ("ask", "TEXT"),
+    ("spread_bps", "TEXT"),
+    ("fill_price", "TEXT"),
+    ("fill_anchor", "TEXT"),
 )
 
 
@@ -417,6 +464,55 @@ def agents_of(trace) -> dict[str, dict[str, str]]:
     return agents
 
 
+# The paper ledger prices every fill from ``order.reference_price`` (see
+# quant_ai.execution.friction: execution_price = reference_price +/- spread and slippage).
+# It never reads the mark at submit. Recorded as a value rather than left implicit so that
+# a later change of anchor is visible in the data as a different string, and pinned by a
+# test against the ledger's real behaviour so the two cannot drift apart in silence.
+FILL_ANCHOR_REFERENCE = "reference_price_at_t0"
+
+
+def fill_marks(proposal: Any, fill: Any, marks: Any = None) -> dict[str, Any]:
+    """What the fill was priced against, beside what the market was showing.
+
+    Three marks describe one entry and they are routinely different:
+    ``reference_price`` is the last closed one-minute bar the gate used, ``mark_at_t0`` is
+    the tick the snapshot froze, and ``mark_at_submit`` is what the book showed when the
+    order went in. The ledger charges against the first. An approval at fifteen basis
+    points of drift therefore books fifteen basis points no broker would have given, and
+    without these columns beside each other that amount cannot be computed after the fact.
+
+    Everything absent stays None. A mark that was never observed is not a zero.
+    """
+    supplied = marks if isinstance(marks, Mapping) else {}
+    provenance = getattr(proposal, "provenance", None)
+    snapshot = provenance.get("feature_snapshot") if isinstance(provenance, dict) else None
+    market = snapshot.get("market") if isinstance(snapshot, dict) else None
+    book = market if isinstance(market, dict) else {}
+    filled = fill is not None and getattr(fill, "average_price", None) is not None
+    return {
+        # Already strings in the snapshot; carried through rather than reformatted, so the
+        # journal and the proof cannot disagree about what the decision saw.
+        "mark_at_t0": _text_or_none(book.get("last_price")),
+        "bid": _text_or_none(book.get("bid")),
+        "ask": _text_or_none(book.get("ask")),
+        "spread_bps": _text_or_none(book.get("spread_bps")),
+        # Measured by the entry gate, which is the only place both numbers exist at once.
+        "mark_at_submit": _text_or_none(supplied.get("mark_at_submit")),
+        "drift_bps": _text_or_none(supplied.get("drift_bps")),
+        "fill_price": decimal_text(fill.average_price) if filled else None,
+        # Only meaningful when something actually filled.
+        "fill_anchor": FILL_ANCHOR_REFERENCE if filled else None,
+    }
+
+
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else decimal_text(value)
+    return text if text else None
+
+
 def decision_row(
     result,
     *,
@@ -426,6 +522,7 @@ def decision_row(
     mode: str | None = None,
     llm_available: bool = False,
     features: Any = None,
+    marks: Any = None,
 ) -> dict[str, Any]:
     """Build the journal row for one ``SwarmExecutionResult`` without writing it."""
     proposal = result.proposal
@@ -471,6 +568,7 @@ def decision_row(
         "probe": 1 if probe_of(proposal) else 0,
         "playbook": playbook_of(proposal),
         **forecast_of(proposal),
+        **fill_marks(proposal, fill, marks),
     }
 
 
@@ -511,11 +609,12 @@ def record_decision(
     now: datetime,
     llm_available: bool = False,
     features: Any = None,
+    marks: Any = None,
 ) -> bool:
     """Journal one cadence decision. Idempotent on ``decision_id``; True when a row was added."""
     row = decision_row(
         result, tenant_id=tenant_id, now=now, regime=regime, mode=mode,
-        llm_available=llm_available, features=features,
+        llm_available=llm_available, features=features, marks=marks,
     )
     inserted = insert_decision(broker, row)
     if inserted:

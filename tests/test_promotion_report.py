@@ -189,3 +189,54 @@ def test_each_row_is_scored_at_the_cost_it_was_decided_under() -> None:
     # probability rather than about the probability.
     assert sample("10")["payoffs_look_declared_not_measured"] is True
     assert sample("0")["payoffs_look_declared_not_measured"] is False
+
+
+def test_the_drift_now_comes_from_the_journal_rather_than_the_caller() -> None:
+    """The input this report used to refuse on, supplied by the gate that measures it.
+
+    ``entry_drift_not_journaled`` was named on every run because the entry gate computed
+    the drift and threw it away. It is a column now, so rows answer for themselves.
+    """
+    rows = [dict(item, drift_bps="12.0" if index % 2 else "-8.0")
+            for index, item in enumerate(skilful(MINIMUM_RESOLVED))]
+    report = promotion_report(rows, realised_max_drawdown="0.02", policy_max_drawdown="0.10")
+    assert "entry_drift_not_journaled" not in report["missing_inputs"]
+    # Absolute, so a market that ran away and one that came back are the same distance.
+    assert report["median_abs_entry_drift_bps"] == "10.0"
+    assert report["verdict"] == "pass"
+
+
+def test_a_journal_that_predates_the_column_is_still_named_as_missing() -> None:
+    """Failing closed did not stop mattering just because the column exists."""
+    report = promotion_report(skilful(MINIMUM_RESOLVED), realised_max_drawdown="0.02",
+                              policy_max_drawdown="0.10")
+    assert "entry_drift_not_journaled" in report["missing_inputs"]
+    assert report["verdict"] == "missing_inputs"
+    assert report["median_abs_entry_drift_bps"] is None
+
+
+def test_an_explicit_drift_overrides_the_journal_for_a_replay() -> None:
+    """A replay scoring a window from outside the ledger keeps its own measurement."""
+    rows = [dict(item, drift_bps="99.0") for item in skilful(MINIMUM_RESOLVED)]
+    report = promotion_report(rows, entry_drift_bps=["4.0", "-6.0"],
+                              realised_max_drawdown="0.02", policy_max_drawdown="0.10")
+    assert report["median_abs_entry_drift_bps"] == "5.0"
+
+
+def test_the_drift_is_measured_on_fills_and_not_on_everything_the_gate_looked_at() -> None:
+    """The question is the drift the book paid, not the drift of what it refused.
+
+    Refusals are every drift above the tolerance and none below it. Folding them into the
+    median would describe the gate's reject pile rather than the cost of the entries that
+    actually happened - and would do it while looking like a fill statistic.
+    """
+    fills = [dict(item, drift_bps="10.0") for item in skilful(MINIMUM_RESOLVED)]
+    # Enough of them to move the median if they were counted: 210 refusals at 400 bps
+    # against 200 fills at 10 would put the middle of the pooled sample in the reject pile.
+    refusals = [dict(item, governance="rejected", realized_net_pnl=None, drift_bps="400.0")
+                for item in skilful(MINIMUM_RESOLVED + 10)]
+    report = promotion_report(fills + refusals, realised_max_drawdown="0.02",
+                              policy_max_drawdown="0.10")
+    assert report["filled_buys"] == MINIMUM_RESOLVED
+    # 10.0, not something dragged upward by the 400 bps moves the gate refused.
+    assert report["median_abs_entry_drift_bps"] == "10.0"

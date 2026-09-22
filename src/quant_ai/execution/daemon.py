@@ -13,6 +13,9 @@ from decimal import Decimal, DecimalException
 # entry is refused. Twenty basis points, unchanged: a fill against a reference the market
 # has left is the thing this gate exists to prevent. Named here so the refusal can state
 # the tolerance it applied rather than leaving a reader to find the literal.
+# One session of a twelve-name book at the current cadence is far below this; the bound
+# exists so an unjournaled cadence cannot accumulate, not to ration normal operation.
+ENTRY_MARK_LIMIT = 512
 ENTRY_PRICE_DRIFT_TOLERANCE = Decimal(".002")
 
 
@@ -48,6 +51,30 @@ from quant_ai.operations.kill_switch import KillSwitch
 from quant_ai.planning.capital import CapitalPlan
 
 OPERATOR_HALT_PREFIX = "operator_halt_file"
+
+
+def remember_entry_marks(runner, proposal, mark: Decimal, drift: Decimal) -> None:
+    """Hold the entry gate's two numbers until the journal takes them.
+
+    Deliberately a function rather than a method: this is called from a gate whose callers
+    supply objects of any shape, and an attribute lookup on ``self`` would raise before a
+    guard inside a method could run. Nothing here may fail a submission - a runner without
+    the store, a proposal without an id and an unformattable number each record nothing.
+    """
+    store = getattr(runner, "_entry_marks", None)
+    if not isinstance(store, dict):
+        return
+    try:
+        decision_id = str(getattr(proposal, "decision_id", "") or "")
+        if not decision_id:
+            return
+        if len(store) >= ENTRY_MARK_LIMIT:
+            # Oldest first: a stalled cadence must not let this outgrow the session, and
+            # the row it would have decorated is the one least likely to be journaled.
+            store.pop(next(iter(store)), None)
+        store[decision_id] = {"mark_at_submit": str(mark), "drift_bps": str(_basis_points(drift))}
+    except Exception:  # evidence capture must never break a submission
+        logging.getLogger(__name__).exception("entry_mark_capture_failed")
 
 
 @dataclass(frozen=True)
@@ -170,6 +197,13 @@ class AutonomousTradingDaemon:
         self.scan_universe = tuple(scan_universe)
         self.scan_gates = {name: frozenset(str(s).upper() for s in symbols)
                            for name, symbols in (scan_gates or {}).items()}
+        # The entry gate's own measurement, by decision id, until the journal takes it.
+        # It lives here rather than on the proposal because a proof must not be edited by
+        # a gate that reads it: the decision is what the swarm concluded, and what the
+        # market was doing when the order went in is evidence about the fill, not about
+        # the decision. Popped on journal; bounded so a cadence that never journals (an
+        # off-hours sweep, a refused symbol) cannot grow it without limit.
+        self._entry_marks: dict[str, dict[str, str]] = {}
 
         # Fault halts share the portfolio's durable risk-state backend. A process or host
         # restart therefore cannot silently clear a breaker that was tripped by the runner.
@@ -244,6 +278,10 @@ class AutonomousTradingDaemon:
             _basis_points(drift), _basis_points(ENTRY_PRICE_DRIFT_TOLERANCE),
             "true" if refused else "false",
         )
+        # A log line is not a record. The journal is what decision quality, the promotion
+        # report and any later fitter actually read, and until this landed there the drift
+        # existed only in a file nobody joins to a decision.
+        remember_entry_marks(self, proposal, mark, drift)
         return "pilot_price_moved_during_analysis" if refused else None
 
     def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
@@ -734,6 +772,7 @@ class AutonomousTradingDaemon:
                 self.tracker.broker, execution, tenant_id=self.tenant_id,
                 now=timestamp, llm_available=llm_available,
                 features=getattr(result, "features", None),
+                marks=self._entry_marks.pop(str(execution.proposal.decision_id), None),
             )
         except Exception:  # evidence capture must never break the cadence
             self._logger.exception("decision_journal_write_failed symbol=%s", instrument.symbol)

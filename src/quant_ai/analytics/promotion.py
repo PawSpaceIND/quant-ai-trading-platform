@@ -107,8 +107,10 @@ def promotion_report(
 ) -> dict[str, Any]:
     """Deterministic over its inputs: the same rows always give the same report.
 
-    ``entry_drift_bps`` and ``realised_max_drawdown`` are supplied by the caller because
-    neither is journaled yet. Absent, they are named as missing and the verdict refuses.
+    ``entry_drift_bps`` overrides the journal's own ``drift_bps`` column, for a replay
+    scoring a window from outside the ledger; absent, the filled rows answer for
+    themselves. ``realised_max_drawdown`` is still the caller's, and absent it is named as
+    missing and the verdict refuses.
     """
     scoring = summarize(list(rows))
     bases = scoring["by_basis"]
@@ -124,7 +126,14 @@ def promotion_report(
     settled = [value for value in realised if value is not None]
     mean_net = (sum(settled, Decimal(0)) / Decimal(len(settled))) if settled else None
 
-    drifts = [parse_decimal(value) for value in (entry_drift_bps or [])]
+    # The journal now carries the gate's own measurement per decision, so the caller no
+    # longer has to supply it. The parameter stays as an override for a replay scoring a
+    # window from outside the ledger; absent, the rows answer for themselves. Measured on
+    # fills, because the question is the drift the book actually paid, not the drift of
+    # everything the gate looked at.
+    supplied = [parse_decimal(value) for value in (entry_drift_bps or [])]
+    journaled = [parse_decimal(row.get("drift_bps")) for row in filled]
+    drifts = supplied if entry_drift_bps is not None else journaled
     drift_values = [abs(value) for value in drifts if value is not None]
     median_drift = median(drift_values) if drift_values else None
 
@@ -183,6 +192,6 @@ def promotion_report(
             "Brier against a coin is the weaker test; skill against the base rate is reported beside it.",
             "Filled-buy P&L is paper, net of recorded fees only; unrecorded costs remain outside it.",
             "Refused decisions score the forecast directionally and are never fill P&L.",
-            "Entry drift and realised drawdown are supplied by the caller; neither is journaled yet.",
+            "Entry drift is the gate's own measurement on filled rows; realised drawdown is still the caller's.",
         ],
     }
