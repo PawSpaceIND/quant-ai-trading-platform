@@ -81,6 +81,11 @@ from quant_ai.marketdata.ticker_stream import (
     _contract_symbol,
 )
 from quant_ai.marketdata.timeframes import DailyHistoryProvider
+
+# Bars the warm-up must leave in the feed for the technical specialist to hold a stance.
+# The pipeline and the specialist carry the same number; a test binds the three together
+# so a change to one fails rather than silently blinding the specialist.
+WARM_INTRADAY_BARS = 50
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationSink
 from quant_ai.operations.macro_probe import check_macro_provider
 from quant_ai.operations.zerodha_renewal import check_runtime_token, default_alert_state
@@ -259,6 +264,17 @@ class DaemonRunner:
         """Seed recent closed one-minute bars before the first AI cadence."""
         provider = self.intraday_warmup_provider
         if provider is None or not self.intraday_warmup_instruments:
+            # Returning in silence is what hid this. The analysis pipeline reads at most
+            # sixty one-minute bars and the technical specialist needs
+            # WARM_INTRADAY_BARS of them, so with no warm-up the feed starts empty and
+            # that specialist - the swarm's most confident when it has its history -
+            # abstains for the first fifty minutes of every session and after every
+            # restart, while nothing in any log says why.
+            self._logger.warning(
+                "intraday_warmup_disabled reason=%s technical_specialist_blind_below_bars=%d",
+                "no_provider" if provider is None else "no_instruments",
+                WARM_INTRADAY_BARS,
+            )
             return
         feed = self.daemon.scheduler.pipeline.market_feed
         seed = getattr(feed, "seed_closed_candles", None)
@@ -285,11 +301,11 @@ class DaemonRunner:
                 }
                 self._logger.warning("intraday_warmup_failed symbol=%s", instrument.symbol)
                 continue
-            status = "ready" if available >= 50 else "insufficient"
+            status = "ready" if available >= WARM_INTRADAY_BARS else "insufficient"
             self.intraday_warmup_status[instrument.symbol] = {
                 "status": status, "bars": available, "updatedAt": stamp
             }
-            if available < 50:
+            if available < WARM_INTRADAY_BARS:
                 self._logger.warning(
                     "intraday_warmup_insufficient symbol=%s bars=%d", instrument.symbol, available
                 )

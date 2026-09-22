@@ -84,6 +84,9 @@ INTRADAY_TIMEFRAME = "15m"
 INTRADAY_TIMEFRAME_MINUTES = 15
 DAILY_TIMEFRAME = "1d"
 INTRADAY_HISTORY_WINDOW = timedelta(hours=30)
+# Minute closes needed before sma20/sma50, RSI and momentum describe anything. Below this
+# the neutral defaults below are returned and the technical specialist abstains on them.
+TECHNICAL_MINIMUM_BARS = 50
 # A provider or feed fault must never break the cadence: context is evidence, not a gate.
 _CONTEXT_FAILURES = (
     TimeoutError, OSError, RuntimeError, ValueError, TypeError, LookupError, AttributeError,
@@ -943,7 +946,7 @@ class SwarmMarketAnalysisPipeline:
     @staticmethod
     def _technical_metrics(closes: tuple[Decimal, ...]) -> dict[str, Decimal]:
         bars = Decimal(len(closes))
-        if len(closes) < 50:
+        if len(closes) < TECHNICAL_MINIMUM_BARS:
             return {
                 "sma_spread": Decimal(0),
                 "rsi": Decimal(50),

@@ -303,12 +303,17 @@ class USEquitiesAgent(SwarmAgent):
         )
 
 
+# Minute bars this specialist needs before it will hold a stance. Matches the pipeline's
+# own floor: below it the metrics it reads are neutral defaults, not measurements.
+TECHNICAL_MINIMUM_BARS = Decimal(50)
+
+
 class TechnicalQuantAgent(SwarmAgent):
     agent_id = "technical-quant-mas"
     domain = AgentDomain.TECHNICAL
 
     def analyze(self, request: AgentAnalysisRequest) -> AgentEvidence:
-        if request.metrics.get("price_history_bars", Decimal(50)) < Decimal(50):
+        if request.metrics.get("price_history_bars", TECHNICAL_MINIMUM_BARS) < TECHNICAL_MINIMUM_BARS:
             return self._evidence(request, Decimal(0), Decimal(0), "insufficient_price_history")
         spread = request.metrics.get("sma_spread", Decimal(0))
         rsi = request.metrics.get("rsi", Decimal(50))
