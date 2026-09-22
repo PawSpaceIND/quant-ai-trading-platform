@@ -55,6 +55,28 @@ for i in range(48):
         "inference_failure_code": None if i % 2 else "missing_consensus_fields",
     })
 
+# The directional forecast the engine records on every decision: the probability that the
+# forward return clears a stated cost over a stated horizon, and the named mapping that
+# produced it. Bases are never pooled, so the fixture carries a retired mapping and its
+# refit, and the reader has to keep them apart.
+for i, row in enumerate(rows):
+    # One decision states no forecast at all and one names a horizon with no resolver
+    # column, so the unscoreable counters are exercised rather than assumed to be zero.
+    if i == 3:
+        continue
+    # Deterministic and dispersed across every reliability bin, with two values inside one
+    # bin so the within-bin term of the decomposition is non-zero and gets checked.
+    probability = round(0.05 + (i % 11) * 0.09, 4)
+    decided_at = datetime.fromisoformat(row["decided_at"])
+    horizon = 7200 if i == 5 else 3600
+    row.update({
+        "forecast_probability_up": str(probability),
+        "forecast_horizon_seconds": horizon,
+        "forecast_cost_bps": "5",
+        "forecast_resolves_at": (decided_at + timedelta(seconds=horizon)).isoformat(),
+        "forecast_basis": "consensus_lean_v1" if i < 44 else "consensus_lean_v2",
+    })
+
 now = BASE + timedelta(days=7)
 report = summarize(rows, tenant_id="ghost", now=now, since=now - timedelta(days=30), minimum_sample=20)
 print(json.dumps(report, indent=2))

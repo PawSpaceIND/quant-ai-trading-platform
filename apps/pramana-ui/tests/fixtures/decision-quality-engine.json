@@ -143,6 +143,228 @@
       }
     ]
   },
+  "forecast_scoring": {
+    "schema": "pramana.forecast_scoring.v1",
+    "minimum_scored": 30,
+    "decisions": 48,
+    "with_forecast": 47,
+    "unscoreable": {
+      "no_forecast": 1,
+      "unknown_horizon": 1,
+      "outcome_unresolved": 11,
+      "invalid_probability": 0
+    },
+    "by_basis": [
+      {
+        "basis": "consensus_lean_v1",
+        "scored": 32,
+        "insufficient_sample": false,
+        "base_rate": 0.46875,
+        "brier_score": 0.080406,
+        "log_score": 0.301467,
+        "baselines": {
+          "coin_flip": {
+            "brier_score": 0.25,
+            "log_score": 0.693147
+          },
+          "base_rate": {
+            "probability": 0.46875,
+            "brier_score": 0.249023,
+            "log_score": 0.691193
+          }
+        },
+        "skill_vs_base_rate": 0.677114,
+        "skill_vs_coin_flip": 0.678375,
+        "decomposition": {
+          "reliability": 0.049353,
+          "resolution": 0.211523,
+          "uncertainty": 0.249023,
+          "within_bin": -0.006447
+        },
+        "reliability": [
+          {
+            "lower": 0.0,
+            "upper": 0.1,
+            "forecasts": 3,
+            "mean_forecast": 0.05,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.1,
+            "upper": 0.2,
+            "forecasts": 3,
+            "mean_forecast": 0.14,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.3,
+            "forecasts": 3,
+            "mean_forecast": 0.23,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.3,
+            "upper": 0.4,
+            "forecasts": 3,
+            "mean_forecast": 0.32,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.5,
+            "forecasts": 3,
+            "mean_forecast": 0.41,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.5,
+            "upper": 0.6,
+            "forecasts": 5,
+            "mean_forecast": 0.554,
+            "observed_frequency": 0.6
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.7,
+            "forecasts": 3,
+            "mean_forecast": 0.68,
+            "observed_frequency": 1.0
+          },
+          {
+            "lower": 0.7,
+            "upper": 0.8,
+            "forecasts": 3,
+            "mean_forecast": 0.77,
+            "observed_frequency": 1.0
+          },
+          {
+            "lower": 0.8,
+            "upper": 0.9,
+            "forecasts": 3,
+            "mean_forecast": 0.86,
+            "observed_frequency": 1.0
+          },
+          {
+            "lower": 0.9,
+            "upper": 1.0,
+            "forecasts": 3,
+            "mean_forecast": 0.95,
+            "observed_frequency": 1.0
+          }
+        ],
+        "verdict": "consensus_lean_v1: 32 scored forecasts with skill +0.677 against the base rate (Brier 0.0804 versus 0.2490). This is paper evidence over one window and is not a live-trading approval."
+      },
+      {
+        "basis": "consensus_lean_v2",
+        "scored": 3,
+        "insufficient_sample": true,
+        "base_rate": 0.0,
+        "brier_score": 0.025,
+        "log_score": 0.154494,
+        "baselines": {
+          "coin_flip": {
+            "brier_score": 0.25,
+            "log_score": 0.693147
+          },
+          "base_rate": {
+            "probability": 0.05,
+            "brier_score": 0.0025,
+            "log_score": 0.051293
+          }
+        },
+        "skill_vs_base_rate": -9.0,
+        "skill_vs_coin_flip": 0.9,
+        "decomposition": {
+          "reliability": 0.025,
+          "resolution": 0.0,
+          "uncertainty": 0.0,
+          "within_bin": 0.0
+        },
+        "reliability": [
+          {
+            "lower": 0.0,
+            "upper": 0.1,
+            "forecasts": 1,
+            "mean_forecast": 0.05,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.1,
+            "upper": 0.2,
+            "forecasts": 1,
+            "mean_forecast": 0.14,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.3,
+            "forecasts": 1,
+            "mean_forecast": 0.23,
+            "observed_frequency": 0.0
+          },
+          {
+            "lower": 0.3,
+            "upper": 0.4,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.5,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.5,
+            "upper": 0.6,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.7,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.7,
+            "upper": 0.8,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.8,
+            "upper": 0.9,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          },
+          {
+            "lower": 0.9,
+            "upper": 1.0,
+            "forecasts": 0,
+            "mean_forecast": null,
+            "observed_frequency": null
+          }
+        ],
+        "verdict": "consensus_lean_v2: 3 scored forecasts, fewer than the 30 this report applies any skill claim to. The numbers below describe this sample only."
+      }
+    ],
+    "limitations": [
+      "Brier and log score are proper scoring rules: lower is better and neither can be improved by hedging towards 0.5 or by exaggerating confidence.",
+      "Skill is measured against the base rate of this sample, not against a coin. A forecast that has only learned how often the move happens scores zero skill here while beating a coin flip, which is why both baselines are shown.",
+      "Bases are never pooled. A refit ships a new basis and its rows are scored on their own terms; rows written under a mapping that no longer runs are still shown.",
+      "Each row is scored against the cost and horizon stored with it, so a later change of cost policy cannot rescore decisions made under the old one.",
+      "Forecasts whose outcome has not resolved are excluded, not counted as misses. The unscoreable counts state how many and why.",
+      "Decisions inside a session are serially correlated, so these are not independent observations and no confidence interval is implied."
+    ]
+  },
   "by_regime": [
     {
       "regime": "HIGH_VOLATILITY",

@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { AiBudget, CalibrationBin, DecisionQualityReport, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Significance, TStatistic, Verdict } from "@/lib/decision-quality-model";
-import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, stancesSummary } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, ForecastBasisRow, ForecastScoring, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Significance, TStatistic, Verdict } from "@/lib/decision-quality-model";
+import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, signedRatio, stancesSummary } from "@/lib/decision-quality-model";
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
 
@@ -65,6 +65,7 @@ export function DecisionQuality() {
       <Headline report={report} />
       <ModelDecisionHealth report={report.inference_health} />
       <Calibration bins={report.calibration.bins} brier={report.calibration.brier_score} horizon={report.directional.horizon_minutes} />
+      <ForecastScoringPanel scoring={report.forecast_scoring} />
       <SignificancePanel significance={report.significance} horizon={report.directional.horizon_minutes} />
       <div className="quality-tables">
         <Panel eyebrow="OUTCOMES BY REGIME" title="By regime">
@@ -211,6 +212,112 @@ function Calibration({ bins, brier, horizon }: { bins: CalibrationBin[]; brier: 
       </div>;
     })}</div> : <div className="empty">No calibration bins in this report</div>}
   </section>;
+}
+
+/**
+ * The engine's scoring of the forecasts it stated before the outcomes existed. The
+ * calibration strip above asks whether the agents' *confidence* tracked their hit rate;
+ * this asks whether the *probability* each decision stated came true as often as it
+ * claimed, against the cost and horizon stored with that decision.
+ *
+ * Bases are shown one below the other and never combined. A refit ships a new basis, and
+ * one curve drawn over two mappings describes neither.
+ */
+export function ForecastScoringPanel({ scoring }: { scoring: ForecastScoring | null }) {
+  return <section className="panel" aria-label="Forecast scoring">
+    <div className="panel-title">
+      <div><span className="eyebrow">STATED BEFORE THE OUTCOME</span><h2>Forecast scoring</h2></div>
+      {scoring && <span className="muted">{count(scoring.with_forecast)} of {count(scoring.decisions)} decisions state a forecast</span>}
+    </div>
+    {!scoring
+      ? <div className="empty">
+          No readable forecast scoring in this report: either no forecast has been recorded over this window, or the
+          block declares a schema this build does not read. Nothing about calibration is inferred from the confidence
+          numbers above, which measure a different claim.
+        </div>
+      : <>
+        <p className="readiness-explanation">
+          Every decision states the probability that the forward return clears its own cost over its own horizon, written
+          before the outcome exists. Brier and log score are proper: lower is better, and neither can be improved by
+          hedging towards 0.5 or by exaggerating. Skill is measured against the base rate rather than a coin, so a
+          forecast that has only learned how often the move happens scores zero here while still beating a coin.
+        </p>
+        <p className="readiness-explanation quality-note">
+          {count(scoring.with_forecast)} forecasts recorded, {count(scoring.unscoreable.no_forecast)} decisions stated none.
+          Not scored: {count(scoring.unscoreable.outcome_unresolved)} whose outcome has not resolved,{" "}
+          {count(scoring.unscoreable.unknown_horizon)} naming a horizon with no resolver, and{" "}
+          {count(scoring.unscoreable.invalid_probability)} with an unusable probability. Unresolved forecasts are excluded,
+          never counted as misses, and no skill is claimed below {count(scoring.minimum_scored)} scored forecasts.
+        </p>
+        {scoring.by_basis.length
+          ? scoring.by_basis.map((basis) => <ForecastBasis key={basis.basis} basis={basis} />)
+          : <div className="empty">{scoring.with_forecast === 0
+              ? "No decision in this window recorded a forecast, so there is nothing to score."
+              : "Forecasts were recorded but none names the mapping that produced it, and a probability whose basis is unknown cannot be told apart from one written under a different mapping."}</div>}
+        <h4 className="quality-subhead">What these scores cannot show</h4>
+        {scoring.limitations.length
+          ? <ul className="quality-limitations">{scoring.limitations.map((item, i) => <li key={i}>{item}</li>)}</ul>
+          : <p className="muted">This scoring block declares no limitations. Treat that as a gap in the report, not as proof there are none.</p>}
+      </>}
+  </section>;
+}
+
+function ForecastBasis({ basis }: { basis: ForecastBasisRow }) {
+  const short = basis.insufficient_sample;
+  const width = (v: number) => `${Math.max(0, Math.min(100, v * 100))}%`;
+  const { baselines: base, decomposition: parts } = basis;
+  return <article className="forecast-basis" aria-label={`Forecast basis ${basis.basis}`}>
+    <header>
+      <strong>{basis.basis.replaceAll("_", " ")}</strong>
+      <span className={`pill ${short ? "amber" : "neutral"}`}>{short ? "Insufficient sample" : `${count(basis.scored)} scored`}</span>
+      <small>Base rate {percent(basis.base_rate)}</small>
+    </header>
+    {/* The engine's own sentence, verbatim: it states what this basis has and has not established. */}
+    <p>{basis.verdict}</p>
+    <DataTable label={`Scores for ${basis.basis}`}
+      columns={[{ name: "Metric" }, { name: "These forecasts", numeric: true }, { name: "Base rate", numeric: true }, { name: "Coin flip", numeric: true }]}
+      rows={[
+        ["Brier score", ratio(basis.brier_score, 4), ratio(base?.base_rate.brier_score, 4), ratio(base?.coin_flip.brier_score, 4)],
+        ["Log score", ratio(basis.log_score, 4), ratio(base?.base_rate.log_score, 4), ratio(base?.coin_flip.log_score, 4)],
+        ["Skill against baseline", "—", signedRatio(basis.skill_vs_base_rate), signedRatio(basis.skill_vs_coin_flip)],
+      ]}
+      empty="No scores for this basis" />
+    <p className="muted">
+      The base-rate column always states {percent(base?.base_rate.probability)}, this sample&apos;s own frequency of the move
+      clearing its cost. Skill is 1 when perfect, 0 when no better than that column, and negative when worse.
+      {short && " This basis has too few scored forecasts for any of it to be a finding."}
+    </p>
+    {parts && <>
+      <h4>Where the Brier score comes from</h4>
+      <DataTable label={`Brier decomposition for ${basis.basis}`}
+        columns={[{ name: "Term" }, { name: "Value", numeric: true }, { name: "What it says" }]}
+        rows={[
+          ["Reliability", ratio(parts.reliability, 6), "How far each bin sat from what that bin did. Lower is better; zero is perfect calibration."],
+          ["Resolution", ratio(parts.resolution, 6), "How far the bins sat from the base rate. Higher is better; zero means the forecasts separated nothing."],
+          ["Uncertainty", ratio(parts.uncertainty, 6), "Variance of the outcome itself, which no forecaster can change."],
+          ["Within bin", signedRatio(parts.within_bin, 6), "The spread inside each bin that binning cannot explain. A large one means these bins are too coarse."],
+          [<strong>Brier score</strong>, <strong>{ratio(basis.brier_score, 6)}</strong>, <span>reliability − resolution + uncertainty + within bin</span>],
+        ]}
+        empty="No decomposition for this basis" />
+    </>}
+    {basis.reliability.some((bin) => bin.forecasts > 0) ? <>
+      <h4>Stated probability against what happened</h4>
+      <div className="calibration-legend" aria-hidden="true"><span><i className="confidence" />Mean forecast</span><span><i className="hit" />Observed frequency</span></div>
+      <div className="calibration-strip" role="list">{basis.reliability.map((bin) => {
+        const quiet = bin.forecasts === 0;
+        return <div className={`calibration-bin${quiet ? " quiet" : ""}`} role="listitem" key={`${bin.lower}-${bin.upper}`}
+          aria-label={`Forecast ${bin.lower.toFixed(1)} to ${bin.upper.toFixed(1)}: mean forecast ${percent(bin.mean_forecast)}, observed ${percent(bin.observed_frequency)}, ${count(bin.forecasts)} forecasts`}>
+          <span className="numeric">{bin.lower.toFixed(1)}–{bin.upper.toFixed(1)}</span>
+          <div>
+            <div className="bar-track">{bin.mean_forecast != null && <span className="confidence" style={{ width: width(bin.mean_forecast) }} />}</div>
+            <div className="bar-track">{bin.observed_frequency != null && <span className="hit" style={{ width: width(bin.observed_frequency) }} />}</div>
+            <small>{percent(bin.mean_forecast)} stated · {percent(bin.observed_frequency)} happened</small>
+          </div>
+          <span className="numeric calibration-count">{count(bin.forecasts)}<small>forecasts</small></span>
+        </div>;
+      })}</div>
+    </> : <p className="muted">No forecast under this basis has resolved yet, so there is no reliability curve to draw.</p>}
+  </article>;
 }
 
 /**
