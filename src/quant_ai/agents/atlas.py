@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from quant_ai.agents import feature_snapshot as snapshots
 from quant_ai.agents import forecast as forecasting
 from quant_ai.agents.contracts import (
     AgentDomain,
@@ -171,6 +172,7 @@ class AtlasInvestmentAgent:
         llm_client: AnthropicSwarmClient | None = None,
         founder_instructions: str = "",
         exploration_used: Callable[[datetime], int] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.policy = policy or AtlasPolicy()
         self.founder_policy = founder_policy or FounderPolicy()
@@ -181,6 +183,10 @@ class AtlasInvestmentAgent:
         # Probes already journaled for the session that contains ``now``, so a restart
         # cannot reset the day's budget. None means this process's own count is all there is.
         self.exploration_used = exploration_used
+        # Every other timestamp on a decision is T0 - the instant the evidence describes.
+        # This one reads the wall clock when the decision is finished, so the gap between
+        # the two is the analysis latency that the entry drift gate later pays for.
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._probes_issued: dict[str, int] = {}
 
     def decide(
@@ -193,12 +199,60 @@ class AtlasInvestmentAgent:
         market_tick: LiveTick | None = None,
         evidence_context: EvidenceContext | None = None,
         knowledge_context: DecisionKnowledgeContext | None = None,
+        features: Mapping[str, object] | None = None,
+        analysis_started_at: datetime | None = None,
     ) -> AtlasDecision:
         decision = self._decide_core(
             subject, evidence, now, country_opportunities, incumbent_country,
             market_tick, evidence_context, knowledge_context,
         )
+        decision = self._with_snapshot(
+            decision, subject=subject, evidence=evidence, frozen_at=now,
+            market_tick=market_tick, context=evidence_context, features=features,
+            analysis_started_at=analysis_started_at,
+        )
         return self._explore(decision, now)
+
+    def _with_snapshot(
+        self,
+        decision: AtlasDecision,
+        *,
+        subject: str,
+        evidence: tuple[AgentEvidence, ...],
+        frozen_at: datetime,
+        market_tick: LiveTick | None,
+        context: EvidenceContext | None,
+        features: Mapping[str, object] | None,
+        analysis_started_at: datetime | None,
+    ) -> AtlasDecision:
+        """Attach what the decision was looking at, and when, to what it concluded.
+
+        Applied once, to whatever ``_decide_core`` returned, so a hold carries the same
+        record as a stance. A hold is the case that most needs it: "insufficient usable
+        agent coverage" is unreadable without the list of who abstained.
+        """
+        provenance = decision.provenance or {}
+        decided_at = self.clock()
+        started = analysis_started_at or frozen_at
+        return replace(decision, provenance={
+            **provenance,
+            "feature_snapshot": snapshots.freeze(
+                subject=subject,
+                frozen_at=frozen_at,
+                metrics=features,
+                evidence=evidence,
+                market_tick=market_tick,
+                regime=dict(context.regime) if context is not None else None,
+                forecast=provenance.get("forecast"),
+            ),
+            # T0 is `features_frozen_at`: the instant the evidence describes. The drift
+            # gate compares the live mark against the last closed one-minute bar as of
+            # T0, so `analysis_latency_ms` is the freeze-to-decision leg and not the whole
+            # window the market had to move in.
+            "timings": snapshots.timings(
+                started_at=started, frozen_at=frozen_at, decided_at=decided_at,
+            ),
+        })
 
     def _session_key(self, now: datetime) -> str:
         return now.astimezone(INDIA_TZ).date().isoformat()
@@ -428,10 +482,19 @@ class AtlasInvestmentAgent:
         market_tick: LiveTick | None = None,
         evidence_context: EvidenceContext | None = None,
         knowledge_context: DecisionKnowledgeContext | None = None,
+        features: Mapping[str, object] | None = None,
+        analysis_started_at: datetime | None = None,
     ) -> AtlasDecision:
         decision = await self._decide_with_llm_core(
             subject, evidence, now, market_tick=market_tick,
             evidence_context=evidence_context, knowledge_context=knowledge_context,
+        )
+        # After the overlay, never before it: the snapshot mirrors the forecast block, and
+        # the forecast is only final once the model has had its say and failed to change it.
+        decision = self._with_snapshot(
+            decision, subject=subject, evidence=evidence, frozen_at=now,
+            market_tick=market_tick, context=evidence_context, features=features,
+            analysis_started_at=analysis_started_at,
         )
         return self._explore(decision, now)
 

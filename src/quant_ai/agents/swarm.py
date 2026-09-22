@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent
@@ -553,9 +553,14 @@ class AtlasCIOAgent:
         market_tick: object | None = None,
         evidence_context: EvidenceContext | None = None,
     ) -> TradeProposal:
+        # The request already carries the vector the specialists voted on, frozen at
+        # request.observed_at. Handing it to Atlas is what makes a decision explainable
+        # later; recomputing it at write time would record a vector no decision saw.
+        started_at = datetime.now(timezone.utc)
         decision = await self.atlas.decide_with_llm(
             request.subject, evidence, request.observed_at, market_tick=market_tick,
             evidence_context=evidence_context,
+            features=request.metrics, analysis_started_at=started_at,
         )
         return self._proposal_from_decision(
             request, decision, quantity=quantity, reference_price=reference_price,
@@ -574,8 +579,10 @@ class AtlasCIOAgent:
         country: str,
         evidence_context: EvidenceContext | None = None,
     ) -> TradeProposal:
+        started_at = datetime.now(timezone.utc)
         decision = self.atlas.decide(
-            request.subject, evidence, request.observed_at, evidence_context=evidence_context
+            request.subject, evidence, request.observed_at, evidence_context=evidence_context,
+            features=request.metrics, analysis_started_at=started_at,
         )
         return self._proposal_from_decision(
             request, decision, quantity=quantity, reference_price=reference_price,

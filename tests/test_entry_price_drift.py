@@ -38,11 +38,29 @@ def test_the_tolerance_is_twenty_basis_points_and_this_change_does_not_widen_it(
     assert ENTRY_PRICE_DRIFT_TOLERANCE == Decimal("0.002")
 
 
-def test_a_move_inside_the_tolerance_is_allowed_and_says_nothing(caplog) -> None:
-    with caplog.at_level(logging.WARNING, logger="pramana.test.drift"):
+def test_a_move_inside_the_tolerance_is_allowed_and_still_recorded(caplog) -> None:
+    """Refusals alone are a censored sample: every drift above the tolerance and none below.
+
+    Their median cannot describe the latency of the analysis path, because the path's
+    fast decisions are exactly the ones missing. The approvals are the other half of the
+    same distribution, so they are recorded too - at INFO, since an allowed entry is not
+    an operator event.
+    """
+    with caplog.at_level(logging.INFO, logger="pramana.test.drift"):
         # 10 bps up on a 2838.50 reference.
         assert _refuse("2838.50", "2841.3385") is None
-    assert caplog.records == [], "an allowed entry is not an event"
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.INFO
+    message = record.getMessage()
+    assert "drift_bps=10.0" in message and "refused=false" in message, message
+
+
+def test_an_allowed_entry_is_not_an_operator_warning(caplog) -> None:
+    """Whatever is recorded, a normal entry must not page anyone."""
+    with caplog.at_level(logging.WARNING, logger="pramana.test.drift"):
+        assert _refuse("2838.50", "2841.3385") is None
+    assert caplog.records == []
 
 
 def test_the_boundary_itself_is_allowed_exactly_as_before(caplog) -> None:
@@ -50,7 +68,7 @@ def test_the_boundary_itself_is_allowed_exactly_as_before(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="pramana.test.drift"):
         assert _refuse("1000.00", "1002.00") is None  # exactly +20 bps
         assert _refuse("1000.00", "998.00") is None  # exactly -20 bps
-    assert caplog.records == []
+    assert caplog.records == [], "the boundary is allowed, so it warns nobody"
     assert _refuse("1000.00", "1002.01") == REASON  # a hair beyond
 
 
@@ -60,6 +78,7 @@ def test_a_refused_entry_records_how_far_the_price_moved(caplog) -> None:
         assert _refuse("1000.00", "1005.00") == REASON  # +50 bps
     message = "\n".join(record.getMessage() for record in caplog.records)
     assert "pilot_entry_price_drift" in message
+    assert "refused=true" in message, message
     assert "drift_bps=50.0" in message, message
     assert "tolerance_bps=20.0" in message, message
     # The decision it belongs to, so the drift can be joined to the journal's timestamp.
