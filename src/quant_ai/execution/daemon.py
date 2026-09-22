@@ -220,25 +220,31 @@ class AutonomousTradingDaemon:
         number that says whether the analysis is marginally too slow or far too slow: the
         drift was computed inside the comparison and discarded, so a session in which
         every proposal died here looked identical whether the market moved 21 basis points
-        or 200. It is now recorded on refusal, which is the only way a decision about the
-        analysis path can be made on evidence rather than on a guess.
+        or 200.
+
+        It is recorded on BOTH outcomes. Refusals alone are a censored sample: they are
+        every drift above the tolerance and none below it, so their median says nothing
+        about the latency of the analysis path as a whole. The approvals are the other
+        half of the same distribution, and only the two together can answer whether the
+        path is marginally too slow or far too slow.
         """
         if proposal.reference_price <= 0:
             # No usable reference to compare against; refuse without dividing by it.
             return "pilot_price_moved_during_analysis"
         drift = mark / proposal.reference_price - Decimal(1)
-        if abs(drift) <= ENTRY_PRICE_DRIFT_TOLERANCE:
-            return None
+        refused = abs(drift) > ENTRY_PRICE_DRIFT_TOLERANCE
         # Read for the record only, and never allowed to decide anything: a refusal path
         # that can raise is worse than one that records nothing, because the caller would
         # see an exception where it expects a reason. Every proposal the engine builds
         # carries both fields; anything else still gets refused, and still gets measured.
-        self._logger.warning(
-            "pilot_entry_price_drift symbol=%s decision_id=%s drift_bps=%s tolerance_bps=%s",
+        self._logger.log(
+            logging.WARNING if refused else logging.INFO,
+            "pilot_entry_price_drift symbol=%s decision_id=%s drift_bps=%s tolerance_bps=%s refused=%s",
             getattr(proposal, "symbol", "unknown"), getattr(proposal, "decision_id", "unknown"),
             _basis_points(drift), _basis_points(ENTRY_PRICE_DRIFT_TOLERANCE),
+            "true" if refused else "false",
         )
-        return "pilot_price_moved_during_analysis"
+        return "pilot_price_moved_during_analysis" if refused else None
 
     def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
         self.apply_operator_halt()
