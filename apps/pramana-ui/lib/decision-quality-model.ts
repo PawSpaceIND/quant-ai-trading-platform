@@ -42,6 +42,51 @@ export type InferenceHealth = {
   statuses: Array<{ status: keyof typeof INFERENCE_STATUS_LABELS; decisions: number }>;
   failures: Array<{ code: string; decisions: number }>;
 };
+/** The engine's own scoring of the directional forecasts it recorded. Its schema is
+ * declared separately from the report's because a refit of the scoring rules ships a new
+ * one, and numbers written under a different version must never be rendered under these
+ * labels. */
+export const FORECAST_SCORING_SCHEMA = "pramana.forecast_scoring.v1";
+export type ForecastBaseline = { brier_score: number | null; log_score: number | null };
+export type ForecastBaselines = {
+  /** Always stating 0.5. The weaker claim, shown because the gap between the two is the point. */
+  coin_flip: ForecastBaseline;
+  /** Always stating how often the move happens. The baseline skill is measured against. */
+  base_rate: ForecastBaseline & { probability: number | null };
+};
+/** Murphy's decomposition plus `within_bin`, the part binning cannot explain. The four
+ * terms reconstruct the Brier score exactly as published. */
+export type ForecastDecomposition = { reliability: number; resolution: number; uncertainty: number; within_bin: number };
+export type ForecastReliabilityBin = { lower: number; upper: number; forecasts: number; mean_forecast: number | null; observed_frequency: number | null };
+export type ForecastBasisRow = {
+  /** The named mapping these forecasts were written under. Bases are never pooled. */
+  basis: string;
+  scored: number;
+  insufficient_sample: boolean;
+  base_rate: number | null;
+  brier_score: number | null;
+  log_score: number | null;
+  baselines: ForecastBaselines | null;
+  /** 1 is perfect, 0 is no better than the baseline, negative is worse. Null when the
+   * baseline leaves no room to improve on. */
+  skill_vs_base_rate: number | null;
+  skill_vs_coin_flip: number | null;
+  decomposition: ForecastDecomposition | null;
+  reliability: ForecastReliabilityBin[];
+  /** The engine's own sentence about what this basis has established. Rendered verbatim. */
+  verdict: string;
+};
+export type ForecastUnscoreable = { no_forecast: number; unknown_horizon: number; outcome_unresolved: number; invalid_probability: number };
+export type ForecastScoring = {
+  schema: typeof FORECAST_SCORING_SCHEMA;
+  minimum_scored: number;
+  decisions: number;
+  with_forecast: number;
+  unscoreable: ForecastUnscoreable;
+  by_basis: ForecastBasisRow[];
+  limitations: string[];
+};
+
 export type RecentDecision = {
   decision_id: string; decided_at: string; symbol: string; stance: string; confidence: number;
   regime: string | null; mode: string | null; governance: Governance; reason: string | null; order_id: string | null;
@@ -82,6 +127,9 @@ export type DecisionQualityReport = {
   /** Today's consensus spend headroom. Absent when the engine runs without a budget. */
   ai_budget: AiBudget | null;
   inference_health: InferenceHealth | null;
+  /** Null on a report written before the engine scored forecasts, and on a block whose
+   * schema is not the one above. */
+  forecast_scoring: ForecastScoring | null;
 };
 
 export type AiBudgetUsage = {
@@ -144,6 +192,9 @@ export const percent = (v: number | null | undefined, digits = 2) => present(v) 
 export const signedPercent = (v: number | null | undefined, digits = 2) => present(v) ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(digits)}%` : DASH;
 /** Unit-free ratio such as a profit factor or a Brier score. */
 export const ratio = (v: number | null | undefined, digits = 2) => present(v) ? v.toFixed(digits) : DASH;
+/** Unit-free ratio with an explicit sign, for skill scores where the sign is the finding:
+ * positive beats the baseline, negative is worse than it. */
+export const signedRatio = (v: number | null | undefined, digits = 3) => present(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(digits)}` : DASH;
 /** Account-currency amount in the workspace's en-IN style. */
 export const money = (v: number | null | undefined) => present(v) ? inr.format(v) : DASH;
 /** Amount with an explicit sign, for P&L columns. */
@@ -287,6 +338,73 @@ function optInferenceHealth(value: unknown, expectedDecisions: number): Inferenc
   } catch { return null; }
 }
 
+/**
+ * The engine's forecast scoring, or null. The block declares its own schema and one
+ * declaring a different version is dropped rather than rendered: a refit changes what the
+ * numbers mean, and printing them under these labels is the same error as pooling two
+ * bases into one curve.
+ */
+function optForecastScoring(value: unknown, expectedDecisions: number): ForecastScoring | null {
+  if (value == null) return null;
+  try {
+    const d = record(value);
+    if (d.schema !== FORECAST_SCORING_SCHEMA) fail();
+    const counter = (v: unknown) => { const n = num(v); return Number.isSafeInteger(n) && n >= 0 ? n : fail(); };
+    const decisions = counter(d.decisions), with_forecast = counter(d.with_forecast);
+    const u = record(d.unscoreable);
+    const unscoreable: ForecastUnscoreable = {
+      no_forecast: counter(u.no_forecast), unknown_horizon: counter(u.unknown_horizon),
+      outcome_unresolved: counter(u.outcome_unresolved), invalid_probability: counter(u.invalid_probability),
+    };
+    const baselines = (raw: unknown): ForecastBaselines | null => {
+      if (raw == null) return null;
+      const b = record(raw), coin = record(b.coin_flip), base = record(b.base_rate);
+      return {
+        coin_flip: { brier_score: optNum(coin.brier_score), log_score: optNum(coin.log_score) },
+        base_rate: { probability: optNum(base.probability), brier_score: optNum(base.brier_score), log_score: optNum(base.log_score) },
+      };
+    };
+    const decomposition = (raw: unknown): ForecastDecomposition | null => {
+      if (raw == null) return null;
+      const c = record(raw);
+      return { reliability: num(c.reliability), resolution: num(c.resolution), uncertainty: num(c.uncertainty), within_bin: num(c.within_bin) };
+    };
+    const by_basis: ForecastBasisRow[] = list(d.by_basis, 50).map((item) => {
+      const b = record(item);
+      return {
+        basis: text(b.basis, 80), scored: counter(b.scored), insufficient_sample: bool(b.insufficient_sample),
+        base_rate: optNum(b.base_rate), brier_score: optNum(b.brier_score), log_score: optNum(b.log_score),
+        baselines: baselines(b.baselines),
+        skill_vs_base_rate: optNum(b.skill_vs_base_rate), skill_vs_coin_flip: optNum(b.skill_vs_coin_flip),
+        decomposition: decomposition(b.decomposition),
+        reliability: list(b.reliability, 20).map((bin) => {
+          const r = record(bin);
+          return {
+            lower: num(r.lower), upper: num(r.upper), forecasts: counter(r.forecasts),
+            mean_forecast: optNum(r.mean_forecast), observed_frequency: optNum(r.observed_frequency),
+          };
+        }),
+        verdict: text(b.verdict, 500),
+      };
+    });
+    // A decision either states a forecast or it does not, so those two counts partition
+    // the report's decisions. A block failing that is describing a different set of rows
+    // than the report around it, and showing it beside those counts would misdescribe the
+    // sample. Two rows under one basis would be two curves for one mapping.
+    if (decisions !== expectedDecisions
+      || unscoreable.no_forecast + with_forecast !== decisions
+      || by_basis.reduce((sum, row) => sum + row.scored, 0) > with_forecast
+      || new Set(by_basis.map((row) => row.basis)).size !== by_basis.length) fail();
+    return {
+      schema: FORECAST_SCORING_SCHEMA, minimum_scored: counter(d.minimum_scored),
+      decisions, with_forecast, unscoreable, by_basis,
+      limitations: list(d.limitations, 20).map((item) => text(item, 500)),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** The engine's t-statistics, or null. Every field of a block is null together when the
  * sample is too small or has no dispersion, so a partial block is treated as no block. */
 function optSignificance(value: unknown): Significance | null {
@@ -381,6 +499,7 @@ function normalizeReport(value: unknown): DecisionQualityReport {
     limitations: list(r.limitations, 50).map((item) => text(item, 500)),
     ai_budget: optAiBudget(r.ai_budget),
     inference_health: optInferenceHealth(r.inference_health, num(counts.decisions)),
+    forecast_scoring: optForecastScoring(r.forecast_scoring, num(counts.decisions)),
   };
 }
 

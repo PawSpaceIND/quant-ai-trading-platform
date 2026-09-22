@@ -4,6 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  DASH,
+  FORECAST_SCORING_SCHEMA,
   LESSON_LIMIT,
   POST_MORTEM_FILE_LIMIT,
   hourLabel,
@@ -18,6 +20,7 @@ import {
   readPostMortems,
   signedMoney,
   signedPercent,
+  signedRatio,
   stancesSummary,
   truncateLesson,
   verdictFor,
@@ -475,4 +478,127 @@ test("a malformed significance block never blanks the rest of the report", () =>
     assert.ok(parsed, "a malformed significance block must not reject the whole report");
     assert.equal(parsed.significance, null);
   }
+});
+
+/* ---------- forecast scoring: what each decision claimed before the outcome existed ---------- */
+
+test("both bases are carried, kept apart, and shown against both baselines", () => {
+  const parsed = parseDecisionQuality(JSON.stringify(engineFixture()));
+  assert(parsed?.forecast_scoring);
+  const scoring = parsed.forecast_scoring;
+  assert.equal(scoring.schema, FORECAST_SCORING_SCHEMA);
+  assert.equal(scoring.minimum_scored, 30);
+  assert.equal(scoring.decisions, parsed.counts.decisions);
+  // A decision either states a forecast or it does not; the two counts partition the sample.
+  assert.equal(scoring.with_forecast + scoring.unscoreable.no_forecast, scoring.decisions);
+  // A refit ships a new basis and the numbers under the old one mean something else, so
+  // the reader has to carry both rather than merge them into one curve.
+  assert.deepEqual(scoring.by_basis.map((b) => b.basis), ["consensus_lean_v1", "consensus_lean_v2"]);
+  const [v1, v2] = scoring.by_basis;
+  assert.equal(v1.scored, 32);
+  assert.equal(v1.insufficient_sample, false);
+  assert.equal(v2.scored, 3);
+  assert.equal(v2.insufficient_sample, true, "three scored forecasts cannot carry a skill claim");
+  // Both baselines, because the coin is the flattering one and the gap between them is the point.
+  assert.equal(typeof v1.baselines?.base_rate.brier_score, "number");
+  assert.equal(typeof v1.baselines?.coin_flip.brier_score, "number");
+  assert.equal(typeof v1.skill_vs_base_rate, "number");
+  assert.equal(typeof v1.skill_vs_coin_flip, "number");
+  assert(v1.verdict.includes("consensus_lean_v1"), "the engine's own sentence is what the panel prints");
+  // Rows that could not be scored are counted and named, never folded into the misses.
+  assert.equal(scoring.unscoreable.outcome_unresolved, 11);
+  assert.equal(scoring.unscoreable.unknown_horizon, 1);
+});
+
+test("the four decomposition terms reconstruct the Brier score at the precision shown", () => {
+  // The panel prints that identity as the caption under the table, so a reader can check
+  // the arithmetic on the page. Four values rounded to six places do not re-add by
+  // accident: the engine reconciles them against the published figures, and this is the
+  // reader's copy of that promise.
+  const parsed = parseDecisionQuality(JSON.stringify(engineFixture()));
+  const bases = parsed?.forecast_scoring?.by_basis ?? [];
+  assert(bases.length, "the fixture must carry a scored basis for this to mean anything");
+  for (const basis of bases) {
+    const d = basis.decomposition;
+    assert(d, `a scored basis must carry its decomposition: ${basis.basis}`);
+    const sum = Number((d.reliability - d.resolution + d.uncertainty + d.within_bin).toFixed(6));
+    assert.equal(sum, basis.brier_score, `the published terms must add up as shown for ${basis.basis}`);
+  }
+});
+
+test("reliability bins are carried with their counts, and an empty bin is not a zero", () => {
+  const parsed = parseDecisionQuality(JSON.stringify(engineFixture()));
+  const [v1, v2] = parsed?.forecast_scoring?.by_basis ?? [];
+  assert(v1 && v2);
+  assert.equal(v1.reliability.length, 10);
+  assert.equal(v1.reliability.reduce((sum, bin) => sum + bin.forecasts, 0), v1.scored);
+  // The three-forecast basis is the one that leaves bins empty, and the emptiness is what
+  // is worth pinning: a bin nothing landed in must state nothing, not an observed
+  // frequency of zero, which would draw as a real bar sitting at the floor. Asserted on a
+  // basis that fills every bin, this check would pass without testing anything.
+  const empty = v2.reliability.filter((bin) => bin.forecasts === 0);
+  assert.equal(empty.length, 7, "the small basis must actually leave bins empty");
+  assert(empty.every((bin) => bin.mean_forecast === null && bin.observed_frequency === null),
+    "a bin nothing landed in states nothing, rather than an observed frequency of zero");
+});
+
+test("a scoring block declaring another schema is dropped, never relabelled", () => {
+  // A refit of the scoring rules ships a new schema. Printing those numbers under these
+  // labels is the same error as pooling two bases into one curve.
+  const raw = engineFixture();
+  raw.forecast_scoring.schema = "pramana.forecast_scoring.v2";
+  const parsed = parseDecisionQuality(JSON.stringify(raw));
+  assert.ok(parsed, "an unreadable scoring block must not reject the whole report");
+  assert.equal(parsed.forecast_scoring, null);
+});
+
+test("a scoring block describing other rows than the report is refused", () => {
+  const mutations: Array<(raw: ReturnType<typeof engineFixture>) => void> = [
+    // Internally consistent, but computed over a different set of rows: the panel prints
+    // "N of M decisions state a forecast" beside the report's own counts, so M must be
+    // this report's M and not some other window's.
+    (raw) => { raw.forecast_scoring.decisions += 1; raw.forecast_scoring.with_forecast += 1; },
+    (raw) => { raw.forecast_scoring.with_forecast -= 1; },
+    (raw) => { raw.forecast_scoring.by_basis[0].scored = raw.forecast_scoring.with_forecast + 1; },
+    // Two rows for one mapping would be two curves claiming to describe it.
+    (raw) => { raw.forecast_scoring.by_basis.push({ ...raw.forecast_scoring.by_basis[1], scored: 0 }); },
+  ];
+  for (const mutate of mutations) {
+    const raw = engineFixture();
+    mutate(raw);
+    const parsed = parseDecisionQuality(JSON.stringify(raw));
+    assert.ok(parsed, "the rest of the report stays readable");
+    assert.equal(parsed.forecast_scoring, null,
+      "a block that cannot describe this report's rows must not be shown beside its counts");
+  }
+});
+
+test("a report written before forecast scoring still reads, and says null rather than empty", () => {
+  const older = engineFixture();
+  delete older.forecast_scoring;
+  const parsed = parseDecisionQuality(JSON.stringify(older));
+  assert(parsed, "an older report must still parse");
+  // Null, not an empty block: "nothing was scored" and "this report never scored" are
+  // different claims and the panel says different things about them.
+  assert.equal(parsed.forecast_scoring, null);
+  assert.equal(parsed.counts.decisions, 48);
+});
+
+test("a malformed scoring block never blanks the rest of the report", () => {
+  for (const broken of ["none", 7, [], {}, { schema: FORECAST_SCORING_SCHEMA, by_basis: "no" }]) {
+    const raw = engineFixture();
+    raw.forecast_scoring = broken;
+    const parsed = parseDecisionQuality(JSON.stringify(raw));
+    assert.ok(parsed, "a malformed scoring block must not reject the whole report");
+    assert.equal(parsed.forecast_scoring, null);
+    assert(parsed.calibration.bins.length > 0, "the rest of the evidence is untouched");
+  }
+});
+
+test("a skill score carries its sign, and an unavailable one is never rendered as zero", () => {
+  assert.equal(signedRatio(0.677114), "+0.677");
+  assert.equal(signedRatio(-9), "-9.000");
+  assert.equal(signedRatio(0), "+0.000");
+  assert.equal(signedRatio(null), DASH);
+  assert.equal(signedRatio(Number.NaN), DASH);
 });

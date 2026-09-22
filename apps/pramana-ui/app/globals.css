@@ -1603,7 +1603,12 @@ td .pill {
 .post-mortem header strong { font-size: 13px; }
 .post-mortem-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 2px 18px; margin: 8px 0 0; }
 .post-mortem-summary > div { margin: 5px 0; }
-.post-mortem h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.post-mortem h4, .forecast-basis h4, .quality-subhead { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+/* One scored basis. Bases stack rather than merge, so each gets its own separated block. */
+.forecast-basis { border-top: 1px solid var(--line); padding: 16px 0 6px; }
+.forecast-basis header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.forecast-basis header strong { font-size: 13px; }
+.forecast-basis header small { color: var(--muted); font-size: 10px; }
 .post-mortem details { margin-top: 10px; }
 .post-mortem details summary { cursor: pointer; font-size: 12px; }
 .post-mortem .research-table-scroll { margin-top: 4px; }
