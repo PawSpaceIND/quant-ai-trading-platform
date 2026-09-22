@@ -187,6 +187,7 @@ class AtlasInvestmentAgent:
         founder_instructions: str = "",
         exploration_used: Callable[[datetime], int] | None = None,
         clock: Callable[[], datetime] | None = None,
+        empirical_payoffs: Callable[..., Mapping[str, object] | None] | None = None,
     ) -> None:
         self.policy = policy or AtlasPolicy()
         self.founder_policy = founder_policy or FounderPolicy()
@@ -201,6 +202,11 @@ class AtlasInvestmentAgent:
         # This one reads the wall clock when the decision is finished, so the gap between
         # the two is the analysis latency that the entry drift gate later pays for.
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # Measured payoffs for one decision, when an operator has supplied an artifact.
+        # A callable rather than the artifact itself, so this module never imports the
+        # analytics package that already imports it - and so a caller cannot hand over a
+        # group without the source id that says which measurement it came from.
+        self.empirical_payoffs = empirical_payoffs
         self._probes_issued: dict[str, int] = {}
 
     def decide(
@@ -256,6 +262,10 @@ class AtlasInvestmentAgent:
             forecast=provenance.get("forecast"),
             expected_return=decision.expected_return,
             expected_risk=decision.expected_risk,
+            # Recorded beside the declared figure, never in place of it, and read by
+            # nothing. The gate reads expected_value; this is the second opinion that has
+            # to earn its way in before anything acts on it.
+            empirical=self._empirical_for(decision, subject),
         )
         return replace(decision, provenance={
             **provenance,
@@ -277,6 +287,20 @@ class AtlasInvestmentAgent:
                 started_at=started, frozen_at=frozen_at, decided_at=decided_at,
             ),
         })
+
+    def _empirical_for(self, decision: AtlasDecision, subject: str) -> Mapping[str, object] | None:
+        """Measured payoffs for this decision, or None. Never able to fail a decision."""
+        if self.empirical_payoffs is None:
+            return None
+        playbook = (decision.provenance or {}).get("playbook")
+        try:
+            return self.empirical_payoffs(
+                symbol=subject,
+                playbook=playbook.get("name") if isinstance(playbook, dict) else playbook,
+                regime=(decision.provenance or {}).get("regime"),
+            )
+        except Exception:  # noqa: BLE001 - an operator artifact must not fail a decision
+            return None
 
     def _ev_gated(self, decision: AtlasDecision) -> AtlasDecision:
         """Hold an entry whose own expected value does not clear zero.
