@@ -1,6 +1,7 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import type {BrokerSelection} from "@/lib/broker-lifecycle";
+import {CHAT_DEADLINE_MS} from "@/lib/chat-deadline";
 import type { Conversation } from "@/lib/copilot";
 export function CopilotPanel({
   draft,
@@ -12,7 +13,7 @@ export function CopilotPanel({
   onFullWorkspace,
 }: {
   draft: string;
-  onDraft: (s: string) => void;
+  onDraft: (value: string | ((current: string) => string)) => void;
   configured: boolean;
   companyAsOf?: string;
   brokerCapture?: BrokerSelection;
@@ -53,9 +54,19 @@ export function CopilotPanel({
       fetch(`/api/copilot/${encodeURIComponent(id)}`, {
         signal: AbortSignal.timeout(12000),
       })
-        .then((r) => (r.ok ? r.json() : null))
+        .then(async (r) => (r.ok ? await r.json() : {missing: r.status === 404}))
         .then((d) => {
-          if (alive && d && new URLSearchParams(window.location.search).get("chat") === id) setActive(d);
+          if (!alive || new URLSearchParams(window.location.search).get("chat") !== id) return;
+          // A 404 turned into null and was swallowed, so a stale or shared link showed the
+          // welcome screen with the dead id still in the address bar and no explanation.
+          if (d?.missing) {
+            setError("That saved conversation no longer exists.");
+            const url = new URL(window.location.href);
+            url.searchParams.delete("chat");
+            window.history.replaceState(null, "", url);
+            return;
+          }
+          if (d) setActive(d);
         })
         .catch(() => {
           if (alive)
@@ -71,17 +82,23 @@ export function CopilotPanel({
     url.searchParams.set("chat", c.id);
     window.history.replaceState(null, "", url);
   }
+  // Every state but "available" refuses a paid call server-side, so the compose form must
+  // say so rather than let the operator spend a daily question discovering it.
+  // The budget line still reports the shared guard, but it only blocks sending when a
+  // paid call is possible: with no key configured nothing can be charged.
+  const paidPaused = configured && !!dollarBudget && dollarBudget.status !== "available";
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!draft.trim() || busy) return;
     setBusy(true);
     setError("");
     const prompt = draft;
+    let restoreHistory = false;
     onDraft("");
     try {
       const r = await fetch("/api/copilot", {
         method: "POST",
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(CHAT_DEADLINE_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
@@ -98,8 +115,14 @@ export function CopilotPanel({
       choose(d);
       if (d.status === "error") onDraft(prompt);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Request failed");
-      onDraft(prompt);
+      const aborted = e instanceof DOMException && e.name === "TimeoutError";
+      setError(aborted
+        ? "Atlas did not answer in time here. The question may still have completed and been charged; check Saved conversations before asking again."
+        : e instanceof Error ? e.message : "Request failed");
+      // Only restore the prompt if nothing was typed while waiting, so a failure cannot
+      // overwrite the operator's next question.
+      onDraft((current) => (current.trim() ? current : prompt));
+      if (aborted) restoreHistory = true;
     } finally {
       setBusy(false);
       // Refresh the server allowance, including any bounded recovery attempt.
@@ -109,6 +132,9 @@ export function CopilotPanel({
           if (d) setDollarBudget(d.dollarBudget ?? null);
           if (d && typeof d.dailyRemaining === "number" && typeof d.dailyLimit === "number")
             setAllowance({ remaining: Math.max(0, d.dailyRemaining), limit: d.dailyLimit });
+          // An answer that finished after the client gave up is still saved server side.
+          // Re-list so it is reachable without a reload.
+          if (d && restoreHistory && Array.isArray(d.conversations)) setHistory(d.conversations);
         }).catch(() => {});
     }
   }
@@ -206,8 +232,9 @@ export function CopilotPanel({
           {error}
         </p>
       )}
-      {dollarBudget && <p className="muted chat-dollar-budget" role="status">
-        {dollarBudget.status === "unavailable" ? "AI dollar budget unavailable; paid calls paused."
+      {dollarBudget && <p className={`${paidPaused ? "error" : "muted"} chat-dollar-budget`} role="status">
+        {dollarBudget.status === "exhausted" ? `Combined AI limit: $${dollarBudget.limitUsd?.toFixed(2)}/day is spent. Paid calls are paused until it resets at 05:30 IST.`
+          : dollarBudget.status === "unavailable" ? "AI dollar budget unavailable; paid calls paused."
           : dollarBudget.status === "activation_hold" ? `Combined AI limit: $${dollarBudget.limitUsd?.toFixed(2)}/day. Paid calls paused until 05:30 IST because earlier spending is unverified.`
           : `Combined AI limit: $${dollarBudget.limitUsd?.toFixed(2)}/day · estimated used $${dollarBudget.spentUsd?.toFixed(2)} · reserved $${dollarBudget.reservedUsd?.toFixed(2)} · available $${dollarBudget.remainingUsd.toFixed(2)}. Resets 05:30 IST.`}
       </p>}
@@ -232,7 +259,7 @@ export function CopilotPanel({
         />
         <div>
           <span>{draft.length}/3000 · No order execution</span>
-          <button className="primary" disabled={busy || !draft.trim()}>
+          <button className="primary" disabled={busy || paidPaused || !draft.trim()}>
             {busy ? "Thinking…" : "Send ↑"}
           </button>
         </div>

@@ -17,6 +17,6 @@ export async function GET() {
       },
     });
   } catch {
-    return NextResponse.json({error: "Portfolio attribution is unavailable."}, {status: 503, headers: {"Cache-Control": "no-store"}});
+    return NextResponse.json({error: "Portfolio attribution is unavailable."}, {status: 503, headers: {"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="pramana-portfolio-attribution-unavailable.json"'}});
   }
 }

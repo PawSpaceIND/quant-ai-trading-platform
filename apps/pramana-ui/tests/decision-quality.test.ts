@@ -395,3 +395,84 @@ test("a no-trade session still explains itself through counts, rejections and re
   assert(parsed.lessons.some((l) => l.includes("paper_naked_sell_disabled")));
   assert(parsed.lessons.some((l) => l.includes("without a completed LLM consensus")));
 });
+
+/* ---------- contract: what the engine writes is what the page can read ---------- */
+
+const enginePath = new URL("./fixtures/decision-quality-engine.json", import.meta.url).pathname;
+const engineFixture = () => JSON.parse(fs.readFileSync(enginePath, "utf8"));
+
+test("every section the engine writes survives the parser", () => {
+  // This fixture is produced by running the engine's own summarize(), not written by hand.
+  // Hand-written fixtures are how the reader drifted: significance, by_playbook and the
+  // probe counters were written by the engine for months and dropped silently here,
+  // while the page went on printing a limitations note about t-statistics it never showed.
+  const raw = engineFixture();
+  const parsed = parseDecisionQuality(JSON.stringify(raw));
+  assert(parsed);
+  const carried = new Set(Object.keys(parsed));
+  const dropped = Object.keys(raw).filter((key) => !carried.has(key));
+  assert.deepEqual(dropped, [], `the parser drops sections the engine writes: ${dropped.join(", ")}`);
+  // Nested counters drift the same way and are named here so the same test catches them.
+  assert.deepEqual(Object.keys(raw.counts).filter((key) => !(key in parsed.counts)), []);
+  assert.deepEqual(Object.keys(raw.recent[0]).filter((key) => !(key in parsed.recent[0])), []);
+});
+
+test("t-statistics are carried with their observation counts and correction note", () => {
+  const parsed = parseDecisionQuality(JSON.stringify(engineFixture()));
+  assert(parsed?.significance);
+  const { significance } = parsed;
+  assert.equal(significance.minimum_observations, 30);
+  assert.equal(significance.multiple_testing_correction, "none");
+  assert.equal(significance.forward_return_60m.observations, 36);
+  assert.equal(typeof significance.forward_return_60m.t_statistic, "number");
+  assert.equal(significance.trade_net_pnl.observations, 32);
+  assert.equal(typeof significance.trade_net_pnl.t_statistic, "number");
+  // The page's limitations list explains these numbers; it may not explain nothing.
+  assert(parsed.limitations.some((note) => note.includes("t-statistics")));
+});
+
+test("a t-statistic below the minimum sample reads as unavailable, never as zero", () => {
+  const raw = engineFixture();
+  raw.significance.trade_net_pnl = { observations: 4, mean: null, standard_error: null, t_statistic: null };
+  const parsed = parseDecisionQuality(JSON.stringify(raw));
+  assert.equal(parsed?.significance?.trade_net_pnl.t_statistic, null);
+  assert.equal(parsed?.significance?.trade_net_pnl.observations, 4);
+});
+
+test("playbook outcomes and probe counts are carried, and absent counters stay null", () => {
+  const parsed = parseDecisionQuality(JSON.stringify(engineFixture()));
+  assert(parsed);
+  assert.equal(parsed.counts.probes, 5);
+  assert(parsed.by_playbook.length >= 3);
+  const trend = parsed.by_playbook.find((row) => row.playbook === "trend_following");
+  assert(trend, "the engine's playbook rows must be readable by name");
+  assert.equal(typeof trend.decisions, "number");
+  assert.equal(typeof trend.probes, "number");
+  assert(parsed.recent.some((row) => row.probe === true), "a probe decision must be distinguishable");
+  assert(parsed.recent.every((row) => typeof row.playbook === "string"));
+
+  // A report written before these counters existed still reads, and says so with null
+  // rather than reporting zero probes it never counted.
+  const older = engineFixture();
+  delete older.significance;
+  delete older.by_playbook;
+  delete older.counts.probes;
+  for (const row of older.recent) { delete row.probe; delete row.playbook; }
+  const legacy = parseDecisionQuality(JSON.stringify(older));
+  assert(legacy, "an older report must still parse");
+  assert.equal(legacy.significance, null);
+  assert.deepEqual(legacy.by_playbook, []);
+  assert.equal(legacy.counts.probes, null);
+  assert.equal(legacy.recent[0].probe, null);
+  assert.equal(legacy.recent[0].playbook, null);
+});
+
+test("a malformed significance block never blanks the rest of the report", () => {
+  for (const broken of ["none", 7, [], { forward_return_60m: {} }, { ...engineFixture().significance, minimum_observations: "30" }]) {
+    const raw = engineFixture();
+    raw.significance = broken;
+    const parsed = parseDecisionQuality(JSON.stringify(raw));
+    assert.ok(parsed, "a malformed significance block must not reject the whole report");
+    assert.equal(parsed.significance, null);
+  }
+});
