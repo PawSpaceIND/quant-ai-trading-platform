@@ -25,6 +25,7 @@ import { ResearchPortfolio } from "./research-portfolio";
 import {PaperContribution} from "./paper-contribution";
 import type {BrokerSelection} from "@/lib/broker-lifecycle";
 import {BrokerObservation} from "./broker-observation";
+import {EngineAlerts} from "./engine-alerts";
 import {PaperOmsPanel} from "./paper-oms";
 import {InstitutionalRecoveryPanel} from "./institutional-recovery";
 import {RunComparison} from "./run-comparison";
@@ -689,6 +690,7 @@ export function PilotWorkspace() {
                   <>
                     {!hosted && <ExternalAccountPanel state={data.externalAccount} onAsk={ask} />}
                     {!hosted && <BrokerObservation state={data.brokerObservation} onAsk={(prompt,selection)=>ask(prompt,undefined,selection)} />}
+                    {!hosted && <EngineAlerts />}
                     {!hosted && <PaperOmsPanel />}
                     {!hosted && <InstitutionalRecoveryPanel />}
                     <TradeFeed trades={trades} />
@@ -1236,7 +1238,7 @@ function ProviderPanel({ data }: { data: Workspace }) {
   return (
     <section className="panel">
       <span className="eyebrow">SOURCE TRANSPARENCY</span>
-      <h2>Data & provider health</h2>
+      <h2>Data sources</h2>
       <div className="provider-grid">
         {Object.entries(data.market.providers || {}).map(([name, status]) => (
           <div key={name}>
@@ -1249,11 +1251,13 @@ function ProviderPanel({ data }: { data: Workspace }) {
         )}
       </div>
       <p className="footnote">
-        Collector-reported status. Engine adapters:{" "}
+        Collector-reported status above. Engine adapters configured:{" "}
         {Object.entries(data.runtime.providers || {})
           .map(([k, v]) => `${k}: ${v}`)
           .join(" · ") || "not reported"}
-        . Configuration alone does not prove provider availability.
+        . These are the adapter classes that are wired, not a statement that any of them
+        answered. A provider that refused is reported by the engine as an alert; see Engine
+        alerts under Activity.
       </p>
     </section>
   );

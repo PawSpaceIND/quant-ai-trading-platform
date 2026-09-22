@@ -58,6 +58,7 @@ export default defineConfig({
       PRAMANA_EXTERNAL_ACCOUNT_SNAPSHOT:externalFixture,
       PRAMANA_EXTERNAL_ACCOUNT_REF:externalRef,
       PRAMANA_MARKET_SNAPSHOT:path.resolve("tests/fixtures/browser-market.json"),
+      PRAMANA_ALERT_LOG:path.resolve("tests/fixtures/browser-alerts.jsonl"),
       TRADING_LIVE_MONEY_ACTIVE:"false",
     },
   }],

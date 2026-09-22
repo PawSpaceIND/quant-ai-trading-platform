@@ -35,6 +35,8 @@ by generating fixtures from the producer rather than by hand.
 | Overview | The daily-loss breaker was published by the engine and drawn nowhere, although breaching it engages the kill switch | A bar beside drawdown and gross exposure, computed with the daemon's own arithmetic | `tests/portfolio-risk.test.ts` daily-loss cases, `e2e/workspace-controls.spec.ts` |
 | Risk lab | "Portfolio valuation status: ok" for a ledger-marked or replayed book, beside its own count of stale marks | The panel names the mark mode and says a non-engine status is the one the book was written with, not a currency check | `e2e/workspace-controls.spec.ts`, verified failing without the fix |
 | Risk lab | Clearing a per-holding shock box wrote an explicit 0% override, dropping that holding from the scenario until Reset | An empty or unparseable box means no override; the holding follows the common shock | `tests/portfolio-risk.test.ts` edit-rule cases |
+| Alerts | The engine raises seventeen alert codes to a durable log and no screen read it; seven had no other path to the operator at all | A bounded, tenant-scoped tail reader and an Engine alerts panel under Activity | `tests/alerts.test.ts` against a log written by the engine's own sink, `e2e/workspace-controls.spec.ts` |
+| Providers | A panel titled "Data & provider health" listed the adapter class names that are wired | Retitled "Data sources"; the row says these are the classes configured, not that any answered, and points at the alert the engine raises when one refuses | `components/pilot-workspace.tsx` |
 
 Note on tenancy: both containers running as the same tenant is a deployment fact and does
 not establish ownership of a file. That is why the proof fix is at the write and read
@@ -77,7 +79,6 @@ These have had no systematic pass. Listing them is not a claim that they are bro
 - Accessibility and layout: ten table scrollers are keyboard-unreachable; the copilot
   overlay is last in tab order between 780px and 1180px with no Escape.
 - Overview and Risk lab panels in depth.
-- Notifications and alerts.
 - The hosted Cloudflare worker build.
 - Accessibility beyond roles and labels already used by tests.
 - Viewports between 390px and 1280px.

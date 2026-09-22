@@ -138,3 +138,19 @@ test("the guardrail panel shows the daily-loss breaker and the risk lab names it
   // marks it is reporting on rather than presenting that status as a current check.
   await expect(page.getByText(/Ledger fill prices, not a current market valuation\. The freshness pass only ages engine valuations/)).toBeVisible();
 });
+
+test("the alerts the engine raised reach a screen", async ({page, context, baseURL}) => {
+  await signIn(context, baseURL!);
+  await page.goto("/?view=activity");
+  const panel = page.getByRole("region", {name: "Engine alerts"});
+  // Seven of the engine's codes had no path to any screen. MACRO_PROVIDER_UNAVAILABLE is
+  // the one its own source calls out: a refused provider leaves every macro-reading
+  // specialist at zero confidence and the pilot holding all day with nothing to show.
+  await expect(panel.getByText("Macro provider unavailable", {exact: true})).toBeVisible();
+  await expect(panel.getByText("Unexplained overnight gap", {exact: true})).toBeVisible();
+  await expect(panel.getByText(/provider: FRED/)).toBeVisible();
+  // Newest first, and another account's alert on the same shared volume is not shown.
+  const labels = await panel.locator("tbody tr td:nth-child(3) strong").allInnerTexts();
+  expect(labels[0]).toBe("Trading halted");
+  expect(await panel.getByText(/OTHER-TENANT-PRIVATE/).count()).toBe(0);
+});
