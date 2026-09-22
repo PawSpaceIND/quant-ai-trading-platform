@@ -111,6 +111,64 @@ def plan(database: Path, session_date: str | None = None) -> str:
     return strategist.render(found)
 
 
+def _journal_rows(database: Path, tenant: str) -> tuple[list[dict], ReadOnlyLedger]:
+    """The tenant's journal over a read-only connection; the caller closes the ledger."""
+    from quant_ai.analytics.decision_journal import TABLE, load_rows
+    ledger = ReadOnlyLedger(database)
+    rows = load_rows(ledger, tenant_id=tenant) if ledger.has_table(TABLE) else []
+    return rows, ledger
+
+
+def calibrate(database: Path, tenant: str) -> str:
+    """Whether the forecast is calibrated, scored only over rows one mapping provably made.
+
+    Read-only throughout. The drawdown limit is rebuilt from the founder directives this
+    container reads, the way the warden builds it; if they cannot be read the limit is
+    reported missing and the verdict refuses, rather than falling back to the 0.10 ceiling
+    and grading the book against a limit looser than the one it ran under.
+    """
+    from quant_ai.analytics import calibrate as calibration
+    from quant_ai.governance.directives import FounderDirectives
+    rows, ledger = _journal_rows(database, tenant)
+    try:
+        realised = calibration.realised_max_drawdown(ledger._connection, tenant)
+    finally:
+        ledger.close()
+    note = ""
+    try:
+        limit = calibration.live_drawdown_limit(FounderDirectives.from_env())
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        limit, note = None, f"\ndrawdown limit unavailable: {type(error).__name__}: {str(error)[:120]}"
+    report = calibration.calibrate(rows, realised_max_drawdown=realised, policy_max_drawdown=limit)
+    return calibration.render(report) + note
+
+
+def empirical_payoffs(database: Path, tenant: str, destination: Path) -> str:
+    """Measure payoffs from the journal and write the artifact; never replace an existing one.
+
+    The id is a hash of the measurement, so writing the same window twice produces the
+    same id - but the file is still created exclusively, because evidence an operator may
+    already have pointed something at must not change under them.
+    """
+    from quant_ai.analytics import empirical_payoffs as payoffs
+    rows, ledger = _journal_rows(database, tenant)
+    ledger.close()
+    found = payoffs.artifact(rows, generated_at=datetime.now(timezone.utc))
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as output:
+        json.dump(found, output, indent=2, sort_keys=True)
+        output.write("\n")
+    overall = found["overall"]
+    usable = sorted(name for name, group in found["by_playbook"].items() if not group["thin"])
+    return "\n".join([
+        f"wrote {destination}  source={payoffs.source_label(found)}",
+        (f"overall  n={overall['n']}  e_win_hat={overall['e_win_hat']}  e_loss_hat={overall['e_loss_hat']}"
+         f"  break_even={overall['break_even_probability']}  thin={str(overall['thin']).lower()}"),
+        f"playbook groups past the {payoffs.MINIMUM_SAMPLE}-row floor: {', '.join(usable) or 'none yet'}",
+        "recorded only: the live expected value keeps the declared 1% / 2%",
+    ])
+
+
 def fraction(text: str) -> Decimal:
     """A ``--threshold`` such as 0.01; argparse only reports ValueError-family failures."""
     try:
@@ -121,7 +179,8 @@ def fraction(text: str) -> Decimal:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill", "pilot-check", "missed", "plan"])
+    parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill",
+                                           "pilot-check", "missed", "plan", "calibrate", "empirical-payoffs"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
@@ -150,6 +209,16 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if args.action == "plan":
         print(plan(args.database, session_date=args.date))
+        raise SystemExit(0)
+    if args.action == "calibrate":
+        # A report, like missed and plan: it exits 0 when it could be produced. The verdict
+        # is in the text; arming anything on it is an operator act, never a script's.
+        print(calibrate(args.database, args.tenant))
+        raise SystemExit(0)
+    if args.action == "empirical-payoffs":
+        if not args.destination:
+            parser.error("empirical-payoffs requires --destination; use a new path")
+        print(empirical_payoffs(args.database, args.tenant, args.destination))
         raise SystemExit(0)
     if args.action == "reconcile":
         from quant_ai.execution.reconciliation import reconcile_paper

@@ -63,6 +63,17 @@ FILL_COLUMNS = (
 )
 
 
+# The two numbers the v1 probability mapping reads, so a stored probability can be
+# recomputed rather than trusted. Until #235 the LLM overlay rewrote the forecast from the
+# model's own stance and confidence under the SAME basis id, so a row labelled
+# weighted_lean_times_confidence.v1 might have come from either mapping and nothing on the
+# row could say which. A label can be wrong in exactly that way; a recomputation cannot.
+CONSENSUS_COLUMNS = (
+    "consensus_weighted_score",
+    "consensus_confidence",
+)
+
+
 COLUMNS = (
     "decision_id",
     "tenant_id",
@@ -96,6 +107,7 @@ COLUMNS = (
     "forecast_cost_bps",
     "forecast_basis",
     *FILL_COLUMNS,
+    *CONSENSUS_COLUMNS,
     *HORIZON_COLUMNS,
     "resolved_at",
     "realized_net_pnl",
@@ -161,6 +173,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     spread_bps TEXT,
     fill_price TEXT,
     fill_anchor TEXT,
+    consensus_weighted_score TEXT,
+    consensus_confidence TEXT,
     forward_return_10m TEXT,
     forward_return_30m TEXT,
     forward_return_60m TEXT,
@@ -240,6 +254,10 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("spread_bps", "TEXT"),
     ("fill_price", "TEXT"),
     ("fill_anchor", "TEXT"),
+    # The v1 mapping's own inputs; see CONSENSUS_COLUMNS. NULL on every row written before
+    # this existed, and those rows are reported as unverifiable rather than assumed clean.
+    ("consensus_weighted_score", "TEXT"),
+    ("consensus_confidence", "TEXT"),
 )
 
 
@@ -499,6 +517,22 @@ def agents_of(trace) -> dict[str, dict[str, str]]:
 FILL_ANCHOR_REFERENCE = "reference_price_at_t0"
 
 
+def consensus_of(proposal: Any) -> dict[str, str | None]:
+    """The lean and conviction the forecast was computed from, as the decision recorded them.
+
+    Carried through as written, never recomputed: the point of storing them is to test the
+    stored probability against them, and a value rebuilt at journal time would test the
+    arithmetic against itself. A hard hold has no consensus and records none.
+    """
+    provenance = getattr(proposal, "provenance", None)
+    block = provenance.get("consensus") if isinstance(provenance, dict) else None
+    consensus = block if isinstance(block, dict) else {}
+    return {
+        "consensus_weighted_score": _text_or_none(consensus.get("weighted_score")),
+        "consensus_confidence": _text_or_none(consensus.get("average_confidence")),
+    }
+
+
 def fill_marks(proposal: Any, fill: Any, marks: Any = None) -> dict[str, Any]:
     """What the fill was priced against, beside what the market was showing.
 
@@ -596,6 +630,7 @@ def decision_row(
         "playbook": playbook_of(proposal),
         **forecast_of(proposal),
         **fill_marks(proposal, fill, marks),
+        **consensus_of(proposal),
     }
 
 
