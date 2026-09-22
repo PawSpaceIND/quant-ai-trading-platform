@@ -72,9 +72,52 @@ def _kite_client(api_key: str) -> Any:
     return KiteConnect(api_key=api_key, timeout=10)
 
 
+# Kite SDK exception names that mean the provider answered and refused these credentials.
+# Matched by name so this module still never imports the SDK, and so a stand-in client in
+# a test can raise either class without one installed.
+PROVIDER_REFUSALS = frozenset({"TokenException", "PermissionException", "InputException"})
+# Anything else - a socket, TLS, timeout or transport error - means the question was never
+# answered. A container's first second frequently has no working route, and the boot check
+# exited the daemon on that, dispatching the same CRITICAL alert as a stolen token. Retry
+# is bounded and short: it must not delay a genuine refusal, and it must not turn a real
+# outage into a slow boot.
+PROFILE_ATTEMPTS = 3
+PROFILE_BACKOFF_SECONDS = (1.0, 2.0)
+
+
+def _profile(kite: Any, *, attempts: int, sleep: Callable[[float], None]) -> Any:
+    """Read the profile, retrying only what was never answered.
+
+    A refusal fails on the first attempt: repeating a rejected token cannot change the
+    answer and would only delay the alert. The exception is classified by its type name
+    and then dropped - never stored, re-raised or rendered - because the SDK puts request
+    context, and sometimes the credential itself, in the message.
+    """
+    total = max(1, attempts)
+    for attempt in range(1, total + 1):
+        refused = False
+        try:
+            return kite.profile()
+        except Exception as error:  # noqa: BLE001 - classified by type name, never rendered.
+            refused = type(error).__name__ in PROVIDER_REFUSALS
+            del error
+        # Raised after the handler has exited, not inside it. `from None` only suppresses
+        # the chain when a traceback is *formatted*; the exception object still holds the
+        # provider's exception on __context__, and anything that walks that chain - a log
+        # handler, an error reporter - would surface a message that is sometimes the
+        # credential. Outside the handler there is no active exception to attach.
+        if refused:
+            raise RenewalError("zerodha_profile_rejected")
+        if attempt >= total:
+            raise RenewalError("zerodha_profile_unavailable")
+        sleep(PROFILE_BACKOFF_SECONDS[min(attempt - 1, len(PROFILE_BACKOFF_SECONDS) - 1)])
+    raise RenewalError("zerodha_profile_unavailable")
+
+
 def validate_token(
     env: Mapping[str, str], *, now: datetime | None = None,
     client_factory: Callable[[str], Any] | None = None,
+    attempts: int = 1, sleep: Callable[[float], None] = time.sleep,
 ) -> VerifiedToken:
     """Refuse missing, expired, future-dated, rejected or wrong-account credentials.
 
@@ -102,12 +145,17 @@ def validate_token(
             raise RenewalError("zerodha_issuance_in_future")
         if is_expired(record, at):
             raise RenewalError("zerodha_session_expired")
-    try:
+    # Suppressed rather than caught-and-re-raised: constructing the client or setting the
+    # token can fail with an SDK error that carries credentials, and suppressing it leaves
+    # nothing attached to the refusal below. Logging it is exactly what must not happen.
+    prepared: Any = None
+    with contextlib.suppress(Exception):
         kite = (client_factory or _kite_client)(key)
         kite.set_access_token(token)
-        profile = kite.profile()
-    except Exception:  # noqa: BLE001 - SDK errors can carry credentials; never render them.
-        raise RenewalError("zerodha_profile_rejected_or_unavailable") from None
+        prepared = kite  # Only once both steps succeeded, so a half-built client is never used.
+    if prepared is None:
+        raise RenewalError("zerodha_profile_unavailable")
+    profile = _profile(prepared, attempts=attempts, sleep=sleep)
     user = profile.get("user_id") if isinstance(profile, Mapping) else None
     if not isinstance(user, str) or not user.strip():
         raise RenewalError("zerodha_profile_identity_missing")
@@ -174,11 +222,27 @@ def notifications() -> TradingNotificationDispatcher:
     return TradingNotificationDispatcher(tuple(sinks))
 
 
+# What the operator should actually do, per reason. A session the provider refused needs
+# a new login; a provider that never answered needs nothing from the login flow at all,
+# and telling someone to re-authenticate sends them to re-enter working credentials.
+_REMEDY = {
+    "zerodha_profile_unavailable":
+        "Zerodha could not be reached to verify the session, so paper startup/new data "
+        "cannot be trusted. The stored token may be perfectly good; check connectivity "
+        "from the host before assuming it is not.",
+}
+_DEFAULT_REMEDY = (
+    "Zerodha session unavailable. Paper startup/new data cannot be trusted. "
+    "Complete interactive login with scripts/renew_pilot_token.py before the open."
+)
+
+
 def check_runtime_token(
     *, env: Mapping[str, str] | None = None, now: datetime | None = None,
     dispatcher: TradingNotificationDispatcher | None = None, phase: str = "boot",
     client_factory: Callable[[str], Any] | None = None,
     alert_state: Path | None = None,
+    attempts: int = PROFILE_ATTEMPTS, sleep: Callable[[float], None] = time.sleep,
 ) -> VerifiedToken:
     """Validate the runtime token; on refusal alert, then re-raise.
 
@@ -190,15 +254,15 @@ def check_runtime_token(
     if phase not in {"boot", "preopen", "watch_start"}:
         raise RenewalError("zerodha_check_phase_invalid")
     try:
-        return validate_token(source, now=now, client_factory=client_factory)
+        return validate_token(source, now=now, client_factory=client_factory,
+                              attempts=attempts, sleep=sleep)
     except RenewalError as error:
         at = now or _now()
         reason = str(error)
         if _alert_due(alert_state, reason, at):
             (dispatcher or notifications()).dispatch(
                 TradingAlertCode.ZERODHA_SESSION_INVALID,
-                "Zerodha session unavailable. Paper startup/new data cannot be trusted. "
-                "Complete interactive login with scripts/renew_pilot_token.py before the open.",
+                _REMEDY.get(reason, _DEFAULT_REMEDY),
                 tenant_id=source.get("PRAMANA_TENANT_ID", "ghost"),
                 priority=AlertPriority.CRITICAL,
                 metadata={"phase": phase, "reason": reason},

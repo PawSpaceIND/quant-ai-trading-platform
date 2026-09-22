@@ -43,6 +43,23 @@ this authoritative profile check. Rejected/unavailable/missing credentials, bad
 issuance metadata and account mismatch refuse startup and dispatch a CRITICAL
 `ZERODHA_SESSION_INVALID` alert to the existing durable alert mechanism.
 
+A refusal and an unanswered question are reported apart, because the operator's next
+action differs. `zerodha_profile_rejected` means the provider answered and would not
+accept these credentials: a new interactive login is required. `zerodha_profile_unavailable`
+means the call never got an answer, so the stored token may be perfectly good and the
+alert says so rather than sending someone to re-enter working credentials. The provider's
+own exception is classified by type name and then dropped; it is never stored, chained or
+rendered, since its message carries request context and sometimes the credential.
+
+Only the unanswered case is retried, at most `PROFILE_ATTEMPTS` times with a short
+bounded backoff, and only on the runtime boot and watch paths. On 22 September 2026 the
+daemon exited twice on a transport failure in the first second of a freshly created
+container - 02:09:29 and 02:15:39 - each time dispatching the same CRITICAL alert that a
+stolen token would, and each time running a minute later on the identical token. An alert
+an operator must not learn to ignore fired twice for nothing. A refusal is never retried:
+repeating a rejected token cannot change the answer and would only delay the alert. The
+interactive helper still asks exactly once, because an operator is watching it.
+
 All provider exception details are discarded at the credential boundary, rather
 than guessing which substrings to redact. Session/token dataclass representations
 hide access tokens. The owner helper uses a hidden terminal prompt for the request
