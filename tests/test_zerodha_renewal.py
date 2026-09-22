@@ -26,6 +26,11 @@ ENV = {"TRADING_LIVE_MONEY_ACTIVE": "false", "ZERODHA_API_KEY": "synthetic-api-k
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class TokenException(Exception):
+    """Named as Kite names its refusal class. The module matches on the name, so this
+    exercises the real refusal branch without the SDK installed."""
+
+
 class FakeKite:
     def __init__(self, user="SYNTHETIC", error=None):
         self.user = user
@@ -95,9 +100,13 @@ def test_legacy_env_without_timestamp_still_requires_authoritative_profile():
     kite = FakeKite()
     renewal.validate_token(legacy, now=NOW, client_factory=lambda _: kite)
     assert kite.profile_calls == 1
-    with pytest.raises(renewal.RenewalError, match="rejected_or_unavailable"):
+    # An unclassified error means the question was never answered, not that it was refused.
+    with pytest.raises(renewal.RenewalError, match="profile_unavailable"):
         renewal.validate_token(legacy, now=NOW,
                                client_factory=lambda _: FakeKite(error=RuntimeError(TOKEN)))
+    with pytest.raises(renewal.RenewalError, match="profile_rejected"):
+        renewal.validate_token(legacy, now=NOW,
+                               client_factory=lambda _: FakeKite(error=TokenException(TOKEN)))
 
 
 def test_provider_failure_emits_critical_durable_alert_without_secret_or_traceback(tmp_path, capsys):
@@ -105,7 +114,7 @@ def test_provider_failure_emits_critical_durable_alert_without_secret_or_traceba
     dispatcher = TradingNotificationDispatcher((JsonlFileSink(path),))
     try:
         renewal.check_runtime_token(
-            env=ENV, now=NOW, dispatcher=dispatcher,
+            env=ENV, now=NOW, dispatcher=dispatcher, sleep=lambda _: None,
             client_factory=lambda _: FakeKite(error=RuntimeError(TOKEN)),
         )
     except renewal.RenewalError as error:
@@ -125,22 +134,22 @@ def test_bad_token_never_reaches_daemon_assembly(tmp_path, monkeypatch):
     monkeypatch.setenv("ZERODHA_API_KEY", "synthetic-api-key")
     monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", TOKEN)
     monkeypatch.delenv(renewal.ISSUED_AT, raising=False)
-    monkeypatch.setattr(renewal, "_kite_client", lambda _: FakeKite(error=RuntimeError(TOKEN)))
+    monkeypatch.setattr(renewal, "_kite_client", lambda _: FakeKite(error=TokenException(TOKEN)))
     monkeypatch.setenv("PRAMANA_ALERT_LOG", str(tmp_path / "alerts.jsonl"))
     dispatcher = TradingNotificationDispatcher((JsonlFileSink(tmp_path / "alerts.jsonl"),))
     monkeypatch.setattr(daemon, "_env_notifications", lambda: dispatcher)
     def forbidden(_):
         pytest.fail("Invalid session reached daemon/IB assembly")
     monkeypatch.setattr(daemon, "import_module", forbidden)
-    with pytest.raises(renewal.RenewalError, match="rejected_or_unavailable"):
+    with pytest.raises(renewal.RenewalError, match="profile_rejected"):
         daemon.build_ghost_runner_from_env()
     assert dispatcher.pending()[0].priority.value == "CRITICAL"
     # The boot check dedupes through the record beside the alert log, so a restart a
     # minute later says nothing new; the record never carries the token.
     record_text = (tmp_path / renewal.SESSION_ALERT_STATE_NAME).read_text()
-    assert json.loads(record_text)["reason"] == "zerodha_profile_rejected_or_unavailable"
+    assert json.loads(record_text)["reason"] == "zerodha_profile_rejected"
     assert TOKEN not in record_text
-    with pytest.raises(renewal.RenewalError, match="rejected_or_unavailable"):
+    with pytest.raises(renewal.RenewalError, match="profile_rejected"):
         daemon.build_ghost_runner_from_env()
     assert len(dispatcher.pending()) == 1
 
@@ -405,6 +414,7 @@ def _refuse(dispatcher, state, at, **overrides):
     with pytest.raises(renewal.RenewalError):
         renewal.check_runtime_token(
             env={**ENV, **overrides}, now=at, dispatcher=dispatcher, alert_state=state,
+            sleep=lambda _: None,
             client_factory=lambda _: FakeKite(error=RuntimeError(TOKEN)),
         )
 
@@ -436,8 +446,8 @@ def test_a_changed_reason_alerts_immediately(tmp_path):
     fresh = {renewal.ISSUED_AT: (EXPIRED_AT - timedelta(minutes=5)).isoformat()}
     _refuse(dispatcher, state, EXPIRED_AT + timedelta(minutes=1), **fresh)
     reasons = [json.loads(line)["metadata"]["reason"] for line in log.read_text().splitlines()]
-    assert reasons == ["zerodha_session_expired", "zerodha_profile_rejected_or_unavailable"]
-    assert json.loads(state.read_text())["reason"] == "zerodha_profile_rejected_or_unavailable"
+    assert reasons == ["zerodha_session_expired", "zerodha_profile_unavailable"]
+    assert json.loads(state.read_text())["reason"] == "zerodha_profile_unavailable"
 
 
 def test_an_unreadable_or_malformed_record_alerts_rather_than_stays_silent(tmp_path):
@@ -469,3 +479,114 @@ def test_without_a_record_every_refusal_alerts_as_the_preopen_reminders_rely_on(
 def test_the_default_record_sits_beside_the_alert_log(tmp_path, monkeypatch):
     monkeypatch.setenv("PRAMANA_ALERT_LOG", str(tmp_path / "alerts" / "alerts.jsonl"))
     assert renewal.default_alert_state() == (tmp_path / "alerts" / "zerodha-session-alert.json").resolve()
+
+
+# --------------------------------------------------------------------------------------
+# The boot race observed on the Lightsail host, 22 September 2026
+#
+# `refresh_services` and the deployment script both recreate every token consumer at once.
+# The daemon's first act is the profile check, and in the container's first second the
+# call failed in transport twice - 02:09:29 and 02:15:39 - each time exiting the process
+# and dispatching the same CRITICAL alert that a stolen token would. Both times it was
+# running a minute later on the identical token, which the same call verified by hand.
+# The alert an operator must never learn to ignore fired twice for nothing.
+
+
+class FlakyKite(FakeKite):
+    """Fails the first ``failures`` profile calls, then answers."""
+
+    def __init__(self, failures, error=None, **kwargs):
+        super().__init__(**kwargs)
+        self.failures = failures
+        self.flaky_error = error or RuntimeError("synthetic transport failure")
+
+    def profile(self):
+        self.profile_calls += 1
+        if self.profile_calls <= self.failures:
+            raise self.flaky_error
+        return {"user_id": self.user}
+
+
+def test_a_provider_that_never_answered_is_retried_and_the_boot_survives(tmp_path):
+    """The whole point: a transient transport failure must not exit the daemon."""
+    slept = []
+    log = tmp_path / "alerts.jsonl"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    kite = FlakyKite(failures=2)
+    verified = renewal.check_runtime_token(
+        env=ENV, now=NOW, dispatcher=dispatcher, client_factory=lambda _: kite,
+        sleep=slept.append,
+    )
+    assert verified.user_id == "SYNTHETIC"
+    assert kite.profile_calls == 3
+    # Bounded and short: it must not turn a real outage into a slow boot.
+    assert slept == [1.0, 2.0]
+    assert sum(slept) < 5
+    assert not log.exists() or log.read_text() == "", "a recovered boot must not alert"
+
+
+def test_a_refused_token_is_not_retried_and_fails_on_the_first_answer():
+    """Repeating a rejected token cannot change the answer; it only delays the alert."""
+    kite = FlakyKite(failures=99, error=TokenException(TOKEN))
+    slept = []
+    with pytest.raises(renewal.RenewalError, match="^zerodha_profile_rejected$"):
+        renewal.check_runtime_token(env=ENV, now=NOW, client_factory=lambda _: kite,
+                                    dispatcher=TradingNotificationDispatcher(), sleep=slept.append)
+    assert kite.profile_calls == 1
+    assert slept == []
+
+
+def test_a_provider_outage_still_refuses_after_its_bounded_attempts(tmp_path):
+    log = tmp_path / "alerts.jsonl"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    kite = FlakyKite(failures=99)
+    with pytest.raises(renewal.RenewalError, match="^zerodha_profile_unavailable$"):
+        renewal.check_runtime_token(env=ENV, now=NOW, dispatcher=dispatcher,
+                                    client_factory=lambda _: kite, sleep=lambda _: None)
+    assert kite.profile_calls == renewal.PROFILE_ATTEMPTS
+    payload = json.loads(log.read_text())
+    assert payload["priority"] == "CRITICAL"
+    assert payload["metadata"]["reason"] == "zerodha_profile_unavailable"
+
+
+def test_the_two_failures_tell_the_operator_to_do_different_things(tmp_path):
+    """A refused session needs a new login. An unreachable provider needs nothing from it,
+    and saying otherwise sends someone to re-enter credentials that already work."""
+    messages = {}
+    for name, error in (("rejected", TokenException(TOKEN)), ("unavailable", RuntimeError(TOKEN))):
+        log = tmp_path / f"{name}.jsonl"
+        dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+        with pytest.raises(renewal.RenewalError):
+            renewal.check_runtime_token(env=ENV, now=NOW, dispatcher=dispatcher,
+                                        client_factory=lambda _, e=error: FakeKite(error=e),
+                                        sleep=lambda _: None)
+        messages[name] = json.loads(log.read_text())["message"]
+    assert "renew_pilot_token.py" in messages["rejected"]
+    assert "renew_pilot_token.py" not in messages["unavailable"]
+    assert "could not be reached" in messages["unavailable"]
+    assert "may be perfectly good" in messages["unavailable"]
+    assert TOKEN not in "".join(messages.values())
+
+
+def test_retrying_never_retains_or_renders_the_provider_exception(tmp_path, capsys):
+    """SDK errors carry request context and sometimes the credential itself. A retry loop
+    is the easy place to start holding one for a later message."""
+    log = tmp_path / "alerts.jsonl"
+    dispatcher = TradingNotificationDispatcher((JsonlFileSink(log),))
+    with pytest.raises(renewal.RenewalError) as caught:
+        renewal.check_runtime_token(
+            env=ENV, now=NOW, dispatcher=dispatcher, sleep=lambda _: None,
+            client_factory=lambda _: FlakyKite(failures=99, error=RuntimeError(TOKEN)),
+        )
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert TOKEN not in rendered + log.read_text() + str(capsys.readouterr())
+
+
+def test_the_renewal_helper_itself_still_asks_exactly_once():
+    """Only the runtime boot/watch path retries. The interactive helper has an operator
+    in front of it who can see the failure and try again."""
+    kite = FlakyKite(failures=1)
+    with pytest.raises(renewal.RenewalError, match="^zerodha_profile_unavailable$"):
+        renewal.validate_token(ENV, now=NOW, client_factory=lambda _: kite)
+    assert kite.profile_calls == 1

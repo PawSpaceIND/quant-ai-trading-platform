@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_zerodha_renewal import TOKEN, FakeKite
+from test_zerodha_renewal import TOKEN, FakeKite, TokenException
 
 from quant_ai import daemon
 from quant_ai.notifications.trading import JsonlFileSink, TradingNotificationDispatcher
@@ -62,7 +62,7 @@ def test_token_refusal_precedes_runner_assembly_in_each_identity_mode(
     configure(monkeypatch, tmp_path, mode)
     kite = FakeKite(
         user="OTHER" if failure == "wrong_account" else "SYNTHETIC",
-        error=RuntimeError(TOKEN) if failure == "rejected" else None,
+        error=TokenException(TOKEN) if failure == "rejected" else None,
     )
     if failure == "missing_token":
         monkeypatch.setenv("ZERODHA_ACCESS_TOKEN", "")
@@ -75,7 +75,7 @@ def test_token_refusal_precedes_runner_assembly_in_each_identity_mode(
         pytest.fail("invalid token must not reach runner/provider assembly")
 
     monkeypatch.setattr(daemon, "import_module", forbidden)
-    reason = {"rejected": "profile_rejected_or_unavailable",
+    reason = {"rejected": "profile_rejected",
               "wrong_account": "profile_identity_mismatch",
               "missing_token": "credentials_missing"}[failure]
     with pytest.raises(renewal.RenewalError, match=reason):
