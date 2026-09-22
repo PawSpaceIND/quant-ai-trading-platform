@@ -83,6 +83,12 @@ services:
       # band. The report is written either way; off keeps every weight at one.
       PRAMANA_SPECIALIST_REWEIGHTING: ${PRAMANA_SPECIALIST_REWEIGHTING:-on}
       PRAMANA_DAILY_HISTORY_PROVIDER: ${PRAMANA_DAILY_HISTORY_PROVIDER:-yahoo}
+      # Minute-bar warm-up at boot. The analysis pipeline reads at most sixty one-minute
+      # bars and the technical specialist needs fifty of them, so without this the feed
+      # starts empty and that specialist abstains for the first fifty minutes of every
+      # session and after every restart. It fails closed: an unreachable provider logs
+      # and the daemon carries on exactly as it does today. "none" keeps that behaviour.
+      PRAMANA_INTRADAY_WARMUP_PROVIDER: ${PRAMANA_INTRADAY_WARMUP_PROVIDER:-kite}
       # Mandatory entry gates; provider absence must never mean permission to trade.
       PRAMANA_REQUIRE_BOOK_RISK_GATES: "true"
       PRAMANA_BOOK_RISK_HISTORY: ${PRAMANA_BOOK_RISK_HISTORY:-daily}
