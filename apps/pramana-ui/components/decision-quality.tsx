@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { AiBudget, CalibrationBin, DecisionQualityReport, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Verdict } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Significance, TStatistic, Verdict } from "@/lib/decision-quality-model";
 import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, stancesSummary } from "@/lib/decision-quality-model";
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
@@ -65,11 +65,17 @@ export function DecisionQuality() {
       <Headline report={report} />
       <ModelDecisionHealth report={report.inference_health} />
       <Calibration bins={report.calibration.bins} brier={report.calibration.brier_score} horizon={report.directional.horizon_minutes} />
+      <SignificancePanel significance={report.significance} horizon={report.directional.horizon_minutes} />
       <div className="quality-tables">
         <Panel eyebrow="OUTCOMES BY REGIME" title="By regime">
           <DataTable label="Decisions by regime" columns={[{ name: "Regime" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
             rows={report.by_regime.map((r) => [r.regime.replaceAll("_", " "), count(r.decisions), count(r.filled), percent(r.hit_rate), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
             empty="No regime breakdown in this report" />
+        </Panel>
+        <Panel eyebrow="OUTCOMES BY PLAYBOOK" title="By playbook">
+          <DataTable label="Decisions by playbook" columns={[{ name: "Playbook" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Probes", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
+            rows={report.by_playbook.map((r) => [r.playbook.replaceAll("_", " "), count(r.decisions), count(r.filled), count(r.probes), percent(r.hit_rate), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
+            empty="No playbook breakdown in this report" />
         </Panel>
         <Panel eyebrow="OUTCOMES BY HOUR" title="By hour (IST)">
           <DataTable label="Decisions by hour IST" columns={[{ name: "Hour IST" }, { name: "Decisions", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
@@ -173,6 +179,9 @@ function Headline({ report }: { report: DecisionQualityReport }) {
   const sign = (v: number | null) => v == null ? undefined : v >= 0;
   return <div className="metric-grid" aria-label="Decision quality headline">
     <Tile label="Decisions" value={count(counts.decisions)} note={`${count(counts.filled)} filled · ${count(counts.rejected)} rejected · ${count(counts.abstained)} abstained`} />
+    <Tile label="Exploration probes" value={count(counts.probes)} note={counts.probes == null
+      ? "This report did not count probes; it cannot say how much of the sample was exploration."
+      : `Directional decisions taken below the conviction floor · ${count(counts.decisions - counts.probes)} at or above it`} />
     <Tile label="Filled" value={count(counts.filled)} note={`${count(counts.closed_trades)} closed trades · ${count(counts.resolved_60m)} resolved at ${directional.horizon_minutes} min`} />
     <Tile label={`Hit rate ${directional.horizon_minutes}m`} value={percent(directional.hit_rate)} note={`${count(directional.evaluated)} evaluated · mean forward ${signedPercent(directional.mean_forward_return)}`} />
     <Tile label="Expectancy" value={signedMoney(trades.expectancy)} positive={sign(trades.expectancy)} note={`Net P&L per closed trade · win rate ${percent(trades.win_rate)}`} />
@@ -204,6 +213,38 @@ function Calibration({ bins, brier, horizon }: { bins: CalibrationBin[]; brier: 
   </section>;
 }
 
+/**
+ * The engine's own t-statistics for the two means the page leads with. The report's
+ * limitations already explain that these are uncorrected for multiple testing; until now
+ * the page carried that caveat without ever showing the numbers it was about.
+ */
+function SignificancePanel({ significance, horizon }: { significance: Significance | null; horizon: number }) {
+  const row = (label: string, block: TStatistic, unit: (v: number | null) => string) => [
+    label, count(block.observations), unit(block.mean), unit(block.standard_error),
+    <span className="numeric">{ratio(block.t_statistic)}</span>,
+  ];
+  return <section className="panel" aria-label="Statistical significance">
+    <div className="panel-title"><div><span className="eyebrow">MEANS AGAINST ZERO</span><h2>Statistical significance</h2></div>
+      {significance && <span className="muted">Multiple-testing correction: {significance.multiple_testing_correction}</span>}</div>
+    {!significance
+      ? <div className="empty">This report carries no t-statistics. A hit rate and an expectancy on their own do not say how far either mean is from zero.</div>
+      : <>
+        <p className="readiness-explanation">
+          Each row tests one mean against zero on the observations shown. A t-statistic near zero is
+          indistinguishable from no effect; the sign says which way. Both rows read as unavailable below{" "}
+          {count(significance.minimum_observations)} observations or when the sample has no dispersion, because no
+          t-statistic exists there.
+        </p>
+        <DataTable label="One-sample t-statistics" columns={[{ name: "Mean tested" }, { name: "Observations", numeric: true }, { name: "Mean", numeric: true }, { name: "Standard error", numeric: true }, { name: "t", numeric: true }]}
+          rows={[
+            row(`Forward return ${horizon}m`, significance.forward_return_60m, (v) => signedPercent(v, 4)),
+            row("Closed-trade net P&L", significance.trade_net_pnl, signedMoney),
+          ]}
+          empty="No t-statistics in this report" />
+      </>}
+  </section>;
+}
+
 function Panel({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
   return <section className="panel"><span className="eyebrow">{eyebrow}</span><h3>{title}</h3>{children}</section>;
 }
@@ -224,14 +265,16 @@ function RecentDecisions({ rows, horizon }: { rows: RecentDecision[]; horizon: n
     <div className="panel-title"><div><span className="eyebrow">NEWEST FIRST</span><h2>Recent decisions</h2></div><span className="muted">{count(rows.length)} shown</span></div>
     <div className="table-scroll">
       <table aria-label="Recent decisions">
-        <thead><tr><th>Decided</th><th>Instrument</th><th>Stance</th><th className="numeric">Confidence</th><th>Regime</th><th>Mode</th><th>Governance</th><th>Reason</th><th className="numeric">Fwd {horizon}m</th><th className="numeric">Net P&L</th><th>Exit</th></tr></thead>
+        <thead><tr><th>Decided</th><th>Instrument</th><th>Stance</th><th className="numeric">Confidence</th><th>Regime</th><th>Playbook</th><th>Mode</th><th>Conviction</th><th>Governance</th><th>Reason</th><th className="numeric">Fwd {horizon}m</th><th className="numeric">Net P&L</th><th>Exit</th></tr></thead>
         <tbody>{rows.map((d) => <tr key={d.decision_id}>
           <td><small>{when(d.decided_at)}</small></td>
           <td><strong>{d.symbol}</strong></td>
           <td>{d.stance}</td>
           <td className="numeric">{percent(d.confidence, 0)}</td>
           <td>{d.regime?.replaceAll("_", " ") ?? "—"}</td>
+          <td>{d.playbook?.replaceAll("_", " ") ?? "—"}</td>
           <td>{d.mode ?? "—"}</td>
+          <td>{d.probe == null ? <span className="muted">not recorded</span> : d.probe ? <span className="pill amber">Probe</span> : "Conviction"}</td>
           <td><span className={`pill ${tone(d.governance)}`}>{d.governance.toUpperCase()}</span></td>
           <td>{d.reason?.replaceAll("_", " ") ?? "—"}</td>
           <td className={`numeric ${signedClass(d.forward_return_60m)}`}>{signedPercent(d.forward_return_60m)}</td>

@@ -18,6 +18,17 @@ export type CountRow = { reason: string; count: number };
 export type ExitRow = { trigger: string; count: number };
 export type CalibrationBin = { lower: number; upper: number; decisions: number; hit_rate: number | null; mean_confidence: number | null };
 export type RegimeRow = { regime: string; decisions: number; filled: number; hit_rate: number | null; net_pnl: number };
+export type PlaybookRow = { playbook: string; decisions: number; filled: number; probes: number | null; hit_rate: number | null; net_pnl: number };
+/** One-sample t-statistic for a mean against zero. Null throughout when the sample is
+ * too small (see `minimum_observations`) or has no dispersion. */
+export type TStatistic = { observations: number; mean: number | null; standard_error: number | null; t_statistic: number | null };
+export type Significance = {
+  minimum_observations: number;
+  /** The engine states its own correction, or "none". Rendered verbatim, never assumed. */
+  multiple_testing_correction: string;
+  forward_return_60m: TStatistic;
+  trade_net_pnl: TStatistic;
+};
 export type HourRow = { hour: number; decisions: number; hit_rate: number | null; net_pnl: number };
 export type AgentRow = { agent_id: string; evaluated: number; directional_accuracy: number | null };
 export type ModeRow = { mode: string; decisions: number };
@@ -35,6 +46,10 @@ export type RecentDecision = {
   decision_id: string; decided_at: string; symbol: string; stance: string; confidence: number;
   regime: string | null; mode: string | null; governance: Governance; reason: string | null; order_id: string | null;
   forward_return_60m: number | null; net_pnl: number | null; exit_trigger: string | null;
+  /** Exploration probe below the conviction floor. Null on a report written before the
+   * engine recorded it, which is not the same claim as false. */
+  probe: boolean | null;
+  playbook: string | null;
 };
 export type DecisionQualityReport = {
   schema: typeof DECISION_QUALITY_SCHEMA;
@@ -43,7 +58,9 @@ export type DecisionQualityReport = {
   window: { since: string; until: string; sessions: number };
   minimum_sample: number;
   insufficient_sample: boolean;
-  counts: { decisions: number; filled: number; rejected: number; abstained: number; resolved_60m: number; closed_trades: number };
+  /** `probes` is null on a report written before the engine counted them; a probe count
+   * of zero is a different claim from not having counted. */
+  counts: { decisions: number; filled: number; rejected: number; abstained: number; resolved_60m: number; closed_trades: number; probes: number | null };
   rejections: CountRow[];
   directional: { horizon_minutes: number; evaluated: number; hit_rate: number | null; mean_forward_return: number | null };
   trades: {
@@ -52,7 +69,11 @@ export type DecisionQualityReport = {
     net_pnl: number; gross_pnl: number; fees: number; exits: ExitRow[];
   };
   calibration: { brier_score: number | null; bins: CalibrationBin[] };
+  /** Null on a report written before the engine computed t-statistics. The limitations
+   * list explains what they do and do not establish. */
+  significance: Significance | null;
   by_regime: RegimeRow[];
+  by_playbook: PlaybookRow[];
   by_hour_ist: HourRow[];
   by_agent: AgentRow[];
   by_mode: ModeRow[];
@@ -266,6 +287,29 @@ function optInferenceHealth(value: unknown, expectedDecisions: number): Inferenc
   } catch { return null; }
 }
 
+/** The engine's t-statistics, or null. Every field of a block is null together when the
+ * sample is too small or has no dispersion, so a partial block is treated as no block. */
+function optSignificance(value: unknown): Significance | null {
+  if (value == null) return null;
+  try {
+    const d = record(value);
+    const block = (raw: unknown): TStatistic => {
+      const b = record(raw);
+      const observations = num(b.observations);
+      if (!Number.isSafeInteger(observations) || observations < 0) fail();
+      return { observations, mean: optNum(b.mean), standard_error: optNum(b.standard_error), t_statistic: optNum(b.t_statistic) };
+    };
+    return {
+      minimum_observations: num(d.minimum_observations),
+      multiple_testing_correction: text(d.multiple_testing_correction, 80),
+      forward_return_60m: block(d.forward_return_60m),
+      trade_net_pnl: block(d.trade_net_pnl),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeReport(value: unknown): DecisionQualityReport {
   const r = record(value);
   if (r.schema !== DECISION_QUALITY_SCHEMA) fail();
@@ -278,6 +322,7 @@ function normalizeReport(value: unknown): DecisionQualityReport {
       confidence: num(d.confidence), regime: optText(d.regime, 60), mode: optText(d.mode, 60), governance: governance(d.governance),
       reason: optText(d.reason, 300), order_id: optText(d.order_id, 120), forward_return_60m: optNum(d.forward_return_60m),
       net_pnl: optNum(d.net_pnl), exit_trigger: optText(d.exit_trigger, 60),
+      probe: typeof d.probe === "boolean" ? d.probe : null, playbook: optText(d.playbook ?? null, 80),
     };
   }).sort((a, b) => Date.parse(b.decided_at) - Date.parse(a.decided_at));
   return {
@@ -290,6 +335,7 @@ function normalizeReport(value: unknown): DecisionQualityReport {
     counts: {
       decisions: num(counts.decisions), filled: num(counts.filled), rejected: num(counts.rejected),
       abstained: num(counts.abstained), resolved_60m: num(counts.resolved_60m), closed_trades: num(counts.closed_trades),
+      probes: counts.probes == null ? null : num(counts.probes),
     },
     rejections: list(r.rejections, 100).map((item) => { const d = record(item); return { reason: text(d.reason, 200), count: num(d.count) }; }),
     directional: {
@@ -310,9 +356,17 @@ function normalizeReport(value: unknown): DecisionQualityReport {
         return { lower: num(d.lower), upper: num(d.upper), decisions: num(d.decisions), hit_rate: optNum(d.hit_rate), mean_confidence: optNum(d.mean_confidence) };
       }),
     },
+    significance: optSignificance(r.significance),
     by_regime: list(r.by_regime, 100).map((item) => {
       const d = record(item);
       return { regime: text(d.regime, 80), decisions: num(d.decisions), filled: num(d.filled), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl) };
+    }),
+    by_playbook: list(r.by_playbook ?? [], 100).map((item) => {
+      const d = record(item);
+      return {
+        playbook: text(d.playbook, 80), decisions: num(d.decisions), filled: num(d.filled),
+        probes: d.probes == null ? null : num(d.probes), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl),
+      };
     }),
     by_hour_ist: list(r.by_hour_ist, 48).map((item) => {
       const d = record(item);

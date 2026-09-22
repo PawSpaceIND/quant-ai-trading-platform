@@ -9,6 +9,7 @@ import {GET,POST} from "../app/api/institutional-recovery/route";
 import {makeSession,SESSION_COOKIE} from "../lib/auth";
 import {applyRecovery,inspectRecovery,readRecoveryOutcome} from "../lib/institutional-recovery-client";
 import {RECOVERY_CONFIRMATION} from "../lib/institutional-recovery-contract";
+import {NOT_DISPATCHED,OUTCOME_UNKNOWN} from "../lib/recovery-refusals";
 const program="programme-1",requestId="recovery-1",context="a".repeat(64);
 const preview=()=>({tenant_id:"tenant",program_id:program,context_sha256:context,program_state:"ACTIVE",
   slice_states:["DISPATCHING"],source_revision_sha256:"b".repeat(64),execution_authorized:false,
@@ -119,4 +120,21 @@ for(const change of ["tenant","origin","credential"]) test(`configuration change
     else fs.writeFileSync(f.apply,randomBytes(32).toString("base64url"));
     return Response.json(preview());});
   await assert.rejects(()=>applyRecovery(body()),/recovery_configuration_changed/);assert.equal(posts,0);
+});
+
+test("every refusal raised before the gateway releases the panel's lock",()=>{
+  // The panel keeps its saved attempt for any refusal it cannot prove was pre-dispatch,
+  // and then refuses every later submission on that evidence. So a pre-dispatch code
+  // missing from the map strands the operator on a request that was never sent.
+  // recovery_observation_unavailable was exactly that: on the apply path it can only come
+  // from the re-inspection the client performs before it POSTs anything.
+  const source=fs.readFileSync(new URL("../lib/institutional-recovery-client.ts",import.meta.url).pathname,"utf8");
+  const raised=new Set([...source.matchAll(/RecoveryGatewayError\([^,]+,\s*(?:payload\s*\?\s*"[a-z_]+"\s*:\s*)?"([a-z_]+)"/g)].map(m=>m[1]));
+  assert(raised.has("recovery_observation_unavailable"),"the client must still raise the code under test");
+  const unclassified=[...raised].filter(code=>!NOT_DISPATCHED[code]&&!OUTCOME_UNKNOWN.includes(code as typeof OUTCOME_UNKNOWN[number]));
+  assert.deepEqual(unclassified,[],
+    `these refusal codes are neither pre-dispatch nor a known unknown outcome: ${unclassified.join(", ")}`);
+  // A post-dispatch refusal must never release the lock.
+  for(const code of OUTCOME_UNKNOWN) assert.equal(NOT_DISPATCHED[code],undefined);
+  for(const message of Object.values(NOT_DISPATCHED)) assert.match(message,/Nothing was submitted/);
 });

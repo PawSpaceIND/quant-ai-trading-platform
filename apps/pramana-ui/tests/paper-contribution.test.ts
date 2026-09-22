@@ -170,3 +170,18 @@ test("private export and persisted Atlas context carry the same incomplete accou
   } finally {delete process.env.ANTHROPIC_API_KEY;}
   mutate("UPDATE paper_accounts SET cash_balance='0'"); assert.equal((await GET()).status, 503);
 });
+
+test("a refused account-contribution export never downloads under the evidence filename", async () => {
+  // The panel's link carries download="pramana-paper-contribution.json", so a refusal body
+  // with no Content-Disposition of its own is saved as the export it failed to produce:
+  // an operator ends up with a file named like evidence that contains an error string.
+  // Its three sibling exports already name a separate file; this one did not.
+  fs.rmSync(file, {force: true});
+  const {readPortfolioSnapshot} = await import("../lib/portfolio");
+  assert.equal(readPortfolioSnapshot().paperContribution.report, null);
+  const {GET} = await import("../app/api/portfolio/contribution/route");
+  const response = await GET();
+  assert.equal(response.ok, false);
+  assert.equal(response.headers.get("content-disposition"), 'attachment; filename="pramana-paper-contribution-unavailable.json"');
+  assert.match(response.headers.get("cache-control")!, /no-store/);
+});
