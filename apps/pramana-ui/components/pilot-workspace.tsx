@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { portfolioRisk } from "@/lib/portfolio-risk";
+import { applyShockEdit, dailyLossUsed, portfolioRisk } from "@/lib/portfolio-risk";
 import { MarketWorkspace } from "./market-workspace";
 import { CopilotPanel } from "./copilot-panel";
 import {BenchmarkAttributionPanel} from "./benchmark-attribution";
@@ -474,6 +474,12 @@ export function PilotWorkspace() {
                         <span className="eyebrow">PORTFOLIO GUARDRAILS</span>
                         <h2>Risk at a glance</h2>
                         <RiskBar
+                          label="Daily loss"
+                          value={dailyLossUsed(p!)}
+                          limit={data.runtime.limits?.dailyLoss}
+                          unavailable="opening equity unknown"
+                        />
+                        <RiskBar
                           label="Drawdown"
                           value={p!.drawdown}
                           limit={data.runtime.limits?.drawdown}
@@ -922,15 +928,47 @@ function EquityChart({ portfolio }: { portfolio: Portfolio }) {
     </section>
   );
 }
+/**
+ * What the displayed valuation actually is. Only an `engine_live` book is aged by the
+ * freshness pass, so every other mark mode keeps whatever status it was written with:
+ * a ledger-marked or replayed book reported "valuation status: ok" beside its own count
+ * of stale marks, and never said which marks it meant.
+ */
+function markStatement(p: Portfolio) {
+  const known: Record<string, string> = {
+    engine_live: "Engine valuation from timestamped ticks",
+    ledger_marked: "Ledger fill prices, not a current market valuation",
+    historical_replay: "Historical or synthetic replay valuations, not live prices",
+  };
+  const mode = known[p.markMode] ?? `Mark mode ${p.markMode || "unknown"}`;
+  return p.markMode === "engine_live"
+    ? `${mode}; valuation status: ${p.status}.`
+    : `${mode}. The freshness pass only ages engine valuations, so "${p.status}" here is the status this book was written with, not a check that it is current.`;
+}
+
 function RiskBar({
   label,
   value,
   limit,
+  unavailable,
 }: {
   label: string;
-  value: number;
+  /** Null when the observation itself cannot be computed, which is not zero. */
+  value: number | null;
   limit?: number;
+  unavailable?: string;
 }) {
+  if (value === null || !Number.isFinite(value))
+    return (
+      <div className="risk-bar">
+        <div>
+          <span>{label}</span>
+          <strong>
+            — <small>/ {unavailable ?? "not observed"}</small>
+          </strong>
+        </div>
+      </div>
+    );
   // The engine caps every published limit at the same ceiling the fallbacks used to be,
   // so a fabricated limit is always the loosest one possible and a tighter configured cap
   // was silently widened. With nothing published there is no bar to draw.
@@ -1058,6 +1096,20 @@ function RiskLab({
 }) {
   const [shock, setShock] = useState(-5);
   const [overrides, setOverrides] = useState<Record<string, number>>({});
+  // What is in each box while it is being edited. An empty box is not a shock of zero:
+  // Number("") is 0, so clearing a field to retype it used to pin that holding at 0% and
+  // quietly drop it from the scenario. An empty or unparseable box means no override, so
+  // the holding follows the common shock until a number is actually entered.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const editShock = (key: string, raw: string) => {
+    setDrafts(old => ({...old, [key]: raw}));
+    setOverrides(old => applyShockEdit(old, key, raw));
+  };
+  const commitShock = (key: string) => setDrafts(old => {
+    if (!Object.hasOwn(old, key)) return old;
+    const {[key]: _committed, ...rest} = old;
+    return rest;
+  });
   const p = data.portfolio;
   const risk = portfolioRisk(p, shock, overrides);
   if (risk.status !== "ok") return <section className="panel"><h2>Portfolio risk unavailable</h2><p>{risk.reason}</p></section>;
@@ -1105,15 +1157,16 @@ function RiskLab({
             <tbody>{risk.rows.map(row => <tr key={row.key}>
               <td><strong>{row.symbol}</strong><div className="muted">{row.fresh ? "Fresh mark" : "Stale / snapshot mark"}</div></td>
               <td>{pct(row.weight)}</td>
-              <td><input style={{ width: "6rem" }} aria-label={`${row.symbol} price shock percent`} type="number" min={-100} max={100} step={1} value={row.shock}
-                onChange={e => { const value = Number(e.target.value); if (Number.isFinite(value)) setOverrides(old => ({...old, [row.key]: Math.max(-100, Math.min(100, value))})); }} /></td>
+              <td><input style={{ width: "6rem" }} aria-label={`${row.symbol} price shock percent`} type="number" min={-100} max={100} step={1}
+                value={drafts[row.key] ?? String(row.shock)}
+                onChange={e => editShock(row.key, e.target.value)} onBlur={() => commitShock(row.key)} /></td>
               <td className={row.pnl < 0 ? "negative" : "positive"}>{money(row.pnl)}</td>
               <td>{row.stopState === "missing" ? "Missing" : row.stopState === "at_or_breached" ? "At / beyond stop" : `Downside ${money(row.stopDownside ?? 0)}`}</td>
             </tr>)}</tbody>
           </table>
         </div>
         {!risk.rows.length && <p className="empty">No holdings. Cash has no price-shock exposure in this scenario.</p>}
-        <button onClick={() => setOverrides({})}>Reset holdings to common shock</button>
+        <button onClick={() => { setOverrides({}); setDrafts({}); }}>Reset holdings to common shock</button>
         <div className="metric-grid research-metrics">
           <Metric
             label="Marked exposure"
@@ -1156,7 +1209,7 @@ function RiskLab({
           <Metric label="Effective holding count" value={risk.effectiveHoldings?.toFixed(2) ?? "—"} note="Inverse sum of squared invested weights" />
           <Metric label="Downside to recorded stops" value={risk.recordedStopDownside === null ? "Unavailable" : money(risk.recordedStopDownside)} note="Partial if stops are missing; excludes gaps and costs" />
         </div>
-        <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. Portfolio valuation status: {p.status}.</p>
+        <p className="footnote">{risk.missingStops} missing stops · {risk.breachedStops} at or beyond stop · {risk.staleMarks} stale or snapshot marks. {markStatement(p)}</p>
         <p className="muted">Effective holding count measures position concentration only; correlated holdings can still fall together. Recorded-stop downside is not a maximum-loss estimate. A breached stop showing zero remaining distance does not prove execution. Sector/factor exposure appears below when reviewed metadata is complete; options Greeks and margin remain unavailable. The separate historical diagnostic below estimates correlations only when its data-coverage checks pass.</p>
       </section>
       <section className="panel">
