@@ -180,11 +180,19 @@ def test_a_model_hold_over_a_specialist_lean_becomes_a_probe_and_a_model_buy_is_
     assert decision.rationale[0].startswith("exploration_probe:")
     assert "anthropic_model=m" in decision.rationale
 
+    # A model BUY over a swarm the floor held no longer stands on its own. The model may
+    # only tighten, so the deterministic NEUTRAL is the action, and the exploration budget
+    # is what turns it into a BUY - small, labelled and counted. Before this the model's
+    # own stance became a full-sized entry on conviction no specialist had reached.
     bought = AtlasInvestmentAgent(policy=budget(3), llm_client=consensus_client("BUY", 0.7))
     decision = asyncio.run(bought.decide_with_llm("TRENT", LEAN, NOW, evidence_context=TREND))
     assert decision.action is Stance.BUY
-    assert "exploration" not in decision.provenance
-    assert bought._probes_issued == {}
+    assert decision.provenance["model_view"] == {
+        "stance": "BUY", "confidence": "0.7000", "expected_risk": "0.0100",
+        "applied": "advisory", "deterministic_stance": "NEUTRAL",
+    }
+    assert decision.provenance["exploration"]["overrode"] == "NEUTRAL"
+    assert bought._probes_issued != {}
 
 
 def test_probe_quantity_is_the_fraction_of_equity_in_whole_units_or_zero() -> None:

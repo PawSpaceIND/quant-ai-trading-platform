@@ -504,6 +504,26 @@ class AtlasInvestmentAgent:
         if STANCE_SCORE[action] > 0 and signal.confidence < floor:
             model_floor = {"confidence": _fixed(signal.confidence), "floor": _fixed(floor), "held": True}
             action = Stance.NEUTRAL
+        # The model may only tighten. STANCE_SCORE orders stances from most risk-adding
+        # (STRONG_BUY, +2) to most defensive (AVOID, -3) on this long-only book, so the
+        # admissible action is whichever of the two scores lower. Until the forecast is
+        # calibrated and an EV gate is armed, a model that wants more risk than the
+        # specialists found is recorded and not acted on: it may talk the book down, never
+        # up. Before this, `action = signal.stance` outright, so a NEUTRAL swarm could be
+        # turned into a BUY by the model alone, on evidence no specialist had weighed.
+        model_stance, model_confidence = action, signal.confidence
+        if STANCE_SCORE[model_stance] < STANCE_SCORE[deterministic.action]:
+            overlay = "tightened"
+            # A tightened action that still adds risk may not be sized on a conviction the
+            # specialists did not reach, so its confidence is capped at theirs.
+            confidence = (min(model_confidence, deterministic.confidence)
+                          if STANCE_SCORE[model_stance] > 0 else model_confidence)
+            expected_return, expected_risk = signal.expected_return, signal.expected_risk
+        else:
+            overlay = "advisory"
+            action = deterministic.action
+            confidence = deterministic.confidence
+            expected_return, expected_risk = deterministic.expected_return, deterministic.expected_risk
         supporting = tuple(
             item.agent_id for item in evidence
             if STANCE_SCORE[item.stance] * STANCE_SCORE[action] > 0
@@ -525,22 +545,31 @@ class AtlasInvestmentAgent:
             now,
             action,
             subject,
-            signal.confidence,
-            signal.expected_return,
-            signal.expected_risk,
+            confidence,
+            expected_return,
+            expected_risk,
             supporting,
             dissenting,
             rationale,
             deterministic.country_recommendations,
             deterministic.founder_escalations,
             False,
+            # The forecast is deliberately NOT rewritten here. It was recorded from the
+            # specialists' lean before the model was asked, and it is the claim this
+            # decision is scored on; a model that restates it under the same basis id
+            # would make the calibration curve describe a mapping that never ran. The
+            # model's own view is kept beside it, as a view and not as a forecast.
             {**deterministic.provenance, "mode": mode, "inference": inference,
-             "forecast": forecasting.record(
-                 subject=subject,
-                 weighted_score=STANCE_SCORE[signal.stance] * (Decimal(-1) if signal.stance is Stance.AVOID else Decimal(1)),
-                 confidence=signal.confidence, now=now,
-                 reference_price=market_tick.ltp if market_tick is not None else None,
-             ),
+             "model_view": {
+                 "stance": model_stance.name,
+                 "confidence": _fixed(model_confidence),
+                 "expected_risk": _fixed(signal.expected_risk),
+                 # "tightened": the model's more defensive stance was taken. "advisory":
+                 # it wanted at least as much risk as the specialists, so it was recorded
+                 # and the deterministic action stands.
+                 "applied": overlay,
+                 "deterministic_stance": deterministic.action.name,
+             },
              **({"model_floor": model_floor} if model_floor else {})},
         )
 
