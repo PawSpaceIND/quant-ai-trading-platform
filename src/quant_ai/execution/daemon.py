@@ -8,6 +8,17 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, DecimalException
+
+# How far the mark may sit from the reference price the analysis reasoned over before an
+# entry is refused. Twenty basis points, unchanged: a fill against a reference the market
+# has left is the thing this gate exists to prevent. Named here so the refusal can state
+# the tolerance it applied rather than leaving a reader to find the literal.
+ENTRY_PRICE_DRIFT_TOLERANCE = Decimal(".002")
+
+
+def _basis_points(fraction: Decimal) -> Decimal:
+    """A signed fraction as basis points, one decimal place, for a log a human reads."""
+    return (fraction * Decimal(10000)).quantize(Decimal("0.1"))
 from pathlib import Path
 from time import monotonic
 from typing import Callable
@@ -201,6 +212,34 @@ class AutonomousTradingDaemon:
         """Recheck all operating gates while recognizing only this claimed child."""
         return self._pilot_pre_submit(proposal, in_flight=in_flight)
 
+    def _entry_price_refusal(self, proposal, mark: Decimal) -> str | None:
+        """Refuse an entry whose reference price the market has left, and record by how far.
+
+        Filling against a reference the market has moved on from is the thing this gate
+        exists to prevent, and the tolerance is unchanged. What was missing is the one
+        number that says whether the analysis is marginally too slow or far too slow: the
+        drift was computed inside the comparison and discarded, so a session in which
+        every proposal died here looked identical whether the market moved 21 basis points
+        or 200. It is now recorded on refusal, which is the only way a decision about the
+        analysis path can be made on evidence rather than on a guess.
+        """
+        if proposal.reference_price <= 0:
+            # No usable reference to compare against; refuse without dividing by it.
+            return "pilot_price_moved_during_analysis"
+        drift = mark / proposal.reference_price - Decimal(1)
+        if abs(drift) <= ENTRY_PRICE_DRIFT_TOLERANCE:
+            return None
+        # Read for the record only, and never allowed to decide anything: a refusal path
+        # that can raise is worse than one that records nothing, because the caller would
+        # see an exception where it expects a reason. Every proposal the engine builds
+        # carries both fields; anything else still gets refused, and still gets measured.
+        self._logger.warning(
+            "pilot_entry_price_drift symbol=%s decision_id=%s drift_bps=%s tolerance_bps=%s",
+            getattr(proposal, "symbol", "unknown"), getattr(proposal, "decision_id", "unknown"),
+            _basis_points(drift), _basis_points(ENTRY_PRICE_DRIFT_TOLERANCE),
+        )
+        return "pilot_price_moved_during_analysis"
+
     def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
         self.apply_operator_halt()
         if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
@@ -234,9 +273,11 @@ class AutonomousTradingDaemon:
             return "pilot_session_or_scope_blocked"
         if not self.telemetry.fresh(instrument, now)[0]:
             return "pilot_stale_entry_price"
-        mark = self.tracker.market_feed.latest_tick(instrument).last_price
-        if proposal.reference_price <= 0 or abs(mark / proposal.reference_price - 1) > Decimal(".002"):
-            return "pilot_price_moved_during_analysis"
+        refusal = self._entry_price_refusal(
+            proposal, self.tracker.market_feed.latest_tick(instrument).last_price
+        )
+        if refusal is not None:
+            return refusal
         for position in self.tracker.broker.get_positions(self.tenant_id):
             resolved = self.tracker.instrument_resolver(position)
             if not self.telemetry.fresh(resolved, now)[0]:
