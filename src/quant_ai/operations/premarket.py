@@ -244,6 +244,30 @@ def _playbooks(env: Mapping[str, str]) -> Check:
     return Check("regime_playbooks", "INFO", f"on: {describe()}; {sizing}")
 
 
+def _ev_gate(env: Mapping[str, str]) -> Check:
+    """Whether an entry must clear its own expected value, as the container reads it.
+
+    Off is the designed state and the line still prints, because the risk here is not a
+    gate that fails - it is one that was armed quietly on a probability nobody scored.
+    """
+    from quant_ai.agents.atlas import EV_GATE_ENV, atlas_policy_from_env
+    from quant_ai.analytics.promotion import MINIMUM_RESOLVED
+
+    try:
+        policy = atlas_policy_from_env(env)
+    except RuntimeError as error:
+        return Check("ev_gate", "FAIL", str(error)[:160])
+    if not policy.ev_gate:
+        return Check("ev_gate", "INFO",
+                     f"off ({EV_GATE_ENV}); expected value is recorded on every decision and gates nothing")
+    return Check(
+        "ev_gate", "INFO",
+        f"ARMED ({EV_GATE_ENV}): BUY and STRONG_BUY are held unless expected value >= 0 under the "
+        f"recorded basis. Protective exits and probes are unaffected. Arm only on a passing "
+        f"promotion_report() over >= {MINIMUM_RESOLVED} resolved forecasts",
+    )
+
+
 def _learning(env: Mapping[str, str]) -> Check:
     """Governed learning as the container reads it: weekly skill weights and post-mortems."""
     from quant_ai.analytics.specialist_skill import (
@@ -316,6 +340,7 @@ def premarket_checks(
         _event_calendar(env),
         _exploration(env),
         _playbooks(env),
+        _ev_gate(env),
         _learning(env),
         _scan_universe(env, payload),
         _market_data(payload, now),
