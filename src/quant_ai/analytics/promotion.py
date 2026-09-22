@@ -42,7 +42,7 @@ PLACEHOLDER_PROBABILITY_BAND = (Decimal("0.45"), Decimal("0.75"))
 FILLED = "filled"
 
 
-def _row_expected_value(row: dict[str, Any]) -> Decimal | None:
+def row_expected_value(row: dict[str, Any]) -> Decimal | None:
     """EV from the row's OWN recorded inputs, never from a current setting.
 
     This is not a recomputed feature. Probability, cost, expected return and expected risk
@@ -76,7 +76,7 @@ def _payoff_note(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """
     values, probabilities = [], []
     for row in rows:
-        value = _row_expected_value(row)
+        value = row_expected_value(row)
         probability = parse_decimal(row.get("forecast_probability_up"))
         if value is not None and probability is not None:
             values.append(value)
