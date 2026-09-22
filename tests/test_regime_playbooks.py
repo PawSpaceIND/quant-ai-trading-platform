@@ -250,10 +250,19 @@ def test_defensive_and_crisis_playbooks_withhold_probes_and_say_so() -> None:
     assert "exploration_suppressed=playbook:crisis_standdown" in crisis.rationale
 
 
-def test_the_llm_path_carries_the_playbook_and_a_model_buy_above_the_floor_is_sized() -> None:
+def test_a_model_buy_over_a_held_swarm_is_advisory_and_the_playbook_still_sizes() -> None:
+    """The model may talk the book down, never up.
+
+    This asserted the opposite until the overlay was constrained: a model BUY over a swarm
+    the floor had held became the action and was sized on the model's own conviction. The
+    probability the decision is scored on comes from the specialists' lean, so a stance no
+    lean supports is recorded as a view and the deterministic NEUTRAL stands.
+    """
     atlas = AtlasInvestmentAgent(llm_client=consensus_client("BUY", 0.70))
     decision = asyncio.run(atlas.decide_with_llm("TRENT", MODERATE, NOW, evidence_context=context("trending_down")))
-    assert decision.action is Stance.BUY and decision.provenance["mode"] == "llm"
+    assert decision.action is Stance.NEUTRAL and decision.provenance["mode"] == "llm"
+    assert decision.provenance["model_view"]["stance"] == "BUY"
+    assert decision.provenance["model_view"]["applied"] == "advisory"
     assert decision.provenance["playbook"]["name"] == "defensive"
     assert "model_floor" not in decision.provenance
     # The runtime then halves the plan quantity for the defensive book and sizes the
