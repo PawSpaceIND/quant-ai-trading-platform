@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from quant_ai.agents import forecast as forecasting
 from quant_ai.agents.contracts import (
     AgentDomain,
     AgentEvidence,
@@ -408,6 +409,14 @@ class AtlasInvestmentAgent:
                     "expected_risk": _fixed(expected_risk),
                     "participating": len(participating),
                 },
+                # The claim this decision makes, recorded before the outcome so it can be
+                # scored. Taken from the lean rather than the action, so a decision the
+                # floor held still states what it thought would happen.
+                "forecast": forecasting.record(
+                    subject=subject, weighted_score=weighted_score, confidence=confidence,
+                    now=now,
+                    reference_price=market_tick.ltp if market_tick is not None else None,
+                ),
             },
         )
 
@@ -526,6 +535,12 @@ class AtlasInvestmentAgent:
             deterministic.founder_escalations,
             False,
             {**deterministic.provenance, "mode": mode, "inference": inference,
+             "forecast": forecasting.record(
+                 subject=subject,
+                 weighted_score=STANCE_SCORE[signal.stance] * (Decimal(-1) if signal.stance is Stance.AVOID else Decimal(1)),
+                 confidence=signal.confidence, now=now,
+                 reference_price=market_tick.ltp if market_tick is not None else None,
+             ),
              **({"model_floor": model_floor} if model_floor else {})},
         )
 
