@@ -37,6 +37,7 @@ Reporting rules that this module will not let a caller break:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -500,6 +501,7 @@ class BaselineEvaluator:
         delivery: bool = True,
         observed_half_spread_fraction: Decimal | None = None,
         tenant_id: str = "baseline",
+        order_gate: Callable[[Decimal, Decimal], bool] | None = None,
     ) -> None:
         if starting_capital <= 0:
             raise ValueError("starting_capital must be positive")
@@ -513,6 +515,11 @@ class BaselineEvaluator:
         self.delivery = delivery
         self.observed_half_spread_fraction = observed_half_spread_fraction
         self.tenant_id = tenant_id
+        # An order a floor may place only if this admits it, given the close the decision
+        # read and the open it would fill at. None - the default - admits every order, as
+        # before. The walk-forward lab passes the live entry drift rule here and to the
+        # replayed engine alike, so the two sides of a comparison obey one rule or neither.
+        self.order_gate = order_gate
 
     def evaluate(
         self,
@@ -673,6 +680,13 @@ class BaselineEvaluator:
                 else int(target * equity / decision_close)
             )
             delta = desired - shares
+            if delta != 0 and self.order_gate is not None and not self.order_gate(
+                decision_close, execution.open
+            ):
+                # Refused, exactly as the engine's order would be: the position stands and
+                # the floor tries again on the next bar. Applied to the gross pass as well,
+                # so gross and net still differ by friction and by nothing else.
+                delta = 0
             if delta != 0:
                 context = self._context(history, instrument)
                 side = Side.BUY if delta > 0 else Side.SELL

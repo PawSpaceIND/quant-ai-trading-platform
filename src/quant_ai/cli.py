@@ -36,6 +36,9 @@ from quant_ai.backtesting.replay import (
     load_replay_dataset,
 )
 from quant_ai.backtesting.tearsheet import build_tearsheet
+from quant_ai.backtesting.walk_forward import folds as walk_forward_folds
+from quant_ai.backtesting.walk_forward import render as render_walk_forward
+from quant_ai.backtesting.walk_forward import walk_forward, windowed
 from quant_ai.config import paths
 from quant_ai.domain.models import AssetClass, Instrument, Market, RiskMode, Side
 from quant_ai.execution.audit import XAITraceLogger
@@ -367,6 +370,47 @@ def _bar_digest(bars) -> str:
     ).hexdigest()
 
 
+REPLAY_CAPITAL = Decimal(100000)
+
+
+def _replay_inputs(args: argparse.Namespace, command: str):
+    """The instrument, the dataset as it stood at the window's end, and the window's bars."""
+    if not args.data:
+        raise SystemExit(f"{command} requires --data")
+    instrument = _replay_instrument(args.market, args.data)
+    dataset = load_replay_dataset(args.data, instrument)
+    bars = _windowed_bars(dataset, args, command)
+    return instrument, windowed(dataset, bars), bars
+
+
+def _harness(broker, instrument, tenant: str, xai_logger, *, order_gate=None) -> HistoricalReplayHarness:
+    """The one place a replay harness is wired, for every command that replays.
+
+    ``backtest``, ``contest`` and ``walk-forward`` all claim to have faced the same engine.
+    That claim is only true while one builder assembles it: the same capital plan, the
+    founder's own scope and blackout calendar, the same dynamic sizing.
+    """
+    plan = CapitalGoalEngine().recommend(
+        CapitalPlanRequest(
+            REPLAY_CAPITAL, Decimal("0.80"), Decimal("0.20"),
+            expected_edge=Decimal("0.02"), requested_mode=RiskMode.BALANCED,
+        )
+    )
+    return HistoricalReplayHarness(
+        broker,
+        plan,
+        quantity=None,  # dynamic: sized per bar from equity and the capital plan
+        country="India" if instrument.market == Market.INDIA else "USA",
+        tenant_id=tenant,
+        xai_logger=xai_logger,
+        # The founder's own scope and blackout calendar, so the backtested engine is the
+        # deployed engine rather than a more permissive relative of it.
+        directives=FounderDirectives.from_env() or FounderDirectives(),
+        event_calendar=event_calendar_from_env(),
+        order_gate=order_gate,
+    )
+
+
 def _replayed(args: argparse.Namespace, command: str):
     """Run the replay exactly as ``backtest`` does, and hand back everything it produced.
 
@@ -376,22 +420,7 @@ def _replayed(args: argparse.Namespace, command: str):
     database - and the sheet would keep printing, comparing two things that were never the
     same. One builder is the only way that claim stays true.
     """
-    if not args.data:
-        raise SystemExit(f"{command} requires --data")
-    instrument = _replay_instrument(args.market, args.data)
-    market = instrument.market
-    dataset = load_replay_dataset(args.data, instrument)
-    bars = _windowed_bars(dataset, args, command)
-    end_time = bars[-1].timestamp
-    dataset = HistoricalReplayDataset(
-        bars,
-        tuple(item for item in dataset.macro if item.observed_at <= end_time),
-        tuple(item for item in dataset.news if item.published_at <= end_time),
-        tuple(item for item in dataset.fundamentals if item.observed_at <= end_time),
-        dataset.benchmark_closes,
-        tuple(w for w in dataset.intrabar_windows
-              if w.parent_timestamp in {b.timestamp for b in bars[1:]}),
-    )
+    instrument, dataset, bars = _replay_inputs(args, command)
     # Every replay is a look at the data, so the look is recorded before it happens: a
     # sweep of windows cannot be reported as one lucky backtest when the register already
     # counts the runs. The tearsheet then carries the running total.
@@ -418,27 +447,12 @@ def _replayed(args: argparse.Namespace, command: str):
         database = str(paths.ledger_path())
     if database != ":memory:":
         Path(database).parent.mkdir(parents=True, exist_ok=True)
-    broker = PaperBrokerService(database, starting_capital=Decimal(100000))
-    plan = CapitalGoalEngine().recommend(
-        CapitalPlanRequest(
-            Decimal(100000), Decimal("0.80"), Decimal("0.20"),
-            expected_edge=Decimal("0.02"), requested_mode=RiskMode.BALANCED,
-        )
-    )
+    broker = PaperBrokerService(database, starting_capital=REPLAY_CAPITAL)
     proof_dir = paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR")
     proof_dir.mkdir(parents=True, exist_ok=True)
     tenant = paths.tenant_id("QUANT_AI_TENANT_ID")
-    result = HistoricalReplayHarness(
-        broker,
-        plan,
-        quantity=None,  # dynamic: sized per bar from equity and the capital plan
-        country="India" if market == Market.INDIA else "USA",
-        tenant_id=tenant,
-        xai_logger=XAITraceLogger(proof_dir, tenant_id=tenant),
-        # The founder's own scope and blackout calendar, so the backtested engine is the
-        # deployed engine rather than a more permissive relative of it.
-        directives=FounderDirectives.from_env() or FounderDirectives(),
-        event_calendar=event_calendar_from_env(),
+    result = _harness(
+        broker, instrument, tenant, XAITraceLogger(proof_dir, tenant_id=tenant)
     ).run(dataset)
     return SimpleNamespace(
         instrument=instrument, bars=bars, result=result, broker=broker,
@@ -492,6 +506,52 @@ def _contest(args: argparse.Namespace) -> None:
     (run.proof_dir / "latest-contest.json").write_text(document)
     print(document)
     run.broker.flush()
+
+
+def _walk_forward(args: argparse.Namespace) -> None:
+    """The replayed engine against every floor, in consecutive windows, under one rule each.
+
+    Each window is replayed twice - under the live entry drift rule and under none - on a
+    fresh in-memory ledger per run, so no window inherits another's positions. Every run
+    is a look at the data, so all of them are counted in the trial register before the
+    first one happens, under the same study ``backtest`` and ``contest`` count against.
+    """
+    instrument, dataset, bars = _replay_inputs(args, "walk-forward")
+    plan = walk_forward_folds(len(bars), window=args.window, embargo=args.embargo,
+                              first_fit=args.first_fit or args.window)
+    register = paths.trial_register("PRAMANA_PAPER_DB", "QUANT_AI_PAPER_DB")
+    record_trials(
+        register,
+        study=f"replay:{instrument.symbol}:{instrument.market.value}",
+        # Two runs per window. A sweep reported as one result is how a lucky window wins.
+        candidate_trials=2 * len(plan),
+        configuration={
+            "command": "walk-forward", "bars": len(bars), "windows": len(plan),
+            "window": args.window, "embargo": args.embargo,
+            "first_fit": args.first_fit or args.window,
+            "start": bars[0].timestamp.isoformat(), "end": bars[-1].timestamp.isoformat(),
+            "market": args.market,
+        },
+        data_sha256=_bar_digest(bars),
+    )
+    tenant = paths.tenant_id("QUANT_AI_TENANT_ID")
+
+    def run_replay(test_bars, gate):
+        broker = PaperBrokerService(":memory:", starting_capital=REPLAY_CAPITAL)
+        result = _harness(broker, instrument, tenant, None, order_gate=gate).run(
+            windowed(dataset, test_bars))
+        return result, broker
+
+    report = walk_forward(bars, instrument=instrument, run_replay=run_replay, plan=plan,
+                          tenant_id=tenant)
+    report["tradedConfigurationDifferences"] = list(TRADED_CONFIGURATION_DIFFERENCES)
+    report["registeredTrials"] = register_summary(register)
+    report["dataSha256"] = _bar_digest(bars)
+    print(render_walk_forward(report))
+    proof_dir = paths.proof_directory("PRAMANA_XAI_DIR", "QUANT_AI_XAI_DIR")
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    (proof_dir / "latest-walk-forward.json").write_text(
+        json.dumps(report, sort_keys=True, allow_nan=False))
 
 
 def _resume(*, clear_fault_halt: bool, operator: str | None) -> int:
@@ -614,7 +674,8 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "run-once", "daemon", "portfolio", "analytics", "stress-test",
-            "backtest", "baselines", "contest", "publish-research", "friction-audit", "halt", "resume",
+            "backtest", "baselines", "contest", "walk-forward", "publish-research", "friction-audit",
+            "halt", "resume",
             "zerodha-login", "decision-quality", "post-mortem",
         ),
     )
@@ -642,6 +703,12 @@ def main(argv: list[str] | None = None) -> int:
         help="zerodha-login: Kite request_token or the full redirect URL; prompted if omitted",
     )
     parser.add_argument("--since", type=int, default=30, help="decision-quality: window in days")
+    parser.add_argument("--window", type=int, default=60,
+                        help="walk-forward: bars in each scored test window")
+    parser.add_argument("--embargo", type=int, default=5,
+                        help="walk-forward: bars between a fold's fit range and its test window")
+    parser.add_argument("--first-fit", type=int, default=None,
+                        help="walk-forward: bars held back before the first test window (default: --window)")
     parser.add_argument("--date", help="post-mortem: IST session date YYYY-MM-DD (default: latest)")
     parser.add_argument(
         "--approve", metavar="YYYY-MM-DD", help="post-mortem: approve the written file for this session"
@@ -672,13 +739,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "contest":
         _contest(args)
         return 0
+    if args.command == "walk-forward":
+        _walk_forward(args)
+        return 0
     if args.command == "baselines":
         _baselines(args)
         return 0
     if args.market is not None:
         raise SystemExit(
             f"--market does not apply to {args.command}: this runtime is a US sandbox. "
-            "Only backtest, baselines and contest read --market; the pilot watchlist is set by "
+            "Only backtest, baselines, contest and walk-forward read --market; the pilot watchlist "
+            "is set by "
             "founder directives."
         )
     daemon = build_runtime()
