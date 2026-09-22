@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from quant_ai.agents import expected_value as valuation
 from quant_ai.agents import feature_snapshot as snapshots
 from quant_ai.agents import forecast as forecasting
 from quant_ai.agents.contracts import (
@@ -53,6 +54,10 @@ class AtlasPolicy:
     min_consensus_confidence: Decimal = Decimal("0.55")
     stale_evidence_seconds: int = 3600
     max_expected_risk: Decimal = Decimal("0.08")
+    # When armed, an entry must also show a non-negative expected value under the
+    # champion basis. Default off: the v1 mapping is a hypothesis, not a calibration,
+    # and gating on it would silence the book for a reason it cannot yet justify.
+    ev_gate: bool = False
     require_governed_knowledge: bool = False
     # Domains whose specialists are gates, not voters. Their AVOID vetoes the cycle exactly
     # like any other specialist's; anything else they say is recorded in the rationale and
@@ -116,6 +121,10 @@ EXPLORATION_MAX_ENV = "PRAMANA_EXPLORATION_MAX_PER_DAY"
 EXPLORATION_MIN_CONFIDENCE_ENV = "PRAMANA_EXPLORATION_MIN_CONFIDENCE"
 EXPLORATION_FRACTION_ENV = "PRAMANA_EXPLORATION_NOTIONAL_FRACTION"
 REGIME_PLAYBOOKS_ENV = "PRAMANA_REGIME_PLAYBOOKS"
+# Off unless an operator names it, and arming it is a decision that needs
+# promotion_report() to pass first: an uncalibrated probability inside a correct EV
+# formula produces a confident, wrong number.
+EV_GATE_ENV = "PRAMANA_EV_GATE"
 _SWITCH = {"on": True, "true": True, "1": True, "yes": True,
            "off": False, "false": False, "0": False, "no": False}
 
@@ -132,12 +141,17 @@ def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPoli
     raw_confidence = source.get(EXPLORATION_MIN_CONFIDENCE_ENV, "").strip()
     raw_fraction = source.get(EXPLORATION_FRACTION_ENV, "").strip()
     raw_playbooks = source.get(REGIME_PLAYBOOKS_ENV, "").strip().lower()
+    raw_ev_gate = source.get(EV_GATE_ENV, "").strip().lower()
     overrides: dict[str, object] = {}
     try:
         if raw_playbooks:
             if raw_playbooks not in _SWITCH:
                 raise ValueError(f"{REGIME_PLAYBOOKS_ENV} must be on or off")
             overrides["regime_playbooks"] = _SWITCH[raw_playbooks]
+        if raw_ev_gate:
+            if raw_ev_gate not in _SWITCH:
+                raise ValueError(f"{EV_GATE_ENV} must be on or off")
+            overrides["ev_gate"] = _SWITCH[raw_ev_gate]
         if raw_max:
             overrides["exploration_max_per_day"] = int(raw_max)
         if raw_confidence:
@@ -211,7 +225,7 @@ class AtlasInvestmentAgent:
             market_tick=market_tick, context=evidence_context, features=features,
             analysis_started_at=analysis_started_at,
         )
-        return self._explore(decision, now)
+        return self._explore(self._ev_gated(decision), now)
 
     def _with_snapshot(
         self,
@@ -234,8 +248,18 @@ class AtlasInvestmentAgent:
         provenance = decision.provenance or {}
         decided_at = self.clock()
         started = analysis_started_at or frozen_at
+        # Recorded, and read by nothing. A probability without a payoff beside it is a
+        # number that looks like a reason: 0.55 is a good bet at three-to-one and a bad
+        # one at even money. Whether this EV is worth acting on is what promotion_report
+        # exists to answer, so it accumulates now and gates nothing until it is armed.
+        valued = valuation.record(
+            forecast=provenance.get("forecast"),
+            expected_return=decision.expected_return,
+            expected_risk=decision.expected_risk,
+        )
         return replace(decision, provenance={
             **provenance,
+            **({"expected_value": valued} if valued is not None else {}),
             "feature_snapshot": snapshots.freeze(
                 subject=subject,
                 frozen_at=frozen_at,
@@ -253,6 +277,39 @@ class AtlasInvestmentAgent:
                 started_at=started, frozen_at=frozen_at, decided_at=decided_at,
             ),
         })
+
+    def _ev_gated(self, decision: AtlasDecision) -> AtlasDecision:
+        """Hold an entry whose own expected value does not clear zero.
+
+        Off unless an operator armed it. It can only tighten: a risk-adding stance becomes
+        NEUTRAL, and the exploration budget may still turn that into a labelled probe -
+        which is the point, because a gate that also stopped probes would stop the sample
+        that decides whether the gate was ever justified.
+
+        An absent expected value refuses. The block is None when the probability or the
+        payoff could not be read, and admitting the unmeasured case as though it had been
+        measured is the failure this gate exists to prevent.
+        """
+        if not self.policy.ev_gate or STANCE_SCORE[decision.action] <= 0:
+            return decision
+        provenance = decision.provenance or {}
+        valued = provenance.get("expected_value")
+        value = valued.get("expected_value") if isinstance(valued, dict) else None
+        try:
+            cleared = value is not None and Decimal(str(value)) >= 0
+        except (ArithmeticError, InvalidOperation, TypeError, ValueError):
+            cleared = False
+        if cleared:
+            return decision
+        reason = f"ev_gate_held:{value if value is not None else 'unavailable'}"
+        return replace(
+            decision,
+            action=Stance.NEUTRAL,
+            rationale=(reason,) + decision.rationale,
+            provenance={**provenance, "ev_gate": {
+                "armed": True, "expected_value": value, "held": True,
+            }},
+        )
 
     def _session_key(self, now: datetime) -> str:
         return now.astimezone(INDIA_TZ).date().isoformat()
@@ -496,7 +553,7 @@ class AtlasInvestmentAgent:
             market_tick=market_tick, context=evidence_context, features=features,
             analysis_started_at=analysis_started_at,
         )
-        return self._explore(decision, now)
+        return self._explore(self._ev_gated(decision), now)
 
     async def _decide_with_llm_core(
         self,

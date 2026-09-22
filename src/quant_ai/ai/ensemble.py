@@ -1,3 +1,30 @@
+"""Research-only signal scoring. Quarantined from every trading path.
+
+This module predates the forecast contract and must never reach the daemon, the pilot,
+the traded runtime or Atlas. ``tests/test_signal_ensemble_quarantine.py`` enforces that.
+
+The reason is its payoffs. It prices every opportunity, on every instrument, in every
+regime, at a fixed 3% win against a fixed 1.5% loss, and charges nothing for the round
+trip:
+
+    EV = p * 0.03 - (1 - p) * 0.015
+
+Those constants are not a measurement of anything. Their effect is that EV becomes a
+monotone restatement of the probability - the EV filter can never disagree with the
+probability filter, so it adds no information while looking like a second opinion - and
+that the break-even sits at p = 1/3. A book that took entries on that number would be
+taking a bet it loses two times in three, with cost on top of it.
+
+The live path computes expected value in ``quant_ai.agents.expected_value``, from the
+consensus payoffs the specialists actually declared and the cost stored on the decision's
+own forecast row. Under the payoffs this book declares today - 1% against 2% at 10 bps -
+break-even is 0.70, not 0.33. That gap is the whole reason this module is fenced off
+rather than merely unused: nothing about it announces that its EV is a costume.
+
+Kept, rather than deleted, because ``Opportunity`` scoring is still a useful research
+shape. Import it from research code, and pin real payoffs before believing any number
+it returns.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
