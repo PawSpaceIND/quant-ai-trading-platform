@@ -31,6 +31,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 SCHEMA = "pramana.expected_value.v1"
+# What produced the payoffs this EV was computed from. "declared" is the specialists' own
+# expected_return and expected_risk - a labelled convention, identical on every instrument
+# in every regime, and the reason break-even sits at 0.70. An empirical source names a
+# measurement instead, as "empirical:<artifact id>", and is recorded beside the declared
+# number rather than in place of it until something has decided the measurement is worth
+# trusting. See quant_ai.analytics.empirical_payoffs.
+DECLARED = "declared"
 BASIS_POINT = Decimal(10000)
 PLACES = Decimal("0.000001")
 
@@ -67,6 +74,7 @@ def record(
     forecast: Any,
     expected_return: Any,
     expected_risk: Any,
+    empirical: Any = None,
 ) -> dict[str, Any] | None:
     """The EV block for a decision's provenance, or None when its inputs are incomplete.
 
@@ -90,7 +98,43 @@ def record(
         "expected_value": str(expected_value(
             probability, expected_return=win, expected_risk=risk, cost_bps=cost_bps,
         )),
+        # Where the two payoffs came from. Always "declared" on the live path: measuring
+        # them is a separate question from acting on the measurement, and a silent swap
+        # would restate what every EV already written had meant.
+        "e_win_source": DECLARED,
+        "e_loss_source": DECLARED,
         # The mapping the probability came from. An EV is only as meaningful as the basis
         # under it, and a refit ships a new id rather than changing what this one meant.
         "basis": block.get("basis"),
+        # The same probability and the same cost, priced against measured payoffs, when a
+        # measurement that applies to this decision exists. Recorded beside the declared
+        # figure, never replacing it, and read by nothing.
+        **({"ev_empirical": measured} if (measured := _measured(
+            probability, cost_bps, empirical)) is not None else {}),
+    }
+
+
+def _measured(probability: Decimal, cost_bps: Decimal, empirical: Any) -> dict[str, Any] | None:
+    """The EV this decision would have had under measured payoffs, or None.
+
+    None whenever the measurement is absent, unreadable or names no source. An empirical
+    block that silently fell back to the declared numbers would be the declared EV wearing
+    a second name, which is worse than no second number at all.
+    """
+    if not isinstance(empirical, dict):
+        return None
+    win = _decimal(empirical.get("e_win_hat"))
+    risk = _decimal(empirical.get("e_loss_hat"))
+    source = empirical.get("source")
+    if win is None or risk is None or not isinstance(source, str) or not source:
+        return None
+    return {
+        "expected_win": str(win),
+        "expected_loss": str(-risk),
+        "expected_value": str(expected_value(
+            probability, expected_return=win, expected_risk=risk, cost_bps=cost_bps,
+        )),
+        "e_win_source": source,
+        "e_loss_source": source,
+        "sample": empirical.get("n"),
     }
