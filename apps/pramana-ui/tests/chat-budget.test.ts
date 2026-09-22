@@ -24,6 +24,12 @@ const ask = (POST: (req: NextRequest) => Promise<Response>, prompt: string) =>
       body: JSON.stringify({ prompt }),
     }),
   );
+// Earlier tests in this file spend the per-minute copilot rate limit, which would refuse
+// a later request before it ever reaches the gate under test.
+const clearRateLimit = () => {
+  const db = new DatabaseSync(process.env.PRAMANA_CONSOLE_DB!);
+  try { db.prepare("DELETE FROM limits WHERE key LIKE 'copilot:%'").run(); } finally { db.close(); }
+};
 const audits = () => {
   const db = new DatabaseSync(process.env.PRAMANA_CONSOLE_DB!);
   try {
@@ -72,4 +78,49 @@ test("a limit of zero or less disables the daily cap", async () => {
   assert.equal(status.dailyLimit, null);
   assert.equal(status.dailyRemaining, null);
   assert.equal((await ask(POST, "fifth")).status, 200);
+});
+
+test("the shared dollar guard refuses paid calls only, never a free unconfigured answer", async () => {
+  // The guard was consulted for every request. With no key configured the answer is a
+  // locally generated refusal that saves the question and its evidence and cannot spend a
+  // cent, so an activation hold silently disabled the copilot on any deployment without a
+  // key - including the container smoke, where it returned a budget error in place of the
+  // saved row the operator is meant to get.
+  const previous = {
+    limit: process.env.PRAMANA_AI_DAILY_USD_LIMIT,
+    db: process.env.PRAMANA_AI_SPEND_DB,
+    key: process.env.ANTHROPIC_API_KEY,
+    daily: process.env.PRAMANA_CHAT_DAILY_LIMIT,
+  };
+  try {
+    process.env.PRAMANA_AI_DAILY_USD_LIMIT = "2.50";
+    process.env.PRAMANA_AI_SPEND_DB = path.join(dir, "absent-ai-spend.sqlite");
+    process.env.PRAMANA_CHAT_DAILY_LIMIT = "50";
+    delete process.env.ANTHROPIC_API_KEY;
+    const { GET, POST } = await import("../app/api/copilot/route");
+    // The guard is on an activation hold and the panel still reports it.
+    assert.equal((await (await GET()).json()).dollarBudget.status, "activation_hold");
+    const before = (await (await GET()).json()).conversations.length;
+    clearRateLimit();
+    const answered = await ask(POST, "unconfigured question during an activation hold");
+    assert.equal(answered.status, 200);
+    const row = await answered.json();
+    assert.equal(row.status, "error");
+    assert.match(row.error, /not configured/i);
+    assert(row.context, "the question's evidence context must still be saved");
+    assert.equal((await (await GET()).json()).conversations.length, before + 1);
+
+    // With a key the same hold refuses before a daily question is consumed.
+    process.env.ANTHROPIC_API_KEY = "synthetic-no-network-key";
+    const remainingBefore = (await (await GET()).json()).dailyRemaining;
+    clearRateLimit();
+    const refused = await ask(POST, "paid question during an activation hold");
+    assert.equal(refused.status, 503);
+    assert.match((await refused.json()).error, /paused until 05:30 IST/);
+    assert.equal((await (await GET()).json()).dailyRemaining, remainingBefore);
+  } finally {
+    for (const [name, value] of [["PRAMANA_AI_DAILY_USD_LIMIT", previous.limit], ["PRAMANA_AI_SPEND_DB", previous.db],
+                                 ["ANTHROPIC_API_KEY", previous.key], ["PRAMANA_CHAT_DAILY_LIMIT", previous.daily]] as const)
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
 });
