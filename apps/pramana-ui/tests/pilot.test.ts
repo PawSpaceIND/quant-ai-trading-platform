@@ -445,3 +445,31 @@ test("another account's newer proofs cannot crowd this account out of its own pa
   process.env.PRAMANA_LEDGER_PATH = ledger;
   fs.rmSync(proofs, { recursive: true, force: true });
 });
+
+test("the sign-in page carries the same protections as the pages behind it", async () => {
+  const { proxy } = await import("../proxy");
+  const previous = process.env.PRAMANA_DASHBOARD_SECRET;
+  process.env.PRAMANA_DASHBOARD_SECRET = "synthetic-proxy-secret-at-least-32-characters-long";
+  try {
+    for (const route of ["/login", "/api/session"]) {
+      const response = proxy(new NextRequest(`https://pilot.example/${route.slice(1)}`));
+      // The one page that accepts the access key used to return before the header block.
+      assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+      assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      assert.equal(response.headers.get("Referrer-Policy"), "same-origin");
+    }
+    // An expired session on a deep link returns there, and only ever within this origin.
+    const deep = proxy(new NextRequest("https://pilot.example/?view=research&chat=abc"));
+    assert.equal(deep.status, 307);
+    const target = new URL(deep.headers.get("location")!);
+    assert.equal(target.pathname, "/login");
+    assert.equal(target.searchParams.get("next"), "/?view=research&chat=abc");
+    // The overview is the default landing page, so it needs no return parameter.
+    assert.equal(new URL(proxy(new NextRequest("https://pilot.example/")).headers.get("location")!)
+      .searchParams.has("next"), false);
+  } finally {
+    if (previous === undefined) delete process.env.PRAMANA_DASHBOARD_SECRET;
+    else process.env.PRAMANA_DASHBOARD_SECRET = previous;
+  }
+});

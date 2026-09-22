@@ -12,20 +12,33 @@ export function proxy(req: NextRequest) {
       { error: "Invalid request origin" },
       { status: 403, headers: {"Cache-Control":"no-store"} },
     );
-  if (route === "/login" || route === "/api/session")
-    return NextResponse.next();
+  if (route === "/login" || route === "/api/session") return secured(NextResponse.next());
   if (!authConfigured())
     return route.startsWith("/api/")
       ? NextResponse.json(
           { error: "Dashboard secret is not configured" },
           { status: 503, headers: {"Cache-Control":"no-store"} },
         )
-      : NextResponse.redirect(new URL("/login", req.url));
+      : NextResponse.redirect(signIn(req));
   if (!validSession(req.cookies.get(SESSION_COOKIE)?.value))
     return route.startsWith("/api/")
       ? NextResponse.json({ error: "Sign in required" }, { status: 401, headers: {"Cache-Control":"no-store"} })
-      : NextResponse.redirect(new URL("/login", req.url));
-  const response = NextResponse.next();
+      : NextResponse.redirect(signIn(req));
+  return secured(NextResponse.next());
+}
+
+/** Sign-in, remembering where the operator was so the round trip does not lose it. */
+function signIn(req: NextRequest) {
+  const target = new URL("/login", req.url);
+  const from = req.nextUrl.pathname + req.nextUrl.search;
+  // Same-origin paths only: never a protocol-relative or absolute destination.
+  if (from.startsWith("/") && !from.startsWith("//") && from !== "/")
+    target.searchParams.set("next", from);
+  return target;
+}
+
+/** The headers every response carries, the sign-in page included. */
+function secured(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");

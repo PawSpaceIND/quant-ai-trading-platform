@@ -16,7 +16,9 @@ export default function Login() {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
-      window.location.assign("/");
+      // Return to whatever triggered the redirect, and only ever to this origin.
+      const next = new URLSearchParams(window.location.search).get("next");
+      window.location.assign(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connection failed");
     } finally {
