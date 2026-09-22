@@ -37,7 +37,7 @@ from typing import Any
 from quant_ai.agents import forecast
 from quant_ai.analytics import empirical_payoffs
 from quant_ai.analytics.decision_journal import parse_decimal
-from quant_ai.analytics.forecast_scoring import summarize
+from quant_ai.analytics.forecast_scoring import MINIMUM_SCORED, summarize
 from quant_ai.analytics.promotion import promotion_report
 
 SCHEMA = "pramana.calibration_report.v1"
@@ -210,16 +210,24 @@ def render(report: dict[str, Any]) -> str:
             f"unverifiable={counts[UNVERIFIABLE]} contaminated={counts[CONTAMINATED]} "
             f"unregistered={counts[UNREGISTERED]}{'  MIXED' if counts['mixed'] else ''}"
         )
-    lines += ["", "Scored sample"]
-    lines.append(_line("resolved forecasts (clean)", promotion["resolved_forecast_count"]))
+    scored = promotion["resolved_forecast_count"]
+    # Below forecast_scoring's own floor the base rate is set by whichever few rows
+    # happened to resolve, and skill against it is a division by that accident: on the
+    # first host run, two rows that moved the same way pinned the base rate at its 0.95
+    # clamp and printed a skill of -114.9. The numbers stay in the JSON; the operator
+    # text shows only what a sample this size can support.
+    thin = scored < MINIMUM_SCORED
+    lines += ["", "Scored sample" + (f"  ({scored} scored, below {MINIMUM_SCORED}: no claim)" if thin else "")]
+    lines.append(_line("resolved forecasts (clean)", scored))
     lines.append(_line("minimum required", promotion["minimum_resolved"]))
     lines.append(_line("Brier", promotion["brier_score"]))
     lines.append(_line("Brier, coin (p=0.5)", promotion["brier_baseline_coin_flip"]))
     champion = next((item for item in report["scoring"]["by_basis"]
                      if item["basis"] == promotion["basis"]), None)
     base_rate = (champion or {}).get("baselines") or {}
-    lines.append(_line("Brier, base rate", (base_rate.get("base_rate") or {}).get("brier_score")))
-    lines.append(_line("skill vs base rate", promotion["skill_vs_base_rate"]))
+    lines.append(_line("Brier, base rate",
+                       None if thin else (base_rate.get("base_rate") or {}).get("brier_score")))
+    lines.append(_line("skill vs base rate", None if thin else promotion["skill_vs_base_rate"]))
     lines += ["", "Book"]
     lines.append(_line("filled buys (probes count)", promotion["filled_buys"]))
     lines.append(_line("mean net P&L, filled buys", promotion["mean_net_ev_filled_buys"]))
