@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, time, timezone
 from decimal import Decimal, InvalidOperation
@@ -242,16 +243,42 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def journal_columns(broker) -> set[str]:
+    """The columns this ledger actually has, which is not always the ones this build names."""
+    with broker._lock:
+        return {row[1] for row in broker._connection.execute(f"PRAGMA table_info({TABLE})")}
+
+
 def ensure_journal(broker) -> None:
-    """Create the journal table lazily, and add any column an older ledger predates."""
-    with broker._lock, broker._connection as db:
-        db.execute(SCHEMA)
-        db.execute(INDEX)
-        present = {row[1] for row in db.execute(f"PRAGMA table_info({TABLE})")}
-        for column, declaration in MIGRATIONS:
-            if column not in present:
-                # Cheap in SQLite: appends to the header, never rewrites the rows.
-                db.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {declaration}")
+    """Create the journal table lazily, and add any column an older ledger predates.
+
+    A reader may hold this ledger open read-only - ``scripts/pilot_ops.py`` deliberately
+    does, so an operator shell cannot write to the live book. Such a connection cannot run
+    the DDL, and until now that turned every read of a ledger one migration behind into
+    ``attempt to write a readonly database``. The window is real and badly placed: between
+    a deploy that adds a column and the session's first journalled decision, which is the
+    pre-open hour an operator is most likely to be reading.
+
+    So the DDL is best-effort. A writer still migrates and still fails loudly if it cannot;
+    a reader gets whatever columns exist, and ``load_rows`` fills the rest with None -
+    which is the honest value, because rows written before a column existed have nothing
+    to put in it.
+    """
+    try:
+        with broker._lock, broker._connection as db:
+            db.execute(SCHEMA)
+            db.execute(INDEX)
+            present = {row[1] for row in db.execute(f"PRAGMA table_info({TABLE})")}
+            for column, declaration in MIGRATIONS:
+                if column not in present:
+                    # Cheap in SQLite: appends to the header, never rewrites the rows.
+                    db.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {declaration}")
+    except sqlite3.OperationalError as error:
+        # Only the one cause is tolerated. A corrupt table or a locked writer must still
+        # raise, because those are failures rather than a reader being ahead of a ledger.
+        if "readonly" not in str(error).lower():
+            raise
+        LOGGER.debug("journal_migration_skipped_on_readonly_connection")
 
 
 def aware(value: datetime) -> datetime:
@@ -673,10 +700,19 @@ def load_rows(
     if where:
         clauses.append(f"({where})")
         values.extend(parameters)
+    # Only the columns this ledger has. A reader newer than the ledger it is pointed at -
+    # a read-only operator shell between a deploy and the first journalled decision - would
+    # otherwise name a column the table does not carry and fail on the SELECT itself.
+    present = journal_columns(broker)
+    selected = [column for column in COLUMNS if column in present]
+    absent = [column for column in COLUMNS if column not in present]
     with broker._lock:
         rows = broker._connection.execute(
-            f"SELECT {', '.join(COLUMNS)} FROM {TABLE} WHERE {' AND '.join(clauses)} "
+            f"SELECT {', '.join(selected)} FROM {TABLE} WHERE {' AND '.join(clauses)} "
             "ORDER BY decided_at, decision_id",
             tuple(values),
         ).fetchall()
-    return [dict(zip(COLUMNS, tuple(row))) for row in rows]
+    # Every caller still gets a full row. A column the ledger predates is None, not zero:
+    # those decisions genuinely have nothing to put in it, and a zero would be a value.
+    blanks = dict.fromkeys(absent)
+    return [{**dict(zip(selected, tuple(row))), **blanks} for row in rows]
