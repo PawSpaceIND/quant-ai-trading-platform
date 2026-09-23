@@ -203,3 +203,28 @@ def test_a_connection_without_row_access_is_refused(tmp_path):
     with sqlite3.connect(path) as connection, pytest.raises(ContributionError, match="rows_unsupported"):
         contribute(connection, tenant_id=TENANT, amount=1000, reference="topup-1",
                    reason="r", now=NOW)
+
+
+def test_a_book_that_never_marked_a_peak_keeps_its_drawdown(tmp_path):
+    # 23 September 2026: the first contribution landed on an account whose equity had
+    # never marked above its starting capital, so no peak was stored. An engine still
+    # running from before the deposit would record the post-deposit equity as a new peak
+    # and the drawdown would go to zero.
+    path = tmp_path / "pramana.db"
+    broker = PaperBrokerService(path, starting_capital=Decimal(100000), slippage_bps=Decimal(0))
+    feed = UsaSandboxMarketDataFeed(base_price=Decimal(95))
+    tracker = PortfolioTracker(broker, feed, tenant_id=TENANT)
+    broker.buy(order(Side.BUY, 100, "100"))
+    before = tracker.metrics(NOW)
+    with operator(path) as connection:
+        assert connection.execute("SELECT peak_equity FROM paper_accounts").fetchone()[0] is None
+    lost = Decimal(100000) - before.total_equity
+    assert lost > 0
+
+    record = add(path)
+    after = tracker.metrics(NOW + timedelta(minutes=1))
+    fresh = PortfolioTracker(broker, feed, tenant_id=TENANT).metrics(NOW + timedelta(minutes=2))
+
+    assert record.peak_before is None and record.peak_after == Decimal(1_000_000)
+    assert after.high_water_mark - after.total_equity == lost
+    assert fresh.high_water_mark - fresh.total_equity == lost

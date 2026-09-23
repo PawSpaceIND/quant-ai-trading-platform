@@ -310,6 +310,10 @@ class HistoricalReplayHarness:
         """
         if self.order_gate is None or self._decision_close is None or self._execution_open is None:
             return None
+        if getattr(proposal, "side", None) is None:
+            # A hold places no order, so there is nothing for the drift rule to refuse. Without
+            # this a hold on a gap day was journaled as a drift refusal.
+            return None
         if self.order_gate(self._decision_close, self._execution_open):
             return None
         return "pilot_price_moved_during_analysis"

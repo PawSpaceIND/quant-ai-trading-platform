@@ -193,7 +193,14 @@ def walk_forward(
         "instrument": {"symbol": instrument.symbol, "market": instrument.market.value},
         "windows": windows,
         "summary": summarize(windows),
+        "engineFills": {run: sum(_engine_fills(window["runs"][run]) for window in windows)
+                        for run in (GATED, UNGATED)},
     }
+
+
+def _engine_fills(scored: dict[str, Any]) -> int:
+    """Orders the replayed engine filled in one window and run."""
+    return sum(row["fills"] for row in scored["entrants"] if row["kind"] == REPLAYED_RULE)
 
 
 def summarize(windows: Sequence[dict[str, Any]]) -> dict[str, dict[str, dict[str, int]]]:
@@ -229,7 +236,13 @@ def render(report: dict[str, Any]) -> str:
                        (UNGATED, "Under no drift rule (looser than live)")):
         lines.append(title)
         floors = report["summary"][run]
-        lines += [verdict_line(floor, tally, run) for floor, tally in floors.items()] or ["  no floors"]
+        if report["windows"] and report.get("engineFills", {}).get(run) == 0:
+            # An engine that never acts earns cash. Scoring cash against the floors would
+            # print verdicts about the engine that are really verdicts about the floors.
+            lines.append(f"  {REPLAYED_RULE} filled no order in any of {len(report['windows'])} "
+                         "windows: its return is cash, so no verdict against the floors is given")
+        else:
+            lines += [verdict_line(floor, tally, run) for floor, tally in floors.items()] or ["  no floors"]
         lines.append("")
     lines.append("Windows (fit / embargo / test)")
     for window in report["windows"]:
@@ -237,8 +250,9 @@ def render(report: dict[str, Any]) -> str:
         lines.append(
             f"  {window['index']}: fit {window['fit']['bars']} bars, embargo {window['embargo']['bars']}, "
             f"test {test['start'][:10]} .. {test['end'][:10]}  "
-            + "  ".join(f"{run}:{sum(1 for o in s['outcome'].values() if o == WIN)}"
-                        f"/{len(s['outcome'])} floors beaten"
-                        for run, s in window["runs"].items())
+            + "  ".join(
+                f"{run}:no orders" if _engine_fills(s) == 0
+                else f"{run}:{sum(1 for o in s['outcome'].values() if o == WIN)}/{len(s['outcome'])} floors beaten"
+                for run, s in window["runs"].items())
         )
     return "\n".join(lines)

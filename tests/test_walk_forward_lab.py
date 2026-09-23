@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -168,6 +169,14 @@ def test_the_replayed_engine_is_refused_with_the_live_reason() -> None:
     assert harness._drift_veto(proposal) is None
 
 
+def test_a_hold_on_a_gap_day_is_not_journaled_as_a_drift_refusal() -> None:
+    # 23 September 2026: 806 of INDIGO's replayed holds were counted as drift refusals.
+    harness = _harness(order_gate=lab.live_drift_gate)
+    harness._decision_close, harness._execution_open = Decimal(100), Decimal(101)
+    assert harness._drift_veto(SimpleNamespace(side=None, symbol="AAPL")) is None
+    assert harness._drift_veto(SimpleNamespace(side=Side.BUY, symbol="AAPL")) is not None
+
+
 def test_a_gated_replay_says_it_was_gated_and_an_ordinary_one_does_not() -> None:
     """The run evidence records the difference from live, as it records every other."""
     gated = [item["knob"] for item in _harness(order_gate=lab.live_drift_gate).traded_configuration_differences]
@@ -244,6 +253,34 @@ def test_a_winning_engine_is_reported_as_having_won_and_nothing_louder() -> None
     text = lab.render(report)
     assert f"beat {CashBaseline.baseline_id} in {len(plan)} of {len(plan)} windows" in text
     assert "LOST TO" not in text
+
+
+def test_an_engine_that_never_acts_gets_no_verdict_against_the_floors() -> None:
+    # 23 September 2026: every watchlist name replayed with zero orders in all windows, and
+    # the sheet still printed "LOST TO buy_and_hold" - cash scored against the floors.
+    series = bars(160)
+    plan = lab.folds(len(series), window=40, embargo=5, first_fit=40)
+
+    def idle(test_bars, gate):
+        flat = replay_over(test_bars, curve=tuple(START for _ in test_bars))
+        return replace(flat, order_ids=()), broker_at()
+
+    report = lab.walk_forward(series, instrument=INDIA, run_replay=idle, plan=plan)
+    text = lab.render(report)
+
+    assert report["engineFills"] == {lab.GATED: 0, lab.UNGATED: 0}
+    assert text.count(f"filled no order in any of {len(plan)} windows") == 2
+    assert "LOST TO" not in text and "beat baseline" not in text and "no better than" not in text
+    assert f"{lab.GATED}:no orders" in text and "floors beaten" not in text
+
+
+def test_an_engine_that_acts_still_gets_its_verdict() -> None:
+    series = bars(160)
+    plan = lab.folds(len(series), window=40, embargo=5, first_fit=40)
+    report = lab.walk_forward(series, instrument=INDIA, plan=plan,
+                              run_replay=_stub_runner(lambda n: tuple(START for _ in range(n)))[0])
+    assert report["engineFills"][lab.GATED] > 0
+    assert "filled no order" not in lab.render(report)
 
 
 def test_a_split_record_is_called_no_better_rather_than_a_win() -> None:

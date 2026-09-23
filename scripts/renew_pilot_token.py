@@ -106,7 +106,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("Verified token published. Running containers still need owner-authorized refresh.")
         return 0
-    except (LoginError, RenewalError, OSError, ValueError, subprocess.SubprocessError):
+    except (LoginError, RenewalError) as error:
+        # Both carry text this codebase wrote - a fixed refusal code or a login step's own
+        # message - never provider exception text, so the reason is safe to show. Hiding it
+        # cost three logins on 23 September 2026 before "Kite rejected the login" surfaced.
+        print(f"renew-pilot-token: refused: {str(error)[:200]}; no credential details displayed.",
+              file=sys.stderr)
+        return 1
+    except (OSError, ValueError, subprocess.SubprocessError):
         print("renew-pilot-token: refused or incomplete; no credential details displayed. "
               "Check private inputs, main/clean/session requirements, and service health.",
               file=sys.stderr)
