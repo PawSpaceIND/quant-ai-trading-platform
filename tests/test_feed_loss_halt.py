@@ -162,6 +162,7 @@ def test_a_position_held_over_the_close_is_not_an_outage(tmp_path):
                   datetime(2026, 9, 16, 2, 0, tzinfo=IST), NEXT_OPEN - timedelta(minutes=5)):
         sweep(runner, quiet)
         assert daemon.exit_engine.unprotected == ("INFY",), "the sweep still says it cannot price"
+        assert "INFY" in daemon.unprotected_since, "the panel still shows how long it has been"
         assert not daemon.kill_switch.engaged, quiet
 
 
