@@ -244,7 +244,7 @@ jobs:
       - name: Python dependency audit (pip-audit)
         run: |
           set -euo pipefail
-          # Blocking. Exactly two findings are accepted, by ID, each with the reason
+          # Blocking. Exactly three findings are accepted, by ID, each with the reason
           # it is accepted and the condition that retires it. Any third vulnerability
           # fails this job. Do not add --strict: this project is not published to
           # PyPI, so pip-audit always reports itself as a skipped dependency.
@@ -258,6 +258,17 @@ jobs:
           #   Remove when: pykiteconnect ships a release that relaxes that pin, or
           #   the pilot extra stops depending on kiteconnect.
           #
+          # CVE-2026-77528 (GHSA-hxp9-w8x3-p566) - autobahn 19.11.2, maxMessagePayloadSize
+          #   is enforced on the compressed length of a permessage-deflate message, so
+          #   the inflated message can exceed the configured limit. Fixed in 26.7.1.
+          #   Accepted: the same exact pin as PYSEC-2020-25; kiteconnect 5.2.2 is still
+          #   the latest release. Not reachable: KiteTicker's client factory never sets
+          #   perMessageCompressionOffers and autobahn's client default offers none, so
+          #   compression is never negotiated; nor does it set maxMessagePayloadSize
+          #   (default 0, no limit), so there is no limit to bypass. The only peer is
+          #   the fixed first-party wss:// Kite endpoint.
+          #   Remove when: the same condition as PYSEC-2020-25.
+          #
           # PYSEC-2026-3447 (CVE-2026-59890) - setuptools 79.0.1, MANIFEST.in exclude
           #   rules bypassed by Unicode NFD/NFC file names when building an sdist on
           #   macOS APFS/HFS+. Fixed in setuptools 83.0.0.
@@ -268,6 +279,7 @@ jobs:
           #   inert in the meantime - an ID that matches nothing is not an error.
           pip-audit \
             --ignore-vuln PYSEC-2020-25 \
+            --ignore-vuln CVE-2026-77528 \
             --ignore-vuln PYSEC-2026-3447
       - uses: actions/setup-node@v7
         with:

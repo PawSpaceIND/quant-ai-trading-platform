@@ -304,16 +304,24 @@ class KiteMinuteWarmupProvider:
                 raise KiteHistoryError("kite_history_candles_invalid")
             candles: list[Candle] = []
             previous: datetime | None = None
-            for row in rows:
+            last = len(rows) - 1
+            for index, row in enumerate(rows):
                 if not isinstance(row, list) or len(row) != 6 or not isinstance(row[0], str):
                     raise KiteHistoryError("kite_history_candle_invalid")
                 opened = _aware(datetime.fromisoformat(row[0]))
                 closed = opened + timedelta(minutes=1)
-                if closed > current or opened < start or (previous is not None and opened <= previous):
+                # During the session Kite ends the series with the minute still in progress.
+                # That row is not a closed bar: it is checked like any other, then left out.
+                # Any other row that closes after ``now`` is still refused.
+                forming = closed > current and index == last and opened <= current
+                if ((closed > current and not forming) or opened < start
+                        or (previous is not None and opened <= previous)):
                     raise KiteHistoryError("kite_history_session_invalid")
                 numbers = tuple(_number(value) for value in row[1:])
                 if numbers[-1] != numbers[-1].to_integral_value():
                     raise KiteHistoryError("kite_history_volume_invalid")
+                if forming:
+                    continue
                 candles.append(Candle(instrument, closed, *numbers))
                 previous = opened
             return tuple(candles[-120:])
