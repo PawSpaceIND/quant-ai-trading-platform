@@ -154,6 +154,9 @@ class AutonomousTradingDaemon:
             os.getenv("PRAMANA_UNPROTECTED_HALT_SECONDS", "120") or 120
         )
         self._unprotected_since: dict[str, datetime] = {}
+        # The halt's own clock: only time inside the symbol's session. The one above is
+        # what surfaces show, and runs at every hour.
+        self._unpriced_in_session_since: dict[str, datetime] = {}
         raw_flatten = os.getenv("PRAMANA_SESSION_FLATTEN_MINUTES", "0").strip() or "0"
         try:
             self.session_flatten_minutes = int(raw_flatten)
@@ -519,27 +522,52 @@ class AutonomousTradingDaemon:
         price is exactly the fabricated-mark behaviour the exit engine refuses to do.
         Recovery is deliberately an operator decision, because an automatic resume would
         re-arm trading on a feed nobody has confirmed is healthy.
+
+        Only time inside the symbol's regular session counts. After the NSE close the feed
+        goes quiet by design, and a position carried past 15:30 stayed unpriced until the
+        post-close session began: on 23 September 2026 that latched this halt on the first
+        position the pilot ever held over the close, with a healthy feed. A stop cannot
+        fire on a market that is not trading, so that silence is not an outage; the clock
+        restarts at the next open, and a feed that is still dead then halts as before.
+        The moment a position first went unpriced is still kept at every hour: that is
+        what the protection panel shows, and a stop is unenforceable overnight in fact.
         """
         unprotected = set(getattr(self.exit_engine, "unprotected", ()))
-        for symbol in list(self._unprotected_since):
-            if symbol not in unprotected:
-                del self._unprotected_since[symbol]
-        if not unprotected:
-            return
+        in_session = {symbol for symbol in unprotected if self._prices_expected(symbol, now)}
+        for clock, live in ((self._unprotected_since, unprotected),
+                            (self._unpriced_in_session_since, in_session)):
+            for symbol in list(clock):
+                if symbol not in live:
+                    del clock[symbol]
         for symbol in unprotected:
-            first_seen = self._unprotected_since.setdefault(symbol, now)
+            self._unprotected_since.setdefault(symbol, now)
+        for symbol in in_session:
+            first_seen = self._unpriced_in_session_since.setdefault(symbol, now)
             if (now - first_seen).total_seconds() >= self.unprotected_halt_seconds:
                 self.engage_kill_switch(f"protection_unreachable:{symbol}")
                 return
+
+    def _prices_expected(self, symbol: str, now: datetime) -> bool:
+        """Whether a live price for ``symbol`` should exist at ``now``: its regular session.
+
+        A symbol the engine has no instrument for stays counted at every hour. Silence
+        about a position nobody configured is what the reachability halt exists to catch.
+        """
+        for instrument in self.instruments:
+            if instrument.symbol == symbol:
+                return self.scheduler.calendar.state(
+                    instrument.market, now, exchange=instrument.exchange
+                ) == MarketState.REGULAR_HOURS
+        return True
 
     @property
     def unprotected_since(self) -> dict[str, datetime]:
         """When each currently-unpriceable symbol first went unpriced, by symbol.
 
-        The same clock ``_check_protection_reachable`` halts on, exposed read-only so a
-        surface can say how long a stop has been unenforceable rather than only that the
-        halt has already fired. A copy, because nothing outside that check may move the
-        moment a halt is measured from.
+        Exposed read-only so a surface can say how long a stop has been unenforceable
+        rather than only that the halt has already fired. It runs at every hour; the halt
+        itself counts only session time on a separate clock. Inside the session the two
+        agree. A copy, because nothing outside ``_check_protection_reachable`` may move it.
         """
         return dict(self._unprotected_since)
 
