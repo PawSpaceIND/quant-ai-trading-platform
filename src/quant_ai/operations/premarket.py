@@ -310,6 +310,41 @@ def _scan_universe(env: Mapping[str, str], payload: Mapping) -> Check:
     )
 
 
+def _plan_capital(env: Mapping[str, str]):
+    """The capital the engine builds its plan from, read the way the daemon reads it."""
+    from quant_ai.governance.directives import (
+        DIRECTIVES_FILE_ENV,
+        DIRECTIVES_JSON_ENV,
+        FounderDirectives,
+    )
+
+    inline = env.get(DIRECTIVES_JSON_ENV, "").strip()
+    if inline:
+        return FounderDirectives.from_json(json.loads(inline)).starting_capital
+    location = env.get(DIRECTIVES_FILE_ENV, "").strip()
+    if location:
+        text = Path(location).expanduser().read_text(encoding="utf-8")
+        return FounderDirectives.from_json(json.loads(text)).starting_capital
+    return FounderDirectives().starting_capital
+
+
+def _capital_plan(env: Mapping[str, str], ledger_capital) -> Check:
+    """The plan's capital against the book's. The account is funded once; after a recorded
+    capital contribution the directives must be raised to match, or the plan's rupee limits
+    describe a smaller book than the one trading."""
+    if ledger_capital is None:
+        return Check("capital_plan", "INFO", "ledger capital not read")
+    try:
+        plan = _plan_capital(env)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return Check("capital_plan", "FAIL", f"founder directives unreadable: {str(error)[:120]}")
+    if plan != ledger_capital:
+        return Check("capital_plan", "FAIL",
+                     f"plan capital {plan} but ledger capital {ledger_capital}; "
+                     "set starting_capital in the founder directives and restart")
+    return Check("capital_plan", "OK", f"plan and ledger both {ledger_capital}")
+
+
 def _market_data(payload: Mapping, now: datetime) -> Check:
     integrity = payload.get("marketDataIntegrity") or {}
     accepted = integrity.get("accepted")
@@ -325,7 +360,8 @@ def _market_data(payload: Mapping, now: datetime) -> Check:
 
 
 def premarket_checks(
-    payload: Mapping, manifest: Mapping | None, env: Mapping[str, str], now: datetime
+    payload: Mapping, manifest: Mapping | None, env: Mapping[str, str], now: datetime,
+    *, ledger_capital=None,
 ) -> list[Check]:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("premarket clock must include a timezone")
@@ -343,8 +379,31 @@ def premarket_checks(
         _ev_gate(env),
         _learning(env),
         _scan_universe(env, payload),
+        _capital_plan(env, ledger_capital),
         _market_data(payload, now),
     ]
+
+
+def load_ledger_capital(database: Path, tenant: str):
+    """The account's capital from the paper ledger, read-only; None when there is no account."""
+    from decimal import Decimal, InvalidOperation
+
+    with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=1)) as db:
+        db.execute("PRAGMA query_only=ON")
+        if not db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_accounts'"
+        ).fetchone():
+            return None
+        row = db.execute(
+            "SELECT starting_capital FROM paper_accounts WHERE tenant_id=?", (tenant,)
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        value = Decimal(str(row[0]))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return value if value.is_finite() else None
 
 
 def load_engine_records(database: Path, tenant: str) -> tuple[dict, dict | None]:

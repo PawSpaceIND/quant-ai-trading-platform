@@ -184,6 +184,37 @@ export function readRuntime(): Runtime {
     db.close();
   }
 }
+type CapitalFlow = { at: number; before: number; after: number };
+
+// Recorded capital contributions, oldest first. Each must continue from the one before it,
+// so a changed starting capital in the valuations is explained by exactly this schedule or
+// not at all. Contributions are refused during NSE hours, so no in-session observation can
+// sit on both sides of one.
+function capitalFlows(db: DatabaseSync): CapitalFlow[] {
+  if (!hasTable(db, "paper_capital_contributions")) return [];
+  const rows = db
+    .prepare("SELECT contributed_at, capital_before, capital_after FROM paper_capital_contributions WHERE tenant_id=? ORDER BY contributed_at LIMIT 1001")
+    .all(tenantId) as { contributed_at: string; capital_before: string; capital_after: string }[];
+  if (rows.length > 1000) throw new Error("Capital contribution history exceeds bounds");
+  const flows = rows.map((r) => ({ at: Date.parse(r.contributed_at), before: Number(r.capital_before), after: Number(r.capital_after) }));
+  flows.forEach((f, i) => {
+    if (!Number.isFinite(f.at) || !Number.isFinite(f.before) || !Number.isFinite(f.after) || f.before <= 0 || f.after <= f.before)
+      throw new Error("Invalid capital contribution record");
+    if (i && (f.before !== flows[i - 1].after || f.at < flows[i - 1].at)) throw new Error("Discontinuous capital contributions");
+  });
+  return flows;
+}
+
+function capitalAt(flows: CapitalFlow[], at: number): number {
+  let capital = flows[0].before;
+  for (const f of flows) if (f.at <= at) capital = f.after;
+  return capital;
+}
+
+function contributedBetween(flows: CapitalFlow[], from: number, to: number): number {
+  return flows.reduce((sum, f) => (f.at > from && f.at <= to ? sum + f.after - f.before : sum), 0);
+}
+
 export function performance() {
   const db = openLedger();
   if (!db)
@@ -219,6 +250,8 @@ export function performance() {
       }
     >();
     let initial: number | undefined;
+    let firstAt: number | undefined;
+    const flows = capitalFlows(db);
     const invalidDays = new Set<string>();
     const today = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata",
@@ -243,7 +276,9 @@ export function performance() {
       if (local.toISOString().slice(0,10) !== p.sessionDate || lastMinute < 555 || lastMinute >= 930) continue;
       if (!Number.isFinite(p.startingCapital) || p.startingCapital <= 0) throw new Error("Invalid starting capital");
       initial ??= p.startingCapital;
-      if (initial !== p.startingCapital) throw new Error("Observation starting capital changed");
+      firstAt ??= timestamp;
+      const expected = flows.length ? capitalAt(flows, timestamp) : initial;
+      if (expected !== p.startingCapital) throw new Error("Observation starting capital changed");
       const previous = days.get(p.sessionDate);
       const minutes = previous?.minutes ?? new Set<number>();
       if (minutes.has(bucket)) invalidDays.add(p.sessionDate);
@@ -261,14 +296,18 @@ export function performance() {
     // A full observation needs at least 300 distinct minute buckets, including the
     // final five minutes of the cash session. Partial days never count as burn-in.
     if (days.size > 10000) throw new Error("Observation history exceeds day bounds");
-    const daily = [...days.values()].filter(
+    const kept = [...days.values()].filter(
       (d) => !invalidDays.has(d.date) && d.minutes.size >= 300 && d.lastMinute >= 15 * 60 + 25,
-    ).sort((a,b)=>a.date.localeCompare(b.date)).map(({minutes,lastAt: _lastAt,...d})=>({...d,minutes:minutes.size}));
+    ).sort((a,b)=>a.date.localeCompare(b.date));
+    // Capital added since the previous kept close is a deposit, not a return: it is taken
+    // out of the day it lands in, so returns are time-weighted across contributions.
+    const deposited = kept.map((d, i) => contributedBetween(flows, i ? kept[i - 1].lastAt : firstAt ?? d.lastAt, d.lastAt));
+    const daily = kept.map(({minutes,lastAt: _lastAt,...d})=>({...d,minutes:minutes.size}));
     const returns = daily
       .slice(1)
       .flatMap((r, i) =>
         r.previousSessionDate === daily[i].date
-          ? [r.equity / daily[i].equity - 1]
+          ? [(r.equity - deposited[i + 1]) / daily[i].equity - 1]
           : [],
       )
       .filter(Number.isFinite);
@@ -301,7 +340,7 @@ export function performance() {
           : null,
       netReturn:
         initial && daily.length
-          ? daily[daily.length - 1].equity / initial - 1
+          ? daily.reduce((growth, d, i) => growth * ((d.equity - deposited[i]) / (i ? daily[i - 1].equity : initial!)), 1) - 1
           : null,
     };
   } catch {

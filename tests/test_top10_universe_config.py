@@ -71,16 +71,18 @@ def test_top10_validation_still_demands_a_timezone_aware_clock():
         validate_pilot_instruments(directives.watchlist, now=NOW.replace(tzinfo=None))
 
 
-def test_top10_directives_change_only_the_watchlist():
-    # Every other field is the example's, verbatim: same capital, posture, caps and
-    # instructions. A universe file that quietly moved the position cap would be a second
-    # change hiding inside the first.
+def test_top10_directives_change_only_the_watchlist_and_the_capital():
+    # Every other field is the example's, verbatim: same posture, caps and instructions.
+    # A universe file that quietly moved the position cap would be a second change hiding
+    # inside the first. The capital is the one named exception: on 23 September 2026 the
+    # founder raised the pilot to ten lakh so one share of every name fits inside the 5%
+    # trade cap, and the ledger was topped up to match through a recorded contribution.
     example, top10 = read("founder-directives.example.json"), read(DIRECTIVES_FILE)
     assert set(top10) == set(example)
     for key in example:
-        if key != "watchlist":
+        if key not in {"watchlist", "starting_capital"}:
             assert top10[key] == example[key], key
-    assert top10["starting_capital"] == 100000 and top10["max_open_positions"] == 5
+    assert top10["starting_capital"] == 1_000_000 and top10["max_open_positions"] == 5
     assert set(top10["allowed_asset_classes"]) == {"EQUITY", "ETF"}
     assert top10["allowed_markets"] == ["INDIA"]
     shape = tuple(sorted(example["watchlist"][0]))

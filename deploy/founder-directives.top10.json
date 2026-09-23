@@ -1,5 +1,5 @@
 {
-  "starting_capital": 100000,
+  "starting_capital": 1000000,
   "risk_mode": "BALANCED",
   "confidence": 0.8,
   "annualized_volatility": 0.2,

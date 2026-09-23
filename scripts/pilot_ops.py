@@ -44,10 +44,16 @@ def health(database: Path, tenant: str) -> dict:
 
 def premarket(database: Path, tenant: str, env=None, now=None) -> tuple[str, bool]:
     """One line per pre-market condition; True when nothing failed."""
-    from quant_ai.operations.premarket import load_engine_records, premarket_checks, render
+    from quant_ai.operations.premarket import (
+        load_engine_records,
+        load_ledger_capital,
+        premarket_checks,
+        render,
+    )
     payload, manifest = load_engine_records(database, tenant)
     checks = premarket_checks(payload, manifest, os.environ if env is None else env,
-                              now or datetime.now(timezone.utc))
+                              now or datetime.now(timezone.utc),
+                              ledger_capital=load_ledger_capital(database, tenant))
     return render(checks), all(check.state != "FAIL" for check in checks)
 
 
@@ -143,6 +149,49 @@ def calibrate(database: Path, tenant: str) -> str:
     return calibration.render(report) + note
 
 
+def capital_contribution(database: Path, tenant: str, amount: str, reference: str, reason: str,
+                         env=None, now: datetime | None = None) -> dict:
+    """Add capital to the paper account as a recorded deposit; see ``capital_contribution``.
+
+    Refused while live money is enabled and during NSE regular hours: the engine sizes and
+    breaks on these figures, so they move only when nothing is trading. The founder
+    directives are read and compared, never edited; the result says whether the plan the
+    engine builds at its next start matches the new book.
+    """
+    from quant_ai.domain.models import Market
+    from quant_ai.execution.capital_contribution import contribute
+    from quant_ai.execution.session import MarketCalendar, MarketState, default_holidays
+    from quant_ai.governance.directives import FounderDirectives
+    source = os.environ if env is None else env
+    moment = now or datetime.now(timezone.utc)
+    if source.get("TRADING_LIVE_MONEY_ACTIVE", "").strip().lower() != "false":
+        raise ValueError("capital_contribution_requires_paper_only")
+    if MarketCalendar(holidays=default_holidays()).state(Market.INDIA, moment) == MarketState.REGULAR_HOURS:
+        raise ValueError("capital_contribution_refused_during_nse_regular_hours")
+    if not database.is_file():
+        raise ValueError("capital_contribution_ledger_missing")
+    with closing(sqlite3.connect(database, timeout=5)) as db:
+        db.row_factory = sqlite3.Row
+        record = contribute(db, tenant_id=tenant, amount=amount, reference=reference,
+                            reason=reason, now=moment)
+    try:
+        directives = FounderDirectives.from_env()
+    except (OSError, ValueError, TypeError, KeyError):
+        directives = None
+    plan = None if directives is None else directives.starting_capital
+    return {
+        "recorded": record.recorded, "reference": record.reference, "amount": str(record.amount),
+        "contributedAt": record.contributed_at,
+        "capital": [str(record.capital_before), str(record.capital_after)],
+        "cash": [str(record.cash_before), str(record.cash_after)],
+        "peak": [None if record.peak_before is None else str(record.peak_before),
+                 None if record.peak_after is None else str(record.peak_after)],
+        "riskDay": record.risk_day,
+        "planCapital": None if plan is None else str(plan),
+        "planMatchesLedger": plan is not None and plan == record.capital_after,
+    }
+
+
 def empirical_payoffs(database: Path, tenant: str, destination: Path) -> str:
     """Measure payoffs from the journal and write the artifact; never replace an existing one.
 
@@ -180,13 +229,17 @@ def fraction(text: str) -> Decimal:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill",
-                                           "pilot-check", "missed", "plan", "calibrate", "empirical-payoffs"])
+                                           "pilot-check", "missed", "plan", "calibrate", "empirical-payoffs",
+                                           "capital-contribution"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed` (default today) or `plan` (default newest)")
     parser.add_argument("--threshold", type=fraction, help="missed-move threshold as a fraction; default 0.01")
+    parser.add_argument("--amount", help="capital-contribution: whole rupees to add")
+    parser.add_argument("--reference", help="capital-contribution: unique name; a repeat records once")
+    parser.add_argument("--reason", help="capital-contribution: why, kept in the record")
     args = parser.parse_args()
     if args.action == "pilot-check":
         if not args.evidence:
@@ -215,6 +268,18 @@ if __name__ == "__main__":
         # is in the text; arming anything on it is an operator act, never a script's.
         print(calibrate(args.database, args.tenant))
         raise SystemExit(0)
+    if args.action == "capital-contribution":
+        if not (args.amount and args.reference and args.reason):
+            parser.error("capital-contribution requires --amount, --reference and --reason")
+        from quant_ai.execution.capital_contribution import ContributionError
+        try:
+            result = capital_contribution(args.database, args.tenant, args.amount,
+                                          args.reference, args.reason)
+        except (ContributionError, ValueError) as error:
+            print(f"capital-contribution refused: {error}")
+            raise SystemExit(2) from None
+        print(json.dumps(result, indent=2))
+        raise SystemExit(0 if result["planMatchesLedger"] else 3)
     if args.action == "empirical-payoffs":
         if not args.destination:
             parser.error("empirical-payoffs requires --destination; use a new path")
