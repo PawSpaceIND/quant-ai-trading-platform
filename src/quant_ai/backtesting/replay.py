@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -217,6 +218,7 @@ class HistoricalReplayHarness:
         event_calendar: EventCalendar | None = None,
         decision_maker: str = DETERMINISTIC_CONSENSUS,
         atlas_policy: AtlasPolicy | None = None,
+        order_gate: Callable[[Decimal, Decimal], bool] | None = None,
     ) -> None:
         if decision_maker != DETERMINISTIC_CONSENSUS:
             # Refusing is the honest answer, not a missing feature: a curve drawn by a
@@ -254,6 +256,23 @@ class HistoricalReplayHarness:
                     "carries the policy that decided."
                 ),
             },)
+        # The close the decision read and the open it will fill at, per bar, for the gate.
+        self.order_gate = order_gate
+        self._decision_close: Decimal | None = None
+        self._execution_open: Decimal | None = None
+        if order_gate is not None:
+            self.traded_configuration_differences += ({
+                "knob": "entryDriftRule",
+                "traded": "last_closed_one_minute_bar_to_live_mark",
+                "replayed": "decision_close_to_next_open",
+                "reason": (
+                    "The live rule compares the mark at submit with the bar the analysis "
+                    "read, over seconds to a minute of analysis. On daily bars the same "
+                    "comparison spans the overnight gap, a far wider window, so the same "
+                    "tolerance refuses more here than it does live. Read beside the ungated "
+                    "run: the live engine sits between the two."
+                ),
+            },)
         self._decision_time: datetime | None = None
 
     def build_runtime(self) -> SwarmPaperTradingService:
@@ -270,9 +289,30 @@ class HistoricalReplayHarness:
             atlas_policy=self.atlas_policy,
             # No attribution restore here; see TRADED_CONFIGURATION_DIFFERENCES.
         )
-        if self.event_calendar is not None:
-            runtime.pre_submit_check = self._blackout_veto
+        if self.event_calendar is not None or self.order_gate is not None:
+            runtime.pre_submit_check = self._pre_submit
         return runtime
+
+    def _pre_submit(self, proposal: TradeProposal) -> str | None:
+        """The pre-submit gates a historical bar can answer, in the live order."""
+        if self.event_calendar is not None:
+            blackout = self._blackout_veto(proposal)
+            if blackout is not None:
+                return blackout
+        return self._drift_veto(proposal)
+
+    def _drift_veto(self, proposal: TradeProposal) -> str | None:
+        """The live entry drift rule, between the close the decision read and the next open.
+
+        Every side, as live: the swarm's own SELL is refused on drift too, and only a
+        protective exit - handled by ``_protect``, never by this hook - goes around it.
+        The refusal reason is the live one, so a replayed rejection reads like a real one.
+        """
+        if self.order_gate is None or self._decision_close is None or self._execution_open is None:
+            return None
+        if self.order_gate(self._decision_close, self._execution_open):
+            return None
+        return "pilot_price_moved_during_analysis"
 
     def run(self, dataset: HistoricalReplayDataset) -> HistoricalReplayResult:
         self._validate(dataset)
@@ -321,6 +361,8 @@ class HistoricalReplayHarness:
             execution_bar = dataset.bars[index]
             feed.set_time(decision_bar.timestamp)
             self._decision_time = decision_bar.timestamp
+            self._decision_close = decision_bar.close
+            self._execution_open = execution_bar.open
             visible = feed.visible()
             context = self._friction_context(visible)
             self.broker.set_friction_context(
