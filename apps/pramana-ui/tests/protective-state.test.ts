@@ -52,6 +52,48 @@ test("an unpriceable stop reads as exposure, names the symbol and states the hal
   assert.equal(protectionSweepCheck(state, "pilot", now).pass, false);
 });
 
+test("an unpriced stop on a closed market reads as paused, not as an imminent halt", () => {
+  // 23 September 2026: after the close this read "entries halt after 120s" every evening.
+  const evening = runtime({protectionSweep: sweep({unprotected: [
+    {symbol: "COALINDIA", unpricedSince: stamp, pricesExpected: false, haltClockSince: null},
+  ]})});
+  const alert = protectionAlert(evening, "pilot", now);
+  assert.equal(alert.severity, "paused");
+  assert.deepEqual(alert.symbols, ["COALINDIA"]);
+  assert.match(alert.headline, /Market closed: halt clock paused until the next open/);
+  assert.match(alert.detail, /COALINDIA has no current price \(unpriced since 2026-09-15T06:00:00/);
+  assert.match(alert.detail, /entries halt if it is still unpriced 120s into the session/);
+  assert.match(alert.detail, /still held/);
+  assert.doesNotMatch(alert.detail, /entries halt after/);
+  // Still not an all-clear: the stop is unenforced, it simply cannot fire yet.
+  assert.equal(protectionSweepCheck(evening, "pilot", now).pass, false);
+});
+
+test("closed only when every unpriced stop says so, and nothing else is wrong", () => {
+  const closed = {symbol: "COALINDIA", unpricedSince: stamp, pricesExpected: false, haltClockSince: null};
+  const gap = {symbol: "INFY", verdict: "UNDETERMINED", venue: "INDIA", previousMark: "100",
+    currentMark: "70", stepFraction: "0.3", nearestAction: "", firstSeenAt: stamp,
+    lastAlertAt: stamp, haltsAt: stamp};
+  for (const [label, changes] of [
+    ["one symbol in session", {unprotected: [closed, {symbol: "NTPC", unpricedSince: stamp, pricesExpected: true, haltClockSince: stamp}]}],
+    ["an engine that did not say", {unprotected: [{symbol: "COALINDIA", unpricedSince: stamp}]}],
+    ["a suspended stop as well", {unprotected: [closed], rebased: ["TCS"]}],
+    ["an unresolved gap as well", {unprotected: [closed], gapMonitor: {armed: true, unresolved: [gap]}}],
+  ] as Array<[string, Partial<ProtectionSweep>]>) {
+    assert.equal(protectionAlert(runtime({protectionSweep: sweep(changes)}), "pilot", now).severity, "exposed", label);
+  }
+});
+
+test("in session the halt is dated from the open, not from the evening before", () => {
+  const opening = "2026-09-16T03:45:00+00:00";
+  const state = runtime({protectionSweep: sweep({unprotected: [
+    {symbol: "COALINDIA", unpricedSince: stamp, pricesExpected: true, haltClockSince: opening},
+  ]})});
+  const alert = protectionAlert(state, "pilot", now);
+  assert.equal(alert.severity, "exposed");
+  assert.match(alert.detail, /entries halt after 120s in session \(halt clock started 2026-09-16T03:45:00\+00:00\)/);
+});
+
 test("a re-based quote is reported as a suspended stop rather than as a quiet one", () => {
   const state = runtime({protectionSweep: sweep({rebased: ["INFY", "TCS"]})});
   const alert = protectionAlert(state, "pilot", now);

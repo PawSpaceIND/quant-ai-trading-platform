@@ -8,6 +8,7 @@ healthy feed, an empty book, or a brief gap.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -199,3 +200,60 @@ def test_a_position_the_engine_has_no_instrument_for_is_counted_at_every_hour(tm
     daemon._check_protection_reachable(overnight + timedelta(seconds=daemon.unprotected_halt_seconds))
 
     assert daemon.kill_switch.reason == "protection_unreachable:INFY"
+
+
+def published(runner):
+    """The unpriced rows of the protection sweep as the dashboard receives them."""
+    row = runner.daemon.tracker.broker._connection.execute("SELECT payload FROM pilot_runtime").fetchone()
+    return json.loads(row[0])["protectionSweep"]["unprotected"]
+
+
+def test_the_panel_is_told_the_halt_clock_is_paused_after_the_close(tmp_path):
+    # 23 September 2026: after the close the panel read "entries halt after 120s" every
+    # evening a position was held, while the halt clock was paused until the open.
+    runner = runner_for(tmp_path)
+    protected_position(runner, LAST_TRADE)
+    evening = datetime(2026, 9, 15, 17, 58, tzinfo=IST)
+    sweep(runner, evening)
+
+    assert published(runner) == [{"symbol": "INFY", "unpricedSince": evening.isoformat(),
+                                  "pricesExpected": False, "haltClockSince": None}]
+
+
+def test_the_panel_is_told_when_the_halt_clock_started_at_the_open(tmp_path):
+    runner = runner_for(tmp_path)
+    protected_position(runner, LAST_TRADE)
+    evening = datetime(2026, 9, 15, 17, 58, tzinfo=IST)
+    sweep(runner, evening)
+    sweep(runner, NEXT_OPEN + timedelta(seconds=30))
+
+    # The display clock still says since the evening; the halt counts from the open.
+    assert published(runner) == [{"symbol": "INFY", "unpricedSince": evening.isoformat(),
+                                  "pricesExpected": True,
+                                  "haltClockSince": (NEXT_OPEN + timedelta(seconds=30)).isoformat()}]
+
+
+def test_a_symbol_with_no_instrument_is_never_published_as_market_closed(tmp_path):
+    runner = runner_for(tmp_path)
+    daemon = runner.daemon
+    protected_position(runner, LAST_TRADE)
+    daemon.instruments = tuple(replace(item, symbol="TCS") for item in daemon.instruments)
+    overnight = datetime(2026, 9, 16, 2, 0, tzinfo=IST)
+    sweep(runner, overnight)
+
+    assert published(runner)[0]["pricesExpected"] is True
+    assert published(runner)[0]["haltClockSince"] == overnight.isoformat()
+
+
+def test_an_unknown_market_state_is_left_out_rather_than_published_as_closed(tmp_path):
+    runner = runner_for(tmp_path)
+    daemon = runner.daemon
+    protected_position(runner, LAST_TRADE)
+    sweep(runner, datetime(2026, 9, 15, 17, 58, tzinfo=IST))
+
+    def unreadable(symbol, now):
+        raise ValueError("calendar unavailable")
+    daemon.prices_expected = unreadable
+    daemon.telemetry.publish(datetime(2026, 9, 15, 17, 59, tzinfo=IST))
+
+    assert "pricesExpected" not in published(runner)[0]

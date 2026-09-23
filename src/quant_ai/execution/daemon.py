@@ -533,7 +533,7 @@ class AutonomousTradingDaemon:
         what the protection panel shows, and a stop is unenforceable overnight in fact.
         """
         unprotected = set(getattr(self.exit_engine, "unprotected", ()))
-        in_session = {symbol for symbol in unprotected if self._prices_expected(symbol, now)}
+        in_session = {symbol for symbol in unprotected if self.prices_expected(symbol, now)}
         for clock, live in ((self._unprotected_since, unprotected),
                             (self._unpriced_in_session_since, in_session)):
             for symbol in list(clock):
@@ -547,11 +547,13 @@ class AutonomousTradingDaemon:
                 self.engage_kill_switch(f"protection_unreachable:{symbol}")
                 return
 
-    def _prices_expected(self, symbol: str, now: datetime) -> bool:
+    def prices_expected(self, symbol: str, now: datetime) -> bool:
         """Whether a live price for ``symbol`` should exist at ``now``: its regular session.
 
         A symbol the engine has no instrument for stays counted at every hour. Silence
         about a position nobody configured is what the reachability halt exists to catch.
+        Public because the protection panel states the same fact: an unpriced stop on a
+        closed market is waiting for the open, not an outage.
         """
         for instrument in self.instruments:
             if instrument.symbol == symbol:
@@ -570,6 +572,15 @@ class AutonomousTradingDaemon:
         agree. A copy, because nothing outside ``_check_protection_reachable`` may move it.
         """
         return dict(self._unprotected_since)
+
+    @property
+    def unpriced_in_session_since(self) -> dict[str, datetime]:
+        """When each unpriced symbol's halt clock started: its first unpriced moment in session.
+
+        Absent for a symbol whose market is closed, because that clock is paused until
+        the open. A copy, for the same reason as ``unprotected_since``.
+        """
+        return dict(self._unpriced_in_session_since)
 
     def _check_overnight_gap(self, now: datetime) -> None:
         """Halt when a price discontinuity has gone a full session without an explanation.

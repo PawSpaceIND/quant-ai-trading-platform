@@ -20,7 +20,11 @@ const MAX_AGE_MS = 10000;
 const FUTURE_TOLERANCE_MS = 5000;
 export const SWEEP_SCHEMA = "pramana.protection_sweep.v1";
 
-export type ProtectionSeverity = "clear" | "unverified" | "exposed";
+/**
+ * `paused` is an unpriced stop on a market that is closed: nothing can fire it, and the
+ * halt clock waits for the open. It is not `clear`, because the stop is still unenforced.
+ */
+export type ProtectionSeverity = "clear" | "unverified" | "paused" | "exposed";
 
 export type ProtectionAlertState = {
   severity: ProtectionSeverity;
@@ -47,6 +51,13 @@ const unpriced = (sweep: ProtectionSweep) =>
   sweep.unprotected.map((row) => String(row?.symbol ?? "").slice(0, 40)).filter(Boolean);
 const suspended = (sweep: ProtectionSweep) =>
   sweep.rebased.map((symbol) => String(symbol ?? "").slice(0, 40)).filter(Boolean);
+/**
+ * Every unpriced stop is on a closed market and none is suspended. Only an explicit
+ * `pricesExpected: false` counts: an engine that did not say is treated as in session.
+ */
+const marketClosed = (sweep: ProtectionSweep) =>
+  !suspended(sweep).length && sweep.unprotected.length > 0
+  && sweep.unprotected.every((row) => row?.pricesExpected === false);
 const unresolved = (sweep: ProtectionSweep) =>
   sweep.gapMonitor.unresolved.map((row) => String(row?.symbol ?? "").slice(0, 40)).filter(Boolean);
 
@@ -85,10 +96,23 @@ export function protectionAlert(runtime: Runtime, tenant: string, now = Date.now
     };
   }
   if (exposed.length) {
+    const since = sweep.unprotected.find((row) => row?.unpricedSince)?.unpricedSince;
+    if (marketClosed(sweep) && !open.length) {
+      // 23 September 2026: this read "entries halt after 120s" every evening a position
+      // was held, while the halt clock was paused until the open.
+      const names = unpriced(sweep);
+      const one = names.length === 1;
+      return {
+        severity: "paused", symbols: exposed,
+        headline: "Market closed: halt clock paused until the next open",
+        detail: `${list(names)} ${one ? "has" : "have"} no current price${since ? ` (unpriced since ${since})` : ""} because ${one ? "its market is" : "their markets are"} closed. No stop can fire while the market is shut, so the halt clock is paused. It restarts at the open, and entries halt if ${one ? "it is" : "they are"} still unpriced ${seconds(sweep.haltAfterSeconds)} into the session. The ${one ? "position is" : "positions are"} still held.`,
+      };
+    }
     const parts: string[] = [];
     if (unpriced(sweep).length) {
-      const since = sweep.unprotected.find((row) => row?.unpricedSince)?.unpricedSince;
-      parts.push(`${list(unpriced(sweep))} could not be priced${since ? ` (unpriced since ${since})` : ""}; entries halt after ${seconds(sweep.haltAfterSeconds)} of this`);
+      const started = sweep.unprotected.find((row) => row?.pricesExpected !== false && typeof row?.haltClockSince === "string")?.haltClockSince;
+      const clock = started ? ` in session (halt clock started ${started})` : " of this";
+      parts.push(`${list(unpriced(sweep))} could not be priced${since ? ` (unpriced since ${since})` : ""}; entries halt after ${seconds(sweep.haltAfterSeconds)}${clock}`);
     }
     if (suspended(sweep).length) {
       parts.push(`${list(suspended(sweep))} had its quote re-based by a corporate action, so the stored stop and cost basis are not comparable and the stop is held until they agree again`);

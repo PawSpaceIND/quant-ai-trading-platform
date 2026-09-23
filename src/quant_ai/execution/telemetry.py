@@ -200,8 +200,7 @@ class PilotTelemetry:
             "checkedAt": now.isoformat(),
             "sweptAt": swept_at.isoformat() if swept_at is not None else None,
             "unprotected": [
-                {"symbol": symbol,
-                 "unpricedSince": since[symbol].isoformat() if symbol in since else None}
+                self._unpriced_row(symbol, since, now)
                 for symbol in sorted(getattr(engine, "unprotected", ()) or ())
             ],
             "rebased": sorted(getattr(engine, "rebased", ()) or ()),
@@ -212,6 +211,38 @@ class PilotTelemetry:
             "gapMonitor": {"armed": monitor is not None,
                 "unresolved": list(monitor.unresolved_state()) if monitor is not None else []},
         }
+
+    def _unpriced_row(self, symbol: str, since: dict, now: datetime) -> dict:
+        """One unpriced stop, with whether its market is open and when its halt clock started.
+
+        ``unpricedSince`` runs at every hour; the halt counts only session time. After the
+        close the two disagree, and a page that knew only the first told the operator,
+        every evening a position was held, that entries would halt in 120 seconds when
+        the halt clock was paused until the open (23 September 2026).
+
+        Each added field is left out, never guessed, when the daemon cannot state it: a
+        page must not read an unknown as "market closed".
+        """
+        row = {"symbol": symbol,
+               "unpricedSince": since[symbol].isoformat() if symbol in since else None}
+        expected = self._prices_expected(symbol, now)
+        if expected is not None:
+            row["pricesExpected"] = expected
+        halt_clock = getattr(self.daemon, "unpriced_in_session_since", None)
+        if isinstance(halt_clock, dict):
+            started = halt_clock.get(symbol)
+            row["haltClockSince"] = started.isoformat() if started is not None else None
+        return row
+
+    def _prices_expected(self, symbol: str, now: datetime) -> bool | None:
+        """The daemon's own session answer for ``symbol``, or None when it cannot give one."""
+        expected = getattr(self.daemon, "prices_expected", None)
+        if not callable(expected):
+            return None
+        try:
+            return bool(expected(symbol, now))
+        except Exception:  # noqa: BLE001 - describing the book must not stop the publish
+            return None
 
     def _risk_gates(self, now: datetime, book: dict | None) -> dict:
         """Which opt-in entry gates are armed, and what each one measures against.
