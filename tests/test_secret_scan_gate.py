@@ -134,7 +134,7 @@ def test_ci_keeps_verified_download_and_full_scans_before_dependency_install():
     assert text.index("scan_repository_secrets.py") < text.index("pip install")
     assert "secret-scan-location-summary" in text
     assert "continue-on-error:" not in text
-    assert text.count("--ignore-vuln") == 2
+    assert text.count("--ignore-vuln") == 3
 
 
 def test_cli_cannot_succeed_without_a_working_scanner(tmp_path):
