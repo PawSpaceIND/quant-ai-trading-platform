@@ -333,3 +333,23 @@ def test_a_ledger_that_never_journaled_is_reported_not_crashed(tmp_path, action)
     result = _run(action, "--database", str(ledger), "--tenant", "ghost")
     assert result.returncode == 0, result.stderr
     assert "no forecasts journaled" in result.stdout
+
+
+def test_a_sample_below_the_scoring_floor_prints_no_skill() -> None:
+    """The first host run printed a skill of -114.9 from two rows. That is an accident, not a finding.
+
+    Two rows that moved the same way pin the base rate at its 0.95 clamp, so its Brier is
+    0.0025 and any forecast looks catastrophically worse than it. The report still carries
+    the numbers; the operator text shows only what the sample can support.
+    """
+    two = [row(0, p="0.7000", forward="0.0200"), row(1, p="0.7000", forward="0.0200")]
+    text = calibration.render(calibration.calibrate(two))
+    assert "(2 scored, below 30: no claim)" in text
+    assert "skill vs base rate               -" in text
+    assert "Brier, base rate                 -" in text
+    # The bounded scores are still shown: a Brier cannot run away the way a ratio can.
+    assert "Brier, coin (p=0.5)              0.25" in text
+
+    enough = calibration.render(calibration.calibrate(calibrated_book(40)))
+    assert "no claim" not in enough
+    assert "skill vs base rate               -" not in enough
