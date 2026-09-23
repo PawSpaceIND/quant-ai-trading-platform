@@ -198,7 +198,11 @@ def contribute(
         peak = _optional(account["peak_equity"], "capital_contribution_account_invalid")
         if capital <= 0:
             raise ContributionError("capital_contribution_account_invalid")
-        new_peak = None if peak is None else peak + value
+        # No stored peak means equity has never marked above the starting capital, and the
+        # tracker then measures drawdown from the starting capital itself. Carry that
+        # figure forward: left empty, a running tracker would record the post-deposit
+        # equity as a fresh peak and erase the drawdown already taken (23 September 2026).
+        new_peak = (capital if peak is None else peak) + value
         connection.execute(
             "UPDATE paper_accounts SET starting_capital=?, cash_balance=?, peak_equity=?, "
             "updated_at=? WHERE tenant_id=?",
