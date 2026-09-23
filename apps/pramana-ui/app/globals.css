@@ -1625,6 +1625,7 @@ td .pill {
 .gate-alert p { font-size: 12px; line-height: 1.65; margin: 0; overflow-wrap: anywhere; }
 .gate-alert.exposed { border-color: #a4524a; background: #33211f; color: #f3d6d2; }
 .gate-alert.unverified { border-color: #8a7439; background: #2b271b; color: #efe2c4; }
+.gate-alert.paused { border-color: #8a7439; background: #2b271b; color: #efe2c4; }
 .gate-alert.clear { border-color: #4f7a68; background: #1d3932; color: #d3f1e5; }
 .gate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; margin-top: 16px; }
 .gate-card { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: #12202a; overflow-wrap: anywhere; }

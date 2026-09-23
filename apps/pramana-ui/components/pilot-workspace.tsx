@@ -425,6 +425,11 @@ export function PilotWorkspace() {
               <strong>{protection.headline}.</strong> {protection.detail}
             </div>
           )}
+          {protection?.severity === "paused" && (
+            <div className="banner warning" role="status">
+              <strong>{protection.headline}.</strong> {protection.detail}
+            </div>
+          )}
           {loading && !data ? (
             <div className="loading-state" role="status">
               <span className="atlas-orb">✳</span>Loading your workspace…

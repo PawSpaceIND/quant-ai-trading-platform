@@ -54,7 +54,13 @@ export type StrategyEpisodeEvidence = {
  */
 export type ProtectionSweep = {
   schema: string; tenantId: string; checkedAt: string; sweptAt: string | null;
-  unprotected: Array<{symbol: string; unpricedSince: string | null}>;
+  /**
+   * `unpricedSince` runs at every hour. The halt counts only session time: `pricesExpected`
+   * says whether the symbol's market is open, `haltClockSince` when that clock started.
+   * Both are absent from an engine that cannot state them, and absent never means closed.
+   */
+  unprotected: Array<{symbol: string; unpricedSince: string | null;
+    pricesExpected?: boolean; haltClockSince?: string | null}>;
   rebased: string[];
   haltAfterSeconds: number | null;
   gapMonitor: {armed: boolean; unresolved: Array<{
