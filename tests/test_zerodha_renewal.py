@@ -379,6 +379,31 @@ def test_request_token_prompt_requires_a_terminal(monkeypatch):
         module.secret_prompt("Request token: ")
 
 
+def test_owner_helper_names_why_the_login_was_refused(tmp_path, monkeypatch, capsys):
+    # 23 September 2026: the generic refusal hid "Kite rejected the login" for three tries.
+    from quant_ai.operations import zerodha_login
+    module = helper()
+    path = private_env(tmp_path)
+    monkeypatch.setenv("TRADING_LIVE_MONEY_ACTIVE", "false")
+    monkeypatch.setattr(zerodha_login, "load_credentials", lambda _: ("synthetic-api-key", "synthetic-secret"))
+    monkeypatch.setattr(module, "check_refresh_allowed", lambda *a, **k: None)
+
+    def rejected(**kwargs):
+        raise zerodha_login.LoginError("Kite rejected the login; request tokens are single-use, start again")
+    monkeypatch.setattr(zerodha_login, "login", rejected)
+
+    assert module.main(["--env-file", str(path), "--restart"]) == 1
+    err = capsys.readouterr().err
+    assert "Kite rejected the login" in err
+    assert "synthetic-secret" not in err and "synthetic-api-key" not in err
+
+    def unreadable(**kwargs):
+        raise OSError("/private/path/with/detail")
+    monkeypatch.setattr(zerodha_login, "login", unreadable)
+    assert module.main(["--env-file", str(path), "--restart"]) == 1
+    assert "/private/path" not in capsys.readouterr().err, "other failures stay generic"
+
+
 def test_owner_helper_wires_private_login_atomic_publish_and_refresh(tmp_path, monkeypatch, capsys):
     from quant_ai.operations import zerodha_login
     module = helper()
