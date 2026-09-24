@@ -12,13 +12,25 @@ export const LESSON_LIMIT = 200;
 
 /** Edge rule thresholds. The verdict sentence states them so the reader never has to guess. */
 export const EDGE_RULE = { hitRate: 0.5, expectancy: 0, profitFactor: 1, brier: 0.25 } as const;
+/** The engine's promotion report, as `pilot_ops.py calibrate` prints it. The edge rule is
+ * read only once this passes, and never below PROMOTION_MINIMUM evaluated decisions, even
+ * when a report states a lower minimum: the floor is the promotion report's own. */
+export const PROMOTION_SCHEMA = "pramana.promotion_report.v1";
+export const PROMOTION_MINIMUM = 200;
+/** Below this many observations a rate is not shown, only its count. The engine's
+ * decision-quality default: its report calls every rate under it sampling noise. Pages
+ * with no report of their own (completed-trade evidence) use it as it stands. */
+export const RATE_MINIMUM = 20;
 
 export type Governance = "filled" | "rejected" | "abstained";
 export type CountRow = { reason: string; count: number };
 export type ExitRow = { trigger: string; count: number };
 export type CalibrationBin = { lower: number; upper: number; decisions: number; hit_rate: number | null; mean_confidence: number | null };
-export type RegimeRow = { regime: string; decisions: number; filled: number; hit_rate: number | null; net_pnl: number };
-export type PlaybookRow = { playbook: string; decisions: number; filled: number; probes: number | null; hit_rate: number | null; net_pnl: number };
+/** `evaluated` is how many decisions the hit rate was taken over; most decisions are
+ * holds and never evaluated. Null on a report written before the engine carried it, and
+ * a rate whose sample is unknown is not shown. */
+export type RegimeRow = { regime: string; decisions: number; filled: number; evaluated: number | null; hit_rate: number | null; net_pnl: number };
+export type PlaybookRow = { playbook: string; decisions: number; filled: number; probes: number | null; evaluated: number | null; hit_rate: number | null; net_pnl: number };
 /** One-sample t-statistic for a mean against zero. Null throughout when the sample is
  * too small (see `minimum_observations`) or has no dispersion. */
 export type TStatistic = { observations: number; mean: number | null; standard_error: number | null; t_statistic: number | null };
@@ -29,7 +41,7 @@ export type Significance = {
   forward_return_60m: TStatistic;
   trade_net_pnl: TStatistic;
 };
-export type HourRow = { hour: number; decisions: number; hit_rate: number | null; net_pnl: number };
+export type HourRow = { hour: number; decisions: number; evaluated: number | null; hit_rate: number | null; net_pnl: number };
 export type AgentRow = { agent_id: string; evaluated: number; directional_accuracy: number | null };
 export type ModeRow = { mode: string; decisions: number };
 export const INFERENCE_STATUS_LABELS = {
@@ -87,6 +99,18 @@ export type ForecastScoring = {
   limitations: string[];
 };
 
+/** Why the book held, as the engine split the holds: nothing weighed (`hard_hold`), no
+ * specialist leaning (`silent`), specialists on both sides (`deadlock`), or a one-sided
+ * lean the floor or the model held (`conviction_floor`). The five parts sum to `holds`. */
+export type HoldCauses = {
+  holds: number; hard_hold: number; silent: number; deadlock: number; conviction_floor: number; roster_unrecorded: number;
+};
+/** The verdict `pilot_ops.py calibrate` reaches, over this report's window. */
+export type PromotionGate = {
+  verdict: string; promotion_authorized: boolean; minimum_resolved: number;
+  resolved_forecast_count: number; basis: string | null; missing_inputs: string[];
+};
+
 export type RecentDecision = {
   decision_id: string; decided_at: string; symbol: string; stance: string; confidence: number;
   regime: string | null; mode: string | null; governance: Governance; reason: string | null; order_id: string | null;
@@ -122,6 +146,11 @@ export type DecisionQualityReport = {
   by_hour_ist: HourRow[];
   by_agent: AgentRow[];
   by_mode: ModeRow[];
+  /** Null on a report written before the engine split its holds. */
+  holds: HoldCauses | null;
+  /** Null on a report written before the engine carried it, and on one that does not
+   * validate. Either way the edge rule is not read. */
+  promotion: PromotionGate | null;
   recent: RecentDecision[];
   limitations: string[];
   /** Today's consensus spend headroom. Absent when the engine runs without a budget. */
@@ -149,12 +178,14 @@ export type PostMortemStatus = "pending" | "approved";
 export type PostMortemCounts = Record<string, number>;
 export type PostMortemExit = {trigger: string; count: number};
 export type PostMortemRejection = {reason: string; count: number};
-export type PostMortemRegime = {regime: string; decisions: number; filled: number; hit_rate: number | null; net_pnl: number};
-export type PostMortemHour = {hour: number; decisions: number; hit_rate: number | null; net_pnl: number};
+export type PostMortemRegime = {regime: string; decisions: number; filled: number; evaluated: number | null; hit_rate: number | null; net_pnl: number};
+export type PostMortemHour = {hour: number; decisions: number; evaluated: number | null; hit_rate: number | null; net_pnl: number};
 export type PostMortemSummary = {
   counts: PostMortemCounts;
   net_pnl: number;
   hit_rate_60m: number | null;
+  /** The decisions `hit_rate_60m` was taken over; null on a post-mortem written before. */
+  evaluated_60m: number | null;
   exits: PostMortemExit[];
   rejections: PostMortemRejection[];
   by_regime: PostMortemRegime[];
@@ -207,6 +238,16 @@ export const hourLabel = (hour: number) => {
   return `${pad(hour)}:00–${pad(hour + 1)}:00`;
 };
 
+/** Whether a rate over `observations` may be shown: never when the count is unknown, and
+ * never under `minimum`. A hit rate over one decision is 0% or 100% and says nothing. */
+export const rateShown = (observations: number | null | undefined, minimum: number) => present(observations) && observations >= minimum;
+/** A rate, or the placeholder when its sample is too thin to be one. */
+export const thinRate = (value: number | null | undefined, observations: number | null | undefined, minimum: number, format: (v: number | null | undefined) => string = percent) =>
+  rateShown(observations, minimum) ? format(value) : DASH;
+/** What stands in for a withheld rate: the count, and how many it needs. */
+export const thinNote = (observations: number | null | undefined, minimum: number) =>
+  present(observations) ? `${count(observations)} of ${count(minimum)} needed for a rate` : "sample size not reported";
+
 /** Lessons are plain text: control characters and line breaks collapse to spaces and the result is capped at LESSON_LIMIT characters. */
 export function truncateLesson(text: string, limit = LESSON_LIMIT): string {
   const visible = Array.from(text).map((ch) => { const code = ch.codePointAt(0) ?? 0; return code < 32 || code === 127 ? " " : ch; }).join("");
@@ -217,13 +258,16 @@ export function truncateLesson(text: string, limit = LESSON_LIMIT): string {
 /* ---------- verdict ---------- */
 
 /**
- * One of three honest states. The rule: evaluated >= minimum_sample, hit rate > 0.5,
- * expectancy > 0, profit factor > 1 and Brier score < 0.25. A null metric cannot
- * pass. The sentence repeats the rule and the values that decided it.
+ * One of three honest states. The edge rule (hit rate > 0.5, expectancy > 0, profit
+ * factor > 1, Brier score < 0.25) is read only when at least PROMOTION_MINIMUM decisions
+ * are evaluated AND the engine's promotion report passes; until then the state is
+ * insufficient sample, whatever the rates say. A null metric cannot pass. The sentence
+ * repeats the rule and the values that decided it.
  */
 export function verdictFor(report: DecisionQualityReport): Verdict {
   const evaluated = report.directional.evaluated;
-  const minimumSample = report.minimum_sample;
+  const promotion = report.promotion;
+  const minimumSample = Math.max(report.minimum_sample, promotion?.minimum_resolved ?? 0, PROMOTION_MINIMUM);
   const { hit_rate } = report.directional;
   const { expectancy, profit_factor } = report.trades;
   const brier = report.calibration.brier_score;
@@ -232,16 +276,26 @@ export function verdictFor(report: DecisionQualityReport): Verdict {
     { label: "Expectancy", value: `${signedMoney(expectancy)} vs > ${EDGE_RULE.expectancy}`, pass: present(expectancy) && expectancy > EDGE_RULE.expectancy },
     { label: "Profit factor", value: `${ratio(profit_factor)} vs > ${EDGE_RULE.profitFactor}`, pass: present(profit_factor) && profit_factor > EDGE_RULE.profitFactor },
     { label: "Brier score", value: `${ratio(brier)} vs < ${EDGE_RULE.brier}`, pass: present(brier) && brier < EDGE_RULE.brier },
+    { label: "Promotion", value: promotion ? promotion.verdict.replaceAll("_", " ") : "not reported", pass: promotion?.promotion_authorized === true },
   ];
   const rule = `hit rate above ${percent(EDGE_RULE.hitRate, 0)}, expectancy above ${EDGE_RULE.expectancy}, profit factor above ${EDGE_RULE.profitFactor} and Brier score below ${EDGE_RULE.brier}`;
   const short = evaluated < minimumSample;
-  if (short || report.insufficient_sample) {
+  const promoted = promotion?.promotion_authorized === true;
+  if (short || report.insufficient_sample || !promoted) {
+    const missing = promotion?.missing_inputs.length ? ` (missing: ${promotion.missing_inputs.map((m) => m.replaceAll("_", " ")).join(", ")})` : "";
     const why = short
-      ? `The edge rule (${rule}) is only applied once at least ${count(minimumSample)} decisions have a ${report.directional.horizon_minutes}-minute outcome.`
-      : `The report itself marks the sample as insufficient, so the edge rule (${rule}) is not applied.`;
+      ? `The edge rule (${rule}) is only applied once at least ${count(minimumSample)} decisions have a ${report.directional.horizon_minutes}-minute outcome and the promotion report passes.`
+      : report.insufficient_sample
+        ? `The report itself marks the sample as insufficient, so the edge rule (${rule}) is not applied.`
+        : !promotion
+          ? `This report carries no promotion verdict, so the edge rule (${rule}) is not applied.`
+          : `The promotion report over this window says ${promotion.verdict.replaceAll("_", " ")}${missing}, so the edge rule (${rule}) is not applied.`;
+    const sample = short
+      ? `${count(evaluated)} of ${count(minimumSample)} directional decisions evaluated`
+      : `${count(evaluated)} directional decisions evaluated (minimum ${count(minimumSample)})`;
     return {
       state: "insufficient_sample", evaluated, minimumSample, checks,
-      sentence: `${count(evaluated)} of ${count(minimumSample)} directional decisions evaluated; do not read these numbers as edge yet. ${why}`,
+      sentence: `${sample}; do not read these numbers as edge yet. ${why}`,
     };
   }
   const failing = checks.filter((c) => !c.pass);
@@ -405,6 +459,50 @@ function optForecastScoring(value: unknown, expectedDecisions: number): Forecast
   }
 }
 
+/** A non-negative whole count, or null when absent. */
+const optCounter = (v: unknown): number | null => {
+  if (v == null) return null;
+  const n = num(v);
+  return Number.isSafeInteger(n) && n >= 0 ? n : fail();
+};
+
+/** The hold split, or null. Its parts must sum to its total and the total must fit the
+ * report's decisions: a block that describes different rows is dropped, not shown. */
+function optHolds(value: unknown, expectedDecisions: number): HoldCauses | null {
+  if (value == null) return null;
+  try {
+    const d = record(value);
+    const counter = (v: unknown) => { const n = num(v); return Number.isSafeInteger(n) && n >= 0 ? n : fail(); };
+    const holds: HoldCauses = {
+      holds: counter(d.holds), hard_hold: counter(d.hard_hold), silent: counter(d.silent),
+      deadlock: counter(d.deadlock), conviction_floor: counter(d.conviction_floor), roster_unrecorded: counter(d.roster_unrecorded),
+    };
+    const parts = holds.hard_hold + holds.silent + holds.deadlock + holds.conviction_floor + holds.roster_unrecorded;
+    if (parts !== holds.holds || holds.holds > expectedDecisions) fail();
+    return holds;
+  } catch { return null; }
+}
+
+/** The promotion gate, or null. A block whose flag disagrees with its own verdict is
+ * dropped: a reader that trusted the flag would promote on a report that did not pass. */
+function optPromotion(value: unknown): PromotionGate | null {
+  if (value == null) return null;
+  try {
+    const d = record(value);
+    if (d.schema !== PROMOTION_SCHEMA) fail();
+    const verdict = text(d.verdict, 40);
+    const promotion_authorized = bool(d.promotion_authorized);
+    if (promotion_authorized !== (verdict === "pass")) fail();
+    const counter = (v: unknown) => { const n = num(v); return Number.isSafeInteger(n) && n >= 0 ? n : fail(); };
+    return {
+      verdict, promotion_authorized,
+      minimum_resolved: counter(d.minimum_resolved), resolved_forecast_count: counter(d.resolved_forecast_count),
+      basis: optText(d.basis ?? null, 80),
+      missing_inputs: list(d.missing_inputs, 10).map((item) => text(item, 80)),
+    };
+  } catch { return null; }
+}
+
 /** The engine's t-statistics, or null. Every field of a block is null together when the
  * sample is too small or has no dispersion, so a partial block is treated as no block. */
 function optSignificance(value: unknown): Significance | null {
@@ -477,24 +575,26 @@ function normalizeReport(value: unknown): DecisionQualityReport {
     significance: optSignificance(r.significance),
     by_regime: list(r.by_regime, 100).map((item) => {
       const d = record(item);
-      return { regime: text(d.regime, 80), decisions: num(d.decisions), filled: num(d.filled), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl) };
+      return { regime: text(d.regime, 80), decisions: num(d.decisions), filled: num(d.filled), evaluated: optCounter(d.evaluated), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl) };
     }),
     by_playbook: list(r.by_playbook ?? [], 100).map((item) => {
       const d = record(item);
       return {
         playbook: text(d.playbook, 80), decisions: num(d.decisions), filled: num(d.filled),
-        probes: d.probes == null ? null : num(d.probes), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl),
+        probes: d.probes == null ? null : num(d.probes), evaluated: optCounter(d.evaluated), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl),
       };
     }),
     by_hour_ist: list(r.by_hour_ist, 48).map((item) => {
       const d = record(item);
-      return { hour: num(d.hour), decisions: num(d.decisions), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl) };
+      return { hour: num(d.hour), decisions: num(d.decisions), evaluated: optCounter(d.evaluated), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl) };
     }).sort((a, b) => a.hour - b.hour),
     by_agent: list(r.by_agent, 100).map((item) => {
       const d = record(item);
       return { agent_id: text(d.agent_id, 120), evaluated: num(d.evaluated), directional_accuracy: optNum(d.directional_accuracy) };
     }),
     by_mode: list(r.by_mode, 50).map((item) => { const d = record(item); return { mode: text(d.mode, 80), decisions: num(d.decisions) }; }),
+    holds: optHolds(r.holds, num(counts.decisions)),
+    promotion: optPromotion(r.promotion),
     recent,
     limitations: list(r.limitations, 50).map((item) => text(item, 500)),
     ai_budget: optAiBudget(r.ai_budget),
@@ -529,10 +629,11 @@ function normalizePostMortem(value: unknown, expectedDate?: string): PostMortem 
     counts,
     net_pnl: num(s.net_pnl),
     hit_rate_60m: optNum(s.hit_rate_60m),
+    evaluated_60m: optCounter(s.evaluated_60m),
     exits: list(s.exits, 20).map((item) => { const d = record(item); return {trigger: text(d.trigger, 60), count: num(d.count)}; }),
     rejections: list(s.rejections, 30).map((item) => { const d = record(item); return {reason: text(d.reason, 120), count: num(d.count)}; }),
-    by_regime: list(s.by_regime, 20).map((item) => { const d = record(item); return {regime: text(d.regime, 60), decisions: num(d.decisions), filled: num(d.filled), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
-    by_hour_ist: list(s.by_hour_ist, 24).map((item) => { const d = record(item); return {hour: num(d.hour), decisions: num(d.decisions), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
+    by_regime: list(s.by_regime, 20).map((item) => { const d = record(item); return {regime: text(d.regime, 60), decisions: num(d.decisions), filled: num(d.filled), evaluated: optCounter(d.evaluated), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
+    by_hour_ist: list(s.by_hour_ist, 24).map((item) => { const d = record(item); return {hour: num(d.hour), decisions: num(d.decisions), evaluated: optCounter(d.evaluated), hit_rate: optNum(d.hit_rate), net_pnl: num(d.net_pnl)}; }),
   };
   return {
     schema: POST_MORTEM_SCHEMA,

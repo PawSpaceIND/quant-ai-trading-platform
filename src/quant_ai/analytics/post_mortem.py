@@ -249,6 +249,9 @@ def build_post_mortem(
                 (parse_decimal(row["realized_net_pnl"]) for row in closed_trades(rows)), Decimal(0)
             )),
             "hit_rate_60m": number(ratio(sum(1 for _, hit, _ in scored if hit), len(scored))),
+            # The rate's own sample: a session with one directional decision has a hit rate
+            # of 0 or 1, and a reader needs the count beside it to know that.
+            "evaluated_60m": len(scored),
             "exits": trades(rows)["exits"],
             "rejections": rejections(rows),
             "by_regime": by_regime(rows),

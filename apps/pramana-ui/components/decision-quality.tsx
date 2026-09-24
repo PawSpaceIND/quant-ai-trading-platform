@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { AiBudget, CalibrationBin, DecisionQualityReport, ForecastBasisRow, ForecastScoring, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Significance, TStatistic, Verdict } from "@/lib/decision-quality-model";
-import { INFERENCE_STATUS_LABELS, count, hourLabel, minutes, money, percent, ratio, signedMoney, signedPercent, signedRatio, stancesSummary } from "@/lib/decision-quality-model";
+import type { AiBudget, CalibrationBin, DecisionQualityReport, ForecastBasisRow, ForecastScoring, HoldCauses, InferenceHealth, MissedOpportunities, PostMortem, RecentDecision, Significance, TStatistic, Verdict } from "@/lib/decision-quality-model";
+import { DASH, INFERENCE_STATUS_LABELS, RATE_MINIMUM, count, hourLabel, minutes, money, percent, rateShown, ratio, signedMoney, signedPercent, signedRatio, stancesSummary, thinNote, thinRate } from "@/lib/decision-quality-model";
 
 type QualityResponse = { report: DecisionQualityReport | null; postMortems: PostMortem[]; missed?: MissedOpportunities | null; verdict: Verdict | null };
 
@@ -63,42 +63,12 @@ export function DecisionQuality() {
         <button onClick={() => void load()} disabled={busy} aria-label="Refresh decision quality">↻ Refresh</button>
       </div>
       <Headline report={report} />
+      <HoldCausesPanel holds={report.holds} decisions={report.counts.decisions} />
       <ModelDecisionHealth report={report.inference_health} />
-      <Calibration bins={report.calibration.bins} brier={report.calibration.brier_score} horizon={report.directional.horizon_minutes} />
+      <Calibration bins={report.calibration.bins} brier={report.calibration.brier_score} horizon={report.directional.horizon_minutes} minimum={report.minimum_sample} />
       <ForecastScoringPanel scoring={report.forecast_scoring} />
       <SignificancePanel significance={report.significance} horizon={report.directional.horizon_minutes} />
-      <div className="quality-tables">
-        <Panel eyebrow="OUTCOMES BY REGIME" title="By regime">
-          <DataTable label="Decisions by regime" columns={[{ name: "Regime" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
-            rows={report.by_regime.map((r) => [r.regime.replaceAll("_", " "), count(r.decisions), count(r.filled), percent(r.hit_rate), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
-            empty="No regime breakdown in this report" />
-        </Panel>
-        <Panel eyebrow="OUTCOMES BY PLAYBOOK" title="By playbook">
-          <DataTable label="Decisions by playbook" columns={[{ name: "Playbook" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Probes", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
-            rows={report.by_playbook.map((r) => [r.playbook.replaceAll("_", " "), count(r.decisions), count(r.filled), count(r.probes), percent(r.hit_rate), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
-            empty="No playbook breakdown in this report" />
-        </Panel>
-        <Panel eyebrow="OUTCOMES BY HOUR" title="By hour (IST)">
-          <DataTable label="Decisions by hour IST" columns={[{ name: "Hour IST" }, { name: "Decisions", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
-            rows={report.by_hour_ist.map((r) => [hourLabel(r.hour), count(r.decisions), percent(r.hit_rate), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
-            empty="No hourly breakdown in this report" />
-        </Panel>
-        <Panel eyebrow="AGENT DIRECTION CALLS" title="By agent">
-          <DataTable label="Directional accuracy by agent" columns={[{ name: "Agent" }, { name: "Evaluated", numeric: true }, { name: "Directional accuracy", numeric: true }]}
-            rows={report.by_agent.map((r) => [r.agent_id, count(r.evaluated), percent(r.directional_accuracy)])}
-            empty="No per-agent accuracy in this report" />
-        </Panel>
-        <Panel eyebrow="HOW TRADES ENDED" title="Exits">
-          <DataTable label="Exit triggers" columns={[{ name: "Trigger" }, { name: "Closed trades", numeric: true }]}
-            rows={report.trades.exits.map((r) => [r.trigger.replaceAll("_", " "), count(r.count)])}
-            empty="No closed trades yet" />
-        </Panel>
-        <Panel eyebrow="WHY DECISIONS DID NOT FILL" title="Rejections">
-          <DataTable label="Rejection reasons" columns={[{ name: "Reason" }, { name: "Decisions", numeric: true }]}
-            rows={report.rejections.map((r) => [r.reason.replaceAll("_", " "), count(r.count)])}
-            empty="No governance rejections recorded" />
-        </Panel>
-      </div>
+      <QualityTables report={report} />
       <RecentDecisions rows={report.recent} horizon={report.directional.horizon_minutes} />
     </>}
     {state && <MissedMoves report={state.missed ?? null} />}
@@ -108,6 +78,47 @@ export function DecisionQuality() {
       <h2>What this evidence cannot show</h2>
       {report.limitations.length ? <ul className="quality-limitations">{report.limitations.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="muted">The report declares no limitations. Treat that as a gap in the report, not as proof of completeness.</p>}
     </section>}
+  </>;
+}
+
+/** The breakdowns. Each hit rate sits beside the decisions it was taken over, and one over
+ * fewer than the report's minimum shows as a dash: a regime with ninety decisions and one
+ * evaluated call has a count, not a rate. */
+export function QualityTables({ report }: { report: DecisionQualityReport }) {
+  return <>
+    <p className="muted quality-note">A rate over fewer than {count(report.minimum_sample)} evaluated decisions shows as {DASH}: the count beside it is the finding.</p>
+    <div className="quality-tables">
+      <Panel eyebrow="OUTCOMES BY REGIME" title="By regime">
+        <DataTable label="Decisions by regime" columns={[{ name: "Regime" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Evaluated", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
+          rows={report.by_regime.map((r) => [r.regime.replaceAll("_", " "), count(r.decisions), count(r.filled), count(r.evaluated), thinRate(r.hit_rate, r.evaluated, report.minimum_sample), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
+          empty="No regime breakdown in this report" />
+      </Panel>
+      <Panel eyebrow="OUTCOMES BY PLAYBOOK" title="By playbook">
+        <DataTable label="Decisions by playbook" columns={[{ name: "Playbook" }, { name: "Decisions", numeric: true }, { name: "Filled", numeric: true }, { name: "Probes", numeric: true }, { name: "Evaluated", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
+          rows={report.by_playbook.map((r) => [r.playbook.replaceAll("_", " "), count(r.decisions), count(r.filled), count(r.probes), count(r.evaluated), thinRate(r.hit_rate, r.evaluated, report.minimum_sample), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
+          empty="No playbook breakdown in this report" />
+      </Panel>
+      <Panel eyebrow="OUTCOMES BY HOUR" title="By hour (IST)">
+        <DataTable label="Decisions by hour IST" columns={[{ name: "Hour IST" }, { name: "Decisions", numeric: true }, { name: "Evaluated", numeric: true }, { name: "Hit rate", numeric: true }, { name: "Net P&L", numeric: true }]}
+          rows={report.by_hour_ist.map((r) => [hourLabel(r.hour), count(r.decisions), count(r.evaluated), thinRate(r.hit_rate, r.evaluated, report.minimum_sample), <span className={signedClass(r.net_pnl)}>{signedMoney(r.net_pnl)}</span>])}
+          empty="No hourly breakdown in this report" />
+      </Panel>
+      <Panel eyebrow="AGENT DIRECTION CALLS" title="By agent">
+        <DataTable label="Directional accuracy by agent" columns={[{ name: "Agent" }, { name: "Evaluated", numeric: true }, { name: "Directional accuracy", numeric: true }]}
+          rows={report.by_agent.map((r) => [r.agent_id, count(r.evaluated), thinRate(r.directional_accuracy, r.evaluated, report.minimum_sample)])}
+          empty="No per-agent accuracy in this report" />
+      </Panel>
+      <Panel eyebrow="HOW TRADES ENDED" title="Exits">
+        <DataTable label="Exit triggers" columns={[{ name: "Trigger" }, { name: "Closed trades", numeric: true }]}
+          rows={report.trades.exits.map((r) => [r.trigger.replaceAll("_", " "), count(r.count)])}
+          empty="No closed trades yet" />
+      </Panel>
+      <Panel eyebrow="WHY DECISIONS DID NOT FILL" title="Rejections">
+        <DataTable label="Rejection reasons" columns={[{ name: "Reason" }, { name: "Decisions", numeric: true }]}
+          rows={report.rejections.map((r) => [r.reason.replaceAll("_", " "), count(r.count)])}
+          empty="No governance rejections recorded" />
+      </Panel>
+    </div>
   </>;
 }
 
@@ -133,6 +144,31 @@ export function AiBudgetNotice({ budget }: { budget: AiBudget }) {
   </div>;
 }
 
+/** The rows of the hold split, in the order an operator acts on them: a deadlock and a
+ * silence want opposite fixes, and a hard hold is not the lean's to fix at all. */
+const HOLD_CAUSES: Array<{ key: Exclude<keyof HoldCauses, "holds">; label: string; meaning: string }> = [
+  { key: "deadlock", label: "Deadlock", meaning: "Specialists leaned both ways and cancelled." },
+  { key: "silent", label: "Silent", meaning: "No specialist leaned either way." },
+  { key: "conviction_floor", label: "Conviction floor", meaning: "A one-sided lean under the entry score or the playbook floor, or held by the model. The journal does not say which." },
+  { key: "hard_hold", label: "Hard hold", meaning: "Nothing was weighed: a veto, stale evidence or missing coverage. Never probed." },
+  { key: "roster_unrecorded", label: "Roster not recorded", meaning: "A lean with no readable roster, so its shape is unknown." },
+];
+
+export function HoldCausesPanel({ holds, decisions }: { holds: HoldCauses | null; decisions: number }) {
+  return <section className="panel" aria-label="Holds by cause">
+    <div className="panel-title"><div><span className="eyebrow">WHY ATLAS HELD</span><h2>Holds by cause</h2></div>
+      {holds && <span className="muted">{count(holds.holds)} of {count(decisions)} decisions held</span>}</div>
+    {!holds
+      ? <div className="empty">This report does not split its holds. A deadlock and a silent roster both hold, and they cannot be told apart here.</div>
+      : <>
+        <DataTable label="Holds by cause" columns={[{ name: "Cause" }, { name: "Holds", numeric: true }, { name: "What it means" }]}
+          rows={HOLD_CAUSES.map((cause) => [<strong>{cause.label}</strong>, count(holds[cause.key]), <small>{cause.meaning}</small>])}
+          empty="No holds in this window" />
+        <p className="muted">Counts only, over this report&apos;s window. What the market did after each kind of hold is not scored on this page.</p>
+      </>}
+  </section>;
+}
+
 export function ModelDecisionHealth({ report }: { report: InferenceHealth | null }) {
   return <section className="panel" aria-label="Model decision health">
     <span className="eyebrow">RECORDED MODEL DIAGNOSTICS</span><h2>Model decision health</h2>
@@ -150,7 +186,7 @@ export function ModelDecisionHealth({ report }: { report: InferenceHealth | null
   </section>;
 }
 
-function VerdictBanner({ verdict }: { verdict: Verdict }) {
+export function VerdictBanner({ verdict }: { verdict: Verdict }) {
   const insufficient = verdict.state === "insufficient_sample";
   const tone = insufficient ? "warning" : verdict.state === "edge_candidate" ? "edge" : "pending";
   const title = insufficient ? "Insufficient sample" : verdict.state === "edge_candidate" ? "Edge candidate" : "No edge yet";
@@ -175,38 +211,51 @@ function Tile({ label, value, note, positive }: { label: string; value: string; 
   </div>;
 }
 
-function Headline({ report }: { report: DecisionQualityReport }) {
+export function Headline({ report }: { report: DecisionQualityReport }) {
   const { counts, directional, trades, calibration } = report;
   const sign = (v: number | null) => v == null ? undefined : v >= 0;
+  // One closed trade is a win rate of 0% or 100%. Below the report's own minimum the tile
+  // shows the count and what it needs, never a rate.
+  const minimum = report.minimum_sample;
+  const calls = rateShown(directional.evaluated, minimum), closed = rateShown(trades.closed, minimum);
   return <div className="metric-grid" aria-label="Decision quality headline">
     <Tile label="Decisions" value={count(counts.decisions)} note={`${count(counts.filled)} filled · ${count(counts.rejected)} rejected · ${count(counts.abstained)} abstained`} />
     <Tile label="Exploration probes" value={count(counts.probes)} note={counts.probes == null
       ? "This report did not count probes; it cannot say how much of the sample was exploration."
       : `Directional decisions taken below the conviction floor · ${count(counts.decisions - counts.probes)} at or above it`} />
     <Tile label="Filled" value={count(counts.filled)} note={`${count(counts.closed_trades)} closed trades · ${count(counts.resolved_60m)} resolved at ${directional.horizon_minutes} min`} />
-    <Tile label={`Hit rate ${directional.horizon_minutes}m`} value={percent(directional.hit_rate)} note={`${count(directional.evaluated)} evaluated · mean forward ${signedPercent(directional.mean_forward_return)}`} />
-    <Tile label="Expectancy" value={signedMoney(trades.expectancy)} positive={sign(trades.expectancy)} note={`Net P&L per closed trade · win rate ${percent(trades.win_rate)}`} />
-    <Tile label="Profit factor" value={ratio(trades.profit_factor)} note={`Gross wins ÷ gross losses · avg win ${money(trades.average_win)} · avg loss ${money(trades.average_loss)}`} />
-    <Tile label="Brier score" value={ratio(calibration.brier_score)} note="Lower is better · 0.25 is the coin-flip threshold" />
+    <Tile label={`Hit rate ${directional.horizon_minutes}m`} value={thinRate(directional.hit_rate, directional.evaluated, minimum)} note={calls
+      ? `${count(directional.evaluated)} evaluated · mean forward ${signedPercent(directional.mean_forward_return)}`
+      : `${count(directional.evaluated)} evaluated · ${thinNote(directional.evaluated, minimum)}`} />
+    <Tile label="Expectancy" value={thinRate(trades.expectancy, trades.closed, minimum, signedMoney)} positive={closed ? sign(trades.expectancy) : undefined} note={closed
+      ? `Net P&L per closed trade · win rate ${percent(trades.win_rate)}`
+      : `${count(trades.closed)} closed · ${thinNote(trades.closed, minimum)}`} />
+    <Tile label="Profit factor" value={thinRate(trades.profit_factor, trades.closed, minimum, ratio)} note={closed
+      ? `Gross wins ÷ gross losses · avg win ${money(trades.average_win)} · avg loss ${money(trades.average_loss)}`
+      : `Gross wins ÷ gross losses · ${thinNote(trades.closed, minimum)}`} />
+    <Tile label="Brier score" value={thinRate(calibration.brier_score, directional.evaluated, minimum, ratio)} note={calls
+      ? "Lower is better · 0.25 is the coin-flip threshold"
+      : `Lower is better · ${thinNote(directional.evaluated, minimum)}`} />
     <Tile label="Net P&L" value={signedMoney(trades.net_pnl)} positive={trades.net_pnl >= 0} note={`Gross ${signedMoney(trades.gross_pnl)} · fees ${money(trades.fees)} · avg hold ${minutes(trades.average_holding_minutes)}`} />
     <Tile label="Sessions" value={count(report.window.sessions)} note={`${day(report.window.since)} → ${day(report.window.until)} · minimum sample ${count(report.minimum_sample)}`} />
   </div>;
 }
 
-function Calibration({ bins, brier, horizon }: { bins: CalibrationBin[]; brier: number | null; horizon: number }) {
+export function Calibration({ bins, brier, horizon, minimum }: { bins: CalibrationBin[]; brier: number | null; horizon: number; minimum: number }) {
   const width = (v: number) => `${Math.max(0, Math.min(100, v * 100))}%`;
   return <section className="panel" aria-label="Calibration">
-    <div className="panel-title"><div><span className="eyebrow">CONFIDENCE VS OUTCOME</span><h2>Calibration</h2></div><span className="muted">Brier {ratio(brier)}</span></div>
-    <p className="readiness-explanation">Each confidence bin compares what the agents claimed (mean confidence) with what happened (hit rate at {horizon} minutes). Bars of equal length are calibrated; a longer confidence bar is over-confidence. Bins with few decisions say little.</p>
+    <div className="panel-title"><div><span className="eyebrow">CONFIDENCE VS OUTCOME</span><h2>Calibration</h2></div><span className="muted">Brier {rateShown(bins.reduce((sum, bin) => sum + bin.decisions, 0), minimum) ? ratio(brier) : DASH}</span></div>
+    <p className="readiness-explanation">Each confidence bin compares what the agents claimed (mean confidence) with what happened (hit rate at {horizon} minutes). Bars of equal length are calibrated; a longer confidence bar is over-confidence. A bin with fewer than {count(minimum)} decisions shows no hit rate.</p>
     <div className="calibration-legend" aria-hidden="true"><span><i className="confidence" />Mean confidence</span><span><i className="hit" />Hit rate {horizon}m</span></div>
     {bins.length ? <div className="calibration-strip" role="list">{bins.map((bin) => {
       const quiet = bin.decisions === 0;
-      return <div className={`calibration-bin${quiet ? " quiet" : ""}`} role="listitem" key={`${bin.lower}-${bin.upper}`} aria-label={`Confidence ${bin.lower.toFixed(1)} to ${bin.upper.toFixed(1)}: mean confidence ${percent(bin.mean_confidence)}, hit rate ${percent(bin.hit_rate)}, ${count(bin.decisions)} decisions`}>
+      const hit = thinRate(bin.hit_rate, bin.decisions, minimum);
+      return <div className={`calibration-bin${quiet ? " quiet" : ""}`} role="listitem" key={`${bin.lower}-${bin.upper}`} aria-label={`Confidence ${bin.lower.toFixed(1)} to ${bin.upper.toFixed(1)}: mean confidence ${percent(bin.mean_confidence)}, hit rate ${hit}, ${count(bin.decisions)} decisions`}>
         <span className="numeric">{bin.lower.toFixed(1)}–{bin.upper.toFixed(1)}</span>
         <div>
           <div className="bar-track">{bin.mean_confidence != null && <span className="confidence" style={{ width: width(bin.mean_confidence) }} />}</div>
-          <div className="bar-track">{bin.hit_rate != null && <span className="hit" style={{ width: width(bin.hit_rate) }} />}</div>
-          <small>{percent(bin.mean_confidence)} claimed · {percent(bin.hit_rate)} hit</small>
+          <div className="bar-track">{bin.hit_rate != null && rateShown(bin.decisions, minimum) && <span className="hit" style={{ width: width(bin.hit_rate) }} />}</div>
+          <small>{percent(bin.mean_confidence)} claimed · {hit} hit</small>
         </div>
         <span className="numeric calibration-count">{count(bin.decisions)}<small>decisions</small></span>
       </div>;
@@ -424,7 +473,7 @@ function MissedMoves({ report }: { report: MissedOpportunities | null }) {
   </section>;
 }
 
-function PostMortems({ items }: { items: PostMortem[] }) {
+export function PostMortems({ items }: { items: PostMortem[] }) {
   // Every section the engine writes is shown. The counts, rejection reasons and regime
   // split are what explain a session, and a no-trade session is explained only by those.
   const COUNT_ORDER = ["decisions", "filled", "rejected", "abstained", "probes", "closed_trades", "resolved_60m"];
@@ -432,7 +481,11 @@ function PostMortems({ items }: { items: PostMortem[] }) {
     const keys = Object.keys(counts);
     return [...COUNT_ORDER.filter((key) => key in counts), ...keys.filter((key) => !COUNT_ORDER.includes(key))];
   };
-  const rate = (value: number | null) => value === null ? "Unavailable" : percent(value);
+  // A session's hit rate is shown only over RATE_MINIMUM evaluated decisions; a post-mortem
+  // written before it recorded the count shows none.
+  const rate = (value: number | null, evaluated: number | null) => !rateShown(evaluated, RATE_MINIMUM)
+    ? `${DASH} (${evaluated == null ? "sample not recorded" : `${count(evaluated)} evaluated`})`
+    : value === null ? "Unavailable" : percent(value);
   return <section className="panel" aria-label="Session post-mortems">
     <div className="panel-title"><div><span className="eyebrow">OPERATOR REVIEW</span><h2>Session post-mortems</h2></div>{items.length > 0 && <span className="muted">Latest {count(items.length)}</span>}</div>
     <p className="readiness-explanation quality-note">Approval happens on the host with <code>pramana post-mortem --approve &lt;date&gt;</code>. This dashboard reads the files; it does not approve them.</p>
@@ -445,7 +498,7 @@ function PostMortems({ items }: { items: PostMortem[] }) {
       <dl className="details post-mortem-summary">
         {ordered(pm.summary.counts).map((key) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{count(pm.summary.counts[key])}</dd></div>)}
         <div><dt>net p&amp;l</dt><dd className={signedClass(pm.summary.net_pnl)}>{signedMoney(pm.summary.net_pnl)}</dd></div>
-        <div><dt>hit rate 60m</dt><dd>{rate(pm.summary.hit_rate_60m)}</dd></div>
+        <div><dt>hit rate 60m</dt><dd>{rate(pm.summary.hit_rate_60m, pm.summary.evaluated_60m)}</dd></div>
       </dl>
       <h4>Why decisions did not become trades</h4>
       {pm.summary.rejections.length
@@ -455,7 +508,7 @@ function PostMortems({ items }: { items: PostMortem[] }) {
       <h4>By regime</h4>
       {pm.summary.by_regime.length
         ? <div className="research-table-scroll" role="region" tabIndex={0}><table><thead><tr><th scope="col">Regime</th><th scope="col">Decisions</th><th scope="col">Filled</th><th scope="col">Hit rate</th><th scope="col">Net P&amp;L</th></tr></thead>
-            <tbody>{pm.summary.by_regime.map((item) => <tr key={item.regime}><td>{item.regime.replaceAll("_", " ")}</td><td>{count(item.decisions)}</td><td>{count(item.filled)}</td><td>{rate(item.hit_rate)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
+            <tbody>{pm.summary.by_regime.map((item) => <tr key={item.regime}><td>{item.regime.replaceAll("_", " ")}</td><td>{count(item.decisions)}</td><td>{count(item.filled)}</td><td>{rate(item.hit_rate, item.evaluated)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
         : <p className="muted">No regime was recorded for this session.</p>}
       <details><summary>Exit triggers ({count(pm.summary.exits.length)})</summary>
         {pm.summary.exits.length
@@ -465,7 +518,7 @@ function PostMortems({ items }: { items: PostMortem[] }) {
       <details><summary>Hourly results ({count(pm.summary.by_hour_ist.length)})</summary>
         {pm.summary.by_hour_ist.length
           ? <div className="research-table-scroll" role="region" tabIndex={0}><table><thead><tr><th scope="col">Hour IST</th><th scope="col">Decisions</th><th scope="col">Hit rate</th><th scope="col">Net P&amp;L</th></tr></thead>
-              <tbody>{pm.summary.by_hour_ist.map((item) => <tr key={item.hour}><td>{hourLabel(item.hour)}</td><td>{count(item.decisions)}</td><td>{rate(item.hit_rate)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
+              <tbody>{pm.summary.by_hour_ist.map((item) => <tr key={item.hour}><td>{hourLabel(item.hour)}</td><td>{count(item.decisions)}</td><td>{rate(item.hit_rate, item.evaluated)}</td><td className={signedClass(item.net_pnl)}>{signedMoney(item.net_pnl)}</td></tr>)}</tbody></table></div>
           : <p className="muted">No hourly breakdown was recorded.</p>}
       </details>
       {pm.lessons.length ? <ul>{pm.lessons.map((lesson, i) => <li key={i}>{lesson}</li>)}</ul> : <p className="muted">No lessons recorded for this session.</p>}

@@ -413,9 +413,9 @@ def test_report_carries_the_exact_schema_and_flags_a_thin_sample(tmp_path):
 
     assert sorted(report) == [
         "by_agent", "by_hour_ist", "by_mode", "by_playbook", "by_regime", "calibration", "counts",
-        "directional", "forecast_scoring", "generated_at", "inference_health",
-        "insufficient_sample", "limitations", "minimum_sample", "recent", "rejections", "schema",
-        "significance", "tenant_id", "trades", "window",
+        "directional", "forecast_scoring", "generated_at", "holds", "inference_health",
+        "insufficient_sample", "limitations", "minimum_sample", "promotion", "recent",
+        "rejections", "schema", "significance", "tenant_id", "trades", "window",
     ]
     assert report["schema"] == "pramana.decision_quality.v1"
     assert report["tenant_id"] == TENANT
@@ -601,7 +601,8 @@ def test_post_mortem_derives_bounded_deterministic_lessons(tmp_path):
     assert report["summary"]["counts"]["decisions"] == 8
     assert report["summary"]["hit_rate_60m"] == 0.25
     assert sorted(report["summary"]) == [
-        "by_hour_ist", "by_regime", "counts", "exits", "hit_rate_60m", "net_pnl", "rejections",
+        "by_hour_ist", "by_regime", "counts", "evaluated_60m", "exits", "hit_rate_60m", "net_pnl",
+        "rejections",
     ]
 
     lessons = report["lessons"]

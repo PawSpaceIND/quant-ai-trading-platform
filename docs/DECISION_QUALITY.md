@@ -33,7 +33,7 @@ renders it under **Decision quality**.
 
 | Number | Meaning | Reads as edge when |
 |---|---|---|
-| Directional hit rate (60m) | Share of BUY/SELL decisions whose 60-minute forward return had the stated sign | above 0.5 with a sample of at least 20 |
+| Directional hit rate (60m) | Share of BUY/SELL decisions whose 60-minute forward return had the stated sign | above 0.5, once the promotion gate below passes |
 | Expectancy | Mean net P&L per closed paper trade after fees | positive |
 | Profit factor | Gross wins divided by gross losses | above 1 |
 | Brier score | Mean squared gap between stated confidence and the 0/1 hit | below 0.25 (0.25 is coin-flip calibration) |
@@ -44,6 +44,32 @@ trigger and rejection reason show where the edge, or the damage, comes from. The
 report carries `insufficient_sample: true` until at least 20 directional decisions
 have a resolved 60-minute outcome; before that the dashboard says so and no number
 should be read as edge.
+
+### Thin samples
+
+Twenty evaluated decisions is enough to print a rate, not to call an edge. Three things
+keep the page from overclaiming:
+
+- **The promotion gate** (`promotion`). The verdict `pilot_ops.py calibrate` reaches,
+  over this report's window: at least 200 clean resolved forecasts, a Brier score under
+  the coin's, positive mean net P&L on filled buys, journaled entry drift, and a realised
+  drawdown within the live limit. A basis with a second mapping in it is `basis_mixed`.
+  The daemon supplies the book's realised drawdown and its breaker's own limit; if
+  either cannot be read, the gate names it missing and refuses. The dashboard reads the
+  edge rule only when at least 200 directional decisions are evaluated **and** this
+  passes. Anything else shows **Insufficient sample**, never a green edge, with the
+  gate's verdict and missing inputs in the sentence.
+- **The sample behind each rate.** Each regime, playbook and hour row carries
+  `evaluated`, the decisions its hit rate was taken over; most decisions are holds and
+  are never evaluated. The post-mortem carries `evaluated_60m`. A rate over fewer than
+  `minimum_sample` (20) shows as a dash with its count, and so do the headline hit rate,
+  expectancy, profit factor and Brier, and the completed-trade win rate on Research.
+- **Why the book held** (`holds`). Each hold is counted once: `hard_hold` (no consensus:
+  a veto, stale evidence or missing coverage; never probed), `silent` (no specialist
+  leaned), `deadlock` (specialists on both sides), `conviction_floor` (a one-sided lean
+  under the entry score or the playbook floor, or held by the model; the journal does
+  not say which) and `roster_unrecorded`. The roster shapes are the scorecard's
+  (`quant_ai.analytics.scorecards`). Counts only; nothing here reweights or moves a floor.
 
 ### Significance
 
@@ -169,8 +195,9 @@ The **Decision quality** section carries the verdict banner, the headline number
 calibration strip, the breakdowns and the post-mortems. Two notices sit above them
 because a quiet engine has more than one cause:
 
-- **Insufficient sample.** Fewer than 20 directional decisions have a resolved
-  60-minute outcome. The numbers are shown but must not be read as edge.
+- **Insufficient sample.** Fewer than 200 directional decisions have a resolved
+  60-minute outcome, or the promotion gate has not passed. Rates over at least 20 are
+  shown and must not be read as edge; rates over fewer show as a dash with their count.
 - **AI budget.** Today's consensus calls and tokens against their caps. When the cap is
   reached, consensus degrades to NEUTRAL and every tick ends in PRESERVE_CAPITAL, so the
   absence of trades after that point says nothing about the strategy. The Atlas chat
@@ -216,7 +243,7 @@ discussion of a live adapter:
 
 1. No safety incident: no unprotected position, no duplicate fill, no unexplained
    cadence halt, no proof without a matching ledger row.
-2. `insufficient_sample` is false and the directional hit rate is above 0.5.
+2. The promotion gate passes and the directional hit rate is above 0.5.
 3. Expectancy after fees is positive and the profit factor is above 1.
 4. Brier score below 0.25 and calibration bins that track confidence.
 5. Realised drawdown inside the founder directive's limit.

@@ -34,6 +34,7 @@ import {HistoricalRisk} from "./historical-risk";
 import {DecisionQuality} from "./decision-quality";
 import {GateRefusals, ProtectiveState} from "./protective-state";
 import {protectionAlert} from "@/lib/protection-sweep";
+import {RATE_MINIMUM, rateShown, thinNote} from "@/lib/decision-quality-model";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
 const hosted = process.env.NEXT_PUBLIC_PRAMANA_HOSTED === "true";
 const sections = [
@@ -1568,11 +1569,14 @@ function TradeRows({
   );
 }
 
-function TradeEvidencePanel({ data, onAsk }: { data: Workspace; onAsk: (prompt: string) => void }) {
+export function TradeEvidencePanel({ data, onAsk }: { data: Workspace; onAsk: (prompt: string) => void }) {
   const report = data.runtime.tradeEvidence;
   const strategy = data.runtime.strategyEvidence;
   const summary = report?.status === "ok" ? report.summary : undefined;
   const numeric = (value: string | null | undefined) => value != null && Number.isFinite(Number(value)) ? Number(value) : undefined;
+  // A win rate over one completed trade is 0% or 100%. Under RATE_MINIMUM the per-trade
+  // statistics show the count and what they need, never a rate.
+  const sampled = summary ? rateShown(summary.completedTrades, RATE_MINIMUM) : false;
   return <section className="panel">
     <span className="eyebrow">RECONCILED PAPER LEDGER</span>
     <h2>Completed-trade evidence</h2>
@@ -1580,9 +1584,9 @@ function TradeEvidencePanel({ data, onAsk }: { data: Workspace; onAsk: (prompt: 
       <div className="metric-grid research-metrics">
         <Metric label="Completed trades" value={String(summary.completedTrades)} note={`${report!.fillCount} fills · ${summary.openEpisodes} open episodes`} />
         <Metric label="Net closed-trade P&L" value={money(numeric(summary.netPnl))} note="INR · recorded cash fees deducted" />
-        <Metric label="Average P&L per trade" value={money(numeric(summary.expectancy))} note="Historical sample mean, not forecast expectancy" />
-        <Metric label="Win rate" value={pct(numeric(summary.winRate))} note={`${summary.wins} wins · ${summary.losses} losses · ${summary.breakeven} flat`} />
-        <Metric label="Profit factor" value={numeric(summary.profitFactor)?.toFixed(2) ?? "—"} note={summary.profitFactorState === "no_observed_losses" ? "No observed losses; ratio undefined" : "Net gains / absolute net losses"} />
+        <Metric label="Average P&L per trade" value={sampled ? money(numeric(summary.expectancy)) : "—"} note={sampled ? "Historical sample mean, not forecast expectancy" : thinNote(summary.completedTrades, RATE_MINIMUM)} />
+        <Metric label="Win rate" value={sampled ? pct(numeric(summary.winRate)) : "—"} note={`${summary.wins} wins · ${summary.losses} losses · ${summary.breakeven} flat${sampled ? "" : ` · ${thinNote(summary.completedTrades, RATE_MINIMUM)}`}`} />
+        <Metric label="Profit factor" value={sampled ? numeric(summary.profitFactor)?.toFixed(2) ?? "—" : "—"} note={!sampled ? thinNote(summary.completedTrades, RATE_MINIMUM) : summary.profitFactorState === "no_observed_losses" ? "No observed losses; ratio undefined" : "Net gains / absolute net losses"} />
         <Metric label="Closed / open cash fees" value={`${money(numeric(summary.closedCashFees))} / ${money(numeric(summary.openCashFees))}`} note="Open-episode fees stay outside closed-trade statistics" />
       </div>
       <p className="footnote">Ledger {report!.ledgerId} · Generated {report!.generatedAt} · {report!.currency}. Source hash: {report!.sourceSha256.slice(0, 16)}… Full hash is included in the evidence export.</p>
