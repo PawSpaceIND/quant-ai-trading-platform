@@ -4,6 +4,7 @@ import {gateTally, gateTone, riskGateViews, type GateState} from "@/lib/risk-gat
 import type {ProtectionAlertState} from "@/lib/protection-sweep";
 import type {ProtectionSweep, Runtime} from "@/lib/pilot";
 import type {GateRefusalState} from "@/lib/types";
+import {probeBudgetView, type ProbesToday} from "@/lib/probe-budget-model";
 
 /**
  * Two panels about the same question: what is stopping the engine, and what is not
@@ -127,5 +128,29 @@ export function GateRefusals({state}: {state?: GateRefusalState}) {
       </table></div>
       {rows.length > 5 ? <button onClick={() => setExpanded(!expanded)}>{expanded ? "Show fewer refusals" : `Show all ${rows.length} recorded refusals`}</button> : null}
     </>}
+  </section>;
+}
+
+const budgetBadge: Record<"off" | "on" | "unverified", {label: string; className: string}> = {
+  off: {label: "Off", className: "neutral"},
+  on: {label: "On", className: "green"},
+  unverified: {label: "Unverified", className: "amber"},
+};
+
+/**
+ * The exploration budget, stated in words before any number. A cap of 0 says "off" and
+ * names the setting, because a budget that is off and one with nothing to probe leave the
+ * same quiet page. Read-only: the cap is the operator's, set on the host.
+ */
+export function ProbeBudget({runtime, tenant, probes}: {runtime: Runtime; tenant: string; probes?: ProbesToday}) {
+  const view = probeBudgetView(runtime, tenant, probes);
+  const tone = budgetBadge[view.state];
+  return <section className="panel probe-budget" aria-label="Probe budget">
+    <div className="panel-title">
+      <div><span className="eyebrow">EXPLORATION BUDGET</span><h2>{view.title}</h2></div>
+      <span className={`pill ${tone.className}`}>{tone.label}</span>
+    </div>
+    {view.used && <p><strong>{view.used}</strong></p>}
+    {view.lines.map((line) => <p className="muted" key={line}>{line}</p>)}
   </section>;
 }

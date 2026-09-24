@@ -71,6 +71,7 @@ export type Intelligence = {
 };
 export type Workspace = {
   gateRefusals?: import("./gate-refusals").GateRefusalState;
+  probesToday?: import("./probe-budget-model").ProbesToday;
   runComparison?: import("./run-comparison-model").RunComparisonState;
   externalAccount?: ExternalAccountState;
   brokerObservation?: import("./broker-observation").BrokerObservationState;

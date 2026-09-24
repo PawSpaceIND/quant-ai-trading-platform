@@ -32,7 +32,7 @@ import {RunComparison} from "./run-comparison";
 import {AccountBenchmark} from "./account-benchmark";
 import {HistoricalRisk} from "./historical-risk";
 import {DecisionQuality} from "./decision-quality";
-import {GateRefusals, ProtectiveState} from "./protective-state";
+import {GateRefusals, ProbeBudget, ProtectiveState} from "./protective-state";
 import {protectionAlert} from "@/lib/protection-sweep";
 import {RATE_MINIMUM, rateShown, thinNote} from "@/lib/decision-quality-model";
 import type { Workspace, Portfolio, Trade, Friction, DecisionProvenance } from "@/lib/types";
@@ -530,6 +530,7 @@ export function PilotWorkspace() {
                   <>
                     {protection && <ProtectiveState runtime={data.runtime} tenant={data.tenantId} alert={protection} />}
                     <GateRefusals state={data.gateRefusals} />
+                    {!hosted && <ProbeBudget runtime={data.runtime} tenant={data.tenantId} probes={data.probesToday} />}
                     <MarketWorkspace
                       readOnly={hosted}
                       compact

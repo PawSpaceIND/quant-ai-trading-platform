@@ -21,6 +21,7 @@ import { readRuntime, performance } from "@/lib/pilot";
 import {protectionCoverageCheck} from "@/lib/protection-coverage";
 import {protectionSweepCheck} from "@/lib/protection-sweep";
 import {readGateRefusals} from "@/lib/gate-refusals";
+import {readProbesToday} from "@/lib/probe-budget";
 import { consoleDb } from "@/lib/console-db";
 import { ledgerPath, tenantId } from "@/lib/db";
 import { externalGateChecks } from "@/lib/external-gates";
@@ -165,6 +166,8 @@ export async function GET() {
         intelligence: latestSwarmIntelligence(),
         // Read from the decision journal the engine already writes; no new store.
         gateRefusals: readGateRefusals(),
+        // Today's journaled probes, counted against the budget the engine publishes.
+        probesToday: readProbesToday(),
         checks,
         audit,
         tenantId,
