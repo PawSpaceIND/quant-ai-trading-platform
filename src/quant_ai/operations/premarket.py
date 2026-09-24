@@ -225,7 +225,8 @@ def _exploration(env: Mapping[str, str]) -> Check:
     return Check(
         "exploration", "INFO",
         f"up to {policy.exploration_max_per_day} probes/day at {percent:.2f}% of equity when "
-        f"specialists lean BUY at >= {policy.exploration_min_confidence} confidence",
+        f"specialists lean BUY (score >= {policy.exploration_min_weighted_score}) "
+        f"at >= {policy.exploration_min_confidence} confidence",
     )
 
 

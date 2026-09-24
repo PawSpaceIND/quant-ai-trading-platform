@@ -22,6 +22,7 @@ from quant_ai.agents.atlas import (
     EXPLORATION_FRACTION_ENV,
     EXPLORATION_MAX_ENV,
     EXPLORATION_MIN_CONFIDENCE_ENV,
+    EXPLORATION_MIN_SCORE_ENV,
     AtlasInvestmentAgent,
     AtlasPolicy,
     atlas_policy_from_env,
@@ -76,6 +77,7 @@ def test_policy_defaults_are_off_and_bounds_are_enforced() -> None:
         {"exploration_min_confidence": Decimal("0.56")},
         {"exploration_min_confidence": Decimal(0)},
         {"exploration_min_weighted_score": Decimal(0)},
+        {"exploration_min_weighted_score": Decimal("0.46")},
         {"exploration_notional_fraction": Decimal("0.06")},
         {"exploration_notional_fraction": Decimal(0)},
     ):
@@ -101,7 +103,8 @@ def test_a_budget_turns_the_lean_into_a_labelled_probe_and_counts_it() -> None:
     assert first.rationale[0] == "exploration_probe:weighted_consensus=1.0000;average_confidence=0.4500;budget=1/3"
     assert first.provenance["exploration"] == {
         "probe": True, "weighted_score": "1.0000", "average_confidence": "0.4500",
-        "budget_used": 1, "budget_max": 3, "notional_fraction": "0.01", "overrode": "NEUTRAL",
+        "budget_used": 1, "budget_max": 3, "notional_fraction": "0.01",
+        "min_weighted_score": "0.4500", "overrode": "NEUTRAL",
     }
     assert first.provenance["mode"] == "deterministic"
     second = atlas.decide("TRENT", LEAN, NOW + timedelta(minutes=10), evidence_context=TREND)
@@ -208,7 +211,11 @@ def test_the_environment_arms_the_budget_and_refuses_a_malformed_value() -> None
     armed = atlas_policy_from_env({EXPLORATION_MAX_ENV: "3", EXPLORATION_MIN_CONFIDENCE_ENV: "0.40",
                                    EXPLORATION_FRACTION_ENV: "0.02"})
     assert (armed.exploration_max_per_day, armed.exploration_notional_fraction) == (3, Decimal("0.02"))
-    for bad in ({EXPLORATION_MAX_ENV: "three"}, {EXPLORATION_FRACTION_ENV: "0.5"}, {EXPLORATION_MIN_CONFIDENCE_ENV: "x"}):
+    assert armed.exploration_min_weighted_score == Decimal("0.45"), "unset keeps the full-entry lean"
+    lowered = atlas_policy_from_env({EXPLORATION_MAX_ENV: "3", EXPLORATION_MIN_SCORE_ENV: "0.35"})
+    assert lowered.exploration_min_weighted_score == Decimal("0.35")
+    for bad in ({EXPLORATION_MAX_ENV: "three"}, {EXPLORATION_FRACTION_ENV: "0.5"}, {EXPLORATION_MIN_CONFIDENCE_ENV: "x"},
+                {EXPLORATION_MIN_SCORE_ENV: "0.5"}, {EXPLORATION_MIN_SCORE_ENV: "0"}, {EXPLORATION_MIN_SCORE_ENV: "x"}):
         with pytest.raises(RuntimeError, match="unsupported exploration budget setting"):
             atlas_policy_from_env(bad)
 
@@ -264,8 +271,56 @@ def test_the_premarket_check_reports_the_budget_as_information(tmp_path) -> None
     armed = premarket_checks(payload(), manifest(), env(**{EXPLORATION_MAX_ENV: "3"}),
                              datetime(2026, 9, 21, 3, 20, tzinfo=timezone.utc))
     line = next(c for c in armed if c.id == "exploration")
-    assert line.detail == "up to 3 probes/day at 1.00% of equity when specialists lean BUY at >= 0.40 confidence"
+    assert line.detail == ("up to 3 probes/day at 1.00% of equity when specialists lean BUY "
+                           "(score >= 0.45) at >= 0.40 confidence")
+    lowered = premarket_checks(payload(), manifest(), env(**{EXPLORATION_MAX_ENV: "3", EXPLORATION_MIN_SCORE_ENV: "0.35"}),
+                               datetime(2026, 9, 21, 3, 20, tzinfo=timezone.utc))
+    assert "(score >= 0.35)" in next(c for c in lowered if c.id == "exploration").detail
     broken = premarket_checks(payload(), manifest(), env(**{EXPLORATION_MAX_ENV: "many"}),
                               datetime(2026, 9, 21, 3, 20, tzinfo=timezone.utc))
     assert next(c for c in broken if c.id == "exploration").state == "FAIL"
     json.dumps([c.__dict__ for c in armed])  # the report stays serialisable
+
+
+# 24 September 2026: the strongest lean all day was 0.37 at 0.72 confidence - one voter
+# saying BUY a little more confidently than two saying NEUTRAL - against a 0.45 bar.
+WEAK_LEAN = (
+    evidence("technical-quant-mas", AgentDomain.TECHNICAL, Stance.BUY, "0.80"),
+    evidence("geopolitical-analyst", AgentDomain.NEWS, Stance.NEUTRAL, "0.68"),
+    evidence("indian-equities", AgentDomain.COUNTRY, Stance.NEUTRAL, "0.68"),
+    evidence("risk-desk", AgentDomain.RISK, Stance.NEUTRAL, "0.70"),
+)
+
+
+def test_a_lowered_probe_bar_probes_the_weak_lean_the_default_holds() -> None:
+    held = AtlasInvestmentAgent(policy=budget(3)).decide("TRENT", WEAK_LEAN, NOW, evidence_context=TREND)
+    assert held.action is Stance.NEUTRAL and "exploration" not in held.provenance
+    assert held.provenance["consensus"]["weighted_score"] == "0.3704"
+
+    lowered = budget(3, exploration_min_weighted_score=Decimal("0.35"))
+    probe = AtlasInvestmentAgent(policy=lowered).decide("TRENT", WEAK_LEAN, NOW, evidence_context=TREND)
+    assert probe.action is Stance.BUY
+    assert probe.provenance["exploration"]["weighted_score"] == "0.3704"
+    assert probe.provenance["exploration"]["min_weighted_score"] == "0.3500"
+
+
+def test_the_lowered_bar_is_still_a_bar_and_still_needs_a_budget() -> None:
+    lowered = budget(3, exploration_min_weighted_score=Decimal("0.35"))
+    # One BUY and two NEUTRAL at equal confidence is a 0.33 lean: under 0.35, a hold.
+    even = tuple(evidence(item.agent_id, item.domain, item.stance, "0.72") for item in WEAK_LEAN)
+    held = AtlasInvestmentAgent(policy=lowered).decide("TRENT", even, NOW, evidence_context=TREND)
+    assert held.provenance["consensus"]["weighted_score"] == "0.3333"
+    assert held.action is Stance.NEUTRAL and "exploration" not in held.provenance
+    # The bar alone trades nothing: with no budget the weak lean stays a hold.
+    off = AtlasPolicy(exploration_min_weighted_score=Decimal("0.35"))
+    assert AtlasInvestmentAgent(policy=off).decide("TRENT", WEAK_LEAN, NOW, evidence_context=TREND).action is Stance.NEUTRAL
+
+
+def test_compose_forwards_the_probe_bar_with_the_full_entry_default() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "deploy/docker-compose.yml").read_text())
+    ghost = compose["services"]["pramana-ghost"]["environment"]
+    assert ghost[EXPLORATION_MIN_SCORE_ENV] == "${PRAMANA_EXPLORATION_MIN_WEIGHTED_SCORE:-0.45}"
