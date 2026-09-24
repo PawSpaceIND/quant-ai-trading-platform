@@ -292,13 +292,18 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"brier_score": number(brier), "bins": bins}
 
 
-def _group_metrics(group: list[dict[str, Any]]) -> tuple[float | None, float]:
+def _group_metrics(group: list[dict[str, Any]]) -> tuple[float | None, float, int]:
+    """Hit rate, closed P&L, and how many decisions the hit rate was taken over.
+
+    The count travels with the rate because a group's decisions are mostly holds, which
+    are never evaluated: a regime with 90 decisions can carry a hit rate of one.
+    """
     scored = evaluated(group)
     hit_rate = ratio(sum(1 for _, hit, _ in scored if hit), len(scored))
     pnl = sum(
         (parse_decimal(row["realized_net_pnl"]) for row in closed_trades(group)), Decimal(0)
     )
-    return number(hit_rate), number(pnl)
+    return number(hit_rate), number(pnl), len(scored)
 
 
 def by_regime(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -307,12 +312,13 @@ def by_regime(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups.setdefault(str(row.get("regime") or UNKNOWN), []).append(row)
     result = []
     for regime, group in groups.items():
-        hit_rate, pnl = _group_metrics(group)
+        hit_rate, pnl, scored = _group_metrics(group)
         result.append(
             {
                 "regime": regime,
                 "decisions": len(group),
                 "filled": sum(row.get("governance") == GOVERNANCE_FILLED for row in group),
+                "evaluated": scored,
                 "hit_rate": hit_rate,
                 "net_pnl": pnl,
             }
@@ -329,9 +335,10 @@ def by_hour_ist(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups.setdefault(moment.astimezone(IST).hour, []).append(row)
     result = []
     for hour in sorted(groups):
-        hit_rate, pnl = _group_metrics(groups[hour])
+        hit_rate, pnl, scored = _group_metrics(groups[hour])
         result.append(
-            {"hour": hour, "decisions": len(groups[hour]), "hit_rate": hit_rate, "net_pnl": pnl}
+            {"hour": hour, "decisions": len(groups[hour]), "evaluated": scored,
+             "hit_rate": hit_rate, "net_pnl": pnl}
         )
     return result
 
@@ -373,18 +380,99 @@ def by_playbook(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups.setdefault(str(row.get("playbook") or UNKNOWN), []).append(row)
     result = []
     for playbook, group in groups.items():
-        hit_rate, pnl = _group_metrics(group)
+        hit_rate, pnl, scored = _group_metrics(group)
         result.append(
             {
                 "playbook": playbook,
                 "decisions": len(group),
                 "filled": sum(row.get("governance") == GOVERNANCE_FILLED for row in group),
                 "probes": sum(1 for row in group if is_probe(row)),
+                "evaluated": scored,
                 "hit_rate": hit_rate,
                 "net_pnl": pnl,
             }
         )
     return sorted(result, key=lambda item: (-item["decisions"], item["playbook"]))
+
+
+HARD_HOLD, SILENT_HOLD, DEADLOCK, CONVICTION_FLOOR, ROSTER_UNRECORDED = (
+    "hard_hold", "silent", "deadlock", "conviction_floor", "roster_unrecorded",
+)
+
+
+def hold_causes(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Why the book held, in the ways the journal can tell apart.
+
+    A hold is a decision whose stance took no direction. The roster shapes are #239's
+    (``quant_ai.analytics.scorecards.roster_shape``); what this adds is splitting them
+    from the holds that never weighed a lean at all:
+
+    ``hard_hold``          no consensus recorded: a veto, stale evidence or missing
+                           coverage stopped the decision first. The exploration budget
+                           never probes these.
+    ``silent``             a consensus was weighed and no specialist leaned either way.
+    ``deadlock``           specialists leaned both ways.
+    ``conviction_floor``   a one-sided lean the action did not take: under the entry score
+                           or the playbook's confidence floor, or tightened by the model.
+                           The journal does not say which of those, so they are one count.
+    ``roster_unrecorded``  a consensus with no readable roster, so the shape is unknown.
+                           Counted rather than called silent.
+
+    Counts only. A share of holds that later moved is a rate, and it belongs to the
+    scorecard with its sample size beside it.
+    """
+    from quant_ai.analytics.scorecards import SILENT, SPLIT, roster_shape
+
+    tally = dict.fromkeys((HARD_HOLD, SILENT_HOLD, DEADLOCK, CONVICTION_FLOOR, ROSTER_UNRECORDED), 0)
+    for row in rows:
+        if direction(row.get("stance")) != 0:
+            continue
+        if parse_decimal(row.get("consensus_weighted_score")) is None:
+            tally[HARD_HOLD] += 1
+            continue
+        shape, buys, sells, flat = roster_shape(row)
+        if buys + sells + flat == 0:
+            tally[ROSTER_UNRECORDED] += 1
+        elif shape == SPLIT:
+            tally[DEADLOCK] += 1
+        elif shape == SILENT:
+            tally[SILENT_HOLD] += 1
+        else:
+            tally[CONVICTION_FLOOR] += 1
+    return {"holds": sum(tally.values()), **tally}
+
+
+def promotion_gate(
+    rows: list[dict[str, Any]],
+    *,
+    realised_max_drawdown: Any = None,
+    policy_max_drawdown: Any = None,
+) -> dict[str, Any]:
+    """Whether the dashboard may read its edge rule at all.
+
+    The dashboard's edge rule (hit rate, expectancy, profit factor, Brier on stated
+    confidence) is applied from ``minimum_sample`` evaluated decisions and knows nothing
+    of a mixed basis, of drawdown or of 200 resolved forecasts. So it is only read once
+    the stricter test passes too: the verdict ``pilot_ops.py calibrate`` reaches, here
+    over this report's window. Anything but ``pass`` and the page says insufficient
+    sample. A missing drawdown is a missing input, and the verdict refuses.
+    """
+    from quant_ai.analytics.calibrate import promotion_verdict
+
+    reached = promotion_verdict(
+        rows, realised_max_drawdown=realised_max_drawdown,
+        policy_max_drawdown=policy_max_drawdown,
+    )
+    promotion = reached["promotion"]
+    return {
+        "schema": promotion["schema"],
+        "verdict": reached["verdict"],
+        "promotion_authorized": reached["verdict"] == "pass",
+        "minimum_resolved": promotion["minimum_resolved"],
+        "resolved_forecast_count": promotion["resolved_forecast_count"],
+        "basis": promotion["basis"],
+        "missing_inputs": list(promotion["missing_inputs"]),
+    }
 
 
 def by_mode(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -437,7 +525,7 @@ def recent(rows: list[dict[str, Any]], limit: int = RECENT_LIMIT) -> list[dict[s
     ]
 
 
-def limitations(*, insufficient_sample: bool, minimum_sample: int) -> list[str]:
+def limitations(*, insufficient_sample: bool, minimum_sample: int, minimum_resolved: int) -> list[str]:
     notes = [
         (
             "Paper fills against live marks with modelled friction; no live orders were "
@@ -470,6 +558,10 @@ def limitations(*, insufficient_sample: bool, minimum_sample: int) -> list[str]:
             "correlation inflates them further."
         ),
     ]
+    notes.append(
+        f"No edge is read below {minimum_resolved} clean resolved forecasts, or while the "
+        "promotion report over this window does not pass; the rates above do not change that."
+    )
     if insufficient_sample:
         notes.append(
             f"Fewer than {minimum_sample} evaluated directional decisions: every rate in "
@@ -485,10 +577,16 @@ def summarize(
     now: datetime,
     since: datetime,
     minimum_sample: int = DEFAULT_MINIMUM_SAMPLE,
+    realised_max_drawdown: Any = None,
+    policy_max_drawdown: Any = None,
 ) -> dict[str, Any]:
     """The full report for an already loaded set of rows."""
     directional_section = directional(rows)
     insufficient = directional_section["evaluated"] < minimum_sample
+    promotion = promotion_gate(
+        rows, realised_max_drawdown=realised_max_drawdown,
+        policy_max_drawdown=policy_max_drawdown,
+    )
     return {
         "schema": SCHEMA,
         "tenant_id": tenant_id,
@@ -515,9 +613,14 @@ def summarize(
         "by_hour_ist": by_hour_ist(rows),
         "by_agent": by_agent(rows),
         "by_mode": by_mode(rows),
+        "holds": hold_causes(rows),
+        "promotion": promotion,
         "inference_health": inference_health(rows),
         "recent": recent(rows),
-        "limitations": limitations(insufficient_sample=insufficient, minimum_sample=minimum_sample),
+        "limitations": limitations(
+            insufficient_sample=insufficient, minimum_sample=minimum_sample,
+            minimum_resolved=promotion["minimum_resolved"],
+        ),
     }
 
 
@@ -528,8 +631,13 @@ def build_report(
     now: datetime,
     since_days: int = DEFAULT_SINCE_DAYS,
     minimum_sample: int = DEFAULT_MINIMUM_SAMPLE,
+    realised_max_drawdown: Any = None,
+    policy_max_drawdown: Any = None,
 ) -> dict[str, Any]:
-    """Decision-quality report for the last ``since_days`` days of the tenant's journal."""
+    """Decision-quality report for the last ``since_days`` days of the tenant's journal.
+
+    The drawdown pair feeds only the promotion gate; absent, the gate names it missing.
+    """
     if since_days < 1:
         raise ValueError("since_days must be at least one")
     if minimum_sample < 1:
@@ -537,7 +645,10 @@ def build_report(
     current = aware(now)
     since = current - timedelta(days=since_days)
     rows = load_rows(broker, tenant_id=tenant_id, since=since, until=current)
-    return summarize(rows, tenant_id=tenant_id, now=current, since=since, minimum_sample=minimum_sample)
+    return summarize(
+        rows, tenant_id=tenant_id, now=current, since=since, minimum_sample=minimum_sample,
+        realised_max_drawdown=realised_max_drawdown, policy_max_drawdown=policy_max_drawdown,
+    )
 
 
 def write_report(path: str | Path, report: dict[str, Any]) -> Path:

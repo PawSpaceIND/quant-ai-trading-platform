@@ -875,7 +875,11 @@ class AutonomousTradingDaemon:
         try:
             from quant_ai.analytics.decision_quality import build_report, write_report
 
-            report = build_report(self.tracker.broker, tenant_id=self.tenant_id, now=timestamp)
+            realised, limit = self._promotion_drawdown()
+            report = build_report(
+                self.tracker.broker, tenant_id=self.tenant_id, now=timestamp,
+                realised_max_drawdown=realised, policy_max_drawdown=limit,
+            )
             from quant_ai.analytics.learning_monitor import enrich_learning_report
 
             observed_at = self.clock()
@@ -902,6 +906,28 @@ class AutonomousTradingDaemon:
             self._notify_learning_evidence(drift, observed_at)
         except Exception:  # see above: evidence never breaks the cadence
             self._logger.exception("decision_quality_report_failed")
+
+    def _promotion_drawdown(self) -> tuple[Decimal | None, Decimal | None]:
+        """The book's realised max drawdown and the limit this process's breaker applies.
+
+        Only the report's promotion gate reads them. Either one that cannot be read is
+        None, and the gate then names it missing and refuses, rather than the report
+        failing or a looser limit standing in.
+        """
+        realised = limit = None
+        try:
+            from quant_ai.analytics.calibrate import realised_max_drawdown
+
+            with self.tracker.broker._lock:
+                realised = realised_max_drawdown(self.tracker.broker._connection, self.tenant_id)
+        except Exception:  # evidence never breaks the cadence
+            self._logger.exception("promotion_drawdown_unavailable")
+        try:
+            # The breaker's own rule, from the tick loop above.
+            limit = min(self.plan.max_drawdown_fraction, Decimal(".10"))
+        except (AttributeError, TypeError, DecimalException):
+            limit = None
+        return realised, limit
 
     def _refresh_specialist_skill(self, timestamp: datetime) -> dict | None:
         """Load the accepted weekly policy before applying weights, including on restart."""

@@ -241,15 +241,18 @@ def journal_high_water(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def calibrate(
+def promotion_verdict(
     rows: Sequence[dict[str, Any]],
     *,
     realised_max_drawdown: Any = None,
     policy_max_drawdown: Any = None,
 ) -> dict[str, Any]:
-    """The whole report: integrity first, then everything else over the clean rows only."""
-    rows = list(rows)
-    measured = empirical_payoffs.artifact(rows)
+    """The verdict this report reaches, without the rest of the report.
+
+    One definition, so the dashboard's decision-quality report and this CLI cannot
+    disagree about whether the same rows passed: the promotion report over the clean rows,
+    overridden by ``basis_mixed`` whenever any row proves a second mapping.
+    """
     integrity = basis_integrity(rows)
     clean = [row for row in rows if integrity_of(row) in CLEAN]
     promotion = promotion_report(
@@ -261,6 +264,24 @@ def calibrate(
     # contaminated rows and passing the rest would certify a basis id that provably meant
     # two things, and the next reader would have no way to know.
     verdict = "basis_mixed" if contaminated else promotion["verdict"]
+    return {"verdict": verdict, "promotion": promotion, "integrity": integrity, "clean": clean}
+
+
+def calibrate(
+    rows: Sequence[dict[str, Any]],
+    *,
+    realised_max_drawdown: Any = None,
+    policy_max_drawdown: Any = None,
+) -> dict[str, Any]:
+    """The whole report: integrity first, then everything else over the clean rows only."""
+    rows = list(rows)
+    measured = empirical_payoffs.artifact(rows)
+    reached = promotion_verdict(
+        rows, realised_max_drawdown=realised_max_drawdown,
+        policy_max_drawdown=policy_max_drawdown,
+    )
+    verdict, promotion = reached["verdict"], reached["promotion"]
+    integrity, clean = reached["integrity"], reached["clean"]
     return {
         "schema": SCHEMA,
         "verdict": verdict,

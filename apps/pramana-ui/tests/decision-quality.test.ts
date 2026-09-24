@@ -201,42 +201,96 @@ test("post-mortem reads are capped at the newest files and a missing directory i
   delete process.env.PRAMANA_POST_MORTEM_DIR;
 });
 
+/** The fixture's rates over a sample the edge rule may read: 240 evaluated decisions and a
+ * promotion report that passed over the same window. */
+const earned = (): DecisionQualityReport => {
+  const r = report();
+  r.directional.evaluated = 240;
+  r.promotion = { verdict: "pass", promotion_authorized: true, minimum_resolved: 200, resolved_forecast_count: 240, basis: "weighted_lean_times_confidence.v1", missing_inputs: [] };
+  return r;
+};
+
 test("verdictFor names the rule in every state", () => {
-  const edge = verdictFor(report());
+  const edge = verdictFor(earned());
   assert.equal(edge.state, "edge_candidate");
-  assert.match(edge.sentence, /^Edge candidate: 34 evaluated decisions \(minimum 20\)/);
+  assert.match(edge.sentence, /^Edge candidate: 240 evaluated decisions \(minimum 200\)/);
   assert.match(edge.sentence, /hit rate above 50%, expectancy above 0, profit factor above 1 and Brier score below 0\.25/);
   assert.match(edge.sentence, /not a live-trading approval/);
-  assert.deepEqual(edge.checks.map((c) => c.pass), [true, true, true, true]);
+  assert.deepEqual(edge.checks.map((c) => c.pass), [true, true, true, true, true]);
 
-  const short = report();
+  const short = earned();
   short.directional.evaluated = 12;
   const insufficient = verdictFor(short);
   assert.equal(insufficient.state, "insufficient_sample");
-  assert.match(insufficient.sentence, /^12 of 20 directional decisions evaluated; do not read these numbers as edge yet\./);
-  assert.match(insufficient.sentence, /at least 20 decisions have a 60-minute outcome/);
+  assert.match(insufficient.sentence, /^12 of 200 directional decisions evaluated; do not read these numbers as edge yet\./);
+  assert.match(insufficient.sentence, /at least 200 decisions have a 60-minute outcome and the promotion report passes/);
 
-  const flagged = report();
+  const flagged = earned();
   flagged.insufficient_sample = true;
   const flaggedVerdict = verdictFor(flagged);
   assert.equal(flaggedVerdict.state, "insufficient_sample");
-  assert.match(flaggedVerdict.sentence, /^34 of 20 directional decisions evaluated; do not read these numbers as edge yet\./);
+  assert.match(flaggedVerdict.sentence, /^240 directional decisions evaluated \(minimum 200\); do not read these numbers as edge yet\./);
   assert.match(flaggedVerdict.sentence, /marks the sample as insufficient/);
 
-  const weak = report();
+  const weak = earned();
   weak.trades.profit_factor = 0.9;
   const noEdge = verdictFor(weak);
   assert.equal(noEdge.state, "no_edge_yet");
-  assert.match(noEdge.sentence, /^No edge yet: 34 evaluated decisions meet the minimum of 20/);
+  assert.match(noEdge.sentence, /^No edge yet: 240 evaluated decisions meet the minimum of 200/);
   assert.match(noEdge.sentence, /Not met: profit factor 0\.90\./);
-  assert.deepEqual(noEdge.checks.map((c) => c.pass), [true, true, false, true]);
+  assert.deepEqual(noEdge.checks.map((c) => c.pass), [true, true, false, true, true]);
 
-  const unknown = report();
+  const unknown = earned();
   unknown.calibration.brier_score = null;
   unknown.directional.hit_rate = 0.5;
   const nullVerdict = verdictFor(unknown);
   assert.equal(nullVerdict.state, "no_edge_yet");
   assert.match(nullVerdict.sentence, /hit rate 60m 50\.00%, brier score unavailable/);
+});
+
+test("rates that clear the page's own rule are not an edge below 200 or without a passing promotion", () => {
+  // The fixture clears every part of the rule on 34 decisions. Before the gate that was a
+  // green "Edge candidate"; it is now a sample that says how far it has to go.
+  const fixtureVerdict = verdictFor(report());
+  assert.equal(fixtureVerdict.state, "insufficient_sample");
+  assert.match(fixtureVerdict.sentence, /^34 of 200 directional decisions evaluated/);
+  assert.equal(fixtureVerdict.minimumSample, 200);
+
+  const one = earned();
+  one.directional.evaluated = 199;
+  assert.equal(verdictFor(one).state, "insufficient_sample");
+
+  const unreported = earned();
+  unreported.promotion = null;
+  const silent = verdictFor(unreported);
+  assert.equal(silent.state, "insufficient_sample");
+  assert.match(silent.sentence, /carries no promotion verdict/);
+  assert.equal(silent.checks.at(-1)?.value, "not reported");
+
+  const noDrawdown = earned();
+  noDrawdown.promotion = { ...noDrawdown.promotion!, verdict: "missing_inputs", promotion_authorized: false, missing_inputs: ["drawdown_or_policy_unavailable"] };
+  const missing = verdictFor(noDrawdown);
+  assert.equal(missing.state, "insufficient_sample");
+  assert.match(missing.sentence, /promotion report over this window says missing inputs \(missing: drawdown or policy unavailable\)/);
+  assert.deepEqual(missing.checks.at(-1), { label: "Promotion", value: "missing inputs", pass: false });
+
+  for (const verdict of ["fail", "basis_mixed", "insufficient_sample"]) {
+    const refused = earned();
+    refused.promotion = { ...refused.promotion!, verdict, promotion_authorized: false };
+    assert.equal(verdictFor(refused).state, "insufficient_sample", verdict);
+  }
+
+  // The floor is the promotion report's own: a report stating a lower minimum does not
+  // lower it, and one stating a higher minimum raises it.
+  const lax = earned();
+  lax.minimum_sample = 20;
+  lax.promotion = { ...lax.promotion!, minimum_resolved: 50 };
+  lax.directional.evaluated = 120;
+  assert.equal(verdictFor(lax).state, "insufficient_sample");
+  const strict = earned();
+  strict.minimum_sample = 300;
+  assert.equal(verdictFor(strict).minimumSample, 300);
+  assert.equal(verdictFor(strict).state, "insufficient_sample");
 });
 
 test("formatting helpers use the workspace placeholder and en-IN money style", () => {
@@ -331,7 +385,8 @@ test("the API route returns report, post-mortems and verdict with no-store", asy
   const body = await response.json();
   assert.equal(body.report.tenant_id, "ghost");
   assert.equal(body.missed.session_date, "2026-09-21");
-  assert.equal(body.verdict.state, "edge_candidate");
+  // The fixture predates the promotion gate, so its rates are never read as an edge.
+  assert.equal(body.verdict.state, "insufficient_sample");
   assert.deepEqual(body.postMortems.map((p: { session_date: string }) => p.session_date), ["2026-09-14", "2026-09-12"]);
   assert.equal(body.postMortems[1].evidence, undefined);
   fs.rmSync(reportFile);
