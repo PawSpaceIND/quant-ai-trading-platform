@@ -13,7 +13,7 @@ from quant_ai.daemon import (
     build_ghost_runner,
     build_ghost_runner_from_env,
 )
-from quant_ai.marketdata.ticker_stream import AbstractTickerStream
+from quant_ai.marketdata.ticker_stream import AbstractTickerStream, TickerGaveUp
 
 
 class FakeStream(AbstractTickerStream):
@@ -101,6 +101,65 @@ def test_supervisor_reconnects_after_connection_error(tmp_path, monkeypatch) -> 
     assert sleeps == [1, 1]
     events = [json.loads(line)["event"] for line in (tmp_path / "ghost.log").read_text().splitlines()]
     assert events == ["websocket_connect_failed", "websocket_disconnected"]
+
+
+class SelfHealingStream(AbstractTickerStream):
+    """A client that retries by itself, as KiteTicker does: two drops, then a give-up."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.trace: list[str] = []
+
+    async def start(self) -> None:
+        self.trace.append("start")
+        await self.on_connection_error(ConnectionError("closed 1006"))
+
+    async def stop(self) -> None:
+        self.trace.append("stop")
+
+    async def wait_for_connection_error(self) -> Exception:
+        error = await super().wait_for_connection_error()
+        self.trace.append(type(error).__name__)
+        if len(self.trace) == 2:
+            await self.on_connection_error(ConnectionError("closed 1006 again"))
+        elif len(self.trace) == 3:
+            await self.on_connection_error(TickerGaveUp("maximum retries"))
+        return error
+
+    def recovers_in_place(self, error: Exception) -> bool:
+        return not isinstance(error, TickerGaveUp)
+
+
+def test_supervisor_leaves_a_self_reconnecting_stream_alone_until_it_gives_up(tmp_path, monkeypatch) -> None:
+    # 24 September 2026: stopping KiteTicker on a routine drop cancelled its own retry,
+    # and the feed stayed silent from 07:06 IST until the unpriced-stop halt at 09:17.
+    monkeypatch.setenv("TRADING_LIVE_MONEY_ACTIVE", "false")
+    stream = SelfHealingStream()
+    runner: DaemonRunner
+
+    async def sleeper(delay: float) -> None:
+        runner.request_stop()
+        await asyncio.sleep(0)
+
+    runner = DaemonRunner(FakeDaemon(), (stream,), reconnect=ReconnectPolicy(1, 8, 2),
+                          log_path=tmp_path / "ghost.log", sleeper=sleeper)
+    asyncio.run(runner._supervise_stream(stream))
+
+    # Both drops are journaled and waited through; only the give-up stops the stream.
+    assert stream.trace == ["start", "ConnectionError", "ConnectionError", "TickerGaveUp", "stop"]
+    lines = [json.loads(line) for line in (tmp_path / "ghost.log").read_text().splitlines()]
+    assert [line["event"] for line in lines] == ["websocket_disconnected"] * 3
+    assert lines[-1]["error"] == "maximum retries"
+
+
+def test_a_give_up_is_not_displaced_by_a_later_routine_drop() -> None:
+    async def scenario():
+        stream = SelfHealingStream()
+        await stream.on_connection_error(TickerGaveUp("maximum retries"))
+        await stream.on_connection_error(ConnectionError("closed 1006"))
+        return await AbstractTickerStream.wait_for_connection_error(stream)
+
+    assert isinstance(asyncio.run(scenario()), TickerGaveUp)
 
 
 def test_cadence_aligns_to_next_ten_minute_boundary(tmp_path, monkeypatch) -> None:

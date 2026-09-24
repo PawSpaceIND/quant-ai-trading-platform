@@ -364,10 +364,16 @@ class DaemonRunner:
             try:
                 await stream.start()
                 delay = self.reconnect.initial_delay_seconds
-                error = await stream.wait_for_connection_error()
-                if self._stop_requested:
-                    return
-                await self._write_event("websocket_disconnected", stream=type(stream).__name__, error=str(error))
+                while True:
+                    error = await stream.wait_for_connection_error()
+                    if self._stop_requested:
+                        return
+                    await self._write_event("websocket_disconnected", stream=type(stream).__name__, error=str(error))
+                    # A client that retries by itself is left to do so: stopping it here
+                    # cancels that retry, and it is the only reconnect that is safe
+                    # inside a running KiteTicker (24 September 2026).
+                    if not stream.recovers_in_place(error):
+                        break
             except asyncio.CancelledError:
                 raise
             except (ConnectionError, OSError, TimeoutError) as error:

@@ -125,6 +125,10 @@ class TickBuffer:
             return dict(self._latest)
 
 
+class TickerGaveUp(ConnectionError):
+    """The stream's own reconnection is exhausted; only a fresh connection can recover it."""
+
+
 class AbstractTickerStream(ABC):
     def __init__(self, buffer: TickBuffer | None = None) -> None:
         self.buffer = buffer or TickBuffer()
@@ -136,10 +140,24 @@ class AbstractTickerStream(ABC):
     async def on_orderbook_update(self, update: OrderBookUpdate) -> None:
         _ = update
 
+    def recovers_in_place(self, error: Exception) -> bool:
+        """Whether the stream reconnects by itself after ``error``.
+
+        False by default: the supervisor stops the stream and starts it again. A stream
+        whose client library already retries must say True for a routine drop, because
+        stopping it cancels that retry.
+        """
+        _ = error
+        return False
+
     async def on_connection_error(self, error: Exception) -> None:
         queue = self._error_queue()
         if queue.full():
-            queue.get_nowait()
+            queued = queue.get_nowait()
+            # A drop the stream recovers from is only journaled; a give-up is what makes
+            # the supervisor reconnect, so a later routine drop must never displace it.
+            if self.recovers_in_place(error) and not self.recovers_in_place(queued):
+                error = queued
         queue.put_nowait(error)
 
     async def wait_for_connection_error(self) -> Exception:
@@ -185,11 +203,36 @@ class ZerodhaKiteTicker(AbstractTickerStream):
         self._ticker.on_ticks = self._on_ticks
         self._ticker.on_error = self._on_error
         self._ticker.on_close = self._on_close
-        await asyncio.to_thread(self._ticker.connect, threaded=True)
+        self._ticker.on_noreconnect = self._on_noreconnect
+        reactor = _kite_reactor()
+        if reactor is not None and reactor.running:
+            # KiteTicker runs one Twisted reactor per process and starts it on the first
+            # connect only. A later connect from this thread registers a socket with a
+            # reactor that is not thread-safe and never wakes for it: on 24 September 2026
+            # the replacement connection never opened, never failed, and the feed stayed
+            # silent from 07:06 IST until the unpriced-stop halt at 09:17.
+            reactor.callFromThread(self._ticker.connect, threaded=True)
+        else:
+            await asyncio.to_thread(self._ticker.connect, threaded=True)
 
     async def stop(self) -> None:
-        if self._ticker is not None:
-            await asyncio.to_thread(self._ticker.close)
+        ticker = self._ticker
+        if ticker is None:
+            return
+        reactor = _kite_reactor()
+        if reactor is not None and reactor.running:
+            reactor.callFromThread(ticker.close)
+        else:
+            await asyncio.to_thread(ticker.close)
+
+    def recovers_in_place(self, error: Exception) -> bool:
+        """KiteTicker reconnects by itself after a drop and resubscribes on connect.
+
+        Stopping it on a routine close cancels that retry (``close`` calls
+        ``stop_retry``), which is what turned one dropped connection into a dead feed.
+        Only its give-up, after ``reconnect_max_tries``, needs a new connection.
+        """
+        return not isinstance(error, TickerGaveUp)
 
     def _on_connect(self, ws: Any, response: Any) -> None:
         _ = response
@@ -238,6 +281,12 @@ class ZerodhaKiteTicker(AbstractTickerStream):
         _ = ws
         if self._loop is not None:
             error = ConnectionError(f"KiteTicker closed {code}: {reason}")
+            asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
+
+    def _on_noreconnect(self, ws: Any) -> None:
+        _ = ws
+        if self._loop is not None:
+            error = TickerGaveUp("KiteTicker stopped reconnecting after its maximum retries")
             asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
 
 
@@ -347,6 +396,11 @@ class IBKRAsyncTicker(AbstractTickerStream):
         except RuntimeError:
             return
         loop.create_task(self.on_orderbook_update(update))
+
+
+def _kite_reactor() -> Any:
+    """The Twisted reactor KiteTicker runs on, or None when the SDK cannot say."""
+    return getattr(import_module("kiteconnect.ticker"), "reactor", None)
 
 
 def _depth_price(levels: list[dict[str, Any]]) -> Decimal | None:
