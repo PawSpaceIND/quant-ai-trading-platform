@@ -12,7 +12,7 @@ comparable to hold them to.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from quant_ai.agents.atlas import AtlasInvestmentAgent, AtlasPolicy, atlas_policy_from_env
@@ -97,6 +97,7 @@ def build_traded_runtime(
     oms: DurableOms | None = None,
     atlas_policy: AtlasPolicy | None = None,
     exploration_used: Callable[[datetime], int] | None = None,
+    empirical_payoffs: Callable[..., Mapping[str, object] | None] | None = None,
 ) -> SwarmPaperTradingService:
     """The sanctioned execution runtime under one set of founder directives.
 
@@ -123,6 +124,9 @@ def build_traded_runtime(
                 policy=atlas_policy or atlas_policy_from_env(),
                 llm_client=llm_client, founder_instructions=directives.instructions,
                 exploration_used=exploration_used,
+                # Measured payoffs, priced beside the declared EV on each proof and read
+                # by nothing: the live EV and the gate keep the declared numbers.
+                empirical_payoffs=empirical_payoffs,
             )
         ),
         warden=RiskWarden(

@@ -269,6 +269,17 @@ def _ev_gate(env: Mapping[str, str]) -> Check:
     )
 
 
+def _empirical_payoffs(env: Mapping[str, str]) -> Check:
+    """Which measured payoffs the proofs are priced against, beside the declared EV.
+
+    Informational in every state: nothing reads the second number, so an artifact that
+    cannot be attached is worth knowing about and never a reason not to trade.
+    """
+    from quant_ai.analytics.empirical_payoffs import from_env
+
+    return Check("empirical_payoffs", "INFO", from_env(env)[1][:200])
+
+
 def _learning(env: Mapping[str, str]) -> Check:
     """Governed learning as the container reads it: weekly skill weights and post-mortems."""
     from quant_ai.analytics.specialist_skill import (
@@ -378,6 +389,7 @@ def premarket_checks(
         _exploration(env),
         _playbooks(env),
         _ev_gate(env),
+        _empirical_payoffs(env),
         _learning(env),
         _scan_universe(env, payload),
         _capital_plan(env, ledger_capital),
