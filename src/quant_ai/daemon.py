@@ -16,6 +16,7 @@ from quant_ai.agents.institutional_runtime import InstitutionalRuntimeInputs
 from quant_ai.agents.scanner import scan_universe_from_env
 from quant_ai.agents.traded_runtime import build_traded_runtime
 from quant_ai.analytics.decision_journal import count_probes
+from quant_ai.analytics.empirical_payoffs import from_env as empirical_payoffs_from_env
 from quant_ai.analytics.post_mortem import approved_lessons
 from quant_ai.analytics.specialist_skill import reweighting_enabled
 from quant_ai.config import paths
@@ -596,6 +597,11 @@ def build_ghost_runner(
         holidays=holidays if holidays is not None else default_holidays(),
         exchanges={item.symbol.upper(): item.exchange.upper() for item in instruments},
     )
+    # Measured payoffs, read once at boot and recorded beside the declared EV on every
+    # proof. Only the operator's artifact attaches; an unreadable one is logged and the
+    # session runs without it, because nothing reads the second number.
+    empirical_lookup, empirical_status = empirical_payoffs_from_env()
+    logging.getLogger("quant_ai.ghost_runner").info("empirical_payoffs %s", empirical_status)
     # The historical replay assembles its runtime through this same builder, so a
     # backtest cannot quietly run a looser configuration than the one that trades.
     runtime = build_traded_runtime(
@@ -618,6 +624,7 @@ def build_ghost_runner(
         institutional_inputs=institutional_inputs, oms=oms,
         # The day's probes so far, from the journal, so a restart cannot reset the budget.
         exploration_used=lambda now: count_probes(broker, tenant_id=tenant_id, now=now),
+        empirical_payoffs=empirical_lookup,
     )
     runtime.oms = oms
     if require_book_risk_gates:

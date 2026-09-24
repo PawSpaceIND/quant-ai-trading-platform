@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+import os
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from statistics import median
 from typing import Any
 
@@ -45,6 +47,9 @@ from quant_ai.analytics.decision_journal import parse_decimal
 from quant_ai.analytics.forecast_scoring import BASIS_POINT, HORIZON_COLUMNS
 
 SCHEMA = "pramana.empirical_payoffs.v1"
+# The artifact the running engine prices its second EV against. Read once, at boot: a
+# refit is a new file, a new id and a restart, never a number that moves mid-session.
+ARTIFACT_ENV = "PRAMANA_EMPIRICAL_PAYOFFS"
 # Matches forecast_scoring.MINIMUM_SCORED. Below it the mean describes which decisions
 # happened to resolve rather than the instrument, and the group says so instead.
 MINIMUM_SAMPLE = 30
@@ -146,12 +151,9 @@ def artifact(rows: Sequence[dict[str, Any]], *, generated_at: datetime | None = 
         "by_playbook": payoffs(rows, key=_playbook_key),
         "overall": _group(list(rows)),
     }
-    digest = hashlib.sha256(
-        json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()[:16]
     return {
         **content,
-        "id": digest,
+        "id": _digest(content),
         "generated_at": generated_at.isoformat() if generated_at is not None else None,
         "limitations": [
             "Measured from resolved forward returns, gross of the fill's own friction.",
@@ -160,6 +162,86 @@ def artifact(rows: Sequence[dict[str, Any]], *, generated_at: datetime | None = 
             "A refit ships a new id; rows written under an earlier id are never back-filled.",
         ],
     }
+
+
+CONTENT_KEYS = ("schema", "minimum_sample", "by_symbol", "by_playbook", "overall")
+
+
+def _digest(content: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+
+
+class ArtifactError(ValueError):
+    """An artifact that cannot be attached, and why, in words an operator can act on."""
+
+
+def load_artifact(path: str | Path) -> dict[str, Any]:
+    """An artifact ``pilot_ops.py empirical-payoffs`` wrote, verified against its own id.
+
+    The id is a hash of the measurement, so a file whose content no longer hashes to it
+    has been edited, and attaching it would price decisions under an id that names
+    different numbers. That, a missing file, bad JSON or another schema all raise.
+    """
+    try:
+        found = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ArtifactError(f"unreadable ({type(error).__name__})") from error
+    if not isinstance(found, dict) or found.get("schema") != SCHEMA:
+        raise ArtifactError(f"not a {SCHEMA} artifact")
+    if found.get("id") != _digest({key: found.get(key) for key in CONTENT_KEYS}):
+        raise ArtifactError("content does not match its id; write a new artifact instead of editing one")
+    return found
+
+
+def measured_payoffs(found: Mapping[str, Any]) -> Callable[..., dict | None]:
+    """Atlas's ``empirical_payoffs`` lookup over one verified artifact.
+
+    Hands back the group that applies to a decision - symbol first, then playbook and
+    regime - named with the artifact's source, so the EV block records which measurement
+    priced it. None when nothing measured applies, including a group under this build's
+    minimum even if the file was written by one with a lower floor.
+    """
+    source = source_label(found)
+
+    def lookup(*, symbol: Any = None, playbook: Any = None, regime: Any = None) -> dict | None:
+        if source == DECLARED:
+            return None
+        group = group_for(found, symbol=symbol, playbook=playbook, regime=regime)
+        try:
+            sampled = group is not None and int(group.get("n")) >= MINIMUM_SAMPLE
+        except (TypeError, ValueError):
+            sampled = False
+        return {**group, "source": source} if sampled else None
+
+    return lookup
+
+
+def from_env(environ: Mapping[str, str] | None = None) -> tuple[Callable[..., dict | None] | None, str]:
+    """The lookup the engine hands Atlas, and one line saying what it attached.
+
+    Recorded only, whatever this returns: the live expected value, and the EV gate when an
+    operator arms it, keep the declared payoffs. So an artifact that cannot be attached is
+    reported and the engine runs without it; it never stops a session.
+    """
+    source = os.environ if environ is None else environ
+    raw = source.get(ARTIFACT_ENV, "").strip()
+    if not raw:
+        return None, f"off (set {ARTIFACT_ENV} to a file written by pilot_ops.py empirical-payoffs)"
+    try:
+        found = load_artifact(raw)
+    except ArtifactError as error:
+        return None, f"not attached: {error}"
+    usable = sum(
+        1 for table in ("by_symbol", "by_playbook")
+        for group in (found.get(table) or {}).values()
+        if isinstance(group, dict) and not group.get("thin")
+    )
+    return measured_payoffs(found), (
+        f"{source_label(found)} attached to proofs as ev_empirical; {usable} group(s) past the "
+        f"{MINIMUM_SAMPLE}-row floor; recorded only, the live EV stays declared"
+    )
 
 
 def source_label(found: Any) -> str:

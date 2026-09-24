@@ -80,6 +80,9 @@ services:
       # Regime playbooks: the regime raises the consensus floor, scales entries and may
       # withhold probes. Every playbook only tightens; off is the looser comparison run.
       PRAMANA_REGIME_PLAYBOOKS: ${PRAMANA_REGIME_PLAYBOOKS:-on}
+      # Measured payoffs priced beside the declared EV on each proof (ev_empirical). Empty
+      # is off. A path under /data written by pilot_ops.py empirical-payoffs; read at boot.
+      PRAMANA_EMPIRICAL_PAYOFFS: ${PRAMANA_EMPIRICAL_PAYOFFS:-}
       # Weekly specialist skill weights from the scored journal, applied inside a fixed
       # band. The report is written either way; off keeps every weight at one.
       PRAMANA_SPECIALIST_REWEIGHTING: ${PRAMANA_SPECIALIST_REWEIGHTING:-on}
