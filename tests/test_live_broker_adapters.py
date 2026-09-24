@@ -165,3 +165,10 @@ def test_global_market_calendar_reports_overlapping_venue_states():
     assert states[GlobalVenue.USA] == MarketState.PRE_MARKET
     assert states[GlobalVenue.INDIA] == MarketState.REGULAR_HOURS
     assert states[GlobalVenue.TOKYO] == MarketState.CLOSED
+
+
+def test_the_build_ships_with_live_order_network_requests_off():
+    # A pin, not a behaviour test: the constant is the second lock behind the environment
+    # check above, and flipping it must fail CI rather than pass review unnoticed.
+    from quant_ai.execution import live_brokers
+    assert live_brokers.LIVE_ORDER_NETWORK_REQUESTS_ENABLED is False
