@@ -353,3 +353,89 @@ def test_a_sample_below_the_scoring_floor_prints_no_skill() -> None:
     enough = calibration.render(calibration.calibrate(calibrated_book(40)))
     assert "no claim" not in enough
     assert "skill vs base rate               -" not in enough
+
+
+# ------------------------------------------------------------------ what the operator reads next
+# The loop is closed only when the report says, on the terminal, what the book entered,
+# what it expected at declared and at measured payoffs, and whether outcomes keep arriving.
+
+
+def test_labelled_probes_are_reported_apart_from_conviction_entries() -> None:
+    book = calibrated_book(40)
+    for index in (0, 1, 2):          # three filled rows (index % 10 < 7 fills) become probes
+        book[index] = dict(book[index], probe=1, realized_net_pnl="-30.00")
+    book.append(row(900, filled=False))      # a hold: forecast, no fill, never an entry
+    entered = calibration.calibrate(book)["entered"]
+    assert entered["probes"]["filled"] == 3 and entered["probes"]["mean_realized_net_pnl"] == "-30.00"
+    assert entered["conviction"]["filled"] == entered["all"]["filled"] - 3
+    assert entered["conviction"]["mean_realized_net_pnl"] == "125.00"
+    # Only positions: the hold's forecast is scored elsewhere and is never an entry here.
+    assert entered["all"]["filled"] == sum(1 for item in book if item["governance"] == "filled")
+
+
+def test_a_probe_is_only_what_the_journal_labelled_one() -> None:
+    assert calibration.is_probe({"probe": 1}) and calibration.is_probe({"probe": "1"})
+    for unlabelled in ({"probe": 0}, {"probe": None}, {}):
+        assert not calibration.is_probe(unlabelled)
+
+
+def test_the_declared_break_even_is_derived_from_the_rows_not_printed_as_a_constant() -> None:
+    assert calibration.declared_break_even([row(0)]) == "0.7000"            # 1% / 2% at 10 bps
+    even = dict(row(0), expected_return="0.02", expected_risk="0.02")
+    assert calibration.declared_break_even([even]) == "0.5250"               # (0.02 + 0.001) / 0.04
+    assert calibration.declared_break_even([dict(row(0), expected_return=None)]) is None
+    text = calibration.render(calibration.calibrate([even] * 3))
+    assert "break-even p (declared)          0.5250" in text
+
+
+def test_measured_ev_sits_beside_declared_and_never_uses_a_thin_group() -> None:
+    thin = calibration.calibrate(calibrated_book(20))["expected_value"]
+    assert thin["declared"]["n"] == 20
+    assert thin["empirical"] == {"n": 0, "mean": None, "negative_share": None}
+    wide = calibration.calibrate(calibrated_book(240))["expected_value"]
+    assert wide["declared"]["n"] == wide["empirical"]["n"] == 240
+    # At declared 1% / 2% every p=0.70 row is -0.0010 and every p=0.30 row -0.0120; the
+    # measured payoffs of the same book change that, which is the point of showing both.
+    assert wide["declared"]["mean"] != wide["empirical"]["mean"]
+    assert wide["measured_break_even_probability"] is not None
+
+
+def test_measured_payoffs_change_no_verdict(monkeypatch) -> None:
+    """Empirical EV is shown, never scored: absurd measured payoffs leave the verdict alone."""
+    book = calibrated_book(240)
+    honest = calibration.calibrate(book, realised_max_drawdown="0.02", policy_max_drawdown="0.10")
+    ruinous = {"e_win_hat": "0.000001", "e_loss_hat": "0.500000", "thin": False}
+    monkeypatch.setattr(calibration.empirical_payoffs, "group_for", lambda *a, **k: ruinous)
+    report = calibration.calibrate(book, realised_max_drawdown="0.02", policy_max_drawdown="0.10")
+    assert Decimal(report["expected_value"]["empirical"]["mean"]) < Decimal("-0.1")
+    assert report["expected_value"]["empirical"]["negative_share"] == "1.0000"
+    assert (report["verdict"], report["promotion_authorized"]) == (honest["verdict"], True)
+    assert report["promotion"] == honest["promotion"]
+
+
+def test_a_missing_drawdown_refuses_however_good_the_rest() -> None:
+    report = calibration.calibrate(calibrated_book(240))
+    assert report["verdict"] == "missing_inputs" and report["promotion_authorized"] is False
+    assert "drawdown_or_policy_unavailable" in report["promotion"]["missing_inputs"]
+    assert "fewer than two daily equity marks, or no drawdown limit" in calibration.render(report)
+
+
+def test_the_journal_high_water_shows_whether_outcomes_keep_arriving() -> None:
+    rows = [dict(row(0), resolved_at="2026-09-15T06:00:00+00:00"),
+            dict(row(1), resolved_at="2026-09-15T06:05:00+00:00"),
+            dict(row(2), resolved_at=None), dict(row(3), forecast_probability_up=None)]
+    journal = calibration.calibrate(rows)["journal"]
+    assert journal == {"rows": 4, "forecasts": 3, "resolved_forecasts": 2,
+                       "last_decided_at": "2026-09-15T05:03:00+00:00",
+                       "last_resolved_at": "2026-09-15T06:05:00+00:00"}
+    text = calibration.render(calibration.calibrate(rows))
+    assert "rows / forecasts / resolver done 4 / 3 / 2" in text
+    assert "last resolved                    2026-09-15T06:05:00+00:00" in text
+
+
+def test_the_reliability_table_is_printed_and_marked_thin_below_the_floor() -> None:
+    text = calibration.render(calibration.calibrate(calibrated_book(240)))
+    assert "0.7-0.8  n=168" in text and "0.3-0.4  n=72" in text
+    assert "(thin: no claim)" not in text
+    thin = calibration.render(calibration.calibrate(calibrated_book(10)))
+    assert "Reliability (stated p against what happened)  (thin: no claim)" in thin

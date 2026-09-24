@@ -32,13 +32,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import Decimal
+from statistics import median
 from typing import Any
 
 from quant_ai.agents import forecast
+from quant_ai.agents.expected_value import expected_value
 from quant_ai.analytics import empirical_payoffs
 from quant_ai.analytics.decision_journal import parse_decimal
-from quant_ai.analytics.forecast_scoring import MINIMUM_SCORED, summarize
-from quant_ai.analytics.promotion import promotion_report
+from quant_ai.analytics.forecast_scoring import BASIS_POINT, MINIMUM_SCORED, summarize
+from quant_ai.analytics.promotion import FILLED, promotion_report, row_expected_value
 
 SCHEMA = "pramana.calibration_report.v1"
 # One step of the mapping's own output. Recomputing from the journal's four-place inputs
@@ -127,6 +129,118 @@ def realised_max_drawdown(connection: Any, tenant_id: str) -> Decimal | None:
     return maximum_drawdown(curve) if len(curve) >= 2 else None
 
 
+def _mean(values: Sequence[Decimal]) -> str | None:
+    return str((sum(values, Decimal(0)) / Decimal(len(values))).quantize(Decimal("0.000001"))) if values else None
+
+
+def _rupees(values: Sequence[Decimal]) -> str | None:
+    return str((sum(values, Decimal(0)) / Decimal(len(values))).quantize(Decimal("0.01"))) if values else None
+
+
+def _negative_share(values: Sequence[Decimal]) -> str | None:
+    if not values:
+        return None
+    return str((Decimal(sum(1 for value in values if value < 0)) / Decimal(len(values))).quantize(Decimal("0.0001")))
+
+
+def empirical_expected_value(row: dict[str, Any], measured: Any) -> Decimal | None:
+    """The row's own probability and cost, priced at the measured payoffs that apply to it.
+
+    None when no measured group applies - including a thin one, exactly as
+    ``empirical_payoffs.group_for`` refuses it. Reported beside the declared EV and read
+    by nothing: the live expected value, and anything that sizes, keeps the declared
+    numbers.
+    """
+    group = empirical_payoffs.group_for(
+        measured, symbol=row.get("symbol"), playbook=row.get("playbook"), regime=row.get("regime"),
+    )
+    probability = parse_decimal(row.get("forecast_probability_up"))
+    cost_bps = parse_decimal(row.get("forecast_cost_bps"))
+    if group is None or probability is None or cost_bps is None:
+        return None
+    win, loss = parse_decimal(group.get("e_win_hat")), parse_decimal(group.get("e_loss_hat"))
+    if win is None or loss is None:
+        return None
+    return expected_value(probability, expected_return=win, expected_risk=loss, cost_bps=cost_bps)
+
+
+def declared_break_even(rows: Sequence[dict[str, Any]]) -> str | None:
+    """Median over rows of (risk + cost) / (win + risk) at each row's OWN declared payoffs.
+
+    Derived rather than printed as a constant: the 0.70 the specialists' 1% / 2% imply is a
+    property of those numbers, and a specialist that declares differently changes it.
+    """
+    values = []
+    for row in rows:
+        win, risk = parse_decimal(row.get("expected_return")), parse_decimal(row.get("expected_risk"))
+        cost = parse_decimal(row.get("forecast_cost_bps"))
+        if win is None or risk is None or cost is None or win + risk <= 0:
+            continue
+        values.append((risk + cost / BASIS_POINT) / (win + risk))
+    return str(median(values).quantize(Decimal("0.0001"))) if values else None
+
+
+def _ev_block(rows: Sequence[dict[str, Any]], measured: Any) -> dict[str, Any]:
+    declared = [value for row in rows if (value := row_expected_value(row)) is not None]
+    empirical = [value for row in rows if (value := empirical_expected_value(row, measured)) is not None]
+    return {
+        "declared": {"n": len(declared), "mean": _mean(declared), "negative_share": _negative_share(declared)},
+        "empirical": {"n": len(empirical), "mean": _mean(empirical), "negative_share": _negative_share(empirical)},
+    }
+
+
+def is_probe(row: dict[str, Any]) -> bool:
+    """A labelled probe: the journal's own flag, never inferred from size or confidence."""
+    return str(row.get("probe")) == "1"
+
+
+def entered(rows: Sequence[dict[str, Any]], measured: Any) -> dict[str, dict[str, Any]]:
+    """Filled buys, as conviction entries and labelled probes apart and together.
+
+    Only decisions that became positions: a hold or a refusal has an expected value but no
+    fill, and averaging its EV in would describe trades the book never took. Probes are
+    told apart because they clear a lower lean by design (PRAMANA_EXPLORATION_MIN_WEIGHTED_SCORE);
+    pooled, their weaker signal would be read as the conviction entries' result.
+    Realised P&L is in rupees per fill; expected value is a return on the notional.
+    """
+    filled = [row for row in rows
+              if row.get("governance") == FILLED and str(row.get("side") or "").upper() == "BUY"]
+    groups = {
+        "all": filled,
+        "conviction": [row for row in filled if not is_probe(row)],
+        "probes": [row for row in filled if is_probe(row)],
+    }
+    result = {}
+    for name, members in groups.items():
+        settled = [value for row in members if (value := parse_decimal(row.get("realized_net_pnl"))) is not None]
+        result[name] = {
+            "filled": len(members),
+            "settled": len(settled),
+            "mean_realized_net_pnl": _rupees(settled),
+            **{f"{kind}_ev": block for kind, block in _ev_block(members, measured).items()},
+        }
+    return result
+
+
+def journal_high_water(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """How far the journal and its outcome resolver have got. Read from the rows already loaded.
+
+    ``last_resolved_at`` is the loop's pulse: when it stops moving while decisions keep
+    arriving, the forecasts are being written and never graded, and the sample the verdict
+    waits on stops growing.
+    """
+    forecasts = [row for row in rows if row.get("forecast_probability_up")]
+    decided = sorted(str(row["decided_at"]) for row in rows if row.get("decided_at"))
+    resolved = sorted(str(row["resolved_at"]) for row in forecasts if row.get("resolved_at"))
+    return {
+        "rows": len(rows),
+        "forecasts": len(forecasts),
+        "resolved_forecasts": len(resolved),
+        "last_decided_at": decided[-1] if decided else None,
+        "last_resolved_at": resolved[-1] if resolved else None,
+    }
+
+
 def calibrate(
     rows: Sequence[dict[str, Any]],
     *,
@@ -135,6 +249,7 @@ def calibrate(
 ) -> dict[str, Any]:
     """The whole report: integrity first, then everything else over the clean rows only."""
     rows = list(rows)
+    measured = empirical_payoffs.artifact(rows)
     integrity = basis_integrity(rows)
     clean = [row for row in rows if integrity_of(row) in CLEAN]
     promotion = promotion_report(
@@ -163,12 +278,22 @@ def calibrate(
         # Payoffs measure what the market did after each decision, net of that row's own
         # cost - which does not depend on which mapping produced the probability, so every
         # resolved row counts here. See quant_ai.analytics.empirical_payoffs.
-        "payoffs": empirical_payoffs.artifact(rows),
+        "payoffs": measured,
+        # Declared and measured side by side, over the decisions that became positions and
+        # over every forecast. The measured column never sizes, gates or replaces anything.
+        "entered": entered(rows, measured),
+        "expected_value": {
+            **_ev_block([row for row in rows if row.get("forecast_probability_up")], measured),
+            "declared_break_even_probability": declared_break_even(rows),
+            "measured_break_even_probability": measured["overall"]["break_even_probability"],
+        },
+        "journal": journal_high_water(rows),
         "limitations": [
             "Scored only over rows whose probability is reproduced by one registered mapping.",
             "Unverifiable rows are excluded, not assumed clean; they predate the recorded inputs.",
             "The drawdown limit is rebuilt from the directives this process reads, as the warden does.",
             "This report arms nothing. The EV gate also needs measured, not declared, payoffs.",
+            "Measured EV uses a symbol or playbook group only when it is not thin; it never sizes.",
         ],
     }
 
@@ -228,19 +353,45 @@ def render(report: dict[str, Any]) -> str:
     lines.append(_line("Brier, base rate",
                        None if thin else (base_rate.get("base_rate") or {}).get("brier_score")))
     lines.append(_line("skill vs base rate", None if thin else promotion["skill_vs_base_rate"]))
+    bins = [item for item in promotion["reliability"] if item["forecasts"]]
+    if bins:
+        lines += ["", "Reliability (stated p against what happened)" + ("  (thin: no claim)" if thin else "")]
+        lines += [f"  {item['lower']:.1f}-{item['upper']:.1f}  n={item['forecasts']:<5} "
+                  f"mean p {_shown(item['mean_forecast'])}  observed {_shown(item['observed_frequency'])}"
+                  for item in bins]
     lines += ["", "Book"]
     lines.append(_line("filled buys (probes count)", promotion["filled_buys"]))
     lines.append(_line("mean net P&L, filled buys", promotion["mean_net_ev_filled_buys"]))
     lines.append(_line("median |drift_bps|, fills", promotion["median_abs_entry_drift_bps"]))
     lines.append(_line("realised max drawdown", promotion["realised_max_drawdown"]))
     lines.append(_line("drawdown limit (live)", promotion["policy_max_drawdown"]))
+    lines += ["", "Entries (filled buys; realised P&L in rupees, EV as a return on notional)"]
+    for name, label in (("conviction", "conviction entries"), ("probes", "labelled probes")):
+        group = report["entered"][name]
+        lines.append(_line(label, (
+            f"filled={group['filled']} settled={group['settled']} "
+            f"mean net={_shown(group['mean_realized_net_pnl'])} "
+            f"EV declared={_shown(group['declared_ev']['mean'])} "
+            f"measured={_shown(group['empirical_ev']['mean'])}")))
     overall = report["payoffs"]["overall"]
-    lines += ["", "Payoffs (measured, net of each row's own cost; declared are 1% / 2%)"]
+    ev = report["expected_value"]
+    lines += ["", "Payoffs, declared against measured (measured never sizes or gates)"]
     lines.append(_line("e_win_hat / e_loss_hat",
                        f"{_shown(overall['e_win_hat'])} / {_shown(overall['e_loss_hat'])}"))
-    lines.append(_line("break-even p (measured)", overall["break_even_probability"]))
-    lines.append(_line("break-even p (declared)", "0.7000"))
     lines.append(_line("sample", f"{overall['n']}{' (thin)' if overall['thin'] else ''}"))
+    lines.append(_line("break-even p (declared)", ev["declared_break_even_probability"]))
+    lines.append(_line("break-even p (measured)", ev["measured_break_even_probability"]))
+    for kind in ("declared", "empirical"):
+        block = ev[kind]
+        lines.append(_line(f"EV, every forecast ({'measured' if kind == 'empirical' else kind})",
+                           f"n={block['n']} mean={_shown(block['mean'])} "
+                           f"negative={_shown(block['negative_share'])}"))
+    journal = report["journal"]
+    lines += ["", "Journal"]
+    lines.append(_line("rows / forecasts / resolver done",
+                       f"{journal['rows']} / {journal['forecasts']} / {journal['resolved_forecasts']}"))
+    lines.append(_line("last decided", journal["last_decided_at"]))
+    lines.append(_line("last resolved", journal["last_resolved_at"]))
     if promotion["missing_inputs"]:
         lines += ["", "Missing inputs (the report refuses until these exist):"]
         lines += [f"  {code}: {MISSING_GLOSS.get(code, code)}" for code in promotion["missing_inputs"]]
