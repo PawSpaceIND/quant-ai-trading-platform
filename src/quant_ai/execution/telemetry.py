@@ -147,6 +147,7 @@ class PilotTelemetry:
             "protectionCoverage": daemon.protection_coverage,
             "protectionSweep": self._protection_sweep(now),
             "riskGates": self._risk_gates(now, book),
+            "exploration": self._exploration(now),
             "tradeEvidence": ({key: value for key, value in daemon.trade_evidence.items()
                 if key not in {"episodes", "openPositions", "strategyAttribution"}}
                 if daemon.trade_evidence and daemon.trade_evidence["ledgerId"] == ledger_id else None),
@@ -317,6 +318,44 @@ class PilotTelemetry:
         return {"schema": "pramana.risk_gates.v1",
                 "tenantId": getattr(daemon, "tenant_id", None),
                 "checkedAt": now.isoformat(), "gates": gates}
+
+    def _exploration(self, now: datetime) -> dict | None:
+        """The probe budget the running Atlas applies, so a cap of 0 reads as off.
+
+        Taken from the policy object the engine is running, not re-read from the
+        environment: the page shows what the process applies. Settings only; the day's
+        count is the journal's, which the dashboard already reads. None when the running
+        pipeline has no Atlas policy to report, which the page shows as not reported
+        rather than as off. Nothing here raises the cap, lowers a bar or turns a hard hold
+        (a veto, stale evidence, missing coverage) into a probe.
+        """
+        from quant_ai.agents.atlas import EXPLORATION_MAX_ENV
+        from quant_ai.agents.playbook import PLAYBOOKS
+
+        pipeline = getattr(getattr(self.daemon, "scheduler", None), "pipeline", None)
+        cio = getattr(getattr(pipeline, "runtime", None), "cio", None)
+        policy = getattr(getattr(cio, "atlas", None), "policy", None)
+        if policy is None:
+            return None
+        try:
+            cap = int(policy.exploration_max_per_day)
+            withheld = (sorted(item.regime for item in PLAYBOOKS.values() if not item.probes_allowed)
+                        if policy.regime_playbooks else [])
+            return {
+                "schema": "pramana.exploration.v1",
+                "tenantId": getattr(self.daemon, "tenant_id", None),
+                "checkedAt": now.isoformat(),
+                "setting": EXPLORATION_MAX_ENV,
+                "armed": cap > 0,
+                "maxPerDay": cap,
+                "minWeightedScore": self._finite(policy.exploration_min_weighted_score),
+                "minConfidence": self._finite(policy.exploration_min_confidence),
+                "notionalFraction": self._finite(policy.exploration_notional_fraction),
+                # Regimes whose playbook never probes, whatever the budget says.
+                "withheldInRegimes": withheld,
+            }
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _finite(value) -> float | None:

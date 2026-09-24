@@ -86,6 +86,8 @@ export type RiskGates = {schema: string; tenantId: string; checkedAt: string; ga
 export type Runtime = {
   protectionSweep?: ProtectionSweep | null;
   riskGates?: RiskGates | null;
+  /** The probe budget the running engine applies; null or absent when it published none. */
+  exploration?: import("./probe-budget-model").Exploration | null;
   marketDataIntegrity?: {schema: string; accepted: number; rejected: Record<string, number>;
     lastRejection: {reason: string; symbol: string; observedAt: string | null; receivedAt: string} | null; scope: string};
   valuation?: {status: string; reason?: string; checkedAt: string; ledgerId: number};
