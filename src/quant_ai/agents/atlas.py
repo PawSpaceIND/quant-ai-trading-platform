@@ -95,8 +95,10 @@ class AtlasPolicy:
             raise ValueError("exploration_max_per_day cannot be negative")
         if not Decimal(0) < self.exploration_min_confidence <= self.min_consensus_confidence:
             raise ValueError("exploration_min_confidence must be in (0, min_consensus_confidence]")
-        if self.exploration_min_weighted_score <= 0:
-            raise ValueError("exploration_min_weighted_score must be positive")
+        # Above the full-entry lean (0.45, in _decide_core) a probe floor means nothing:
+        # a lean that strong is already a BUY when its confidence clears the floor.
+        if not Decimal(0) < self.exploration_min_weighted_score <= Decimal("0.45"):
+            raise ValueError("exploration_min_weighted_score must be in (0, 0.45]")
         if not Decimal(0) < self.exploration_notional_fraction <= Decimal("0.05"):
             raise ValueError("exploration_notional_fraction must be in (0, 0.05]")
 
@@ -120,6 +122,10 @@ def _fixed(value: Decimal) -> str:
 EXPLORATION_MAX_ENV = "PRAMANA_EXPLORATION_MAX_PER_DAY"
 EXPLORATION_MIN_CONFIDENCE_ENV = "PRAMANA_EXPLORATION_MIN_CONFIDENCE"
 EXPLORATION_FRACTION_ENV = "PRAMANA_EXPLORATION_NOTIONAL_FRACTION"
+# The lean a probe needs. On 24 September 2026 the strongest lean all day was 0.37 at 0.72
+# confidence against a 0.45 bar, so the budget went unused; the founder set it to 0.35 for
+# the pilot. Probes only: a full entry still needs 0.45.
+EXPLORATION_MIN_SCORE_ENV = "PRAMANA_EXPLORATION_MIN_WEIGHTED_SCORE"
 REGIME_PLAYBOOKS_ENV = "PRAMANA_REGIME_PLAYBOOKS"
 # Off unless an operator names it, and arming it is a decision that needs
 # promotion_report() to pass first: an uncalibrated probability inside a correct EV
@@ -140,6 +146,7 @@ def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPoli
     raw_max = source.get(EXPLORATION_MAX_ENV, "").strip()
     raw_confidence = source.get(EXPLORATION_MIN_CONFIDENCE_ENV, "").strip()
     raw_fraction = source.get(EXPLORATION_FRACTION_ENV, "").strip()
+    raw_score = source.get(EXPLORATION_MIN_SCORE_ENV, "").strip()
     raw_playbooks = source.get(REGIME_PLAYBOOKS_ENV, "").strip().lower()
     raw_ev_gate = source.get(EV_GATE_ENV, "").strip().lower()
     overrides: dict[str, object] = {}
@@ -158,6 +165,8 @@ def atlas_policy_from_env(environ: Mapping[str, str] | None = None) -> AtlasPoli
             overrides["exploration_min_confidence"] = Decimal(raw_confidence)
         if raw_fraction:
             overrides["exploration_notional_fraction"] = Decimal(raw_fraction)
+        if raw_score:
+            overrides["exploration_min_weighted_score"] = Decimal(raw_score)
         return AtlasPolicy(**overrides)
     except (ValueError, InvalidOperation) as error:
         raise RuntimeError(f"unsupported exploration budget setting: {error}") from error
@@ -393,6 +402,9 @@ class AtlasInvestmentAgent:
             "budget_used": used + 1,
             "budget_max": policy.exploration_max_per_day,
             "notional_fraction": str(policy.exploration_notional_fraction),
+            # The bar this probe cleared, so a probe taken at 0.35 is never scored as if
+            # it had cleared 0.45.
+            "min_weighted_score": _fixed(policy.exploration_min_weighted_score),
             "overrode": decision.action.value,
         }
         note = (
