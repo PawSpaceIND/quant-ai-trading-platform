@@ -229,6 +229,10 @@ class PilotTelemetry:
         expected = self._prices_expected(symbol, now)
         if expected is not None:
             row["pricesExpected"] = expected
+        if expected is False and self._closing_auction(symbol, now):
+            # Present only inside the auction, so a page can say why the clock is paused
+            # at 15:20 without calling the market closed, and every other row is unchanged.
+            row["closingAuction"] = True
         halt_clock = getattr(self.daemon, "unpriced_in_session_since", None)
         if isinstance(halt_clock, dict):
             started = halt_clock.get(symbol)
@@ -244,6 +248,16 @@ class PilotTelemetry:
             return bool(expected(symbol, now))
         except Exception:  # noqa: BLE001 - describing the book must not stop the publish
             return None
+
+    def _closing_auction(self, symbol: str, now: datetime) -> bool:
+        """Whether the daemon says ``symbol`` is in its closing auction; False when it cannot."""
+        auction = getattr(self.daemon, "closing_auction", None)
+        if not callable(auction):
+            return False
+        try:
+            return auction(symbol, now) is True
+        except Exception:  # noqa: BLE001 - describing the book must not stop the publish
+            return False
 
     def _risk_gates(self, now: datetime, book: dict | None) -> dict:
         """Which opt-in entry gates are armed, and what each one measures against.

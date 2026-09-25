@@ -102,6 +102,15 @@ export function protectionAlert(runtime: Runtime, tenant: string, now = Date.now
       // was held, while the halt clock was paused until the open.
       const names = unpriced(sweep);
       const one = names.length === 1;
+      if (sweep.unprotected.every((row) => row?.closingAuction === true)) {
+        // 24 and 25 September 2026: the closing auction's crossed book left the held name
+        // unpriced from 15:20, and this halt latched at 15:24 on a healthy feed.
+        return {
+          severity: "paused", symbols: exposed,
+          headline: "Closing auction: halt clock paused until the next open",
+          detail: `${list(names)} ${one ? "has" : "have"} no current price${since ? ` (unpriced since ${since})` : ""} because the exchange is running its closing auction: continuous trading in F&O stocks stops at 15:15, and auction orders are collected until 15:30 without trading. No stop can fire in an auction, so the halt clock is paused through the close. It restarts at the next open, and entries halt if ${one ? "it is" : "they are"} still unpriced ${seconds(sweep.haltAfterSeconds)} into the session. The ${one ? "position is" : "positions are"} still held.`,
+        };
+      }
       return {
         severity: "paused", symbols: exposed,
         headline: "Market closed: halt clock paused until the next open",
