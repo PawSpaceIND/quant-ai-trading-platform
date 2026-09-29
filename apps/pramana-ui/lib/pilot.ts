@@ -58,9 +58,11 @@ export type ProtectionSweep = {
    * `unpricedSince` runs at every hour. The halt counts only session time: `pricesExpected`
    * says whether the symbol's market is open, `haltClockSince` when that clock started.
    * Both are absent from an engine that cannot state them, and absent never means closed.
+   * `closingAuction` is present, and true, only while the exchange's closing auction holds
+   * the clock paused (NSE and BSE F&O stocks, 15:15 to the 15:30 close).
    */
   unprotected: Array<{symbol: string; unpricedSince: string | null;
-    pricesExpected?: boolean; haltClockSince?: string | null}>;
+    pricesExpected?: boolean; haltClockSince?: string | null; closingAuction?: boolean}>;
   rebased: string[];
   haltAfterSeconds: number | null;
   gapMonitor: {armed: boolean; unresolved: Array<{

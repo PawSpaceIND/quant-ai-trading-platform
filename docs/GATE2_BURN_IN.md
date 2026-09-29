@@ -265,7 +265,12 @@ silent and **stops are not being enforced for the gap** — treat it as a feed o
 (Zerodha access tokens expire daily). After
 `PRAMANA_UNPROTECTED_HALT_SECONDS` (120 by default) of an open position staying
 unpriceable, the engine latches `protection_unreachable:<symbol>` and stops adding risk.
-It does not liquidate: selling on a feed it cannot price is the fabricated-mark
+That clock counts continuous trading only. It pauses after the close, and for NSE and
+BSE cash equities it also pauses in the closing auction, from 15:15 to the 15:30 close
+(live since 3 August 2026 for F&O stocks). Trading stops at 15:15. From 15:20 the
+auction's book shows bids above asks, so every tick is refused as crossed and a held
+name goes unpriced by design. The clock restarts at the next open. ETFs trade on to
+15:30 and keep their clock. It does not liquidate: selling on a feed it cannot price is the fabricated-mark
 behaviour the exit engine exists to refuse. Fix the feed, confirm ticks are arriving,
 then `pramana resume`.
 

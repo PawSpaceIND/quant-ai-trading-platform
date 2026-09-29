@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta
 from enum import Enum
 from zoneinfo import ZoneInfo
 
-from quant_ai.domain.models import Market
+from quant_ai.domain.models import AssetClass, Market
 
 
 class MarketState(str, Enum):
@@ -111,6 +111,37 @@ def session_for(
     if venue == GlobalVenue.INDIA and code in INDIA_EXCHANGE_SESSIONS:
         return INDIA_EXCHANGE_SESSIONS[code]
     return SESSIONS[venue]
+
+
+# SEBI's closing auction session, on NSE and BSE from 3 August 2026: continuous trading in
+# stocks with F&O contracts stops at 15:15 IST, orders are collected from 15:20 until a
+# random close between 15:28 and 15:30, and they are matched from 15:30 into the closing
+# price. Nothing trades continuously in that window. The book stands still until 15:20,
+# then shows bids above asks, because auction orders are collected without being matched.
+# ETFs are outside phase 1 and trade continuously to 15:30.
+CLOSING_AUCTION_FROM = date(2026, 8, 3)
+CLOSING_AUCTION_START = time(15, 15)
+CLOSING_AUCTION_EXCHANGES = frozenset({"NSE", "BSE"})
+
+
+def in_closing_auction(calendar: MarketCalendar, instrument, timestamp: datetime) -> bool:
+    """Whether ``instrument`` is in its exchange's closing auction at ``timestamp``.
+
+    True for a cash equity on NSE or BSE from 15:15 IST to the regular close of a trading
+    day, from 3 August 2026. Phase 1 covers stocks with F&O contracts only, and nothing
+    here says which stocks those are, so every cash equity is treated as one: the pilot's
+    names are Nifty constituents, which all carry F&O contracts. ETFs and every other asset
+    class are never in it.
+    """
+    if instrument.market != Market.INDIA or instrument.asset_class != AssetClass.EQUITY:
+        return False
+    code = str(instrument.exchange or "").strip().upper()
+    if code not in CLOSING_AUCTION_EXCHANGES:
+        return False
+    if calendar.state(instrument.market, timestamp, exchange=code) != MarketState.REGULAR_HOURS:
+        return False
+    local = timestamp.astimezone(ZoneInfo(session_for(instrument.market, code).timezone))
+    return local.date() >= CLOSING_AUCTION_FROM and local.time().replace(tzinfo=None) >= CLOSING_AUCTION_START
 
 
 # NYSE full-day closures for 2026, derived from the exchange's published rules

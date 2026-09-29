@@ -42,7 +42,7 @@ from quant_ai.execution.protective_exits import (
     market_feed_mark_resolver,
 )
 from quant_ai.execution.scheduler import AutonomousCadenceScheduler
-from quant_ai.execution.session import MarketState
+from quant_ai.execution.session import MarketState, in_closing_auction
 from quant_ai.governance.directives import country_for
 from quant_ai.governance.event_calendar import EventCalendar
 from quant_ai.marketdata.corporate_calendar import CorporateActionCalendar
@@ -548,7 +548,15 @@ class AutonomousTradingDaemon:
                 return
 
     def prices_expected(self, symbol: str, now: datetime) -> bool:
-        """Whether a live price for ``symbol`` should exist at ``now``: its regular session.
+        """Whether a live price for ``symbol`` should exist at ``now``: its continuous session.
+
+        That is its regular session, less the exchange's closing auction. On 24 and 25
+        September 2026 this halt latched at 15:24 IST on COALINDIA, the one name held into
+        the close, with a healthy feed. Since 3 August continuous trading in F&O stocks
+        stops at 15:15 and the auction collects orders from 15:20. Its book shows bids
+        above asks, every such tick is refused as crossed, and the last accepted price
+        aged past the freshness limit. A stop cannot fire in an auction any more than on a
+        closed market, so the halt clock pauses there too and restarts at the next open.
 
         A symbol the engine has no instrument for stays counted at every hour. Silence
         about a position nobody configured is what the reachability halt exists to catch.
@@ -557,10 +565,18 @@ class AutonomousTradingDaemon:
         """
         for instrument in self.instruments:
             if instrument.symbol == symbol:
-                return self.scheduler.calendar.state(
+                calendar = self.scheduler.calendar
+                return calendar.state(
                     instrument.market, now, exchange=instrument.exchange
-                ) == MarketState.REGULAR_HOURS
+                ) == MarketState.REGULAR_HOURS and not in_closing_auction(calendar, instrument, now)
         return True
+
+    def closing_auction(self, symbol: str, now: datetime) -> bool:
+        """Whether ``symbol`` is in its exchange's closing auction, for the protection panel."""
+        for instrument in self.instruments:
+            if instrument.symbol == symbol:
+                return in_closing_auction(self.scheduler.calendar, instrument, now)
+        return False
 
     @property
     def unprotected_since(self) -> dict[str, datetime]:

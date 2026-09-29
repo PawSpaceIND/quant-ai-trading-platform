@@ -69,6 +69,30 @@ test("an unpriced stop on a closed market reads as paused, not as an imminent ha
   assert.equal(protectionSweepCheck(evening, "pilot", now).pass, false);
 });
 
+test("an unpriced stop in the closing auction reads as paused for the auction, not as a closed market", () => {
+  // 24 and 25 September 2026: the auction's crossed book left COALINDIA unpriced from 15:20.
+  const auction = {symbol: "COALINDIA", unpricedSince: stamp, pricesExpected: false, haltClockSince: null, closingAuction: true};
+  const alert = protectionAlert(runtime({protectionSweep: sweep({unprotected: [auction]})}), "pilot", now);
+  assert.equal(alert.severity, "paused");
+  assert.deepEqual(alert.symbols, ["COALINDIA"]);
+  assert.match(alert.headline, /Closing auction: halt clock paused until the next open/);
+  assert.match(alert.detail, /COALINDIA has no current price \(unpriced since 2026-09-15T06:00:00/);
+  assert.match(alert.detail, /continuous trading in F&O stocks stops at 15:15/);
+  assert.match(alert.detail, /entries halt if it is still unpriced 120s into the session/);
+  assert.match(alert.detail, /still held/);
+  assert.doesNotMatch(alert.detail, /market is closed|entries halt after/);
+  assert.equal(protectionSweepCheck(runtime({protectionSweep: sweep({unprotected: [auction]})}), "pilot", now).pass, false);
+
+  // A closed-market row beside it: the specific auction wording is not claimed for both.
+  const closed = {symbol: "AAPL", unpricedSince: stamp, pricesExpected: false, haltClockSince: null};
+  const mixed = protectionAlert(runtime({protectionSweep: sweep({unprotected: [auction, closed]})}), "pilot", now);
+  assert.equal(mixed.severity, "paused");
+  assert.match(mixed.headline, /Market closed/);
+  // An in-session row beside it is exposure, as before.
+  const live = {symbol: "GOLDBEES", unpricedSince: stamp, pricesExpected: true, haltClockSince: stamp};
+  assert.equal(protectionAlert(runtime({protectionSweep: sweep({unprotected: [auction, live]})}), "pilot", now).severity, "exposed");
+});
+
 test("closed only when every unpriced stop says so, and nothing else is wrong", () => {
   const closed = {symbol: "COALINDIA", unpricedSince: stamp, pricesExpected: false, haltClockSince: null};
   const gap = {symbol: "INFY", verdict: "UNDETERMINED", venue: "INDIA", previousMark: "100",
