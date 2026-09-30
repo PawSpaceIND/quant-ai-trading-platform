@@ -40,6 +40,13 @@ class OrderBookUpdate:
     source: str
 
 
+# Names whose ticks are counted one by one. Past this, a symbol's counts are pooled under
+# UNTRACKED rather than growing a dictionary without bound on a feed nobody curated.
+MAX_TRACKED_SYMBOLS = 256
+UNTRACKED = "_untracked"
+ACCEPTED = "accepted"
+
+
 class TickBuffer:
     def __init__(self, maxlen: int = 10_000, *, clock: Callable[[], datetime] | None = None) -> None:
         if maxlen < 1:
@@ -52,14 +59,36 @@ class TickBuffer:
         self._accepted = 0
         self._rejected: Counter[str] = Counter()
         self._last_rejection: dict | None = None
+        # Accepted and rejected ticks per symbol, by reason, since this process started.
+        # The process-wide totals above say that ticks were thrown away; these say whose,
+        # which is the difference between a feed that stalled and one symbol whose every
+        # tick was refused.
+        self._by_symbol: dict[str, Counter[str]] = {}
+        self.started_at = utc_time(self.clock())
 
     def subscribe(self, listener: Callable[[LiveTick], None]) -> None:
         """Register a synchronous callback for accepted ticks, in acceptance order."""
         with self._lock:
             self._listeners.append(listener)
 
+    def _count(self, symbol: str, outcome: str) -> None:
+        key = str(symbol)[:80]
+        if key not in self._by_symbol and len(self._by_symbol) >= MAX_TRACKED_SYMBOLS:
+            key = UNTRACKED
+        self._by_symbol.setdefault(key, Counter())[outcome] += 1
+
+    def symbol_counts(self, symbols) -> dict[str, dict[str, int]]:
+        """Accepted and rejected ticks for each named symbol since the process started.
+
+        A symbol with no tick at all is present with no counts, which is itself the answer
+        to "did anything arrive for it".
+        """
+        with self._lock:
+            return {str(symbol): dict(self._by_symbol.get(str(symbol), ())) for symbol in symbols}
+
     def reject(self, reason: str, symbol: str, observed_at: datetime | None = None) -> None:
         with self._lock:
+            self._count(symbol, reason)
             self._rejected[reason] += 1
             self._last_rejection = {"reason": reason, "symbol": str(symbol)[:80],
                 "observedAt": utc_time(observed_at).isoformat() if isinstance(observed_at, datetime) else None,
@@ -92,6 +121,7 @@ class TickBuffer:
             self._ticks.append(tick)
             self._latest[tick.symbol] = tick
             self._accepted += 1
+            self._count(tick.symbol, ACCEPTED)
             # Keep callbacks ordered across producer threads. Callbacks must be
             # short and must not wait for another thread to acquire this buffer.
             for listener in tuple(self._listeners):
