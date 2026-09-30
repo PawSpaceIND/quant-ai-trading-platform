@@ -236,11 +236,24 @@ class SqliteAIBudget:
         return self._finish_ticket(ticket, usage, cancel=False)
 
     def _finish_ticket(self, ticket, usage, *, cancel):
-        inputs = sum(_token_count(usage, key) for key in (
-            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-        outputs = _token_count(usage, "output_tokens")
-        if not cancel and not inputs and not outputs:
-            return False  # Unknown completion remains reserved.
+        inputs = outputs = 0
+        if not cancel:
+            # A partial count cannot prove the remaining allowance was unspent.
+            # Required counts must exist; supplied cache counts must also be valid.
+            if not isinstance(usage, Mapping):
+                return False
+            keys = ("input_tokens", "output_tokens") + tuple(
+                key for key in ("cache_creation_input_tokens", "cache_read_input_tokens")
+                if key in usage
+            )
+            if any(type(usage.get(key)) is not int or usage[key] < 0 for key in keys):
+                return False
+            inputs = usage["input_tokens"] + sum(
+                usage[key] for key in keys[2:]
+            )
+            outputs = usage["output_tokens"]
+            if not inputs and not outputs:
+                return False  # Preserve the existing conservative zero-usage policy.
         try:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")

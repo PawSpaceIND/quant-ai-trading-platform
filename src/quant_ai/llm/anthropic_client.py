@@ -233,7 +233,8 @@ class AnthropicSwarmClient:
         provenance.update(_consensus_response_metadata(response))
         usage = getattr(response, "usage", None)
         provenance["usage"] = {name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
-                               for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}
+                               for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+                               if name in {"input_tokens", "output_tokens"} or hasattr(usage, name)}
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
             # Tokens were spent whether or not the payload passes the schema below.
@@ -380,6 +381,7 @@ class AnthropicSwarmClient:
             name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
             for name in ("input_tokens", "output_tokens",
                          "cache_creation_input_tokens", "cache_read_input_tokens")
+            if name in {"input_tokens", "output_tokens"} or hasattr(usage, name)
         }
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:

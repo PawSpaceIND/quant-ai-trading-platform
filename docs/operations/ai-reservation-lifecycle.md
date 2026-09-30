@@ -6,7 +6,10 @@ allowance, creation/dispatch times, linked dollar ticket ID and settled token us
 Admission and its ticket insertion are one SQLite transaction. Dispatch is marked
 before provider I/O. Dollar denial compensates the admitted token ticket exactly once;
 shared denial similarly compensates the optional shadow sample ticket. Valid usage
-settles once against the original day, before validating output content.
+settles once against the original day, before validating output content. Both input and
+output counts must be complete nonnegative integers; any supplied cache counts must
+also be valid. Partial, malformed and all-zero usage retains the whole allowance.
+Absent optional Anthropic cache fields are omitted; OpenAI input already includes cache.
 
 Historical aggregates have no request provenance. They remain legacy unknown and are
 neither backfilled nor released. Unknown usage, timeouts, network failures and dispatched

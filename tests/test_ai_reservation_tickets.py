@@ -132,7 +132,7 @@ def test_inconsistent_counter_settlement_rolls_back_and_retains_ticket(tmp_path)
     # Simulated corruption must not partially subtract scope counters.
     with sqlite3.connect(store.database) as db:
         db.execute("UPDATE ai_budget_aggregate SET reserved_tokens=0")
-    assert not store.settle_ticket(ticket, {"input_tokens": 10})
+    assert not store.settle_ticket(ticket, {"input_tokens": 10, "output_tokens": 0})
     assert store.status("consensus")["reserved_tokens"] == 700
     with sqlite3.connect(store.database) as db:
         assert db.execute("SELECT status FROM ai_budget_requests").fetchone() == ("dispatched",)
@@ -150,3 +150,44 @@ def test_partial_shadow_dispatch_cannot_release_marked_side(tmp_path, monkeypatc
     assert shared.status("astra_consensus")["reserved_tokens"] == 0
     shadow.sample.close()
     shared.close()
+
+
+@pytest.mark.parametrize("usage", [
+    {"input_tokens": 10, "output_tokens": None},
+    {"output_tokens": 10},
+    {"input_tokens": 10},
+    {"input_tokens": None, "output_tokens": 10},
+    {"input_tokens": 10, "output_tokens": -1},
+    {"input_tokens": 10, "output_tokens": "10"},
+    {"input_tokens": True, "output_tokens": 10},
+    {"input_tokens": 10, "output_tokens": False},
+    {"input_tokens": 10, "output_tokens": 1.5},
+    {"input_tokens": 10, "output_tokens": 1, "cache_read_input_tokens": None},
+    {"input_tokens": 10, "output_tokens": 1, "cache_creation_input_tokens": -1},
+    {"input_tokens": 10, "output_tokens": 1, "cache_read_input_tokens": True},
+])
+def test_partial_or_malformed_usage_cannot_reopen_cap(tmp_path, usage):
+    store = SqliteAIBudget(tmp_path / "tokens.sqlite", daily_call_limit=10, daily_token_limit=100)
+    ticket = store.reserve_ticket("consensus", 100)
+    assert store.dispatch_ticket(ticket)
+    assert not store.settle_ticket(ticket, usage)
+    assert not store.reserve_ticket("consensus", 90)
+    assert store.status("consensus")["reserved_tokens"] == 100
+    assert store.status("consensus")["aggregate"]["reserved_tokens"] == 100
+    store.close()
+
+
+def test_complete_usage_and_cache_counts_preserve_prior_unknown_reserves(tmp_path):
+    store = ledger(tmp_path / "tokens.sqlite")
+    assert store.reserve("legacy", 500)
+    unknown = store.reserve_ticket("consensus", 600)
+    valid = store.reserve_ticket("consensus", 700)
+    assert store.dispatch_ticket(unknown) and store.dispatch_ticket(valid)
+    assert not store.settle_ticket(unknown, {"input_tokens": 10, "output_tokens": None})
+    assert store.settle_ticket(valid, {"input_tokens": 10, "output_tokens": 20,
+                                     "cache_creation_input_tokens": 30, "cache_read_input_tokens": 40})
+    state = store.status("consensus")
+    assert state["input_tokens"] == 80 and state["output_tokens"] == 20
+    assert state["aggregate"]["reserved_tokens"] == 1100
+    assert not store.settle_ticket(valid, {"input_tokens": 10, "output_tokens": 20})
+    store.close()
