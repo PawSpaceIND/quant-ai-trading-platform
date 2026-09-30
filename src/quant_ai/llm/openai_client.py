@@ -99,9 +99,9 @@ class OpenAIConsensusClient:
                 return await client.post(RESPONSES_URL, json=request,
                                          headers={"Authorization": "Bearer " + self._key})
 
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
-            provenance["token_budget_ticket"] = budget_ticket
             provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
             if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
                 raise SpendRefused()

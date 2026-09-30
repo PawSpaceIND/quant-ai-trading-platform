@@ -82,6 +82,7 @@ def test_dollar_denial_compensates_and_never_dispatches(tmp_path, monkeypatch, m
         result = asyncio.run(client.score_headlines("NTPC", ("synthetic headline",))) if mode == "headlines" else asyncio.run(client.generate_trading_consensus("synthetic prompt"))
         scope = "headline_sentiment" if mode == "headlines" else "consensus"
     assert result.provenance["status"] == "budget_exhausted"
+    assert result.provenance["token_budget_ticket"]
     create.assert_not_called()
     state = store.status(scope)
     assert state["calls"] == 0 and state["reserved_tokens"] == 0

@@ -185,9 +185,9 @@ class AnthropicSwarmClient:
             return unavailable("AI budget exhausted", status="budget_exhausted",
                                risk_factor="ai_budget_exhausted", failure_code="budget_exhausted")
 
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
-            provenance["token_budget_ticket"] = budget_ticket
             provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
             if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
                 raise SpendRefused()
@@ -349,9 +349,9 @@ class AnthropicSwarmClient:
             self._warn_budget_exhausted(self.budget)
             return ConsensusPayload({"scores": []},
                                     finish("budget_exhausted", "AI budget exhausted"))
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
-            provenance["token_budget_ticket"] = budget_ticket
             provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
             if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
                 raise SpendRefused()
