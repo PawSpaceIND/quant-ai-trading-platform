@@ -71,7 +71,8 @@ def _observation(result):
     provenance = getattr(result, "provenance", {}) or {}
     fields = ("provider", "requested_model", "resolved_model", "response_id", "status",
               "failure_code", "started_at", "completed_at", "duration_ms", "usage",
-              "prompt_sha256", "request_sha256", "system_sha256", "response_payload_sha256")
+              "prompt_sha256", "request_sha256", "system_sha256", "response_payload_sha256",
+              "token_budget_ticket", "dollar_budget_ticket_id")
     record = {field: provenance.get(field) for field in fields}
     if isinstance(result, dict) and provenance.get("status") == "completed":
         record["consensus"] = dict(result)
