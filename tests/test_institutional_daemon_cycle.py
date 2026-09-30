@@ -29,7 +29,7 @@ INSTRUMENT = Instrument("TCS", Market.INDIA, AssetClass.EQUITY, "INR", "NSE")
 
 
 class CycleHarness:
-    def __init__(self, root, *, required_book=False):
+    def __init__(self, root, *, required_book=False, opportunity_selection=False):
         self.root = root
         self.now = NOW
         self.programs = ExecutionProgramJournal(root / "programs.sqlite")
@@ -54,7 +54,8 @@ class CycleHarness:
             database=root / "paper.sqlite", oms_database=root / "oms.sqlite", tenant_id="tenant",
             log_path=root / "events.jsonl", xai_directory=root / "proofs", halt_file=root / "HALT",
             directives=FounderDirectives(watchlist=(INSTRUMENT,), sector_map={"TCS":"IT_SERVICES"}), pilot_mode=True,
-            order_identity_mode="bound_v1", institutional_inputs=inputs)
+            order_identity_mode="bound_v1", institutional_inputs=inputs,
+            paper_opportunity_selection=opportunity_selection)
         self.daemon = self.runner.daemon
         self.daemon.clock = lambda: self.now
         self.runtime = self.daemon.scheduler.pipeline.runtime
@@ -387,4 +388,89 @@ def test_inflight_hook_binding_does_not_silently_replace_initial_admission(tmp_p
         h.seed()
         assert execute_cycle(h).fill is not None
     finally:
+        h.close()
+
+
+def test_actual_opportunity_daemon_buy_waits_for_later_tick_and_protective_sell_survives(tmp_path):
+    h = CycleHarness(tmp_path, opportunity_selection=True)
+    try:
+        h.seed()
+        selector = h.daemon.opportunity_selector
+        selector.snapshot_provider.day = NOW.date()
+        selector.snapshot_provider.snapshot = {"schema": "pramana.research_shortlist.v1", "as_of": NOW.isoformat(),
+            "target_session": NOW.date().isoformat(), "shortlist": ["TCS"],
+            "names": [{"symbol": "TCS", "eligible": True}]}
+        h.daemon.tracker.market_feed.buffer.put(LiveTick("TCS",D("100.90"),D(100000),D("100.895"),D("100.905"),h.now,"zerodha"))
+        rejected = execute_cycle(h)
+        assert rejected.fill is None
+        assert rejected.risk_decision.reason == "paper_opportunity_not_admitted"
+        assert not h.broker.ledger_entries("tenant")
+        h.now += timedelta(seconds=1)
+        h.daemon.tracker.market_feed.buffer.put(LiveTick("TCS",D("100.90"),D(100000),D("100.895"),D("100.905"),h.now,"zerodha"))
+        admitted = execute_cycle(h)
+        assert admitted.fill is not None, admitted.risk_decision.reason
+        assert len(h.broker.ledger_entries("tenant")) == 1
+        h.daemon.engage_kill_switch("synthetic retained halt")
+        h.now += timedelta(seconds=1)
+        h.daemon.tracker.market_feed.buffer.put(LiveTick("TCS",D(95),D(100000),D("94.995"),D("95.005"),h.now,"zerodha"))
+        execute_cycle(h)  # Actual run_once sweeps protection before opportunity decisions.
+        assert h.broker.get_positions("tenant") == ()
+        assert len(h.broker.ledger_entries("tenant")) == 2
+        assert h.daemon.kill_switch.engaged
+        assert h.daemon.instruments == (INSTRUMENT,)
+    finally:
+        h.daemon.request_stop()
+        h.close()
+
+
+def test_actual_daemon_cadence_keeps_tick_ingestion_progress_during_pending_rank(tmp_path, monkeypatch):
+    from threading import Event, Thread
+
+    from quant_ai.agents import scanner
+    from quant_ai.execution.briefing import FounderExecutionBrief
+    from quant_ai.execution.session import MarketState
+    from quant_ai.marketdata.timeframes import DailyHistoryProvider
+
+    h = CycleHarness(tmp_path, opportunity_selection=True)
+    entered, release, ingested = Event(), Event(), Event()
+    selector = h.daemon.opportunity_selector
+    history = DailyHistoryProvider(None)
+    history._cache[("TCS", "INDIA")] = (NOW.date(), tuple(object() for _ in range(21)))
+    selector.snapshot_provider.history = history
+    def delayed_rank(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=2)
+        return {"schema": "pramana.research_shortlist.v1", "as_of": NOW.isoformat(),
+            "target_session": NOW.date().isoformat(), "shortlist": ["TCS"],
+            "names": [{"symbol": "TCS", "eligible": True}]}
+    monkeypatch.setattr(scanner, "research_shortlist", delayed_rank)
+    # Only the downstream analysis is substituted; actual run_once selection,
+    # protection, telemetry, journaling and reporting remain in the daemon path.
+    h.daemon.scheduler.run_tick = lambda *args, **kwargs: FounderExecutionBrief(
+        NOW, MarketState.REGULAR_HOURS, "TCS", "SYNTHETIC", (), "synthetic_no_order", (), ())
+    try:
+        async def exercise():
+            loop = asyncio.get_running_loop()
+            async def accept():
+                h.daemon.tracker.market_feed.buffer.put(LiveTick("TCS",D(100),D(100000),D(99),D(101),NOW,"zerodha"))
+                ingested.set()
+            def native_callback():
+                entered.wait(timeout=1)
+                asyncio.run_coroutine_threadsafe(accept(), loop)
+            producer = Thread(target=native_callback, daemon=True)
+            producer.start()
+            await h.daemon.run_once(NOW)
+            await asyncio.sleep(.02)
+            assert entered.is_set() and ingested.is_set()
+            assert selector.snapshot_provider._worker.is_alive()
+            assert not release.is_set()
+            assert not h.broker.ledger_entries("tenant")
+            producer.join(timeout=1)
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        worker = selector.snapshot_provider._worker
+        if worker is not None:
+            worker.join(timeout=2)
+        h.daemon.request_stop()
         h.close()

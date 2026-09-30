@@ -534,6 +534,7 @@ def build_ghost_runner(
     event_calendar: EventCalendar | None = None,
     institutional_inputs: InstitutionalRuntimeInputs | None = None,
     intraday_warmup_provider: Any | None = None,
+    paper_opportunity_selection: bool = False,
 ) -> DaemonRunner:
     """Assemble the ghost runtime with live market data and paper-only execution."""
     _assert_ghost_mode()
@@ -544,9 +545,21 @@ def build_ghost_runner(
         raise ValueError("institutional_runner_bound_pilot_required")
     order_identity_mode = validate_identity_storage(order_identity_mode,
         pilot_mode=pilot_mode, database=database, oms_database=oms_database)
+    if type(paper_opportunity_selection) is not bool:
+        raise ValueError("opportunity_boolean_required")
+    if paper_opportunity_selection and (not pilot_mode or order_identity_mode != "bound_v1" or include_ibkr):
+        raise ValueError("opportunity_bound_paper_nse_required")
     directives = directives or FounderDirectives()
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    if paper_opportunity_selection:
+        from quant_ai.execution.opportunity_universe import PaperOpportunitySelector
+        from quant_ai.governance.nse_watchlist import validate_subscription_mapping
+        # Validate before opening any persistent state or constructing providers.
+        zerodha_instrument_tokens = tuple(zerodha_instrument_tokens)
+        validate_subscription_mapping(instruments, zerodha_instrument_tokens, zerodha_symbol_by_token)
+        PaperOpportunitySelector(instruments, paper_only=True, snapshot_provider=lambda now: None,
+            tick_reader=lambda symbol: None, subscribed_symbols=zerodha_symbol_by_token.values())
     if pilot_mode and len(instruments) > 5:
         # Expanded cash scope must have a complete, unambiguous subscription BEFORE any
         # persistent broker state is opened. Keep the existing five-name path unchanged.
@@ -674,6 +687,16 @@ def build_ghost_runner(
                 "watchlist symbol %s has no websocket mapping; it will be vetoed as missing market data",
                 item.symbol,
             )
+    opportunity_selector = None
+    if paper_opportunity_selection:
+        from quant_ai.execution.opportunity_universe import (
+            CatalogResearchSnapshot,
+            PaperOpportunitySelector,
+        )
+        opportunity_selector = PaperOpportunitySelector(instruments, paper_only=True,
+            snapshot_provider=CatalogResearchSnapshot(instruments, history_provider,
+                directives.sector_map or {}, calendar), tick_reader=buffer.latest,
+            subscribed_symbols=zerodha_symbol_by_token.values())
     daemon = AutonomousTradingDaemon(
         scheduler,
         tracker,
@@ -692,6 +715,7 @@ def build_ghost_runner(
         session_plan_dir=_session_plan_dir(database, session_plan_dir),
         # Opportunity scan outside the book: candidates from the environment, gates from
         # what this boot could actually map (websocket tokens) and group (sector map).
+        opportunity_selector=opportunity_selector,
         scan_universe=scan_universe,
         scan_gates={"token": frozenset(mapped), "sector": frozenset(directives.sector_map or {})},
     )
@@ -993,6 +1017,10 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     pilot_mode = _env_flag("PRAMANA_PILOT_MODE", True)
     validate_identity_storage(order_identity_mode, pilot_mode=pilot_mode,
         database=paths.ledger_path("PRAMANA_PAPER_DB"), oms_database=oms_database)
+    opportunity_selection = _env_flag("PRAMANA_PAPER_OPPORTUNITY_SELECTION", False)
+    if opportunity_selection and (not pilot_mode or order_identity_mode != "bound_v1"
+                                  or _env_flag("PRAMANA_IBKR_ENABLED")):
+        raise ValueError("opportunity_bound_paper_nse_required")
     dispatcher = _env_notifications()
     # Deduplicated: Docker restarts a refused boot every minute until the token is renewed,
     # and each retry alerted before this.
@@ -1023,6 +1051,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     return build_ghost_runner(
         directives=FounderDirectives.from_env(),
         pilot_mode=pilot_mode,
+        paper_opportunity_selection=opportunity_selection,
         order_identity_mode=order_identity_mode,
         oms_database=oms_database,
         news_provider=news,

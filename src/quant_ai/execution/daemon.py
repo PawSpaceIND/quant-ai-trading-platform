@@ -112,9 +112,11 @@ class AutonomousTradingDaemon:
         session_plan_dir: str | Path | None = None,
         scan_universe: Iterable[Instrument] = (),
         scan_gates: Mapping[str, Iterable[str]] | None = None,
+        opportunity_selector=None,
     ) -> None:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
+        self.opportunity_selector = opportunity_selector
         self.instruments = tuple(instruments) if instruments else (instrument,)
         if not self.instruments:
             raise ValueError("at least one instrument is required")
@@ -289,6 +291,11 @@ class AutonomousTradingDaemon:
 
     def _pilot_pre_submit(self, proposal, *, in_flight=None) -> str | None:
         self.apply_operator_halt()
+        selector = getattr(self, "opportunity_selector", None)
+        if selector is not None and proposal.side != Side.SELL:
+            issue = selector.entry_issue(proposal.symbol, self.clock())
+            if issue is not None:
+                return issue
         if proposal.side != Side.SELL and not self.check_protection_coverage(self.clock()):
             return "pilot_protection_incomplete"
         if self.strategy_manifest is not None:
@@ -694,6 +701,9 @@ class AutonomousTradingDaemon:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        selector = getattr(self, "opportunity_selector", None)
+        if selector is not None:
+            selector.snapshot_provider.cancel()
 
     def install_signal_handlers(self) -> None:
         loop = asyncio.get_running_loop()
@@ -703,8 +713,21 @@ class AutonomousTradingDaemon:
             except (NotImplementedError, RuntimeError):
                 pass
 
+    def _opportunity_decision_instruments(self, timestamp):
+        selector = getattr(self, "opportunity_selector", None)
+        if selector is None:
+            return self.instruments
+        held = (p.symbol for p in self.tracker.broker.get_positions(self.tenant_id) if p.quantity != 0)
+        selected = selector.select(timestamp, held)
+        self.audit.append("paper_opportunity_selection", selector.last_evidence)
+        # A reporting-only primary keeps the cadence contract when no entries qualify.
+        # BUY remains blocked at pre-submit; independent protective SELLs persist.
+        return selected or (self.instrument,)
+
     async def run_once(self, now: datetime | None = None) -> FounderExecutionBrief:
         timestamp = now or self.clock()
+        if getattr(self, "opportunity_selector", None) is not None and self.telemetry is None:
+            raise RuntimeError("opportunity_pilot_monitoring_required")
         self._in_flight = True
         try:
             with self.tracker.broker._lock:
@@ -719,7 +742,8 @@ class AutonomousTradingDaemon:
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []
-            for instrument in self.instruments:
+            decision_instruments = self._opportunity_decision_instruments(timestamp)
+            for instrument in decision_instruments:
                 before = self.tracker.get_snapshot(timestamp)
                 exposure = self.country_exposure(timestamp)
                 if use_llm:
@@ -823,11 +847,13 @@ class AutonomousTradingDaemon:
             # carried and the one the proof stores, so a by-regime breakdown and the proof
             # a founder opens from it always say the same word. ``record_decision`` reads it
             # from the trace, falling back to the proposal provenance.
+            selector = getattr(self, "opportunity_selector", None)
             record_decision(
                 self.tracker.broker, execution, tenant_id=self.tenant_id,
                 now=timestamp, llm_available=llm_available,
                 features=getattr(result, "features", None),
                 marks=self._entry_marks.pop(str(execution.proposal.decision_id), None),
+                opportunity_selection=(selector.last_evidence if selector is not None else None),
             )
         except Exception:  # evidence capture must never break the cadence
             self._logger.exception("decision_journal_write_failed symbol=%s", instrument.symbol)
