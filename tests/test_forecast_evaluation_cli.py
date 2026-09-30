@@ -99,3 +99,28 @@ def test_cli_refuses_existing_output_before_reading_inputs(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "read_private_bytes", forbidden)
     assert cli.main() == 2
     assert output.read_text() == "preserve"
+
+
+def test_actual_cli_rolling_uses_private_fold_plan_and_keeps_output_private(tmp_path):
+    from test_rolling_forecast_evaluation import folds
+
+    args = inputs(tmp_path)
+    (tmp_path / "package.json").write_bytes(package(tmp_path, count=120))
+    boundaries = tmp_path / "folds.json"
+    boundaries.write_text(json.dumps([{k: v.isoformat() for k, v in fold.items()} for fold in folds()]))
+    boundaries.chmod(0o600)
+    start = args.index("--training-cutoff")
+    del args[start:start + 4]
+    args += ["--folds", str(boundaries)]
+    completed = run(args)
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads(completed.stdout)
+    assert summary["mode"] == "RETROSPECTIVE_ROLLING"
+    assert summary["holdout_rows"] == 80
+    assert str(tmp_path) not in completed.stdout + completed.stderr
+    output = tmp_path / "report.json"
+    assert output.stat().st_mode & 0o077 == 0
+    report = json.loads(output.read_bytes())
+    assert len(report["folds"]) == 2
+    assert report["trading_authorized"] is report["promotion_authorized"] is False
+    assert run(args).returncode == 2

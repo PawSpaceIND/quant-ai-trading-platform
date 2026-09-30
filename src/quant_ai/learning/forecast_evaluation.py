@@ -51,7 +51,7 @@ def _metrics(probabilities, targets):
 
 
 def evaluate_forecasts(package_raw, *, source_grants, training_cutoff, holdout_start,
-                       run_id, candidate_id, clock=None):
+                       run_id, candidate_id, clock=None, holdout_end=None):
     """Fit earlier rows and evaluate every later row; no model selection or promotion.
 
     The existing package is a recorded-observation container, not permission to fit
@@ -62,6 +62,8 @@ def evaluate_forecasts(package_raw, *, source_grants, training_cutoff, holdout_s
     started = _instant(clock())
     cutoff, first_test = _instant(training_cutoff), _instant(holdout_start)
     _check(cutoff < first_test <= started, "split_order")
+    end = _instant(holdout_end) if holdout_end is not None else None
+    _check(end is None or first_test < end <= started, "holdout_end")
     data = json.loads(validate_training_package(package_raw, source_grants=source_grants,
                                                now=started))
     _check(first_test <= _instant(data["cutoff"]), "holdout_after_dataset")
@@ -75,12 +77,16 @@ def evaluate_forecasts(package_raw, *, source_grants, training_cutoff, holdout_s
                 excluded.append({"row_id": row["row_id"], "reason": "label_unknown_at_training_cutoff"})
         elif at < first_test:
             excluded.append({"row_id": row["row_id"], "reason": "embargo"})
+        elif end is not None and at >= end:
+            excluded.append({"row_id": row["row_id"], "reason": "after_holdout_window"})
         else:
             holdout.append(row)
     _check(len(holdout) >= MIN_TEST_ROWS, "holdout_sample_too_small")
     split = {"training_cutoff": cutoff.isoformat(), "holdout_start": first_test.isoformat(),
              "training_row_ids": [r["row_id"] for r in training],
              "holdout_row_ids": [r["row_id"] for r in holdout], "excluded": excluded}
+    if end is not None:
+        split["holdout_end_exclusive"] = end.isoformat()
     package_sha = _digest(package_raw)
     training_data = {**data, "cutoff": cutoff.isoformat(), "rows": training}
     # Even the training identity depends only on training observations and metadata.
