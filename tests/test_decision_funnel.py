@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from quant_ai.agents.atlas import AtlasInvestmentAgent, AtlasPolicy
 from quant_ai.agents.contracts import AgentDomain, AgentEvidence, Stance
 from quant_ai.analytics.decision_funnel import report
@@ -84,13 +86,15 @@ def test_effective_quorum_snapshot_preserves_gate_and_stale_hold():
     assert snapshot["agents"][-1]["role"] == "gate"
 
 
-def test_journal_projection_links_proof_and_execution_state_without_provider_body():
+@pytest.mark.parametrize("trace_fields,expected_id", [({}, None), ({"decision_id": None}, None),
+                                                     ({"decision_id": "distinct-proof"}, "distinct-proof")])
+def test_journal_projection_links_proof_and_execution_state_without_provider_body(trace_fields, expected_id):
     now = datetime(2026, 1, 5, 4, tzinfo=timezone.utc)
     proposal = SimpleNamespace(decision_id="synthetic", symbol="AAA", market=Market.INDIA,
         asset_class=AssetClass.EQUITY, side=None, quantity=0, confidence=Decimal(0),
         expected_return=Decimal(0), expected_risk=Decimal(0), reference_price=Decimal(1),
         stop_price=None, take_profit_price=None, provenance={})
-    trace = SimpleNamespace(decision_id="synthetic", input_matrix=(), provenance={
+    trace = SimpleNamespace(**trace_fields, input_matrix=(), provenance={
         "inputs_sha256": "a" * 64, "evidence_admission": {"minimum_voters": 3},
         "provider_body": "not persisted"})
     result = SimpleNamespace(proposal=proposal, xai_trace=trace, fill=None,
@@ -98,7 +102,8 @@ def test_journal_projection_links_proof_and_execution_state_without_provider_bod
         order_state="REJECTED")
     row = decision_row(result, tenant_id="paper", now=now)
     snapshot = json.loads(row["funnel_evidence"])
-    assert snapshot["proof_decision_id"] == "synthetic"
+    assert snapshot["proof_decision_id"] == expected_id
+    assert row["decision_id"] == "synthetic"
     assert snapshot["order_state"] == "REJECTED"
     assert snapshot["admission"]["minimum_voters"] == 3
     assert "not persisted" not in row["funnel_evidence"]

@@ -591,6 +591,7 @@ def decision_row(
     """Build the journal row for one ``SwarmExecutionResult`` without writing it."""
     proposal = result.proposal
     trace = result.xai_trace
+    proof_decision_id = getattr(trace, "decision_id", None)
     governance, reason = governance_of(result)
     regime_label = (
         regime
@@ -625,7 +626,7 @@ def decision_row(
         "agents": json.dumps(agents_of(trace), sort_keys=True, allow_nan=False),
         "funnel_evidence": json.dumps({
             "schema": "pramana.decision_funnel.v1",
-            "proof_decision_id": str(trace.decision_id),
+            "proof_decision_id": str(proof_decision_id) if proof_decision_id is not None else None,
             "inputs_sha256": decision_provenance(result).get("inputs_sha256"),
             "configuration_sha256": decision_provenance(result).get("configuration_sha256"),
             "admission": decision_provenance(result).get("evidence_admission"),
