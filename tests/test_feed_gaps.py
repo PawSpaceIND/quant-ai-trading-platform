@@ -307,4 +307,3 @@ def test_the_command_is_registered(tmp_path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith("feed gaps  session 2026-09-24 (times IST)")
-
