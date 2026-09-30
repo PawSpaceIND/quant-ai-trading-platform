@@ -39,6 +39,7 @@ from quant_ai.intelligence.etf_reference import ETFReferenceReader
 from quant_ai.intelligence.freshness import (
     DataCategory,
     FreshnessResult,
+    FreshnessState,
     FreshnessValidator,
     IntelligenceDataCache,
 )
@@ -742,6 +743,12 @@ class SwarmMarketAnalysisPipeline:
     @classmethod
     def _required_freshness(cls, agent_id: str, states: PipelineFreshness) -> Decimal:
         sources = cls._freshness_sources(agent_id)
+        # Streamed inputs must be current. Slow publication sources retain their
+        # existing penalties and Atlas still applies its stricter domain budget.
+        if any(source in {"price", "news"}
+               and getattr(states, source).state is not FreshnessState.FRESH
+               for source in sources):
+            return Decimal(0)
         return min(getattr(states, source).confidence_multiplier for source in sources)
 
     @classmethod
@@ -762,7 +769,8 @@ class SwarmMarketAnalysisPipeline:
         for source in cls._freshness_sources(agent_id):
             result = getattr(states, source)
             age = "unknown" if result.age_seconds is None else str(result.age_seconds)
-            parts.append(f"{source}={result.state.value}(age_seconds={age})")
+            parts.append(f"{source}={result.state.value}(age_seconds={age},"
+                         f"ttl_seconds={result.ttl_seconds})")
         return ",".join(parts)
 
     def _approved_lessons(self) -> tuple[str, ...]:
