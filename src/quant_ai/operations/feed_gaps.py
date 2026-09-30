@@ -233,4 +233,3 @@ def stream_events(lines: Iterable[str], session_date: date) -> list[str]:
         reason = SECRET.sub("[redacted]", str(event.get("error", "")))[:80]
         found.append(f"{_ist(stamp)} {name} {reason}".strip())
     return found
-
