@@ -133,3 +133,34 @@ def test_slow_source_ttls_and_penalties_unchanged():
     assert FreshnessValidator.TTL[DataCategory.FUNDAMENTAL] == 86400
     assert FreshnessValidator.TTL[DataCategory.MACRO] == 604800
     assert Pipeline._required_freshness('indian-equities', states(fundamentals=86401)) == Decimal('0.50')
+
+
+@pytest.mark.parametrize('now_fold,observed_fold,expected_age', [(0, 1, None), (1, 0, 3600)])
+@pytest.mark.parametrize('category', list(DataCategory))
+def test_dst_fall_back_compares_instants(now_fold, observed_fold, expected_age, category):
+    from zoneinfo import ZoneInfo
+    zone = ZoneInfo('America/New_York')
+    now = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=now_fold)
+    observed = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=observed_fold)
+    validator = FreshnessValidator()
+    result = validator.validate(category, observed, now)
+    assert result == validator.validate(category, observed.astimezone(timezone.utc), now.astimezone(timezone.utc))
+    assert result.age_seconds == expected_age
+    if expected_age is None:
+        assert result.state == FreshnessState.INVALID
+        assert result.confidence_multiplier == 0
+    elif category in {DataCategory.PRICE, DataCategory.NEWS}:
+        assert result.state == FreshnessState.STALE
+    else:
+        assert result.state == FreshnessState.FRESH
+
+
+@pytest.mark.parametrize('category', list(DataCategory))
+@pytest.mark.parametrize('offset_hours', [-5, -4, 0, 5.5])
+def test_fixed_offsets_and_utc_are_equivalent(category, offset_hours):
+    offset = timezone(timedelta(hours=offset_hours))
+    validator = FreshnessValidator()
+    for age in [0, 60, 1800, 86400, 604800, -0.000001]:
+        stamp = NOW - timedelta(seconds=age)
+        result = validator.validate(category, stamp.astimezone(offset), NOW.astimezone(offset))
+        assert result == validator.validate(category, stamp, NOW)

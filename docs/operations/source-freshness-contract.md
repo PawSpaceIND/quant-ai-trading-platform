@@ -30,7 +30,9 @@ No such admission change is in this PR. ETF's two-voter/three-quorum gap is sepa
 - TTL equality is current. A fractional second beyond the TTL is stale; integer ages
   round upward conservatively. No future observation is current, even within one
   microsecond: INVALID, unknown age, zero multiplier. MISSING likewise has unknown
-  age and zero multiplier. Naive timestamps remain rejected.
+  age and zero multiplier. Timestamps without a UTC offset remain rejected.
+  Aware timestamps normalize to UTC before subtraction, including repeated local
+  times across DST folds; equivalent timezone offsets give equivalent results.
 - Each specialist rationale records its declared source names, states, ages and TTLs
   for full and reduced weights. The legacy aggregate age field still contains the
   oldest known dependency age; it cannot represent unknown age and must be interpreted
@@ -57,6 +59,12 @@ These tests characterize supplied snapshot timestamps, not provider timestamp li
 The pipeline still uses its existing latest-news aggregation and declared dependency
 mapping; whether older contributing headlines or optional India tape metrics need
 separate clocks is follow-up review. No historical simulation, production path frequency,
-live effectiveness or readiness is established. Focused validation: 161 tests passed across source freshness, intelligence pipeline,
+live effectiveness or readiness is established. Independent source review also reproduced the shared-ZoneInfo fall-back bug: local
+01:30 fold 1 is one hour in the future of fold 0, but wall-time subtraction made it
+fresh age zero. Eight added fold-direction/category cases failed before UTC
+normalization and pass afterward; sixteen fixed-offset equivalence cases pass.
+This is source correctness; no observed Indian runtime impact is claimed.
+
+Focused validation: 185 tests passed across source freshness, intelligence pipeline,
 Atlas rule/MAS/LLM overlay, ETF specialist scope and mocked Anthropic swarm tests.
 Focused Ruff and `git diff --check` passed. Full builds/suite were not run locally.
