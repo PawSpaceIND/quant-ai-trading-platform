@@ -137,9 +137,11 @@ class SwarmAgent(ABC):
         notes: list[str] = []
         if freshness < 1:
             notes.append(f"freshness_penalty={freshness}")
-            diagnostic = request.metrics.get("freshness_diagnostic")
-            if isinstance(diagnostic, str) and diagnostic:
-                notes.append(f"freshness_sources={diagnostic}")
+        # Full source weight does not mean the aggregate age meets Atlas's separate
+        # domain budget. Keep source states/ages/TTLs visible even at full weight.
+        diagnostic = request.metrics.get("freshness_diagnostic")
+        if isinstance(diagnostic, str) and diagnostic:
+            notes.append(f"freshness_sources={diagnostic}")
         if freshness <= Decimal("0.25"):
             notes.append("capital_preservation_stale_or_missing_data")
         return notes

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
+from math import ceil
 from typing import ClassVar
 
 
@@ -18,6 +19,7 @@ class FreshnessState(str, Enum):
     FRESH = "FRESH"
     STALE = "STALE"
     MISSING = "MISSING"
+    INVALID = "INVALID"
 
 
 @dataclass(frozen=True)
@@ -49,9 +51,17 @@ class FreshnessValidator:
         ttl = self.TTL[category]
         if observed_at is None:
             return FreshnessResult(FreshnessState.MISSING, None, ttl, Decimal(0))
-        if observed_at.tzinfo is None or now.tzinfo is None:
+        if observed_at.utcoffset() is None or now.utcoffset() is None:
             raise ValueError("freshness timestamps must be timezone-aware")
-        age = max(0, int((now - observed_at).total_seconds()))
+        # Shared ZoneInfo objects subtract wall times, ignoring DST folds. Compare
+        # UTC instants so repeated local times cannot hide future or stale evidence.
+        elapsed = (now.astimezone(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
+        if elapsed < 0:
+            # A future observation cannot be used in an as-of decision. Its age is
+            # unknown, rather than a fabricated fresh zero.
+            return FreshnessResult(FreshnessState.INVALID, None, ttl, Decimal(0))
+        # Round conservatively so ttl + a fraction of a second is already stale.
+        age = ceil(elapsed)
         if age <= ttl:
             return FreshnessResult(FreshnessState.FRESH, age, ttl, Decimal(1))
         ratio = Decimal(ttl) / Decimal(max(age, 1))
