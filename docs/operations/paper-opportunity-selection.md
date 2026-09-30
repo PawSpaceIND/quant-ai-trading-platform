@@ -12,10 +12,21 @@ activation requires paper mode, pilot monitoring, bound-v1 order identity and OM
 NSE cash instruments, no IBKR stream, and the existing complete bijective subscription
 mapping. The 50-name pilot/catalog cap remains enforced before opening broker state.
 
-At an eligible session cadence the source adapter invokes the existing prior-session
-research-shortlist engine once per session for eligible stock rows already in the
-catalog. It uses the daemon's exchange calendar for the previous trading session and
-existing history provider/sector map. The engine retains its liquidity/momentum/volume
+At an eligible session cadence the source adapter copies only already-cached,
+current-day daily bars from the explicitly supported Yahoo/Kite history readers; their
+cached readers perform no I/O. Unknown provider types and incomplete stock cache coverage
+use fixed fallback. Optional history warmup is not assumed to have succeeded. The scan
+never invokes shared-provider fetch/client I/O, acquires a provider fetch lock, or adds
+requests. It captures at most64 immutable bars per stock (at most50 stocks) on the loop,
+then runs the existing prior-session shortlist engine in one daemon worker with a
+five-second completion deadline and cooperative cancellation between symbols. The worker
+sees only the private in-memory bar copy, never the shared provider/client. It uses the
+daemon's exchange calendar for the previous trading session and existing sector map.
+A pending scan keeps the safe current-session selection or fixed fallback. Results are
+published only on a subsequent cadence after successful completion within the deadline;
+late, cancelled, failed or wrong-session results grant no dynamic admission. Shutdown
+cancels publication without waiting on an I/O future, and no replacement worker starts
+while the previous worker is alive. The engine retains its liquidity/momentum/volume
 and diversification screen and at-most-15 shortlist (fewer is valid). No extra model
 or alternative-data provider is added. No paid/provider calls are performed by tests.
 
@@ -56,7 +67,10 @@ Offline tests cover paper/mode refusal before broker construction, cap/identity 
 observation-only/unknown/unsubscribed symbols, held retention, independent unchanged
 protection catalog, stale/empty/error scans, invalid/future/stale/wrong-source prices,
 later-cycle admission, session rollover, BUY-only pre-submit refusal, actual bound-paper
-builder wiring without subscription/order calls, source adapter cache, journal evidence
+builder wiring without subscription/order calls, slow-history/event-loop progress,
+concurrent native-callback tick ingestion during actual run_once, deadline/cancellation,
+actual institutional BUY refusal/later admission and retained-halt protective SELL,
+source adapter cache, journal evidence
 and manifest stability. Existing daemon/protection/journal/manifest compatibility checks
 remain required. This feature does not demonstrate better returns, calibrated probability,
 prospective comparison or live readiness. Deployment and activation are separate actions.

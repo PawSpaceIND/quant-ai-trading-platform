@@ -119,25 +119,93 @@ class PaperOpportunitySelector:
         return None
 
 
+class _MemoryHistory:
+    def __init__(self, bars, cancelled, deadline):
+        self.bars, self.cancelled, self.deadline = bars, cancelled, deadline
+
+    def fetch(self, instrument, now):
+        from time import monotonic
+
+        if monotonic() > self.deadline:
+            self.cancelled.set()
+        if self.cancelled.is_set():
+            raise RuntimeError("scan_cancelled")
+        return self.bars[instrument.symbol]
+
+
 class CatalogResearchSnapshot:
-    """Reuse the shortlist engine once per session, inside the existing catalog."""
+    """Rank immutable cached bars off-loop; never call shared provider I/O.
+
+    One daemon worker per adapter, five-second publication deadline, cooperative
+    cancellation between symbols. No replacement worker until the old worker exits.
+    Missing complete current-day cache means fixed fallback, never a network fetch.
+    """
     def __init__(self, catalog, history, sectors, calendar):
-        self.catalog, self.history, self.sectors, self.calendar = catalog, history, sectors, calendar
+        self.catalog, self.history, self.sectors, self.calendar = tuple(catalog), history, dict(sectors), calendar
         self.day, self.snapshot = None, None
+        self._worker = None
+        self._cancelled = False
+        self._stop = None
+        self._result = None
+        self._deadline = None
+        self._generation = None
+
+    def cancel(self):
+        self._cancelled = True
+        self.snapshot = None
+        if self._stop is not None:
+            self._stop.set()
+
+    def _cached_bars(self, now):
+        from quant_ai.marketdata.kite_history import KiteDailyHistoryProvider
+        from quant_ai.marketdata.timeframes import DailyHistoryProvider
+
+        # Only audited non-I/O cached() implementations may run on this loop.
+        # Unknown custom providers get fallback; never assume a method name is safe.
+        if type(self.history) not in {DailyHistoryProvider, KiteDailyHistoryProvider}:
+            return None
+        bars = {}
+        for item in self.catalog:
+            if item.tradable is True and item.asset_class == AssetClass.EQUITY:
+                observed = tuple(self.history.cached(item, now)[-64:])
+                if len(observed) < 21:
+                    return None
+                bars[item.symbol] = observed
+        return bars or None
 
     def __call__(self, now):
         from datetime import time
+        from queue import Empty, Queue
+        from threading import Event, Thread
+        from time import monotonic
 
         from quant_ai.agents.scanner import research_shortlist
         from quant_ai.execution.session import MarketState
 
+        if self._cancelled:
+            return None
         zone = ZoneInfo("Asia/Kolkata")
         day = now.astimezone(zone).date()
         if self.calendar.state(Market.INDIA, now, exchange="NSE") != MarketState.REGULAR_HOURS:
             return None
+        if self._worker is not None:
+            if self._worker.is_alive():
+                if monotonic() > self._deadline or self._generation != day:
+                    self._stop.set()
+                return self.snapshot if self.day == day else None
+            try:
+                completed, result = self._result.get_nowait()
+            except Empty:
+                completed, result = float("inf"), None
+            valid = not self._stop.is_set() and completed <= self._deadline and self._generation == day
+            self._worker = None
+            if valid and result is not None:
+                self.day, self.snapshot = day, result
         if self.day == day:
             return self.snapshot
-        self.day, self.snapshot = day, None
+        bars = self._cached_bars(now)
+        if bars is None:
+            return None
         previous = day
         for _ in range(30):
             previous -= timedelta(days=1)
@@ -146,8 +214,23 @@ class CatalogResearchSnapshot:
                 break
         else:
             return None
-        self.snapshot = research_shortlist(tuple(i for i in self.catalog
-            if i.tradable is True and i.asset_class == AssetClass.EQUITY),
-            history=self.history, as_of=now, target_session=day, previous_session=previous,
-            sectors=self.sectors, fixed_watchlist=(i.symbol for i in self.catalog))
-        return self.snapshot
+        candidates = tuple(i for i in self.catalog if i.symbol in bars)
+        sectors = dict(self.sectors)
+        fixed = tuple(i.symbol for i in self.catalog)
+        stop, output = Event(), Queue(maxsize=1)
+        deadline = monotonic() + 5
+
+        def rank():
+            try:
+                result = research_shortlist(candidates, history=_MemoryHistory(bars, stop, deadline), as_of=now,
+                    target_session=day, previous_session=previous, sectors=sectors, fixed_watchlist=fixed)
+                if not stop.is_set():
+                    output.put_nowait((monotonic(), result))
+            except Exception:  # noqa: BLE001 - worker failure means fallback, no private exception publication
+                return
+
+        self._stop, self._result = stop, output
+        self._generation, self._deadline = day, deadline
+        self._worker = Thread(target=rank, name="pramana-opportunity-rank", daemon=True)
+        self._worker.start()
+        return None

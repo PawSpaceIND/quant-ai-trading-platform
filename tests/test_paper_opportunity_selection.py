@@ -149,22 +149,31 @@ def test_cadence_selection_never_replaces_protection_catalog_and_retains_holding
     assert selection.entry_issue("A", later) == "paper_opportunity_not_admitted"
 
 
-def test_snapshot_adapter_reuses_shortlist_and_caches_only_current_session():
+def test_snapshot_adapter_reuses_cached_shortlist_without_provider_io():
     from test_research_shortlist import History
 
     from quant_ai.execution.opportunity_universe import CatalogResearchSnapshot
     from quant_ai.execution.session import MarketCalendar, default_holidays
+    from quant_ai.marketdata.timeframes import DailyHistoryProvider
 
     catalog = tuple(instrument(s) for s in "ABC")
-    history = History()
+    history = DailyHistoryProvider(None)
+    for item in catalog:
+        history._cache[(item.symbol, item.market.value)] = (NOW.date(), History().fetch(item, NOW))
     provider = CatalogResearchSnapshot(catalog, history, {s: s for s in "ABC"},
         MarketCalendar(holidays=default_holidays()))
-    result = provider(NOW)
+    assert provider(NOW) is None  # Work is staged, not awaited on the event loop.
+    provider._worker.join(timeout=1)
+    assert not provider._worker.is_alive()
+    # Next cadence may poll much later than the worker deadline: completed-in-time
+    # results remain admissible, provided their session/scan freshness still holds.
+    from unittest.mock import patch
+    with patch("time.monotonic", return_value=provider._deadline + 600):
+        result = provider(NOW + timedelta(minutes=10))
     assert result["previous_session"] == "2026-09-21"
     assert result["universe"] == ["A", "B", "C"]
     assert result["shortlist"]
     assert provider(NOW + timedelta(minutes=10)) is result
-    assert len(history.clocks) == 3
     assert provider(NOW.replace(hour=0)) is None
 
 
@@ -276,3 +285,82 @@ def test_actual_bound_paper_builder_keeps_subscriptions_identity_and_protection_
     finally:
         daemon.tracker.broker.close()
         daemon.scheduler.pipeline.runtime.oms.close()
+
+
+def test_slow_uncached_history_cannot_block_loop_or_received_ticks():
+    import asyncio
+    from time import monotonic, sleep
+
+    from quant_ai.execution.opportunity_universe import CatalogResearchSnapshot
+    from quant_ai.execution.session import MarketCalendar, default_holidays
+    from quant_ai.marketdata.ticker_stream import TickBuffer
+    from quant_ai.marketdata.timeframes import DailyHistoryProvider
+
+    class SlowFeed:
+        def __init__(self): self.calls = 0
+        def fetch_ohlcv(self, *args):
+            self.calls += 1
+            sleep(.15)
+            return ()
+
+    feed = SlowFeed()
+    history = DailyHistoryProvider(None, feed=feed)
+    provider = CatalogResearchSnapshot((instrument("A"),), history, {"A": "sector"},
+        MarketCalendar(holidays=default_holidays()))
+    buffer = TickBuffer(clock=lambda: NOW)
+
+    async def exercise():
+        observed = []
+        async def ingest():
+            await asyncio.sleep(.01)
+            buffer.put(tick("A", NOW))
+            observed.append(monotonic())
+        pending = asyncio.create_task(ingest())
+        start = monotonic()
+        assert provider(NOW) is None
+        await pending
+        assert observed[0] - start < .1
+    asyncio.run(exercise())
+    assert feed.calls == 0
+    assert buffer.latest("A").observed_at == NOW
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_bounded_worker_does_not_block_loop_or_publish_cancelled_late_result(monkeypatch, cancel):
+    import asyncio
+    from threading import Event
+
+    from quant_ai.agents import scanner
+    from quant_ai.execution.opportunity_universe import CatalogResearchSnapshot
+    from quant_ai.execution.session import MarketCalendar, default_holidays
+    from quant_ai.marketdata.timeframes import DailyHistoryProvider
+
+    entered, release = Event(), Event()
+    def delayed(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=2)
+        return snapshot(("A",))
+    monkeypatch.setattr(scanner, "research_shortlist", delayed)
+    history = DailyHistoryProvider(None)
+    history._cache[("A", "INDIA")] = (NOW.date(), tuple(object() for _ in range(21)))
+    provider = CatalogResearchSnapshot((instrument("A"),), history, {"A": "sector"},
+        MarketCalendar(holidays=default_holidays()))
+    try:
+        async def exercise():
+            assert provider(NOW) is None
+            await asyncio.sleep(.01)
+            assert entered.is_set()
+            worker = provider._worker
+            assert provider(NOW + timedelta(seconds=1)) is None
+            assert provider._worker is worker  # No duplicate workers while pending.
+            if cancel: provider.cancel()
+            else: provider._deadline = 0
+            assert provider(NOW + timedelta(seconds=2)) is None
+            assert provider._stop.is_set()
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        provider._worker.join(timeout=2)
+    assert provider(NOW + timedelta(seconds=3)) is None
+    assert provider.snapshot is None
+    provider.cancel()

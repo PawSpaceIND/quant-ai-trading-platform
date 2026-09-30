@@ -701,6 +701,9 @@ class AutonomousTradingDaemon:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        selector = getattr(self, "opportunity_selector", None)
+        if selector is not None:
+            selector.snapshot_provider.cancel()
 
     def install_signal_handlers(self) -> None:
         loop = asyncio.get_running_loop()
