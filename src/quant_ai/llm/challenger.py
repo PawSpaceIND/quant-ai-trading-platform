@@ -87,9 +87,30 @@ class _ChallengerBudget:
         path = Path(shared.database).with_name(Path(shared.database).name + ".astra-shadow")
         self.sample = SqliteAIBudget(path, daily_call_limit=20, daily_token_limit=300_000)
 
+    def reserve_ticket(self, scope, token_reservation=0):
+        sample = self.sample.reserve_ticket(scope, token_reservation)
+        if sample is None:
+            return None
+        shared = self.shared.reserve_ticket(scope, token_reservation)
+        if shared is None:
+            self.sample.cancel_ticket(sample)
+            return None
+        return (sample, shared)
+
+    def dispatch_ticket(self, ticket, dollar_ticket=None):
+        # Partial failure retains the marked side; no provider call may follow.
+        return (self.sample.dispatch_ticket(ticket[0], dollar_ticket)
+                and self.shared.dispatch_ticket(ticket[1], dollar_ticket))
+
+    def cancel_ticket(self, ticket):
+        return (self.sample.cancel_ticket(ticket[0]), self.shared.cancel_ticket(ticket[1]))
+
+    def settle_ticket(self, ticket, usage):
+        return (self.sample.settle_ticket(ticket[0], usage),
+                self.shared.settle_ticket(ticket[1], usage))
+
     def reserve(self, scope, token_reservation=0):
-        return (self.sample.reserve(scope, token_reservation)
-                and self.shared.reserve(scope, token_reservation))
+        return self.reserve_ticket(scope, token_reservation) is not None
 
     def record(self, scope, usage, *, token_reservation=0):
         self.sample.record(scope, usage, token_reservation=token_reservation)

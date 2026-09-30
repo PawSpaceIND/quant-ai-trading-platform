@@ -175,9 +175,9 @@ class AnthropicSwarmClient:
         budget_reservation = (
             _budget_token_reservation(request) if self.budget is not None else 0
         )
-        if self.budget is not None and not self.budget.reserve(
-            BUDGET_SCOPE, budget_reservation
-        ):
+        budget_ticket = (self.budget.reserve_ticket(BUDGET_SCOPE, budget_reservation)
+                         if self.budget is not None else None)
+        if self.budget is not None and budget_ticket is None:
             # Daily spend cap reached, or the budget ledger is unreadable (which fails
             # closed): nothing leaves the process. The NEUTRAL payload degrades the tick
             # to PRESERVE_CAPITAL with the reason visible in the proof.
@@ -187,11 +187,17 @@ class AnthropicSwarmClient:
 
         try:
             spend_ticket = require_reservation(request)
+            provenance["token_budget_ticket"] = budget_ticket
+            provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
+            if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
+                raise SpendRefused()
             response = await asyncio.wait_for(
                 self._client.messages.create(**request),
                 timeout=self.timeout_seconds,
             )
         except SpendRefused:
+            if self.budget is not None:
+                self.budget.cancel_ticket(budget_ticket)
             return unavailable("Daily USD budget exhausted or unavailable", status="budget_exhausted",
                                failure_code="budget_exhausted")
         except (asyncio.TimeoutError, TimeoutError):
@@ -231,9 +237,7 @@ class AnthropicSwarmClient:
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
             # Tokens were spent whether or not the payload passes the schema below.
-            self.budget.record(
-                BUDGET_SCOPE, provenance["usage"], token_reservation=budget_reservation
-            )
+            self.budget.settle_ticket(budget_ticket, provenance["usage"])
         # A syntactically complete-looking tool can still belong to a truncated or
         # refused response. Account for spent tokens above, then fail closed.
         stop_failures = {
@@ -339,18 +343,24 @@ class AnthropicSwarmClient:
         budget_reservation = (
             _budget_token_reservation(request) if self.budget is not None else 0
         )
-        if self.budget is not None and not self.budget.reserve(
-            HEADLINE_BUDGET_SCOPE, budget_reservation
-        ):
+        budget_ticket = (self.budget.reserve_ticket(HEADLINE_BUDGET_SCOPE, budget_reservation)
+                         if self.budget is not None else None)
+        if self.budget is not None and budget_ticket is None:
             self._warn_budget_exhausted(self.budget)
             return ConsensusPayload({"scores": []},
                                     finish("budget_exhausted", "AI budget exhausted"))
         try:
             spend_ticket = require_reservation(request)
+            provenance["token_budget_ticket"] = budget_ticket
+            provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
+            if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
+                raise SpendRefused()
             response = await asyncio.wait_for(
                 self._client.messages.create(**request), timeout=self.timeout_seconds
             )
         except SpendRefused:
+            if self.budget is not None:
+                self.budget.cancel_ticket(budget_ticket)
             return ConsensusPayload({"scores": []}, finish("budget_exhausted", "Daily USD budget unavailable or exhausted"))
         except (asyncio.TimeoutError, TimeoutError):
             return ConsensusPayload({"scores": []}, finish("unavailable", "API Timeout"))
@@ -373,11 +383,7 @@ class AnthropicSwarmClient:
         }
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
-            self.budget.record(
-                HEADLINE_BUDGET_SCOPE,
-                provenance["usage"],
-                token_reservation=budget_reservation,
-            )
+            self.budget.settle_ticket(budget_ticket, provenance["usage"])
         def invalid_headline(code: str) -> ConsensusPayload:
             return ConsensusPayload(
                 {"scores": []},
