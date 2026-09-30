@@ -548,6 +548,11 @@ class AtlasInvestmentAgent:
             False,
             {
                 **self._provenance(subject, evidence, now, market_tick, evidence_context, knowledge_context),
+                "deterministic_gate_reasons": (
+                    (["consensus_confidence_below_floor"] if confidence < floor else [])
+                    + (["expected_risk_above_policy"] if expected_risk > self.policy.max_expected_risk else [])
+                    + (["neutral_weighted_lean"] if abs(weighted_score) < Decimal("0.45") else [])
+                ),
                 # The specialists' lean and its conviction, kept beside the action so the
                 # exploration budget and any later reader can see what the floor refused.
                 "consensus": {
@@ -743,6 +748,7 @@ class AtlasInvestmentAgent:
         regime = dict(context.regime) if context is not None else {}
         label, timeframe = regime.get("label"), regime.get("timeframe")
         return {"schema": "pramana.decision_provenance.v1", "mode": "deterministic",
+                "evidence_admission": self._admission_snapshot(subject, evidence),
                 "configuration": configuration, "configuration_sha256": content_hash(configuration),
                 "inputs": inputs, "inputs_sha256": content_hash(inputs), "inference": None,
                 "regime": label if isinstance(label, str) else None,
@@ -752,6 +758,33 @@ class AtlasInvestmentAgent:
                 "playbook": self.policy.playbook(context).provenance(self.policy.min_consensus_confidence),
                 "governed_knowledge": knowledge_provenance,
                 **_headline_provenance(context)}
+
+    def _admission_snapshot(self, subject, evidence) -> dict:
+        """Describe existing coverage predicates; this observation never admits a trade.
+
+        Candidates are not votes cast: an earlier gate can hold before consensus runs.
+        Keep the effective per-domain budget beside each age, including hard holds.
+        """
+        rows = []
+        for item in evidence:
+            if item.subject != subject:
+                continue
+            gate = item.domain in self.policy.gate_domains
+            budget = self.policy.stale_budget_seconds(item.domain)
+            stale = item.source_freshness_seconds > budget
+            abstained = item.stance is Stance.NEUTRAL and (stale or item.confidence <= 0)
+            rows.append({
+                "agent_id": item.agent_id, "domain": item.domain.value,
+                "stance": item.stance.value, "confidence": str(item.confidence),
+                "age_seconds": item.source_freshness_seconds, "budget_seconds": budget,
+                "role": "gate" if gate else "voter", "over_atlas_age_budget": stale,
+                "coverage_candidate": not gate and not abstained,
+            })
+        return {"schema": "pramana.evidence_admission.v1",
+                "minimum_voters": self.policy.min_evidence_agents,
+                "voter_count": sum(row["role"] == "voter" for row in rows),
+                "coverage_candidates": sum(row["coverage_candidate"] for row in rows),
+                "agents": rows}
 
     def _founder_rationale(self) -> tuple[str, ...]:
         if not self.founder_instructions:
@@ -782,7 +815,8 @@ class AtlasInvestmentAgent:
             (),
             (),
             False,
-            self._provenance(subject, evidence, now, market_tick, context, knowledge),
+            {**self._provenance(subject, evidence, now, market_tick, context, knowledge),
+             "deterministic_gate_reasons": [reason]},
         )
 
 

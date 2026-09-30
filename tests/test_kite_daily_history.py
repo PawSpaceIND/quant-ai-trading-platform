@@ -140,13 +140,30 @@ def test_daily_candles_derive_tokens_and_preserve_decimal_and_source():
 
 @pytest.mark.parametrize("change", [
     {"market": Market.USA}, {"exchange": "BSE"}, {"currency": "USD"},
-    {"tradable": False}, {"symbol": "../orders"}, {"asset_class": AssetClass.BOND},
+    {"symbol": "../orders"}, {"asset_class": AssetClass.BOND},
 ])
 def test_out_of_scope_instruments_refuse_before_requests(change):
     client = Client()
     with pytest.raises(kh.KiteHistoryError, match="nse_cash_only"):
         feed(client).fetch_ohlcv(replace(INSTRUMENT, **change), START, NOW, "1d")
     assert client.calls == []
+
+
+def test_observation_candidate_daily_research_does_not_grant_execution_permission():
+    from quant_ai.agents.scanner import _bars_for
+    instrument = replace(INSTRUMENT, tradable=False)
+    client = Client()
+    provider = kh.KiteDailyHistoryProvider("fixture", "dummy", client=client)
+    bars = _bars_for(provider, instrument, NOW)
+    assert len(bars) == 1  # Previously swallowed nse_cash_only and returned no history.
+    assert bars[0].instrument.tradable is False
+    assert instrument.tradable is False
+    assert len(client.calls) == 2
+    tradable_bars = provider.fetch(INSTRUMENT, NOW)
+    assert tradable_bars[0].instrument.tradable is True
+    assert provider.cached(instrument, NOW)[0].instrument.tradable is False
+    with pytest.raises(kh.KiteHistoryError, match="nse_cash_only"):
+        kh._instrument(instrument)  # Strict admission still used for minute warmup.
 
 
 @pytest.mark.parametrize("problem", ["duplicate_symbol", "duplicate_token", "bad_token", "overflow", "expiry", "wrong_exchange", "missing_header", "duplicate_header", "bad_lot", "nan_tick"])

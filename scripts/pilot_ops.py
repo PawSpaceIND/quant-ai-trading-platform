@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from threading import RLock
+from zoneinfo import ZoneInfo
 
 
 def backup(source: Path, destination: Path) -> dict:
@@ -258,7 +259,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill",
                                            "pilot-check", "missed", "plan", "calibrate", "empirical-payoffs",
-                                           "capital-contribution", "feed-gaps"])
+                                           "capital-contribution", "feed-gaps", "decision-funnel"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
@@ -285,6 +286,11 @@ if __name__ == "__main__":
         raise SystemExit(0 if result["ready"] else 2)
     if not args.database:
         parser.error(f"{args.action} requires --database")
+    if args.action == "decision-funnel":
+        from quant_ai.analytics.decision_funnel import report
+        day = args.date or datetime.now(timezone.utc).astimezone(ZoneInfo('Asia/Kolkata')).date().isoformat()
+        print(json.dumps(report(args.database, args.tenant, day), indent=2))
+        raise SystemExit(0)
     if args.action == "missed":
         print(missed(args.database, args.tenant, session_date=args.date, threshold=args.threshold))
         raise SystemExit(0)

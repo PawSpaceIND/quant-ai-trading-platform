@@ -21,13 +21,15 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from quant_ai.agents.playbook import playbook_for
 from quant_ai.domain.models import AssetClass, Instrument, Market
 from quant_ai.intelligence.regime import INSUFFICIENT_HISTORY, classify
+from quant_ai.marketdata.timeframes import closed_sessions, venue_for
 
 SCAN_UNIVERSE_ENV = "PRAMANA_SCAN_UNIVERSE_JSON"
 MAX_SCAN_NAMES = 100
@@ -166,3 +168,96 @@ def brief_lines(report: Mapping[str, Any], limit: int = MAX_BRIEF_LINES) -> list
     if len(opportunities) > limit:
         lines.append(f"+{len(opportunities) - limit} more in the plan file")
     return lines
+
+
+def research_shortlist(
+    candidates: Iterable[Instrument], *, history: Any, as_of: datetime,
+    target_session: date, previous_session: date, sectors: Mapping[str, str],
+    fixed_watchlist: Iterable[str] = (), observations: Mapping[str, Mapping] | None = None,
+    limit: int = 15, min_turnover: Decimal = Decimal(50000000), sector_limit: int = 3,
+) -> dict[str, Any]:
+    """Offline research selection; no directives, subscriptions, orders or inference.
+
+    The caller supplies exchange-calendar dates. Both publication and availability must
+    precede as_of; a later-arriving catalyst cannot enter an earlier decision. Daily
+    close times are filtered independently of provider behavior. Liquidity is an OHLCV
+    turnover proxy, not an observed rupee trading total or a promise of execution.
+    """
+    zone = ZoneInfo("Asia/Kolkata")
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise ValueError("as_of must be timezone-aware")
+    cutoff = as_of.astimezone(timezone.utc)
+    # Morning research may freeze before the open; it may not use target-day bars.
+    if previous_session >= target_session or cutoff.astimezone(zone).date() > target_session:
+        raise ValueError("session dates do not describe prospective research")
+    if not 10 <= limit <= 15 or min_turnover <= 0 or sector_limit < 1:
+        raise ValueError("invalid research screening policy")
+    universe = tuple(candidates)
+    if len(universe) > MAX_SCAN_NAMES or len({i.symbol for i in universe}) != len(universe):
+        raise ValueError("research universe must be unique and at most100 names")
+    rows = []
+    for instrument in universe:
+        if (instrument.market != Market.INDIA or instrument.exchange != "NSE"
+                or instrument.asset_class != AssetClass.EQUITY or instrument.is_dated_contract):
+            raise ValueError("research universe must be NSE cash stocks")
+        bars = tuple(b for b in closed_sessions(_bars_for(history, instrument, cutoff), cutoff,
+                                                venue_for(Market.INDIA))
+                     if b.timestamp.astimezone(zone).date() <= previous_session)
+        reasons = []
+        if len(bars) < 21:
+            reasons.append("insufficient_prior_sessions")
+        if not bars or bars[-1].timestamp.astimezone(zone).date() != previous_session:
+            reasons.append("missing_previous_session")
+        sector = sectors.get(instrument.symbol)
+        if not sector:
+            reasons.append("unknown_sector")
+        metrics = None
+        if len(bars) >= 21:
+            prior = bars[-21:-1]
+            avg_volume = sum((b.volume for b in prior), Decimal(0)) / 20
+            turnover = sum((b.close * b.volume for b in bars[-20:]), Decimal(0)) / 20
+            if avg_volume <= 0 or turnover < min_turnover:
+                reasons.append("liquidity_proxy_below_screen")
+            metrics = {"turnover_proxy_20d": str(turnover),
+                       "momentum_5d": str(bars[-1].close / bars[-6].close - 1),
+                       "relative_volume": str(bars[-1].volume / avg_volume) if avg_volume > 0 else None}
+        observed = dict((observations or {}).get(instrument.symbol, {}))
+        available = False
+        try:
+            published = datetime.fromisoformat(observed["published_at"])
+            received = datetime.fromisoformat(observed["received_at"])
+            available = (published.utcoffset() is not None and received.utcoffset() is not None
+                         and published <= received <= cutoff)
+        except (KeyError, ValueError, TypeError):
+            pass
+        rows.append({"symbol": instrument.symbol, "sector": sector, "eligible": not reasons,
+                     "reasons": reasons, "metrics": metrics,
+                     "last_session": bars[-1].timestamp.astimezone(zone).date().isoformat() if bars else None,
+                     "catalyst_observed": observed.get("catalyst") if available and type(observed.get("catalyst")) is bool else None,
+                     "spread_bps": str(observed["spread_bps"]) if available and isinstance(observed.get("spread_bps"), Decimal)
+                         and observed["spread_bps"].is_finite() and observed["spread_bps"] >= 0 else None,
+                     "execution_authorized": False})
+    eligible = [r for r in rows if r["eligible"]]
+    # Transparent cross-sectional ranks; no fitted weights or probability claim.
+    ranks = {}
+    for metric in ("momentum_5d", "relative_volume", "turnover_proxy_20d"):
+        for rank, row in enumerate(sorted(eligible, key=lambda r: (Decimal(r["metrics"][metric]), r["symbol"]))):
+            ranks[row["symbol"]] = ranks.get(row["symbol"], 0) + rank
+    eligible.sort(key=lambda r: (-ranks[r["symbol"]], r["symbol"]))
+    selected, sector_counts = [], {}
+    for row in eligible:
+        row["rank_score"] = ranks[row["symbol"]]
+        if len(selected) >= limit or sector_counts.get(row["sector"], 0) >= sector_limit:
+            row["reasons"].append("research_capacity_or_sector_limit")
+            continue
+        selected.append(row["symbol"])
+        sector_counts[row["sector"]] = sector_counts.get(row["sector"], 0) + 1
+    return {"schema": "pramana.research_shortlist.v1", "as_of": cutoff.isoformat(),
+            "target_session": target_session.isoformat(), "previous_session": previous_session.isoformat(),
+            "universe": sorted(i.symbol for i in universe), "shortlist": selected,
+            "fixed_watchlist": sorted(set(fixed_watchlist)), "names": rows,
+            "policy": {"limit": limit, "min_turnover_proxy": str(min_turnover), "sector_limit": sector_limit},
+            "limitations": ["Shortlist is research, not trades; fewer than10 is valid when evidence is insufficient.",
+                            "Catalyst/spread observations are reported, not scored; unknown is not zero.",
+                            "Point-in-time universe membership/provider availability must be supplied and archived.",
+                            "No realized edge, forecast probability or prospective comparison result is implied."]}
