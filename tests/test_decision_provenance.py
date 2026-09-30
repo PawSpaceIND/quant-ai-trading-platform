@@ -45,7 +45,9 @@ def test_actual_request_hash_and_returned_identity_are_recorded_without_auth_mat
     assert p['resolved_model'] == 'synthetic-resolved-model'
     assert p['response_id'] == 'synthetic-response'
     assert p['usage']['input_tokens'] == 123
-    assert p['usage']['cache_read_input_tokens'] is None
+    # Absent optional provider counts stay absent; explicit null means unknown.
+    assert 'cache_read_input_tokens' not in p['usage']
+    assert 'cache_creation_input_tokens' not in p['usage']
     assert llm.parse_consensus(result)[1].model == 'synthetic-resolved-model'
     assert 'api_key' not in json.dumps(p)
     assert set(result) == set(payload())  # Metadata never enters the model's strict tool schema.
