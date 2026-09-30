@@ -107,3 +107,23 @@ def test_journal_projection_links_proof_and_execution_state_without_provider_bod
     assert snapshot["order_state"] == "REJECTED"
     assert snapshot["admission"]["minimum_voters"] == 3
     assert "not persisted" not in row["funnel_evidence"]
+
+
+@pytest.mark.parametrize("evidence,expected", [
+    ({"deterministic_gate_reasons": []}, {}),
+    ({}, {"unknown": 1}),
+    ({"deterministic_gate_reasons": None}, {"unknown": 1}),
+    ({"deterministic_gate_reasons": "stale"}, {"unknown": 1}),
+    ({"deterministic_gate_reasons": [None]}, {"unknown": 1}),
+    ({"deterministic_gate_reasons": [""]}, {"unknown": 1}),
+    ("malformed JSON", {"unknown": 1}),
+    ({"deterministic_gate_reasons": ["stale", "quorum", "stale"]}, {"stale": 2, "quorum": 1}),
+])
+def test_report_preserves_known_empty_gate_reasons(tmp_path, evidence, expected):
+    path = tmp_path / "gate-reasons.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE paper_decision_journal(tenant_id TEXT, decided_at TEXT, funnel_evidence TEXT, decision_id TEXT, symbol TEXT)")
+        payload = evidence if isinstance(evidence, str) else json.dumps(evidence)
+        db.execute("INSERT INTO paper_decision_journal VALUES(?,?,?,?,?)",
+                   ("paper", "2026-01-05T04:00:00+00:00", payload, "synthetic", "AAA"))
+    assert report(path, "paper", "2026-01-05")["deterministic_gate_reasons"] == expected

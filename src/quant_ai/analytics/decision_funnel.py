@@ -20,6 +20,13 @@ def _object(value):
         return {}
 
 
+def _gate_reasons(evidence):
+    reasons = _object(evidence).get("deterministic_gate_reasons")
+    if isinstance(reasons, list) and all(isinstance(reason, str) and reason.strip() for reason in reasons):
+        return reasons
+    return ["unknown"]
+
+
 def report(database: Path, tenant: str, session_date: str) -> dict:
     """One IST date, half-open bounds and one read transaction across all evidence.
 
@@ -95,7 +102,7 @@ def report(database: Path, tenant: str, session_date: str) -> dict:
             "inference_statuses": dict(Counter(r.get("inference_status") or "unknown" for r in rows_list)),
             "deterministic_gate_reasons": dict(Counter(
                 reason for r in rows_list
-                for reason in (_object(r.get("funnel_evidence")).get("deterministic_gate_reasons") or ["unknown"]))),
+                for reason in _gate_reasons(r.get("funnel_evidence")))),
             "recorded_execution_states": dict(states),
             "ledger_fills": len(fills_list) if fills is not None else None,
             "fill_kinds": dict(Counter(r["kind"] for r in links)),
