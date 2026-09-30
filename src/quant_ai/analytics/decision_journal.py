@@ -587,6 +587,7 @@ def decision_row(
     llm_available: bool = False,
     features: Any = None,
     marks: Any = None,
+    opportunity_selection: Any = None,
 ) -> dict[str, Any]:
     """Build the journal row for one ``SwarmExecutionResult`` without writing it."""
     proposal = result.proposal
@@ -626,6 +627,7 @@ def decision_row(
         "agents": json.dumps(agents_of(trace), sort_keys=True, allow_nan=False),
         "funnel_evidence": json.dumps({
             "schema": "pramana.decision_funnel.v1",
+            "opportunity_selection": opportunity_selection,
             "proof_decision_id": str(proof_decision_id) if proof_decision_id is not None else None,
             "inputs_sha256": decision_provenance(result).get("inputs_sha256"),
             "configuration_sha256": decision_provenance(result).get("configuration_sha256"),
@@ -692,11 +694,12 @@ def record_decision(
     llm_available: bool = False,
     features: Any = None,
     marks: Any = None,
+    opportunity_selection: Any = None,
 ) -> bool:
     """Journal one cadence decision. Idempotent on ``decision_id``; True when a row was added."""
     row = decision_row(
         result, tenant_id=tenant_id, now=now, regime=regime, mode=mode,
-        llm_available=llm_available, features=features, marks=marks,
+        llm_available=llm_available, features=features, marks=marks, opportunity_selection=opportunity_selection,
     )
     inserted = insert_decision(broker, row)
     if inserted:

@@ -32,6 +32,8 @@ FIELDS = {
         "instruments",
         "plan",
     ),
+    "quant_ai.execution.opportunity_universe.PaperOpportunitySelector": ("catalog", "fixed", "subscribed"),
+    "quant_ai.execution.opportunity_universe.CatalogResearchSnapshot": ("catalog", "sectors"),
     "quant_ai.execution.scheduler.AutonomousCadenceScheduler": ("cadence",),
     "quant_ai.intelligence.pipeline.SwarmMarketAnalysisPipeline": ("bind_order_instruments",),
     "quant_ai.intelligence.etf_reference.ETFReferenceReader": (),
@@ -209,6 +211,8 @@ def describe(obj, issues: list[str]) -> dict | None:
         issues.append(f"unsupported_component:{name}")
         return {"type": name, "supported": False}
     result = {"type": name, "parameters": {key: stable(getattr(obj, key)) for key in FIELDS[name]}}
+    if name.endswith("PaperOpportunitySelector"):
+        result["research_snapshot"] = describe(obj.snapshot_provider, issues)
     if name.endswith("SqliteAIBudget"):
         from quant_ai.governance.runtime_identity import path_digest
 
@@ -377,6 +381,7 @@ class RuntimeManifest:
             name: describe(obj, issues)
             for name, obj in {
                 "daemon": d,
+                "opportunity_selector": getattr(d, "opportunity_selector", None),
                 "scheduler": d.scheduler,
                 "pipeline": p,
                 "runtime": r,
