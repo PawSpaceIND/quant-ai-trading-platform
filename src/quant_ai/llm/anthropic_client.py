@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -19,6 +20,7 @@ from quant_ai.llm.provenance import ConsensusPayload, content_hash
 from quant_ai.llm.spend import SpendRefused, initialize, require_reservation, settle
 
 LOGGER = logging.getLogger("quant_ai.anthropic")
+_ANTHROPIC_SDK_TYPE = AsyncAnthropic
 
 CONSENSUS_SYSTEM = (
     "You are Pramana's advisory quant consensus engine. Use only the supplied market context. "
@@ -121,6 +123,18 @@ class AnthropicSwarmClient:
         self.budget = budget
         self._budget_warned_day: str | None = None
 
+    async def _create_message(self, request):
+        if isinstance(self._client, _ANTHROPIC_SDK_TYPE):
+            # Retain only usage from the wire: SDK coercion can turn malformed bools
+            # into integers and optional absent fields into explicit None defaults.
+            raw = await self._client.messages.with_raw_response.create(**request)
+            response = await raw.parse()
+            body = raw.http_response.json()
+            usage = body.get("usage") if isinstance(body, Mapping) else None
+            return response, usage
+        response = await self._client.messages.create(**request)
+        return response, getattr(response, "usage", None)
+
     async def generate_trading_consensus(self, prompt: str) -> dict[str, Any]:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
@@ -175,9 +189,9 @@ class AnthropicSwarmClient:
         budget_reservation = (
             _budget_token_reservation(request) if self.budget is not None else 0
         )
-        if self.budget is not None and not self.budget.reserve(
-            BUDGET_SCOPE, budget_reservation
-        ):
+        budget_ticket = (self.budget.reserve_ticket(BUDGET_SCOPE, budget_reservation)
+                         if self.budget is not None else None)
+        if self.budget is not None and budget_ticket is None:
             # Daily spend cap reached, or the budget ledger is unreadable (which fails
             # closed): nothing leaves the process. The NEUTRAL payload degrades the tick
             # to PRESERVE_CAPITAL with the reason visible in the proof.
@@ -185,13 +199,19 @@ class AnthropicSwarmClient:
             return unavailable("AI budget exhausted", status="budget_exhausted",
                                risk_factor="ai_budget_exhausted", failure_code="budget_exhausted")
 
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
-            response = await asyncio.wait_for(
-                self._client.messages.create(**request),
+            provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
+            if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
+                raise SpendRefused()
+            response, usage = await asyncio.wait_for(
+                self._create_message(request),
                 timeout=self.timeout_seconds,
             )
         except SpendRefused:
+            if self.budget is not None:
+                self.budget.cancel_ticket(budget_ticket)
             return unavailable("Daily USD budget exhausted or unavailable", status="budget_exhausted",
                                failure_code="budget_exhausted")
         except (asyncio.TimeoutError, TimeoutError):
@@ -225,15 +245,11 @@ class AnthropicSwarmClient:
             value = getattr(response, attribute, None)
             provenance["resolved_model" if attribute == "model" else "response_id"] = value if isinstance(value, str) else None
         provenance.update(_consensus_response_metadata(response))
-        usage = getattr(response, "usage", None)
-        provenance["usage"] = {name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
-                               for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}
+        provenance["usage"] = _provider_usage(usage)
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
             # Tokens were spent whether or not the payload passes the schema below.
-            self.budget.record(
-                BUDGET_SCOPE, provenance["usage"], token_reservation=budget_reservation
-            )
+            self.budget.settle_ticket(budget_ticket, provenance["usage"])
         # A syntactically complete-looking tool can still belong to a truncated or
         # refused response. Account for spent tokens above, then fail closed.
         stop_failures = {
@@ -339,18 +355,24 @@ class AnthropicSwarmClient:
         budget_reservation = (
             _budget_token_reservation(request) if self.budget is not None else 0
         )
-        if self.budget is not None and not self.budget.reserve(
-            HEADLINE_BUDGET_SCOPE, budget_reservation
-        ):
+        budget_ticket = (self.budget.reserve_ticket(HEADLINE_BUDGET_SCOPE, budget_reservation)
+                         if self.budget is not None else None)
+        if self.budget is not None and budget_ticket is None:
             self._warn_budget_exhausted(self.budget)
             return ConsensusPayload({"scores": []},
                                     finish("budget_exhausted", "AI budget exhausted"))
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
-            response = await asyncio.wait_for(
-                self._client.messages.create(**request), timeout=self.timeout_seconds
+            provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
+            if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
+                raise SpendRefused()
+            response, usage = await asyncio.wait_for(
+                self._create_message(request), timeout=self.timeout_seconds
             )
         except SpendRefused:
+            if self.budget is not None:
+                self.budget.cancel_ticket(budget_ticket)
             return ConsensusPayload({"scores": []}, finish("budget_exhausted", "Daily USD budget unavailable or exhausted"))
         except (asyncio.TimeoutError, TimeoutError):
             return ConsensusPayload({"scores": []}, finish("unavailable", "API Timeout"))
@@ -365,19 +387,10 @@ class AnthropicSwarmClient:
             provenance["resolved_model" if attribute == "model" else "response_id"] = (
                 value if isinstance(value, str) else None
             )
-        usage = getattr(response, "usage", None)
-        provenance["usage"] = {
-            name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
-            for name in ("input_tokens", "output_tokens",
-                         "cache_creation_input_tokens", "cache_read_input_tokens")
-        }
+        provenance["usage"] = _provider_usage(usage)
         settle(spend_ticket, provenance["usage"])
         if self.budget is not None:
-            self.budget.record(
-                HEADLINE_BUDGET_SCOPE,
-                provenance["usage"],
-                token_reservation=budget_reservation,
-            )
+            self.budget.settle_ticket(budget_ticket, provenance["usage"])
         def invalid_headline(code: str) -> ConsensusPayload:
             return ConsensusPayload(
                 {"scores": []},
@@ -531,6 +544,26 @@ def _consensus_output_limit(value: int | None) -> int:
     if value > MAX_CONSENSUS_MAX_TOKENS:
         raise ValueError("consensus_max_tokens_invalid")
     return value
+
+
+def _provider_usage(usage: Any) -> dict[str, int | None]:
+    """Distinguish absent SDK cache defaults from explicitly supplied unknown counts."""
+    if isinstance(usage, Mapping):
+        return {name: value if type(value := usage.get(name)) is int and value >= 0 else None
+                for name in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                             "cache_read_input_tokens")
+                if name in {"input_tokens", "output_tokens"} or name in usage}
+    fields = getattr(usage, "model_fields_set", None)
+    if fields is None:
+        fields = getattr(usage, "__fields_set__", None)
+    names = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+             "cache_read_input_tokens")
+    return {
+        name: value if type(value := getattr(usage, name, None)) is int and value >= 0 else None
+        for name in names
+        if name in {"input_tokens", "output_tokens"}
+        or (name in fields if isinstance(fields, (set, frozenset)) else hasattr(usage, name))
+    }
 
 
 def _consensus_response_metadata(response: Any) -> dict[str, Any]:

@@ -238,3 +238,37 @@ def test_shadow_cannot_exceed_shared_account_cap(tmp_path, monkeypatch):
     result = asyncio.run(wrapped.generate_trading_consensus("evidence"))
     assert result["stance"] == "BUY"
     assert result.provenance["model_comparison"]["challenger"]["status"] == "budget_exhausted"
+
+
+def test_comparison_retains_request_ticket_links_through_real_mocked_clients(tmp_path, monkeypatch):
+    import sqlite3
+
+    import quant_ai.llm.anthropic_client as anthropic
+    import quant_ai.llm.openai_client as openai
+    from quant_ai.llm.challenger import _ChallengerBudget
+
+    monkeypatch.setattr(anthropic, "require_reservation", lambda request: {"id": "synthetic-primary-dollar"})
+    monkeypatch.setattr(openai, "require_reservation", lambda request: {"id": "synthetic-shadow-dollar"})
+    monkeypatch.setattr(anthropic, "settle", lambda *args: None)
+    monkeypatch.setattr(openai, "settle", lambda *args: None)
+    shared = SqliteAIBudget(tmp_path / "tokens", daily_call_limit=10, daily_token_limit=1_000_000)
+    shadow = _ChallengerBudget(shared)
+    primary = AnthropicSwarmClient(client=sdk(payload()), budget=shared)
+    secondary, requests = client(budget=shadow)
+    result = asyncio.run(ChallengerConsensusClient(primary, secondary).generate_trading_consensus("synthetic evidence"))
+    pair = result.provenance["model_comparison"]
+    primary_ticket = pair["primary"]["token_budget_ticket"]
+    sample_ticket, shared_ticket = pair["challenger"]["token_budget_ticket"]
+    assert pair["primary"]["dollar_budget_ticket_id"] == "synthetic-primary-dollar"
+    assert pair["challenger"]["dollar_budget_ticket_id"] == "synthetic-shadow-dollar"
+    for database, ticket, dollar in (
+        (shared.database, primary_ticket, "synthetic-primary-dollar"),
+        (shared.database, shared_ticket, "synthetic-shadow-dollar"),
+        (shadow.sample.database, sample_ticket, "synthetic-shadow-dollar"),
+    ):
+        with sqlite3.connect(database) as db:
+            assert db.execute("SELECT dollar_ticket_id,status FROM ai_budget_requests WHERE id=?", (ticket,)).fetchone() == (dollar, "settled")
+    assert len(requests) == 1
+    assert "test-secret" not in json.dumps(pair)
+    shared.close()
+    shadow.sample.close()

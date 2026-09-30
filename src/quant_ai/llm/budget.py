@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
+from uuid import uuid4
 
 LOGGER = logging.getLogger("quant_ai.ai_budget")
 
@@ -92,6 +93,15 @@ class SqliteAIBudget:
                 )
                 """
             )
+            # Historical aggregate reservations stay untouched and unattributed.
+            self._connection.execute("""
+                CREATE TABLE IF NOT EXISTS ai_budget_requests (
+                    id TEXT PRIMARY KEY, day TEXT NOT NULL, scope TEXT NOT NULL,
+                    reserved_tokens INTEGER NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, dispatched_at TEXT, dollar_ticket_id TEXT,
+                    input_tokens INTEGER, output_tokens INTEGER
+                )
+            """)
             # Existing pilot databases already contain valid per-scope usage. Seed one
             # aggregate row per historical day exactly once so an upgrade cannot reset
             # account-wide headroom.
@@ -114,7 +124,12 @@ class SqliteAIBudget:
             now = now.astimezone(timezone.utc)
         return now.date().isoformat()
 
-    def reserve(self, scope: str, token_reservation: int = 0) -> bool:
+    def reserve_ticket(self, scope: str, token_reservation: int = 0) -> str | None:
+        """Durably bind new provider admissions to their original UTC day."""
+        ticket = uuid4().hex
+        return ticket if self.reserve(scope, token_reservation, _ticket=ticket) else None
+
+    def reserve(self, scope: str, token_reservation: int = 0, *, _ticket=None) -> bool:
         """Atomically admit under both scope and account-wide daily ceilings.
 
         Production callers pass a conservative token allowance before provider I/O. A
@@ -179,6 +194,12 @@ class SqliteAIBudget:
                     if scoped.rowcount != 1:
                         self._connection.rollback()
                         return False
+                    if _ticket is not None:
+                        self._connection.execute(
+                            "INSERT INTO ai_budget_requests "
+                            "(id,day,scope,reserved_tokens,status,created_at) VALUES(?,?,?,?,?,?)",
+                            (_ticket, day, scope, token_reservation, "admitted", _utc_now().isoformat()),
+                        )
                     self._connection.commit()
                     return True
                 except Exception:
@@ -191,6 +212,82 @@ class SqliteAIBudget:
                 day,
                 f"{type(error).__name__}: {error}",
             )
+            return False
+
+    def dispatch_ticket(self, ticket: str, dollar_ticket=None) -> bool:
+        """Mark uncertainty before provider I/O; a crash afterwards must retain quota."""
+        try:
+            with self._lock, self._connection:
+                row = self._connection.execute(
+                    "UPDATE ai_budget_requests SET status='dispatched', dispatched_at=?, "
+                    "dollar_ticket_id=? WHERE id=? AND status='admitted'",
+                    (_utc_now().isoformat(), (dollar_ticket or {}).get("id"), ticket),
+                )
+                return row.rowcount == 1
+        except sqlite3.Error:
+            LOGGER.error("ai_budget_dispatch_failed; refusing provider I/O")
+            return False
+
+    def cancel_ticket(self, ticket: str) -> bool:
+        """Compensate only a durable admission known never to have dispatched."""
+        return self._finish_ticket(ticket, None, cancel=True)
+
+    def settle_ticket(self, ticket: str, usage: Mapping[str, Any] | None) -> bool:
+        return self._finish_ticket(ticket, usage, cancel=False)
+
+    def _finish_ticket(self, ticket, usage, *, cancel):
+        inputs = outputs = 0
+        if not cancel:
+            # A partial count cannot prove the remaining allowance was unspent.
+            # Required counts must exist; supplied cache counts must also be valid.
+            if not isinstance(usage, Mapping):
+                return False
+            keys = ("input_tokens", "output_tokens") + tuple(
+                key for key in ("cache_creation_input_tokens", "cache_read_input_tokens")
+                if key in usage
+            )
+            if any(type(usage.get(key)) is not int or usage[key] < 0 for key in keys):
+                return False
+            inputs = usage["input_tokens"] + sum(
+                usage[key] for key in keys[2:]
+            )
+            outputs = usage["output_tokens"]
+            if not inputs and not outputs:
+                return False  # Preserve the existing conservative zero-usage policy.
+        try:
+            with self._lock:
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    row = self._connection.execute(
+                        "SELECT * FROM ai_budget_requests WHERE id=?", (ticket,)
+                    ).fetchone()
+                    expected = "admitted" if cancel else "dispatched"
+                    if row is None or row["status"] != expected:
+                        self._connection.rollback()
+                        return False
+                    for table, scoped in (("ai_budget", True), ("ai_budget_aggregate", False)):
+                        where = "day=? AND scope=?" if scoped else "day=?"
+                        keys = (row["day"], row["scope"]) if scoped else (row["day"],)
+                        changed = self._connection.execute(
+                            f"UPDATE {table} SET calls=calls-?, input_tokens=input_tokens+?, "
+                            "output_tokens=output_tokens+?, reserved_tokens=reserved_tokens-? "
+                            f"WHERE {where} AND calls>=1 AND reserved_tokens>=?",
+                            (int(cancel), inputs, outputs, row["reserved_tokens"],
+                             *keys, row["reserved_tokens"]),
+                        )
+                        if changed.rowcount != 1:
+                            raise sqlite3.IntegrityError("reservation counters inconsistent")
+                    self._connection.execute(
+                        "UPDATE ai_budget_requests SET status=?,input_tokens=?,output_tokens=? WHERE id=?",
+                        ("cancelled" if cancel else "settled", inputs, outputs, ticket),
+                    )
+                    self._connection.commit()
+                    return True
+                except Exception:
+                    self._connection.rollback()
+                    raise
+        except sqlite3.Error:
+            LOGGER.error("ai_budget_ticket_settlement_failed; reservation retained")
             return False
 
     def record(

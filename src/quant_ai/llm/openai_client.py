@@ -88,7 +88,9 @@ class OpenAIConsensusClient:
         # reservation; no automatic retries can silently multiply the request budget.
         reservation = _budget_token_reservation({**request, "max_tokens": self.max_output_tokens})
         scope = "astra_consensus"
-        if self.budget is not None and not self.budget.reserve(scope, reservation):
+        budget_ticket = (self.budget.reserve_ticket(scope, reservation)
+                         if self.budget is not None else None)
+        if self.budget is not None and budget_ticket is None:
             return unavailable("budget_exhausted", "budget_exhausted")
 
         async def send():
@@ -97,10 +99,16 @@ class OpenAIConsensusClient:
                 return await client.post(RESPONSES_URL, json=request,
                                          headers={"Authorization": "Bearer " + self._key})
 
+        provenance["token_budget_ticket"] = budget_ticket
         try:
             spend_ticket = require_reservation(request)
+            provenance["dollar_budget_ticket_id"] = (spend_ticket or {}).get("id")
+            if self.budget is not None and not self.budget.dispatch_ticket(budget_ticket, spend_ticket):
+                raise SpendRefused()
             response = await asyncio.wait_for(send(), self.timeout_seconds)
         except SpendRefused:
+            if self.budget is not None:
+                self.budget.cancel_ticket(budget_ticket)
             return unavailable("budget_exhausted", "budget_exhausted")
         except (asyncio.TimeoutError, httpx.TimeoutException):
             return unavailable("provider_timeout")
@@ -128,7 +136,7 @@ class OpenAIConsensusClient:
         settle(spend_ticket, provenance["usage"])
         # OpenAI input_tokens already includes cached input: never add it twice.
         if self.budget is not None:
-            self.budget.record(scope, provenance["usage"], token_reservation=reservation)
+            self.budget.settle_ticket(budget_ticket, provenance["usage"])
         if body.get("status") != "completed":
             details = body.get("incomplete_details") or {}
             reason = details.get("reason") if isinstance(details, dict) else None
