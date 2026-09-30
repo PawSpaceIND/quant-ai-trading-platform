@@ -72,11 +72,12 @@ def _aware(moment):
     return moment.astimezone(timezone.utc)
 
 
-def _instrument(instrument):
+def _instrument(instrument, *, research=False):
     if (not isinstance(instrument, Instrument) or instrument.market is not Market.INDIA
             or instrument.exchange != "NSE" or instrument.currency != "INR"
             or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
-            or instrument.tradable is not True or instrument.is_dated_contract
+            or type(instrument.tradable) is not bool
+            or (not research and instrument.tradable is not True) or instrument.is_dated_contract
             or not re.fullmatch(r"[A-Z0-9][A-Z0-9&_.-]{0,79}", instrument.symbol)):
         raise KiteHistoryError("kite_history_nse_cash_only")
     return instrument
@@ -200,7 +201,7 @@ class KiteDailyFeed:
         return result
 
     def fetch_ohlcv(self, instrument, start, end, interval):
-        _instrument(instrument)
+        _instrument(instrument, research=True)
         start, end = _aware(start), _aware(end)
         if interval != "1d" or start >= end or (end - start) > timedelta(days=366):
             raise KiteHistoryError("kite_history_window_invalid")
@@ -342,8 +343,8 @@ class KiteDailyHistoryProvider(DailyHistoryProvider):
 
     @staticmethod
     def _identity(instrument):
-        _instrument(instrument)
-        return (instrument.symbol, instrument.market, instrument.asset_class, instrument.currency,
+        _instrument(instrument, research=True)
+        return (instrument.symbol, instrument.market, instrument.asset_class, instrument.currency, instrument.tradable,
                 instrument.exchange, instrument.lot_size, instrument.tick_size,
                 instrument.underlying, tuple(sorted(instrument.metadata.items())))
 

@@ -32,7 +32,7 @@
     {
       "id": "cash_scope",
       "path": "src/quant_ai/marketdata/kite_history.py",
-      "old": "    if (not isinstance(instrument, Instrument) or instrument.market is not Market.INDIA\n            or instrument.exchange != \"NSE\" or instrument.currency != \"INR\"\n            or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}\n            or instrument.tradable is not True or instrument.is_dated_contract\n            or not re.fullmatch(r\"[A-Z0-9][A-Z0-9&_.-]{0,79}\", instrument.symbol)):\n",
+      "old": "    if (not isinstance(instrument, Instrument) or instrument.market is not Market.INDIA\n            or instrument.exchange != \"NSE\" or instrument.currency != \"INR\"\n            or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}\n            or type(instrument.tradable) is not bool\n            or (not research and instrument.tradable is not True) or instrument.is_dated_contract\n            or not re.fullmatch(r\"[A-Z0-9][A-Z0-9&_.-]{0,79}\", instrument.symbol)):\n",
       "new": "    if False:\n",
       "test": "tests/test_kite_daily_history.py::test_out_of_scope_instruments_refuse_before_requests"
     },

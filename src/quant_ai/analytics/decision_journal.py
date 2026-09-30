@@ -97,6 +97,7 @@ COLUMNS = (
     "reason",
     "order_id",
     "agents",
+    "funnel_evidence",
     "features",
     "feature_schema_version",
     "probe",
@@ -156,6 +157,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     reason TEXT,
     order_id TEXT,
     agents TEXT NOT NULL,
+    funnel_evidence TEXT,
     features TEXT,
     feature_schema_version INTEGER,
     probe INTEGER,
@@ -223,6 +225,7 @@ MODE_UNVERIFIED = "unverified_inference"
 # exists to prevent. Every entry must be nullable: rows decided before a column existed
 # genuinely have nothing to put in it, and NULL is the honest value.
 MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("funnel_evidence", "TEXT"),
     ("inference_status", "TEXT"),
     ("inference_failure_code", "TEXT"),
     ("features", "TEXT"),
@@ -588,6 +591,7 @@ def decision_row(
     """Build the journal row for one ``SwarmExecutionResult`` without writing it."""
     proposal = result.proposal
     trace = result.xai_trace
+    proof_decision_id = getattr(trace, "decision_id", None)
     governance, reason = governance_of(result)
     regime_label = (
         regime
@@ -620,6 +624,17 @@ def decision_row(
         "reason": reason[:200] if reason else None,
         "order_id": str(fill.order_id) if fill is not None and fill.order_id else None,
         "agents": json.dumps(agents_of(trace), sort_keys=True, allow_nan=False),
+        "funnel_evidence": json.dumps({
+            "schema": "pramana.decision_funnel.v1",
+            "proof_decision_id": str(proof_decision_id) if proof_decision_id is not None else None,
+            "inputs_sha256": decision_provenance(result).get("inputs_sha256"),
+            "configuration_sha256": decision_provenance(result).get("configuration_sha256"),
+            "admission": decision_provenance(result).get("evidence_admission"),
+            "consensus_participating": consensus_participating(result),
+            "deterministic_gate_reasons": decision_provenance(result).get("deterministic_gate_reasons"),
+            "proposal_quantity": proposal.quantity,
+            "order_state": enum_value(getattr(result, "order_state", None)),
+        }, sort_keys=True, allow_nan=False),
         # What the decision was made on, not what the agents concluded from it. ``agents``
         # already records the conclusions; without the inputs beside them no later work can
         # ask whether the conclusions were any good, and the inputs cannot be reconstructed
@@ -632,6 +647,11 @@ def decision_row(
         **fill_marks(proposal, fill, marks),
         **consensus_of(proposal),
     }
+
+
+def consensus_participating(result):
+    consensus = decision_provenance(result).get("consensus")
+    return consensus.get("participating") if isinstance(consensus, dict) else None
 
 
 def insert_decision(broker, row: dict[str, Any]) -> bool:
