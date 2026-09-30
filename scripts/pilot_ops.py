@@ -218,6 +218,34 @@ def empirical_payoffs(database: Path, tenant: str, destination: Path) -> str:
     ])
 
 
+def feed_gaps(database: Path, tenant: str, session_date: str | None = None,
+              now: datetime | None = None, log_path: Path | None = None) -> str:
+    """Which watched names went stale in a session, and what their ticks did meanwhile.
+
+    Read-only. Prints the persisted halt row, the day's websocket events and every stale
+    run per name, so an incident can be read before anyone restarts the engine - and
+    after, since everything here is on disk.
+    """
+    from datetime import date as calendar_date
+
+    from quant_ai.operations import feed_gaps as gaps
+    moment = now or datetime.now(timezone.utc)
+    day = (calendar_date.fromisoformat(session_date) if session_date
+           else moment.astimezone(gaps.IST).date())
+    with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        minutes = gaps.load_minutes(db, tenant, day) if "pilot_feed_minutes" in tables else []
+        halt = (db.execute("SELECT kill_switch_engaged, kill_switch_reason, updated_at FROM risk_control_state "
+                           "WHERE tenant_id=?", (tenant,)).fetchone()
+                if "risk_control_state" in tables else None)
+    source = log_path or Path(os.environ.get("PRAMANA_GHOST_LOG") or database.resolve().parent / "pramana-ghost.log")
+    events = []
+    if source.is_file():
+        with source.open(encoding="utf-8", errors="replace") as handle:
+            events = gaps.stream_events(handle, day)
+    return gaps.render(gaps.report(minutes, session_date=day), halt=halt, stream_events=events)
+
+
 def fraction(text: str) -> Decimal:
     """A ``--threshold`` such as 0.01; argparse only reports ValueError-family failures."""
     try:
@@ -230,12 +258,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["health", "premarket", "reconcile", "backup", "restore-drill",
                                            "pilot-check", "missed", "plan", "calibrate", "empirical-payoffs",
-                                           "capital-contribution"])
+                                           "capital-contribution", "feed-gaps"])
     parser.add_argument("--database", type=Path)
     parser.add_argument("--tenant", default="ghost")
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--evidence", type=Path)
-    parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed` (default today) or `plan` (default newest)")
+    parser.add_argument("--date", help="IST session date YYYY-MM-DD for `missed` and `feed-gaps` (default today) or `plan` (default newest)")
     parser.add_argument("--threshold", type=fraction, help="missed-move threshold as a fraction; default 0.01")
     parser.add_argument("--amount", help="capital-contribution: whole rupees to add")
     parser.add_argument("--reference", help="capital-contribution: unique name; a repeat records once")
@@ -262,6 +290,9 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if args.action == "plan":
         print(plan(args.database, session_date=args.date))
+        raise SystemExit(0)
+    if args.action == "feed-gaps":
+        print(feed_gaps(args.database, args.tenant, session_date=args.date))
         raise SystemExit(0)
     if args.action == "calibrate":
         # A report, like missed and plan: it exits 0 when it could be produced. The verdict

@@ -274,6 +274,33 @@ name goes unpriced by design. The clock restarts at the next open. ETFs trade on
 behaviour the exit engine exists to refuse. Fix the feed, confirm ticks are arriving,
 then `pramana resume`.
 
+Read what happened before resuming. The command only reads what is on disk, so it
+works after a restart too:
+
+```sh
+docker exec deploy-pramana-ghost-1 python /app/scripts/pilot_ops.py feed-gaps --database /data/pramana.db
+```
+
+Add `--date YYYY-MM-DD` for an earlier IST session. It prints:
+
+- the persisted halt;
+- the day's websocket events;
+- every run of stale minutes for each watched name, from the per-minute record the
+  engine keeps for 30 days (`pilot_feed_minutes`).
+
+Each run ends with what that name's ticks did:
+
+| Verdict | Meaning |
+|---|---|
+| `silent` | Nothing arrived. |
+| `refused` | Ticks arrived and every one was rejected, with the reasons. |
+| `delayed` | Ticks were accepted, but with old exchange times. |
+| `restart` | The engine restarted inside the gap, so the counts don't compare. |
+
+A `WHOLE FEED` line means every name was stale at once, which points to the connection
+or Kite. One name alone points to that instrument or its ticks. The halt only names
+held symbols, so the other names in this output are what tell the two apart.
+
 **Halts** — after a breach, BUYs show `max_drawdown_reached` /
 `daily_loss_limit_reached`; SELLs show `approved_risk_reducing`. The drawdown tile
 tracks the persisted peak. Kill and restart the daemon once mid-session: peak,

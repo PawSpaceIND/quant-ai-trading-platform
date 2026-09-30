@@ -12,11 +12,17 @@ from quant_ai.execution.protection_state import positive_level
 from quant_ai.execution.session import MarketState
 from quant_ai.intelligence.regime_observation import RegimeObservationStore
 
+FEED_SCHEMA = "pramana.feed_minute.v1"
+# Long enough to look back over a month of sessions after an incident; bounded because a
+# minute of twelve names is written every in-session minute and nothing else prunes it.
+FEED_RETENTION_DAYS = 30
+
 
 class PilotTelemetry:
     def __init__(self, daemon) -> None:
         self.daemon = daemon
         self.broker = daemon.tracker.broker
+        self._feed_pruned: str | None = None
         self._strategy_report = None
         self._strategy_sha = None
         self._strategy_evidence = None
@@ -28,6 +34,9 @@ class PilotTelemetry:
                     PRIMARY KEY(tenant_id,timestamp));
                 CREATE TABLE IF NOT EXISTS pilot_runtime (
                     tenant_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS pilot_feed_minutes (
+                    tenant_id TEXT NOT NULL, minute TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(tenant_id,minute));
             """)
 
     def publish(self, now: datetime) -> dict:
@@ -110,9 +119,61 @@ class PilotTelemetry:
                 book={"grossExposure": sum((item.market_value for item in metrics.positions), Decimal(0)),
                       "equity": metrics.total_equity})
             self._write_valuation(now, ledger_id, payload)
+            try:
+                self._write_feed_minute(now)
+            except Exception:  # evidence never breaks the heartbeat it describes
+                logger = getattr(daemon, "_logger", None)
+                if logger is not None:
+                    logger.exception("feed_minute_write_failed")
             self.broker._connection.execute("INSERT OR REPLACE INTO pilot_runtime VALUES (?,?,?)",
                                             (daemon.tenant_id, now.isoformat(), json.dumps(runtime, allow_nan=False)))
             return payload
+
+    def _write_feed_minute(self, now: datetime) -> None:
+        """Each watched name's last tick and tick counts, once a minute, while it trades.
+
+        The valuation row carries held names only and the tick counters live in memory.
+        After the protection halts of 24 and 25 September a restart had already wiped the
+        only record that could say whether the whole feed stalled or one name did, and
+        whether that name's ticks stopped arriving or arrived and were refused. This is
+        that record, in its own table so the valuation history and its readers are
+        untouched. Nothing reads it to decide anything; ``pilot_ops.py feed-gaps`` reads
+        it for the operator.
+        """
+        daemon = self.daemon
+        live = [item for item in daemon.instruments if daemon.prices_expected(item.symbol, now)]
+        if not live:
+            return
+        buffer = getattr(daemon.tracker.market_feed, "buffer", None)
+        counts = buffer.symbol_counts(item.symbol for item in live) if buffer is not None else {}
+        at = now.astimezone(timezone.utc)
+        symbols = {}
+        for instrument in live:
+            fresh, stamp = self.fresh(instrument, at)
+            age = round((at - datetime.fromisoformat(stamp)).total_seconds(), 1) if stamp else None
+            symbols[instrument.symbol] = {
+                "fresh": fresh, "lastTickAt": stamp, "ageSeconds": age,
+                # Cumulative since `countsSince`: a later minute minus an earlier one is
+                # what arrived in between, unless the process restarted between them.
+                "ticks": counts.get(instrument.symbol, {}),
+            }
+        started = getattr(buffer, "started_at", None)
+        payload = {
+            "schema": FEED_SCHEMA, "writtenAt": at.isoformat(),
+            "countsSince": started.isoformat() if isinstance(started, datetime) else None,
+            "symbols": symbols,
+        }
+        minute = at.replace(second=0, microsecond=0).isoformat()
+        self.broker._connection.execute(
+            "INSERT OR REPLACE INTO pilot_feed_minutes VALUES (?,?,?)",
+            (daemon.tenant_id, minute, json.dumps(payload, allow_nan=False, sort_keys=True)),
+        )
+        if self._feed_pruned != minute[:10]:
+            cutoff = (at - timedelta(days=FEED_RETENTION_DAYS)).isoformat()
+            self.broker._connection.execute(
+                "DELETE FROM pilot_feed_minutes WHERE tenant_id=? AND minute<?", (daemon.tenant_id, cutoff),
+            )
+            self._feed_pruned = minute[:10]
 
     def _write_valuation(self, now, ledger_id, payload):
         bucket = now.replace(second=0, microsecond=0).isoformat()
