@@ -27,6 +27,57 @@ def _gate_reasons(evidence):
     return ["unknown"]
 
 
+def research_coverage(rows):
+    """Describe recorded admission evidence, never reconstruct votes or trade permission."""
+    states = Counter()
+    stale = Counter()
+    entries = 0
+    for row in rows:
+        admission = _object(row.get("funnel_evidence")).get("admission")
+        valid = isinstance(admission, dict) and admission.get("schema") == "pramana.evidence_admission.v1"
+        agents = admission.get("agents") if valid else None
+        minimum = admission.get("minimum_voters") if valid else None
+        valid = valid and type(minimum) is int and minimum > 0 and isinstance(agents, list)
+        if valid:
+            identities = []
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    valid = False
+                    break
+                identity = agent.get("agent_id")
+                age, budget = agent.get("age_seconds"), agent.get("budget_seconds")
+                if (not isinstance(identity, str) or not identity.strip()
+                        or agent.get("role") not in ("gate", "voter")
+                        or type(age) is not int or age < 0 or type(budget) is not int or budget < 0
+                        or type(agent.get("coverage_candidate")) is not bool
+                        or type(agent.get("over_atlas_age_budget")) is not bool
+                        or agent["over_atlas_age_budget"] != (age > budget)
+                        or (agent["role"] == "gate" and agent["coverage_candidate"])):
+                    valid = False
+                    break
+                identities.append(identity)
+            valid = valid and len(set(identities)) == len(identities)
+        if not valid:
+            states["unknown_admission"] += 1
+            continue
+        candidates = sum(a["coverage_candidate"] for a in agents)
+        states["candidate_quorum_met" if candidates >= minimum else "candidate_quorum_below"] += 1
+        entries += len(agents)
+        # Count evaluations affected once, even if several inputs exceed their age budget.
+        if any(a["over_atlas_age_budget"] for a in agents):
+            stale["evaluations_with_over_age_input"] += 1
+        stale["over_age_agent_entries"] += sum(a["over_atlas_age_budget"] for a in agents)
+    return {"recorded_evaluations": len(rows),
+            "admission_states": {name: states[name] for name in
+                ("candidate_quorum_met", "candidate_quorum_below", "unknown_admission")},
+            "validated_agent_entries": entries,
+            "evaluations_with_over_age_input": stale["evaluations_with_over_age_input"],
+            "over_age_agent_entries": stale["over_age_agent_entries"],
+            "limitations": ["Coverage candidates are not votes cast or permission to trade.",
+                            "Input age is recorded Atlas evidence age, not independent source authentication.",
+                            "Unknown admission contributes no inferred fresh or stale inputs."]}
+
+
 def report(database: Path, tenant: str, session_date: str) -> dict:
     """One IST date, half-open bounds and one read transaction across all evidence.
 
@@ -109,6 +160,7 @@ def report(database: Path, tenant: str, session_date: str) -> dict:
             "evaluation_records": evaluations, "fill_links": links,
             "forecast_scoring": score_forecasts(rows_list),
             "forecast_basis_integrity": basis_integrity(rows_list),
+            "research_coverage": research_coverage(rows_list) if rows is not None else None,
             "limitations": ["Counts cover recorded evaluations, not scheduler ticks missing from the journal.",
                             "A side is a recorded directional proposal, not proof of submission.",
                             "Evidence presence/IDs are linkage, not cryptographic validation or fill conservation.",
