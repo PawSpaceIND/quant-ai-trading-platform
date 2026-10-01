@@ -11,6 +11,7 @@ from importlib import import_module
 from threading import RLock
 from typing import Any, Callable
 
+from quant_ai.marketdata.stream_progress import StreamProgress
 from quant_ai.marketdata.tick_integrity import tick_value_issue, utc_time
 
 
@@ -65,6 +66,9 @@ class TickBuffer:
         # tick was refused.
         self._by_symbol: dict[str, Counter[str]] = {}
         self.started_at = utc_time(self.clock())
+        self.stream_progress = None
+        self._last_buffer_write = None
+        self._last_accepted_source = None
 
     def subscribe(self, listener: Callable[[LiveTick], None]) -> None:
         """Register a synchronous callback for accepted ticks, in acceptance order."""
@@ -96,9 +100,16 @@ class TickBuffer:
 
     def integrity(self) -> dict:
         with self._lock:
-            return {"schema": "pramana.tick_integrity.v1", "accepted": self._accepted,
+            result = {"schema": "pramana.tick_integrity.v1", "accepted": self._accepted,
                 "rejected": dict(self._rejected), "lastRejection": dict(self._last_rejection) if self._last_rejection else None,
+                "lastBufferWriteAt": self._last_buffer_write.isoformat() if self._last_buffer_write else None,
+                "lastAcceptedSourceAt": self._last_accepted_source.isoformat() if self._last_accepted_source else None,
                 "scope": "current_process; rejected_ticks_do_not_refresh_quotes; no_exchange_sequence_reconstruction"}
+        # Never nest progress and buffer locks: native callback and consumer paths
+        # must stay independent, including while listener callbacks fail.
+        if self.stream_progress is not None:
+            result['zerodhaIngestion'] = self.stream_progress.snapshot()
+        return result
 
     def put(self, tick: LiveTick) -> bool:
         with self._lock:
@@ -121,6 +132,8 @@ class TickBuffer:
             self._ticks.append(tick)
             self._latest[tick.symbol] = tick
             self._accepted += 1
+            self._last_buffer_write = utc_time(self.clock())
+            self._last_accepted_source = observed
             self._count(tick.symbol, ACCEPTED)
             # Keep callbacks ordered across producer threads. Callbacks must be
             # short and must not wait for another thread to acquire this buffer.
@@ -223,17 +236,22 @@ class ZerodhaKiteTicker(AbstractTickerStream):
         self.symbol_by_token = dict(symbol_by_token)
         self._ticker: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self.progress = StreamProgress(lambda: self.buffer.clock())
+        self.buffer.stream_progress = self.progress
 
     async def start(self) -> None:
         module = import_module("kiteconnect")
         ticker_type = module.KiteTicker
         self._loop = asyncio.get_running_loop()
         self._ticker = ticker_type(self.api_key, self.access_token)
+        self.progress.start()
+        self._ticker.on_message = self._on_raw_message
         self._ticker.on_connect = self._on_connect
         self._ticker.on_ticks = self._on_ticks
         self._ticker.on_error = self._on_error
         self._ticker.on_close = self._on_close
         self._ticker.on_noreconnect = self._on_noreconnect
+        self._ticker.on_reconnect = self._on_reconnect
         reactor = _kite_reactor()
         if reactor is not None and reactor.running:
             # KiteTicker runs one Twisted reactor per process and starts it on the first
@@ -266,11 +284,48 @@ class ZerodhaKiteTicker(AbstractTickerStream):
 
     def _on_connect(self, ws: Any, response: Any) -> None:
         _ = response
-        ws.subscribe(list(self.instrument_tokens))
-        ws.set_mode(ws.MODE_FULL, list(self.instrument_tokens))
+        if not self._current_callback(ws):
+            return
+        self.progress.note('connected')
+        self.progress.retrying(False)
+        self.progress.note('subscription')
+        try:
+            subscribed = ws.subscribe(list(self.instrument_tokens))
+            mode = ws.set_mode(ws.MODE_FULL, list(self.instrument_tokens))
+            self.progress.subscribed(subscribed is False or mode is False)
+        except Exception:
+            self.progress.subscribed(failed=True)
+            raise
+
+    def _current_callback(self, ws):
+        if ws is not None and ws is not self._ticker:
+            self.progress.note('ignored')
+            return False
+        return True
+
+    def _on_raw_message(self, ws, payload, is_binary):
+        # Observe SDK receipt before parsing; never retain/log payload bytes.
+        if self._current_callback(ws):
+            self.progress.note('raw')
+
+    def _schedule_ingestion(self, coroutine):
+        generation = self.progress.queued()
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        except Exception:  # noqa: BLE001 - no exception text/payload in diagnostics
+            coroutine.close()
+            self.progress.finished(generation, failed=True)
+            return
+        def completed(result):
+            cancelled = result.cancelled()
+            failed = False if cancelled else result.exception() is not None
+            self.progress.finished(generation, failed=failed, cancelled=cancelled)
+        future.add_done_callback(completed)
 
     def _on_ticks(self, ws: Any, ticks: list[dict[str, Any]]) -> None:
-        _ = ws
+        if not self._current_callback(ws):
+            return
+        self.progress.note('ticks')
         if self._loop is None:
             return
         for payload in ticks:
@@ -297,27 +352,37 @@ class ZerodhaKiteTicker(AbstractTickerStream):
             except (ValueError, TypeError, KeyError, AttributeError, InvalidOperation, OverflowError):
                 self.buffer.reject("invalid_zerodha_payload", symbol)
                 continue
-            asyncio.run_coroutine_threadsafe(self.on_tick(tick), self._loop)
+            self._schedule_ingestion(self.on_tick(tick))
             if book:
-                asyncio.run_coroutine_threadsafe(self.on_orderbook_update(book), self._loop)
+                self._schedule_ingestion(self.on_orderbook_update(book))
 
     def _on_error(self, ws: Any, code: Any, reason: Any) -> None:
-        _ = ws
+        if not self._current_callback(ws):
+            return
         if self._loop is not None:
             error = ConnectionError(f"KiteTicker error {code}: {reason}")
             asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
 
     def _on_close(self, ws: Any, code: Any, reason: Any) -> None:
-        _ = ws
+        if not self._current_callback(ws):
+            return
+        self.progress.retrying(True)
         if self._loop is not None:
             error = ConnectionError(f"KiteTicker closed {code}: {reason}")
             asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
 
     def _on_noreconnect(self, ws: Any) -> None:
-        _ = ws
+        if not self._current_callback(ws):
+            return
+        self.progress.retrying(False)
         if self._loop is not None:
             error = TickerGaveUp("KiteTicker stopped reconnecting after its maximum retries")
             asyncio.run_coroutine_threadsafe(self.on_connection_error(error), self._loop)
+
+    def _on_reconnect(self, ws, attempts):
+        if self._current_callback(ws):
+            self.progress.retrying(True)
+            self.progress.note('retry')
 
 
 class IBKRAsyncTicker(AbstractTickerStream):
