@@ -162,6 +162,7 @@ class PilotTelemetry:
             "schema": FEED_SCHEMA, "writtenAt": at.isoformat(),
             "countsSince": started.isoformat() if isinstance(started, datetime) else None,
             "symbols": symbols,
+            "ingestionProgress": buffer.integrity().get('zerodhaIngestion') if buffer is not None else None,
         }
         minute = at.replace(second=0, microsecond=0).isoformat()
         self.broker._connection.execute(
