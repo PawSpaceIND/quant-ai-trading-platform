@@ -333,3 +333,61 @@ def test_core_primary_key_constraint_is_part_of_supported_contract(tmp_path):
         db.execute('DROP TABLE synthetic_old_positions')
     with pytest.raises(ValueError, match='broker_schema_initialization_required'):
         inspect(ledger, oms, **kwargs)
+
+
+def replace_position_ddl(ledger, change):
+    with sqlite3.connect(ledger) as db:
+        sql = db.execute("SELECT sql FROM sqlite_master WHERE name='paper_positions'").fetchone()[0]
+        altered = change(sql)
+        assert altered != sql
+        db.execute('ALTER TABLE paper_positions RENAME TO synthetic_old_positions')
+        db.execute(altered)
+        db.execute('INSERT INTO paper_positions SELECT * FROM synthetic_old_positions')
+        db.execute('DROP TABLE synthetic_old_positions')
+
+
+def test_nocase_tenant_reads_cannot_receive_transition_or_bound_sell_authority(tmp_path):
+    from decimal import Decimal
+
+    from test_pilot_closure import INSTRUMENT
+
+    from quant_ai.domain.models import InstrumentBoundOrderIntent, Market, Side
+    from quant_ai.execution.paper_ledger import PaperBrokerService
+    from quant_ai.operations.paper_identity_transition import apply_reviewed_transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    plan = inspect(ledger, oms, **kwargs)
+    replace_position_ddl(ledger, lambda sql: sql.replace('tenant_id TEXT NOT NULL',
+                                                       'tenant_id TEXT COLLATE NOCASE NOT NULL'))
+    broker = PaperBrokerService(ledger)
+    try:
+        # Demonstrate why PRAGMA table_info alone was unsafe on this malformed DB.
+        assert broker.get_positions('PILOT')
+        assert broker.get_positions('PILOT')[0].tenant_id == 'pilot'
+        with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+            inspect(ledger, oms, **kwargs)
+        with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+            apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+        assert broker._connection.execute("SELECT instrument_identity FROM paper_positions WHERE tenant_id='pilot'").fetchone()[0] is None
+        order = InstrumentBoundOrderIntent('INFY', Market.INDIA, Side.SELL, 2, Decimal(100),
+                    'synthetic cross-tenant', tenant_id='PILOT', instrument=INSTRUMENT)
+        with pytest.raises(ValueError, match='position_instrument_identity_missing'):
+            broker.sell_protected(order, {'schema': 'pramana.protective_exit.v1',
+                                         'event_type': 'protective_exit'}, None)
+        assert broker.get_positions('pilot')[0].quantity == 2
+        assert not broker.ledger_entries('PILOT')
+        assert broker.get_margin('pilot').cash_balance == Decimal(99800)
+    finally:
+        broker.close()
+
+
+@pytest.mark.parametrize('change', [
+    lambda sql: sql.replace('symbol TEXT NOT NULL', 'symbol TEXT COLLATE RTRIM NOT NULL'),
+    lambda sql: sql.replace('average_price TEXT NOT NULL', 'average_price TEXT COLLATE NOCASE NOT NULL'),
+    lambda sql: sql.replace('PRIMARY KEY (tenant_id, symbol, market, asset_class)',
+                           'PRIMARY KEY (tenant_id, symbol, market, asset_class) ON CONFLICT REPLACE'),
+])
+def test_unmodeled_comparison_or_conflict_semantics_refuse(tmp_path, change):
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    replace_position_ddl(ledger, change)
+    with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+        inspect(ledger, oms, **kwargs)

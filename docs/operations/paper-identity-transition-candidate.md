@@ -108,3 +108,19 @@ Missing core triggers, columns or tables and changed holding-key constraints ref
 apply. Synthetic regressions demonstrate that normal legacy initialization can repair
 missing objects BEFORE a new plan, after which actual bound startup remains reconciled;
 no planner initialization or real host restart is performed.
+
+## Tenant-comparison and unmodeled-DDL qualification
+
+Structural PRAGMA metadata alone is insufficient: a NOCASE tenant column can alias another
+tenant without changing table_info. Core qualification now also uses collation/descending/key
+metadata from index_xinfo and an exact audited normalized-DDL allowlist. The allowlist contains
+only the fresh initializer form and the explicitly rehearsed pre-plan peak_equity repair form;
+it does not infer arbitrary historical variants as equivalent. Pilot-scope DDL is also matched
+to its audited initializer form. Other host DDL forms require review before any migration.
+
+Exact DDL qualification rejects non-indexed comparison changes, conflict clauses and other
+semantics not represented by the structural metadata. Regressions demonstrate the unsafe
+cross-case read on a synthetic malformed schema, refusal of inspect/apply before binding,
+and rejection of the attempted bound cross-tenant protective SELL with original holdings/cash
+preserved. This does not repair arbitrary already-malformed databases or authorize a legacy
+unbound cross-tenant order; such stores are unqualified for this transition.

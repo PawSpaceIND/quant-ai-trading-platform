@@ -25,7 +25,14 @@ BROKER_CORE_TABLES = frozenset({
 })
 # Complete _create_schema + _EXPECTED_COLUMNS logical schema, constraints/index
 # definitions and required broker triggers; harmless column ordering is ignored. Missing objects must not be repaired AFTER certification.
-TRUSTED_BROKER_CORE_SHA256 = '6f0c51863ad8f99e051d7092388681d7e5d137c4b17ea7199fdb83fce8385050'
+# Only audited initializer-produced SQL variants are accepted. The second is
+# peak_equity repaired by _EXPECTED_COLUMNS before planning, not after certification.
+TRUSTED_BROKER_CORE_DDL_SHA256 = frozenset({
+    'f0eba5f5eea66310ab140b12b848db51cf373890fdf3b27f500f147e050c18a1',
+    '8583002368d95f26f9128b800d561b5325406dc7806a72d0f07a0aa2483b2939',
+})
+TRUSTED_PILOT_SCOPE_DDL_SHA256 = '244486444f8129ba53bc001479a40866e6158728d87e68e2852339771835abb9'
+TRUSTED_BROKER_CORE_SHA256 = 'e8ba2c0e3ac35a1e2e34ac52784f6f9400e0a88a9ed0814ace43673662589683'
 TRUSTED_RUNTIME_SCHEMA_SHA256 = '4ef266017e804319ec946dc5ca9335b4df373057ee3fb2fc0cd042c9eb47fb2d'
 SUPPORTED_RUNTIME_TABLES = frozenset({
     'paper_decision_journal', 'paper_live_valuations', 'paper_specialist_feedback',
@@ -459,7 +466,9 @@ def ledger_schema(db):
             actual = hashlib.sha256(' '.join(row['sql'].split()).encode()).hexdigest()
             if actual != expected:
                 raise ValueError('transition_unreviewed_ledger_trigger')
-    if digest(broker_core_contract(db)) != TRUSTED_BROKER_CORE_SHA256:
+    core_ddl = {r['name']: ' '.join(r['sql'].split()) for r in rows if r['tbl_name'] in BROKER_CORE_TABLES}
+    if (digest(core_ddl) not in TRUSTED_BROKER_CORE_DDL_SHA256
+            or digest(broker_core_contract(db)) != TRUSTED_BROKER_CORE_SHA256):
         raise ValueError('transition_broker_schema_initialization_required')
     return rows
 
@@ -517,6 +526,9 @@ def transition_schema_sql():
 
 
 def validate_pilot_scope(db, tenant, identities):
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='pilot_scope'").fetchone()[0]
+    if hashlib.sha256(' '.join(sql.split()).encode()).hexdigest() != TRUSTED_PILOT_SCOPE_DDL_SHA256:
+        raise ValueError('transition_pilot_schema_initialization_required')
     expected_columns = [('tenant_id', 'TEXT', 0, 1), ('currency', 'TEXT', 1, 0),
                         ('market', 'TEXT', 1, 0), ('symbols', 'TEXT', 1, 0),
                         ('instrument_identities', 'TEXT', 0, 0)]
@@ -549,7 +561,8 @@ def broker_core_contract(db):
         for index in db.execute(f'PRAGMA index_list("{table}")'):
             name = index['name'].replace('"', '""')
             indexes.append({'unique': index['unique'], 'origin': index['origin'], 'partial': index['partial'],
-                'columns': [r['name'] for r in db.execute(f'PRAGMA index_info("{name}")')]})
+                'columns': [{k: r[k] for k in ('name', 'desc', 'coll', 'key')}
+                            for r in db.execute(f'PRAGMA index_xinfo("{name}")')]})
         sql = db.execute('SELECT sql FROM sqlite_master WHERE type=? AND name=?', ('table', table)).fetchone()[0].upper()
         tables[table] = {'columns': columns, 'indexes': sorted(indexes, key=canonical),
             'foreign_keys': [dict(r) for r in db.execute(f'PRAGMA foreign_key_list("{table}")')],
