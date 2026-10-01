@@ -552,6 +552,20 @@ def build_ghost_runner(
     directives = directives or FounderDirectives()
     instrument = instrument or Instrument("AAPL", Market.USA, AssetClass.EQUITY, "USD", "NASDAQ")
     instruments = directives.instruments_or(instrument)
+    # Built here rather than beside the scheduler because the overnight limits are the
+    # same calendar read from the entry side: what the warden must know about the close is
+    # exactly what the scheduler knows about the session, and two calendars could disagree.
+    # The watchlist is where the operator already named each instrument's venue, so it is
+    # also the only place the calendar can learn that GOLD is an MCX contract and keeps
+    # MCX hours. Without this every India instrument is judged by the NSE cash session and
+    # the engine is blind to the eight hours a metal trades after the equity market shuts.
+    calendar = MarketCalendar(
+        holidays=holidays if holidays is not None else default_holidays(),
+        exchanges={item.symbol.upper(): item.exchange.upper() for item in instruments},
+    )
+    if pilot_mode:
+        from quant_ai.execution.session import validate_pilot_nse_calendar
+        validate_pilot_nse_calendar(calendar, instruments)
     if paper_opportunity_selection:
         from quant_ai.execution.opportunity_universe import PaperOpportunitySelector
         from quant_ai.governance.nse_watchlist import validate_subscription_mapping
@@ -598,17 +612,6 @@ def build_ghost_runner(
         DailyCloseHistory(book_risk_history, instruments,
                           max_age=timedelta(days=7) if require_book_risk_gates else None)
         if book_risk_history is not None else None
-    )
-    # Built here rather than beside the scheduler because the overnight limits are the
-    # same calendar read from the entry side: what the warden must know about the close is
-    # exactly what the scheduler knows about the session, and two calendars could disagree.
-    # The watchlist is where the operator already named each instrument's venue, so it is
-    # also the only place the calendar can learn that GOLD is an MCX contract and keeps
-    # MCX hours. Without this every India instrument is judged by the NSE cash session and
-    # the engine is blind to the eight hours a metal trades after the equity market shuts.
-    calendar = MarketCalendar(
-        holidays=holidays if holidays is not None else default_holidays(),
-        exchanges={item.symbol.upper(): item.exchange.upper() for item in instruments},
     )
     # Measured payoffs, read once at boot and recorded beside the declared EV on every
     # proof. Only the operator's artifact attaches; an unreadable one is logged and the

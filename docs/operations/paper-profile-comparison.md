@@ -108,3 +108,38 @@ This module uses existing repository methods; no public framework code or new
 license/data entitlement is imported. Trades provide evaluation evidence; they do
 not automatically train or update Atlas. The finite follow-up is collecting and
 reconciling approved recorded evidence, not an unbounded learning roadmap.
+
+## Scheduled inference on closed NSE sessions
+
+The existing scheduler's synchronous and asynchronous paths check session state
+before entering the analysis pipeline. That precedes paid headline sentiment,
+Claude consensus, optional OpenAI comparison and their token/dollar reservations.
+The cached selector checks the same calendar before history reads or worker creation.
+Those default-calendar gates were present; tests now exercise their actual placement,
+not just an order refusal. Health, reconciliation and protection remain independent.
+
+A concrete configuration gap was reproduced: a supplied empty holiday calendar or
+empty NSE override could remove known holiday closures. The pilot builder now
+validates all known NSE 2026 closures before opening persistent stores or constructing
+providers. A supplied calendar may add closures; it cannot reopen a known NSE holiday.
+Generic offline calendars and other venues retain their existing behavior. No host
+calendar/configuration is edited by installing this source.
+
+The [official NSE holiday data](https://www.nseindia.com/api/holiday-master?type=trading)
+was checked on 2026-10-01 and identifies October 2 as a CM closure. The supported
+Budget Sunday session remains February 1, 09:15–15:30 IST, per
+[NSE/CMTR/72349](https://nsearchives.nseindia.com/content/circulars/CMTR72349.pdf).
+Muhurat/other unsupported special timings are not invented or enabled. The static
+calendar is qualified for its recorded year, not an authenticated future-year feed.
+Host installed-module bytes, actual calendar overrides/venue map, scheduled job
+inventory and absence of automatic paid calls require AWS qualification; passing
+source tests does not prove today's deployed host behavior. User-initiated chat or
+research probes are separate explicit paths, not automatic market cadence.
+
+Frozen-clock acceptance covers October 2, October 3–4 weekends, October 5 pre-open/
+closed and regular open, plus the supported official Sunday session. Closed cases
+assert zero SDK/HTTP model requests, zero scorer calls, and exact unchanged shared
+and challenger-sample token ledgers plus dollar request/reservation rows. Open
+controls reach mocked sentiment/Claude/OpenAI calls and real disposable reservation
+ledgers, proving the negative cases are not accidental unreachable models. No
+external requests, real orders or host accounting resets are used.
