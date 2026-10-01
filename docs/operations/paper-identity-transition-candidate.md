@@ -12,7 +12,9 @@ The planner rejects physical zero-quantity rows, ambiguous/unmapped holding iden
 unsupported modes/contracts, conflicting pins, corrupt accounting and any raw history in
 any OMS table globally. Unknown OMS tables refuse. Private plan material contains the
 unchanged historical rows; it must not be published. The plan deliberately states
-apply_supported=false because there is no operator-facing supported apply interface yet.
+apply_supported=false because the raw library plan is not apply permission. The separate
+[guarded offline operator interface](paper-release-operator-interface.md) requires exact
+reviewed preflight, backups, explicit stopped-writer attestations and write guards.
 
 Explicit `provision_empty_oms` inserts a separate immutable singleton UUID, only after
 matching a reviewed empty-schema fingerprint. This is an internal database identity,
@@ -57,7 +59,8 @@ unchanged legacy records, first BUY/partial-full SELL/protective SELL receipts, 
 restart/reconciliation, shared protective accounting replay, raw orphan history, missing and
 same-path replaced OMS, low-ID/backdated later fills, and entry-certificate failure with
 independent protective execution. Further independent review/host rehearsal and hosted CI
-are required before an operator-facing migration workflow is published or used.
+are required before any actual host migration is selected. The separately guarded
+offline interface does not authenticate host shutdown or grant runtime activation.
 
 ## Successor review repairs
 

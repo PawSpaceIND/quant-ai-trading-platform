@@ -73,6 +73,7 @@ from quant_ai.intelligence.sandbox import (
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.llm.budget import budget_from_env
 from quant_ai.llm.challenger import with_astra_challenger
+from quant_ai.marketdata.feed_watchdog import FeedObservationPolicy, progress_issue
 from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
@@ -155,6 +156,7 @@ class DaemonRunner:
         protection_interval: float = 1.0,
         intraday_warmup_provider: Any | None = None,
         intraday_warmup_instruments: Iterable[Instrument] = (),
+        feed_observation_policy: FeedObservationPolicy | None = None,
     ) -> None:
         _assert_ghost_mode()
         if cadence <= timedelta(0):
@@ -165,6 +167,20 @@ class DaemonRunner:
         self._protection_stop = Event()
         self.daemon = daemon
         self.streams = tuple(streams)
+        self.feed_observation_policy = feed_observation_policy
+        self._feed_alerts = 0
+        if feed_observation_policy is not None:
+            from quant_ai.execution.risk_state import SQLiteRiskStateStore
+            if (type(feed_observation_policy) is not FeedObservationPolicy
+                    or os.getenv('TRADING_LIVE_MONEY_ACTIVE') != 'false'
+                    or daemon.telemetry is None or type(daemon.tracker.broker) is not PaperBrokerService
+                    or type(daemon.tracker.risk_state) is not SQLiteRiskStateStore
+                    or len(self.streams) != 1 or any(type(s) is not ZerodhaKiteTicker for s in self.streams)
+                    or not daemon.instruments or any(i.market != Market.INDIA or i.exchange != 'NSE' for i in daemon.instruments)):
+                raise ValueError('feed_observation_monitored_paper_nse_required')
+            from quant_ai.governance.nse_watchlist import validate_subscription_mapping
+            validate_subscription_mapping(tuple(daemon.instruments), self.streams[0].instrument_tokens,
+                                          self.streams[0].symbol_by_token)
         self.cadence = cadence
         self.reconnect = reconnect or ReconnectPolicy()
         self.fault_policy = fault_policy or CadenceFaultPolicy()
@@ -335,6 +351,7 @@ class DaemonRunner:
         protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
         cadence_task: asyncio.Task[None] | None = None
+        watchdog = asyncio.create_task(self._watch_silent_feeds()) if self.feed_observation_policy is not None else None
         try:
             if self._recovery_service is not None and not self._stop_requested:
                 await self._recovery_service.start()
@@ -352,6 +369,9 @@ class DaemonRunner:
                     await self._recovery_service.stop()
             finally:
                 self._stop_requested = True
+                if watchdog is not None:
+                    watchdog.cancel()
+                    await asyncio.gather(watchdog, return_exceptions=True)
                 self._protection_stop.set()
                 protection.join(timeout=10)
                 for task in supervisors:
@@ -384,6 +404,57 @@ class DaemonRunner:
             if not self._stop_requested:
                 await self.sleeper(delay)
                 delay = min(self.reconnect.max_delay_seconds, delay * self.reconnect.multiplier)
+
+    async def _check_silent_feeds(self, active_since):
+        """Observe silent feeds and report once; never replace or resume a socket.
+
+        Autonomous replacement is intentionally excluded: the existing supervisor
+        and native handoff cannot carry atomic halt/generation authorization.
+        """
+        policy = self.feed_observation_policy
+        if policy is None:
+            return
+        now = _as_utc(self.clock())
+        for stream in self.streams:
+            if not any(self.daemon.prices_expected(symbol, now) for symbol in stream.symbol_by_token.values()):
+                active_since.pop(stream, None)
+                stream.progress.watchdog('prices_not_expected')
+                continue
+            active = active_since.setdefault(stream, now)
+            issue = progress_issue(stream.progress.snapshot(), now, active, policy)
+            stream.progress.watchdog(issue)
+            if issue not in {'silent_raw_feed', 'raw_frames_without_tick_callbacks', 'connection_callback_missing'}:
+                continue
+            if self._feed_alerts >= 1:
+                stream.progress.watchdog('operator_alert_limit_reached')
+                continue
+            try:
+                durable, reason = self.daemon.tracker.risk_state.kill_switch_state(self.daemon.tenant_id)
+                halted = (durable is True and self.daemon.kill_switch.engaged is True and reason
+                          and reason == self.daemon.kill_switch.reason)
+            except Exception:  # noqa: BLE001 - unknown persistence cannot authorize recovery
+                halted = False
+            if not halted:
+                stream.progress.watchdog('requires_existing_persisted_halt')
+                continue
+            self._feed_alerts += 1
+            stream.progress.watchdog('operator_recovery_required')
+            await self._write_event('silent_feed_operator_recovery_required', issue=issue,
+                                    observation_attempt=self._feed_alerts, autonomous_recovery=False)
+            # This is an observation, not an authorization ticket. Nothing is queued
+            # after the await: retry, halt ABA, new ticks or a new generation cannot
+            # cause this observer to close either the old or current connection.
+
+    async def _watch_silent_feeds(self):
+        active_since = {}
+        while not self._stop_requested:
+            try:
+                await self._check_silent_feeds(active_since)
+            except Exception:  # noqa: BLE001 - unavailable diagnostics cannot grant recovery
+                for stream in self.streams:
+                    stream.progress.watchdog('watchdog_unavailable_manual_recovery')
+                return
+            await asyncio.sleep(self.feed_observation_policy.poll_seconds)
 
     async def _wait_for_cadence(self, seconds: float) -> None:
         if self._recovery_service is None:
