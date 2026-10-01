@@ -14,11 +14,11 @@ from test_pilot_closure import INSTRUMENT
 from quant_ai.daemon import DaemonRunner
 from quant_ai.execution.paper_ledger import PaperBrokerService
 from quant_ai.execution.risk_state import SQLiteRiskStateStore
-from quant_ai.marketdata.feed_watchdog import FeedRecoveryPolicy, progress_issue
+from quant_ai.marketdata.feed_watchdog import FeedObservationPolicy, progress_issue
 from quant_ai.marketdata.ticker_stream import TickBuffer, ZerodhaKiteTicker
 
 NOW = datetime(2026, 9, 30, 5, tzinfo=timezone.utc)
-DEFAULT_POLICY = FeedRecoveryPolicy()
+DEFAULT_POLICY = FeedObservationPolicy()
 
 
 def source(monkeypatch):
@@ -89,7 +89,7 @@ def test_callback_failure_is_observed_without_payload_or_exception_text(monkeypa
         assert data['zerodhaIngestion']['currentGenerationFutureFailures'] == 1
         assert data['zerodhaIngestion']['pendingFutures'] == 0
         now[0] += timedelta(minutes=5)
-        assert progress_issue(stream.progress.snapshot(), now[0], NOW, FeedRecoveryPolicy()) == 'consumer_future_failed_manual_recovery'
+        assert progress_issue(stream.progress.snapshot(), now[0], NOW, FeedObservationPolicy()) == 'consumer_future_failed_manual_recovery'
         assert 'private' not in json.dumps(data)
         await stream.stop()
     asyncio.run(run())
@@ -108,7 +108,7 @@ def test_pending_consumer_is_visible_and_cannot_authorize_socket_recovery(monkey
         now[0] += timedelta(minutes=5)
         evidence = stream.progress.snapshot()
         assert evidence['pendingFutures'] == 1 and evidence['pendingSince'] == NOW.isoformat()
-        assert progress_issue(evidence, now[0], NOW, FeedRecoveryPolicy()) == 'consumer_future_pending_no_recovery'
+        assert progress_issue(evidence, now[0], NOW, FeedObservationPolicy()) == 'consumer_future_pending_no_recovery'
         release.set()
         await drain()
         assert stream.progress.snapshot()['pendingFutures'] == 0
@@ -150,7 +150,7 @@ def test_old_sdk_callbacks_do_not_refresh_new_generation_or_cancel_native_retry(
         assert evidence['counts']['ignoredOldCallbacks'] == 3
         stream._on_reconnect(stream._ticker, 1)
         now[0] += timedelta(minutes=5)
-        assert progress_issue(stream.progress.snapshot(), now[0], NOW, FeedRecoveryPolicy()) == 'native_retry_active'
+        assert progress_issue(stream.progress.snapshot(), now[0], NOW, FeedObservationPolicy()) == 'native_retry_active'
         await stream.stop()
     asyncio.run(run())
 
@@ -171,7 +171,7 @@ def runner(tmp_path, monkeypatch, *, policy=DEFAULT_POLICY):
     async def no_wait(delay):
         await asyncio.sleep(0)
     result = DaemonRunner(daemon, (stream,), clock=lambda: now[0],
-                          log_path=tmp_path / 'synthetic.log', feed_recovery_policy=policy, sleeper=no_wait)
+                          log_path=tmp_path / 'synthetic.log', feed_observation_policy=policy, sleeper=no_wait)
     return result, stream, buffer, now, reactor, tickers, broker
 
 
@@ -190,7 +190,7 @@ def test_default_does_not_create_watchdog_or_recover_silent_stream(tmp_path, mon
         broker.close()
 
 
-def test_one_halted_recovery_uses_supervisor_thread_handoff_without_resume(tmp_path, monkeypatch):
+def test_halted_silence_reports_once_without_socket_replacement_or_resume(tmp_path, monkeypatch):
     observed, stream, _, now, reactor, tickers, broker = runner(tmp_path, monkeypatch)
     async def run():
         task = asyncio.create_task(observed._supervise_stream(stream))
@@ -199,19 +199,17 @@ def test_one_halted_recovery_uses_supervisor_thread_handoff_without_resume(tmp_p
         active = {stream: NOW}
         now[0] += timedelta(minutes=5)
         await observed._check_silent_feeds(active)
-        # The supervisor journals through a worker before replacing the socket.
-        async def replaced():
-            while len(tickers) != 2:
-                await asyncio.sleep(0.001)
-        await asyncio.wait_for(replaced(), timeout=2)
-        assert len(tickers) == 2 and tickers[0].closes == 1
-        assert reactor.handed_over[:2] == ['close', 'connect']
+        await drain()
+        assert len(tickers) == 1 and tickers[0].closes == 0
+        assert reactor.handed_over == []
+        assert stream._error_queue().empty()
         assert observed.daemon.kill_switch.engaged
         assert observed.daemon.tracker.risk_state.kill_switch_state('pilot') == (True, 'protection_unreachable:INFY')
+        assert stream.progress.snapshot()['watchdogState'] == 'operator_recovery_required'
         now[0] += timedelta(minutes=5)
         await observed._check_silent_feeds(active)
-        assert stream.progress.snapshot()['watchdogState'] == 'recovery_limit_requires_operator'
-        assert observed._feed_recoveries == 1
+        assert stream.progress.snapshot()['watchdogState'] == 'operator_alert_limit_reached'
+        assert observed._feed_alerts == 1
         observed.request_stop()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -236,8 +234,8 @@ def test_nonrecoverable_states_do_not_replace_socket(tmp_path, monkeypatch, case
         if case == 'pending': stream.progress.queued()
         if case == 'failed': stream.progress.finished(stream.progress.queued(), failed=True)
         await observed._check_silent_feeds(active)
-        assert observed._feed_recoveries == 0 and len(tickers) == 1
-        assert stream.progress.snapshot()['watchdogState'] != 'bounded_socket_recovery_requested'
+        assert observed._feed_alerts == 0 and len(tickers) == 1
+        assert stream._error_queue().empty()
         await stream.stop()
     try:
         asyncio.run(run())
@@ -248,7 +246,7 @@ def test_nonrecoverable_states_do_not_replace_socket(tmp_path, monkeypatch, case
 @pytest.mark.parametrize('seconds', [0, 60, 901, True, '180'])
 def test_invalid_recovery_policy_refused(seconds):
     with pytest.raises(ValueError):
-        FeedRecoveryPolicy(silent_seconds=seconds)
+        FeedObservationPolicy(silent_seconds=seconds)
 
 
 def test_read_only_snapshot_is_independent_and_bounded(monkeypatch):
@@ -293,10 +291,53 @@ def test_opt_in_refuses_missing_monitoring_and_subscription_mismatch(tmp_path, m
     try:
         stream.symbol_by_token = {1: 'UNKNOWN'}
         with pytest.raises(ValueError):
-            DaemonRunner(observed.daemon, (stream,), feed_recovery_policy=DEFAULT_POLICY)
+            DaemonRunner(observed.daemon, (stream,), feed_observation_policy=DEFAULT_POLICY)
         stream.symbol_by_token = {1: 'INFY'}
         observed.daemon.telemetry = None
         with pytest.raises(ValueError, match='monitored_paper'):
-            DaemonRunner(observed.daemon, (stream,), feed_recovery_policy=DEFAULT_POLICY)
+            DaemonRunner(observed.daemon, (stream,), feed_observation_policy=DEFAULT_POLICY)
+    finally:
+        broker.close()
+
+
+@pytest.mark.parametrize('change', ['retry', 'halt_release', 'halt_aba', 'generation', 'fresh_tick'])
+def test_journal_await_cannot_authorize_stale_recovery(tmp_path, monkeypatch, change):
+    observed, stream, buffer, now, reactor, tickers, broker = runner(tmp_path, monkeypatch)
+    async def run():
+        await stream.start()
+        connect(stream)
+        active = {stream: NOW}
+        now[0] += timedelta(minutes=5)
+        async def journal(event, **fields):
+            await asyncio.sleep(0)
+            if change == 'retry':
+                stream.progress.retrying(True)
+            elif change in ('halt_release', 'halt_aba'):
+                observed.daemon.tracker.risk_state.set_kill_switch('pilot', False, None)
+                observed.daemon.kill_switch.engaged = False
+                if change == 'halt_aba':
+                    observed.daemon.tracker.risk_state.set_kill_switch('pilot', True, 'protection_unreachable:INFY')
+                    observed.daemon.kill_switch.engaged = True
+            elif change == 'generation':
+                stream.progress.start()
+            else:
+                stream._on_ticks(stream._ticker, [payload(now[0], depth=False)])
+                await drain()
+        observed._write_event = journal
+        await observed._check_silent_feeds(active)
+        assert stream._error_queue().empty(), 'observation must not enqueue a give-up replacement'
+        assert len(tickers) == 1 and tickers[0].closes == 0
+        assert reactor.handed_over == []
+        if change == 'retry':
+            assert stream.progress.snapshot()['nativeRetryActive']
+        if change == 'halt_release':
+            assert observed.daemon.tracker.risk_state.kill_switch_state('pilot') == (False, None)
+        if change == 'generation':
+            assert stream.progress.snapshot()['connectionGeneration'] == 2
+        if change == 'fresh_tick':
+            assert buffer.integrity()['accepted'] == 1
+        await stream.stop()
+    try:
+        asyncio.run(run())
     finally:
         broker.close()

@@ -1,4 +1,4 @@
-"""Opt-in bounded recovery classification; never freshness or entry permission."""
+"""Opt-in bounded observation classification; never freshness or entry permission."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,14 +6,14 @@ from datetime import datetime, timedelta
 
 
 @dataclass(frozen=True)
-class FeedRecoveryPolicy:
+class FeedObservationPolicy:
     silent_seconds: int = 180
     poll_seconds: int = 10
 
     def __post_init__(self):
         if (type(self.silent_seconds) is not int or not 120 <= self.silent_seconds <= 900
                 or type(self.poll_seconds) is not int or not 5 <= self.poll_seconds <= 30):
-            raise ValueError('feed_recovery_policy_invalid')
+            raise ValueError('feed_observation_policy_invalid')
 
 
 def progress_issue(progress, now, active_since, policy):

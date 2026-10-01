@@ -1,4 +1,4 @@
-# Feed ingestion boundary and bounded halted recovery
+# Feed ingestion boundary and bounded operator observation
 
 The observed silent-stream incident is not explained by a connected socket or a
 running process. Synthetic reproduction established a narrower source fact: the
@@ -26,34 +26,39 @@ nonempty current-generation future group, not the age of a specific oldest task.
 No task/payload collection is retained, no provider/credential details are exposed,
 and raw frames include SDK heartbeat/text frames, not just usable prices.
 
-An optional `FeedRecoveryPolicy` is a source API on `DaemonRunner`, default `None`.
+An optional `FeedObservationPolicy` is a source API on `DaemonRunner`, default `None`.
 It is NOT enabled by environment or Compose and this change activates nothing.
 Explicit opt-in refuses anything outside the monitored PAPER/NSE engine, durable
 SQLite risk store, one audited Zerodha stream and unchanged complete subscription
 bijection. It monitors only when existing `prices_expected` says a continuous session
 is active, retaining the closing-auction/closed-market exclusions and startup grace.
-The threshold is120–900 seconds; polls5–30 seconds. Policy is not a risk/freshness cap.
+The threshold is 120–900 seconds; polls 5–30 seconds. Policy is not a risk/freshness cap.
 
 Only silent raw feed, raw frames without tick callbacks, or a missing connection
-callback can request at most ONE socket replacement per process. Before requesting
-it, an existing durable halt must match the still-engaged in-memory halt exactly.
-It preserves the halt/reason and uses the existing give-up/supervisor thread-safe
-close/connect path with the identical configured tokens. It never cancels Kite's
-active native retry, clears buffers/reservations, resets risk, changes subscriptions,
-places an order or automatically resumes trading. The request is not successful
-recovery: only new validated prices/protection evidence can establish that later.
-A stalled native reactor may not execute its queued close/connect; exhausted or
-unsuccessful recovery therefore requires an operator rather than repeated attempts.
+callback can produce at most ONE operator alert per process, behind an existing
+matching durable/in-memory halt. This observer never queues a connection error,
+closes or starts a socket, cancels native retry, clears buffers/reservations, resets
+risk, changes subscriptions, places orders or resumes trading. The existing normal
+SDK retry and real give-up supervisor paths are unchanged.
+
+Autonomous replacement was deliberately removed before publication. Adversarial
+regressions reproduced native retry, halt release/re-engagement (ABA), or generation
+changes while journal I/O awaited; the existing replacement path cannot atomically
+carry authorization through both supervisor journaling and native thread handoff.
+Checking only before/after journal I/O would not close that race. Removing the
+replacement request eliminates this authority path rather than treating a delayed
+observation as permission to close the current connection.
 
 Unknown diagnostics, failed/pending consumer futures, failed subscription sends,
-unconfirmed halt persistence and closed/auction sessions refuse replacement. An
-event-loop-based watchdog cannot repair a completely blocked event loop; raw/native
-progress and pending-consumer evidence help localize that boundary, while process
-recovery remains an explicitly scoped operator action. Whole-process same-image
-restart, protection interruption and subsequent verification are not CLI actions.
+unconfirmed halt persistence and closed/auction sessions do not generate this
+halted-feed alert. An event-loop observer cannot diagnose a completely blocked
+event loop while blocked. Native progress/pending-consumer evidence can help after
+recovery; same-image process restart, protection interruption and verification
+remain separately scoped operator actions. They are not CLI actions in this release.
 
-Synthetic tests cover silent/no-error behavior, callback/listener failures, pending
-futures, receipt-vs-source/buffer distinctions, ignored old callbacks, native retry
-preservation, bounded one-shot replacement behind an unchanged durable halt, absent
-policy, session exclusions and refusal states. No production cause, live restoration,
-successful broker subscription, trading edge or operational activation is inferred.
+Synthetic tests cover callback/listener failures, pending futures, receipt-versus-
+source/buffer distinctions, ignored old callbacks, native retry preservation, absent
+policy, session exclusions and one alert without replacement. Adversarial journal
+interleavings cover retry, halt release/ABA, new generation and fresh accepted ticks;
+none queues replacement or reaches a native close handoff. No production cause,
+live restoration, successful subscription or trading edge is inferred.

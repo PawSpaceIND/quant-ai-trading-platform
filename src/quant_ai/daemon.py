@@ -73,7 +73,7 @@ from quant_ai.intelligence.sandbox import (
 from quant_ai.llm.anthropic_client import AnthropicSwarmClient
 from quant_ai.llm.budget import budget_from_env
 from quant_ai.llm.challenger import with_astra_challenger
-from quant_ai.marketdata.feed_watchdog import FeedRecoveryPolicy, progress_issue
+from quant_ai.marketdata.feed_watchdog import FeedObservationPolicy, progress_issue
 from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
 from quant_ai.marketdata.ticker_stream import (
     AbstractTickerStream,
@@ -156,7 +156,7 @@ class DaemonRunner:
         protection_interval: float = 1.0,
         intraday_warmup_provider: Any | None = None,
         intraday_warmup_instruments: Iterable[Instrument] = (),
-        feed_recovery_policy: FeedRecoveryPolicy | None = None,
+        feed_observation_policy: FeedObservationPolicy | None = None,
     ) -> None:
         _assert_ghost_mode()
         if cadence <= timedelta(0):
@@ -167,17 +167,17 @@ class DaemonRunner:
         self._protection_stop = Event()
         self.daemon = daemon
         self.streams = tuple(streams)
-        self.feed_recovery_policy = feed_recovery_policy
-        self._feed_recoveries = 0
-        if feed_recovery_policy is not None:
+        self.feed_observation_policy = feed_observation_policy
+        self._feed_alerts = 0
+        if feed_observation_policy is not None:
             from quant_ai.execution.risk_state import SQLiteRiskStateStore
-            if (type(feed_recovery_policy) is not FeedRecoveryPolicy
+            if (type(feed_observation_policy) is not FeedObservationPolicy
                     or os.getenv('TRADING_LIVE_MONEY_ACTIVE') != 'false'
                     or daemon.telemetry is None or type(daemon.tracker.broker) is not PaperBrokerService
                     or type(daemon.tracker.risk_state) is not SQLiteRiskStateStore
                     or len(self.streams) != 1 or any(type(s) is not ZerodhaKiteTicker for s in self.streams)
                     or not daemon.instruments or any(i.market != Market.INDIA or i.exchange != 'NSE' for i in daemon.instruments)):
-                raise ValueError('feed_recovery_monitored_paper_nse_required')
+                raise ValueError('feed_observation_monitored_paper_nse_required')
             from quant_ai.governance.nse_watchlist import validate_subscription_mapping
             validate_subscription_mapping(tuple(daemon.instruments), self.streams[0].instrument_tokens,
                                           self.streams[0].symbol_by_token)
@@ -351,7 +351,7 @@ class DaemonRunner:
         protection.start()
         supervisors = [asyncio.create_task(self._supervise_stream(stream)) for stream in self.streams]
         cadence_task: asyncio.Task[None] | None = None
-        watchdog = asyncio.create_task(self._watch_silent_feeds()) if self.feed_recovery_policy is not None else None
+        watchdog = asyncio.create_task(self._watch_silent_feeds()) if self.feed_observation_policy is not None else None
         try:
             if self._recovery_service is not None and not self._stop_requested:
                 await self._recovery_service.start()
@@ -406,12 +406,12 @@ class DaemonRunner:
                 delay = min(self.reconnect.max_delay_seconds, delay * self.reconnect.multiplier)
 
     async def _check_silent_feeds(self, active_since):
-        """At most one socket replacement per process, only behind existing durable halt.
+        """Observe silent feeds and report once; never replace or resume a socket.
 
-        No automatic resume, consumer cancellation or process restart. Recovery of a
-        blocked/failed consumer is left to the operator; socket replacement cannot fix it.
+        Autonomous replacement is intentionally excluded: the existing supervisor
+        and native handoff cannot carry atomic halt/generation authorization.
         """
-        policy = self.feed_recovery_policy
+        policy = self.feed_observation_policy
         if policy is None:
             return
         now = _as_utc(self.clock())
@@ -425,8 +425,8 @@ class DaemonRunner:
             stream.progress.watchdog(issue)
             if issue not in {'silent_raw_feed', 'raw_frames_without_tick_callbacks', 'connection_callback_missing'}:
                 continue
-            if self._feed_recoveries >= 1:
-                stream.progress.watchdog('recovery_limit_requires_operator')
+            if self._feed_alerts >= 1:
+                stream.progress.watchdog('operator_alert_limit_reached')
                 continue
             try:
                 durable, reason = self.daemon.tracker.risk_state.kill_switch_state(self.daemon.tenant_id)
@@ -437,14 +437,13 @@ class DaemonRunner:
             if not halted:
                 stream.progress.watchdog('requires_existing_persisted_halt')
                 continue
-            # Preserve the original halt/reason and use the already-tested thread-safe
-            # native give-up replacement path; never interrupt Kite's active own retry.
-            from quant_ai.marketdata.ticker_stream import TickerGaveUp
-            self._feed_recoveries += 1
-            stream.progress.watchdog('bounded_socket_recovery_requested')
-            await self._write_event('silent_feed_recovery_requested', issue=issue,
-                                    recovery_attempt=self._feed_recoveries, halt_preserved=True)
-            await stream.on_connection_error(TickerGaveUp('silent_feed_behind_persisted_halt'))
+            self._feed_alerts += 1
+            stream.progress.watchdog('operator_recovery_required')
+            await self._write_event('silent_feed_operator_recovery_required', issue=issue,
+                                    observation_attempt=self._feed_alerts, autonomous_recovery=False)
+            # This is an observation, not an authorization ticket. Nothing is queued
+            # after the await: retry, halt ABA, new ticks or a new generation cannot
+            # cause this observer to close either the old or current connection.
 
     async def _watch_silent_feeds(self):
         active_since = {}
@@ -455,7 +454,7 @@ class DaemonRunner:
                 for stream in self.streams:
                     stream.progress.watchdog('watchdog_unavailable_manual_recovery')
                 return
-            await asyncio.sleep(self.feed_recovery_policy.poll_seconds)
+            await asyncio.sleep(self.feed_observation_policy.poll_seconds)
 
     async def _wait_for_cadence(self, seconds: float) -> None:
         if self._recovery_service is None:
