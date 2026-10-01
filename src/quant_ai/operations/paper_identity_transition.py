@@ -119,7 +119,7 @@ def oms_instance(db):
     return value
 
 
-def provision_empty_oms(path, *, paper_only, reviewed_empty_sha256):
+def provision_empty_oms(path, *, paper_only, reviewed_empty_sha256, reviewed_state_sha256=None):
     """Explicit internal identity provisioning; no broker credentials or constructor.
 
     Caller must quiesce writers. Compare an exact inspected empty schema fingerprint;
@@ -132,6 +132,8 @@ def provision_empty_oms(path, *, paper_only, reviewed_empty_sha256):
     db.row_factory = sqlite3.Row
     try:
         db.execute('BEGIN IMMEDIATE')
+        if reviewed_state_sha256 is not None and store_snapshot_sha256(db) != reviewed_state_sha256:
+            raise ValueError('transition_reviewed_store_changed')
         require_empty_oms(db)
         if empty_oms_fingerprint(db) != reviewed_empty_sha256:
             raise ValueError('transition_oms_plan_changed')
@@ -304,11 +306,12 @@ def validate_legacy_evidence(inventory):
 
 def apply_reviewed_transition(ledger_path, oms_path, *, reviewed_plan_sha256,
                               tenant, catalog, account_binding, catalog_capture_sha256,
-                              paper_only):
-    """Forward-only local apply primitive, not wired to any CLI or runtime activation.
+                              paper_only, reviewed_store_snapshots=None):
+    """Forward-only primitive; guarded offline CLI is separate from runtime activation.
 
     Hold write locks on BOTH databases during revalidation/ledger commit. OMS already
     has an explicit provisioned identity; this operation writes only the ledger.
+    Optional complete store snapshots bind verified backups under both write locks.
     """
     from quant_ai.governance.runtime_identity import SCHEMA as PIN_SCHEMA
 
@@ -323,6 +326,11 @@ def apply_reviewed_transition(ledger_path, oms_path, *, reviewed_plan_sha256,
         db.execute('BEGIN IMMEDIATE')
         db.row_factory = sqlite3.Row
         odb.row_factory = sqlite3.Row
+        if reviewed_store_snapshots is not None and (
+                set(reviewed_store_snapshots) != {'ledger', 'oms'}
+                or reviewed_store_snapshots['ledger'] != store_snapshot_sha256(db)
+                or reviewed_store_snapshots['oms'] != store_snapshot_sha256(odb)):
+            raise ValueError('transition_reviewed_store_changed')
         if 'paper_identity_transitions' in _tables(db):
             prior = db.execute('SELECT sha256 FROM paper_identity_transitions WHERE tenant_id=?', (tenant,)).fetchone()
             if prior is not None:
@@ -476,6 +484,11 @@ def ledger_schema(db):
 def all_rows(db):
     return {table: sorted((dict(r) for r in db.execute(f'SELECT * FROM "{table}"')), key=canonical)
             for table in sorted(_tables(db))}
+
+
+def store_snapshot_sha256(db):
+    """Bind a reviewed backup's complete logical schema/rows under operation locks."""
+    return digest({'schema': schema_rows(db), 'rows': all_rows(db)})
 
 
 def validate_post_transition(db, plan, before):
