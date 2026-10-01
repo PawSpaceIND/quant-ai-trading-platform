@@ -104,6 +104,23 @@ def test_subscription_and_tick_refusals_do_not_remove_holdings():
     assert result["later_cycle"]["rejections"]["B"] == "subscription_not_configured"
 
 
+def test_generator_holdings_frozen_once_and_retained_on_both_cycles():
+    source = ["C"]
+    consumed = []
+    def holdings():
+        for symbol in source:
+            consumed.append(symbol)
+            yield symbol
+    result = qualify(*inputs(), held_symbols=holdings(), ticks={})
+    assert consumed == ["C"]
+    assert source == ["C"]
+    assert result["first_cycle"]["held_retained"] == ["C"]
+    assert result["later_cycle"]["held_retained"] == ["C"]
+    result["first_cycle"]["held_retained"].clear()
+    assert result["later_cycle"]["held_retained"] == ["C"]
+    assert source == ["C"]
+
+
 @pytest.mark.parametrize("changes", [{"paper_only": False}, {"later": NOW},
     {"later": NOW + timedelta(days=1)}, {"held_symbols": ("UNKNOWN",)}])
 def test_mode_clock_and_held_identity_boundaries(changes):

@@ -102,6 +102,7 @@ def qualify_paper_research(catalog, history, *, now, later, previous_session,
     if later.astimezone(ZoneInfo("Asia/Kolkata")).date() != now.astimezone(ZoneInfo("Asia/Kolkata")).date():
         raise ValueError("qualification_same_session_required")
     catalog = tuple(catalog)
+    held_symbols = tuple(held_symbols)
     coverage, bars = cached_research_coverage(catalog, history, now=now,
                                             previous_session=previous_session, calendar=calendar)
     snapshot = None
