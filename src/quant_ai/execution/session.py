@@ -156,7 +156,8 @@ NYSE_HOLIDAYS_2026 = frozenset(
 )
 
 # NSE/BSE 2026 full-day closures, including the Maharashtra election closure.
-# Source: https://zerodha.com/marketintel/holiday-calendar/
+# Source: https://www.nseindia.com/api/holiday-master?type=trading
+# CM segment checked 2026-10-01; weekend closures are enforced independently.
 # Special Sunday Muhurat sessions are not enabled by this regular-session calendar.
 NSE_HOLIDAYS_2026 = frozenset(
     date(2026, month, day)
@@ -213,6 +214,20 @@ def intraday_periods_per_year(
 
 def default_holidays() -> dict[Market | GlobalVenue, frozenset[date]]:
     return {GlobalVenue.USA: NYSE_HOLIDAYS_2026, GlobalVenue.INDIA: NSE_HOLIDAYS_2026}
+
+
+def validate_pilot_nse_calendar(calendar, instruments) -> None:
+    """Configured pilot closures may be stricter, never reopen known NSE holidays.
+
+    This bounds the supported 2026 calendar, not future calendar authenticity. Other
+    venues and generic historical/sandbox calendars keep their existing semantics.
+    """
+    if not any(item.market == Market.INDIA and item.exchange == "NSE" for item in instruments):
+        return
+    for day in NSE_HOLIDAYS_2026:
+        noon = datetime.combine(day, time(12), ZoneInfo("Asia/Kolkata"))
+        if calendar.state(Market.INDIA, noon, exchange="NSE") != MarketState.CLOSED:
+            raise ValueError("pilot_nse_known_holiday_reopened")
 
 
 def default_special_sessions() -> dict[Market | GlobalVenue, frozenset[date]]:
