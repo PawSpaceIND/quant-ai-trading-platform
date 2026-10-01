@@ -1095,6 +1095,24 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     if opportunity_selection and (not pilot_mode or order_identity_mode != "bound_v1"
                                   or _env_flag("PRAMANA_IBKR_ENABLED")):
         raise ValueError("opportunity_bound_paper_nse_required")
+    instrument = Instrument(
+        os.getenv("PRAMANA_TARGET_SYMBOL", "INFY").strip() or "INFY",
+        Market(os.getenv("PRAMANA_TARGET_MARKET", "INDIA").strip().upper()),
+        AssetClass(os.getenv("PRAMANA_TARGET_ASSET_CLASS", "EQUITY").strip().upper()),
+        os.getenv("PRAMANA_TARGET_CURRENCY", "INR").strip().upper(),
+        os.getenv("PRAMANA_TARGET_EXCHANGE", "NSE").strip().upper(),
+    )
+    # Freeze and validate the effective calendar before probes, providers or stores.
+    directives = FounderDirectives.from_env()
+    holidays = _env_holidays()
+    instruments = (directives or FounderDirectives()).instruments_or(instrument)
+    if pilot_mode:
+        from quant_ai.execution.session import validate_pilot_nse_calendar
+        calendar = MarketCalendar(
+            holidays=holidays if holidays is not None else default_holidays(),
+            exchanges={item.symbol.upper(): item.exchange.upper() for item in instruments},
+        )
+        validate_pilot_nse_calendar(calendar, instruments)
     dispatcher = _env_notifications()
     # Deduplicated: Docker restarts a refused boot every minute until the token is renewed,
     # and each retry alerted before this.
@@ -1112,18 +1130,11 @@ def build_ghost_runner_from_env() -> DaemonRunner:
     tokens = tuple(int(item) for item in _env_json("PRAMANA_ZERODHA_TOKENS_JSON", []))
     raw_symbols = _env_json("PRAMANA_ZERODHA_SYMBOLS_JSON", {})
     symbols = {int(key): str(value) for key, value in raw_symbols.items()}
-    instrument = Instrument(
-        os.getenv("PRAMANA_TARGET_SYMBOL", "INFY").strip() or "INFY",
-        Market(os.getenv("PRAMANA_TARGET_MARKET", "INDIA").strip().upper()),
-        AssetClass(os.getenv("PRAMANA_TARGET_ASSET_CLASS", "EQUITY").strip().upper()),
-        os.getenv("PRAMANA_TARGET_CURRENCY", "INR").strip().upper(),
-        os.getenv("PRAMANA_TARGET_EXCHANGE", "NSE").strip().upper(),
-    )
     news, fundamentals, macro = _env_intelligence_providers()
     daily_history = _env_daily_history_provider()
     budget = budget_from_env(paths.ledger_path("PRAMANA_PAPER_DB").parent)
     return build_ghost_runner(
-        directives=FounderDirectives.from_env(),
+        directives=directives,
         pilot_mode=pilot_mode,
         paper_opportunity_selection=opportunity_selection,
         order_identity_mode=order_identity_mode,
@@ -1134,7 +1145,7 @@ def build_ghost_runner_from_env() -> DaemonRunner:
         history_provider=daily_history,
         book_risk_history=_env_book_risk_history_provider(daily_history),
         require_book_risk_gates=_env_required_book_risk(),
-        holidays=_env_holidays(),
+        holidays=holidays,
         notifications=dispatcher,
         halt_file=paths.halt_file(),
         zerodha_api_key=credentials.api_key,

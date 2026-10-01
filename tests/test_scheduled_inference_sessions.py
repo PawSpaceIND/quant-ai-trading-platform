@@ -168,3 +168,43 @@ def test_pilot_refuses_calendar_override_that_reopens_known_nse_holidays_before_
             xai_directory=tmp_path / 'proofs', halt_file=tmp_path / 'HALT',
             directives=FounderDirectives(watchlist=(INSTRUMENT,)), pilot_mode=True, holidays=holidays)
     assert not ledger.exists()
+
+
+@pytest.mark.parametrize('watchlist_overrides_target', [False, True])
+def test_env_calendar_refusal_precedes_every_probe_provider_and_ledger_initialization(tmp_path, monkeypatch, watchlist_overrides_target):
+    import json
+
+    import quant_ai.daemon as factory
+
+    monkeypatch.setenv('TRADING_LIVE_MONEY_ACTIVE', 'false')
+    monkeypatch.setenv('PRAMANA_PILOT_MODE', 'true')
+    monkeypatch.setenv('PRAMANA_ORDER_IDENTITY_MODE', 'legacy_cash')
+    monkeypatch.setenv('PRAMANA_PAPER_OPPORTUNITY_SELECTION', 'false')
+    monkeypatch.setenv('PRAMANA_IBKR_ENABLED', 'false')
+    monkeypatch.setenv('PRAMANA_HOLIDAYS_JSON', '{"NSE":[]}')
+    monkeypatch.setenv('PRAMANA_PAPER_DB', str(tmp_path / 'ledger.sqlite'))
+    monkeypatch.setenv('PRAMANA_LEDGER_PATH', str(tmp_path / 'ledger.sqlite'))
+    monkeypatch.delenv('PRAMANA_OMS_DB', raising=False)
+    monkeypatch.delenv('PRAMANA_FOUNDER_DIRECTIVES_FILE', raising=False)
+    monkeypatch.delenv('PRAMANA_FOUNDER_DIRECTIVES_JSON', raising=False)
+    target = ('AAPL', 'USA', 'USD', 'NASDAQ') if watchlist_overrides_target else ('INFY', 'INDIA', 'INR', 'NSE')
+    for name, value in zip(('SYMBOL', 'MARKET', 'CURRENCY', 'EXCHANGE'), target):
+        monkeypatch.setenv('PRAMANA_TARGET_' + name, value)
+    monkeypatch.setenv('PRAMANA_TARGET_ASSET_CLASS', 'EQUITY')
+    if watchlist_overrides_target:
+        monkeypatch.setenv('PRAMANA_FOUNDER_DIRECTIVES_JSON', json.dumps({'watchlist': [
+            {'symbol': 'INFY', 'market': 'INDIA', 'currency': 'INR', 'exchange': 'NSE', 'asset_class': 'EQUITY'}]}))
+    calls = []
+    def forbidden(name):
+        def invoke(*args, **kwargs):
+            calls.append(name)
+            pytest.fail('refused calendar reached startup effect: ' + name)
+        return invoke
+    for name in ('_env_notifications', 'check_runtime_token', 'check_macro_provider', 'import_module',
+                 '_env_intelligence_providers', '_env_daily_history_provider', 'budget_from_env',
+                 'AnthropicSwarmClient', 'with_astra_challenger', '_env_intraday_warmup_provider'):
+        monkeypatch.setattr(factory, name, forbidden(name))
+    with pytest.raises(ValueError, match='pilot_nse_known_holiday_reopened'):
+        factory.build_ghost_runner_from_env()
+    assert calls == []
+    assert list(tmp_path.iterdir()) == []
