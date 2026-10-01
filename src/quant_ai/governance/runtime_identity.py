@@ -162,6 +162,19 @@ def runtime_identity_entry_issue(daemon, *, in_flight: InFlightOmsSubmission | N
         oms = runtime.oms
         if not isinstance(oms, DurableOms) or path_digest(oms.path) != configuration["oms_path_sha256"]:
             return "runtime_identity_oms_unavailable"
+        from quant_ai.operations.paper_identity_transition import (
+            TransitionReplay,
+            oms_instance,
+            read_database,
+        )
+        transition = TransitionReplay(runtime.broker._connection, daemon.tenant_id)
+        legacy = set()
+        if transition.plan is not None:
+            expected_uuid = transition.plan['oms_instance_uuid']
+            with read_database(oms.path) as observed_db:
+                if oms_instance(observed_db) != expected_uuid or oms_instance(oms.db) != expected_uuid:
+                    return 'runtime_identity_oms_instance_mismatch'
+            legacy = {r['order_id'] for r in transition.plan['legacy_inventory']['paper_ledger']}
         orders = oms.all_orders(daemon.tenant_id)
         for order in orders:
             oms.verify(order.client_order_id)
@@ -191,7 +204,12 @@ def runtime_identity_entry_issue(daemon, *, in_flight: InFlightOmsSubmission | N
         protected = {row[0] for row in runtime.broker._connection.execute(
             "SELECT order_id FROM paper_protective_fill_outbox WHERE tenant_id=?", (daemon.tenant_id,))}
         for entry in runtime.broker.ledger_entries(daemon.tenant_id):
+            if entry.order_id in legacy:
+                continue
             if entry.order_id in protected:
+                receipt = runtime.broker.protected_fill_receipt(entry.order_id, daemon.tenant_id)
+                if receipt.entry.side is not Side.SELL:
+                    return 'runtime_identity_protective_receipt_invalid'
                 continue
             observed = by_fill.get(entry.order_id)
             if (observed is None or observed.filled_quantity != entry.quantity
