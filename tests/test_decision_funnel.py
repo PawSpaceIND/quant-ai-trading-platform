@@ -45,6 +45,8 @@ def test_session_funnel_counts_each_evaluation_once_and_separates_protection(tmp
     result = report(path, "paper", "2026-01-05")
     assert path.read_bytes() == before
     assert result["evaluations"] == 3
+    assert result["research_coverage"]["recorded_evaluations"] == 3
+    assert result["research_coverage"]["admission_states"]["unknown_admission"] == 3
     assert result["directional_proposals"] == 2
     assert result["outcomes"] == {"abstained": 1, "rejected": 1, "filled": 1}
     assert sum(result["outcomes"].values()) == result["evaluations"]
@@ -62,6 +64,7 @@ def test_missing_tables_are_unknown_not_zero(tmp_path):
     sqlite3.connect(path).close()
     result = report(path, "paper", "2026-01-05")
     assert result["evaluations"] is None
+    assert result["research_coverage"] is None
     assert result["ledger_fills"] is None
 
 
@@ -84,6 +87,10 @@ def test_effective_quorum_snapshot_preserves_gate_and_stale_hold():
     assert snapshot["agents"][0]["age_seconds"] == 3601
     assert snapshot["agents"][0]["budget_seconds"] == 3600
     assert snapshot["agents"][-1]["role"] == "gate"
+    from quant_ai.analytics.decision_funnel import research_coverage
+    coverage = research_coverage([{"funnel_evidence": {"admission": snapshot}}])
+    assert coverage["admission_states"]["candidate_quorum_below"] == 1
+    assert coverage["evaluations_with_over_age_input"] == 1
 
 
 @pytest.mark.parametrize("trace_fields,expected_id", [({}, None), ({"decision_id": None}, None),
@@ -127,3 +134,53 @@ def test_report_preserves_known_empty_gate_reasons(tmp_path, evidence, expected)
         db.execute("INSERT INTO paper_decision_journal VALUES(?,?,?,?,?)",
                    ("paper", "2026-01-05T04:00:00+00:00", payload, "synthetic", "AAA"))
     assert report(path, "paper", "2026-01-05")["deterministic_gate_reasons"] == expected
+
+
+def _coverage_agent(name="a", *, age=0, budget=60, role="voter", candidate=True):
+    return {"agent_id": name, "role": role, "age_seconds": age,
+            "budget_seconds": budget, "coverage_candidate": candidate,
+            "over_atlas_age_budget": age > budget}
+
+
+def _coverage_row(agents, minimum=1):
+    return {"funnel_evidence": json.dumps({"admission": {
+        "schema": "pramana.evidence_admission.v1", "minimum_voters": minimum,
+        "agents": agents}})}
+
+
+def test_research_coverage_denominators_do_not_invent_votes_or_freshness():
+    from quant_ai.analytics.decision_funnel import research_coverage
+    rows = [_coverage_row([_coverage_agent()]),
+            _coverage_row([_coverage_agent(age=61),
+                           _coverage_agent("risk", age=120, role="gate", candidate=False)], 2),
+            {"funnel_evidence": None}]
+    result = research_coverage(rows)
+    assert result["admission_states"] == {"candidate_quorum_met": 1,
+        "candidate_quorum_below": 1, "unknown_admission": 1}
+    assert sum(result["admission_states"].values()) == result["recorded_evaluations"] == 3
+    assert result["validated_agent_entries"] == 3
+    assert result["evaluations_with_over_age_input"] == 1
+    assert result["over_age_agent_entries"] == 2
+
+
+@pytest.mark.parametrize("change", [
+    {"age_seconds": -1}, {"age_seconds": True}, {"budget_seconds": None},
+    {"coverage_candidate": "true"}, {"over_atlas_age_budget": True},
+    {"role": "gate"}, {"agent_id": ""}, {"role": "unknown"}, {"role": []},
+])
+def test_malformed_admission_is_unknown_without_partial_counts(change):
+    from quant_ai.analytics.decision_funnel import research_coverage
+    agent = {**_coverage_agent(), **change}
+    result = research_coverage([_coverage_row([_coverage_agent("valid"), agent])])
+    assert result["admission_states"]["unknown_admission"] == 1
+    assert result["validated_agent_entries"] == 0
+    assert result["evaluations_with_over_age_input"] == 0
+
+
+@pytest.mark.parametrize("agents,minimum", [([], 1), ([_coverage_agent(), _coverage_agent()], 1),
+                                           ([_coverage_agent()], True)])
+def test_empty_duplicate_and_boolean_quorum(agents, minimum):
+    from quant_ai.analytics.decision_funnel import research_coverage
+    result = research_coverage([_coverage_row(agents, minimum)])
+    expected = "candidate_quorum_below" if not agents else "unknown_admission"
+    assert result["admission_states"][expected] == 1
