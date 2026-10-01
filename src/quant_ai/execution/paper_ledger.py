@@ -938,6 +938,8 @@ class PaperBrokerService(BrokerAdapter):
                AND market=? AND asset_class=? AND id<? ORDER BY id""",
             (tenant_id, entry.symbol, entry.market.value, entry.asset_class.value, row["id"]),
         ).fetchall()
+        from quant_ai.operations.paper_identity_transition import TransitionReplay
+        transition = TransitionReplay(self._connection, tenant_id)
         held, average, identity = 0, Decimal(0), None
         for prior_row in previous:
             prior = self._decode_ledger_entry(prior_row)
@@ -955,6 +957,7 @@ class PaperBrokerService(BrokerAdapter):
                 held -= prior.quantity
                 if not held:
                     average, identity = Decimal(0), None
+            identity = transition.after_fill(prior.order_id, prior.symbol, held, average, identity)
         if qty != held or basis != (average if held else None) or receipt.get("priorInstrumentIdentity") != identity:
             raise ValueError("paper_receipt_prior_ledger_mismatch")
         return PaperSubmissionReceipt(entry, order, qty, basis, payload)

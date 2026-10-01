@@ -163,6 +163,8 @@ class ProtectiveExitAccounting:
                 if key in fees:
                     raise ValueError("protective_accounting_duplicate_fee_code")
                 fees[key] = cost
+        from quant_ai.operations.paper_identity_transition import TransitionReplay
+        transition = TransitionReplay(self.broker._connection, entries[0].tenant_id) if entries else None
         positions = {}
         for entry in entries:
             if entry.asset_class not in ({AssetClass.EQUITY, AssetClass.ETF} | MARGINED_FUTURES_ASSET_CLASSES):
@@ -229,7 +231,9 @@ class ProtectiveExitAccounting:
                 held += entry.quantity
             else:
                 held -= entry.quantity
-            positions[key] = (held, average if held else D(0), entry.instrument_identity if held else None, reserved)
+            effective_identity = transition.after_fill(entry.order_id, entry.symbol, held,
+                average if held else D(0), entry.instrument_identity if held else None)
+            positions[key] = (held, average if held else D(0), effective_identity, reserved)
             for (order_id, code), cost in fees.items():
                 if order_id == entry.order_id:
                     tax = code in TAX_CODES

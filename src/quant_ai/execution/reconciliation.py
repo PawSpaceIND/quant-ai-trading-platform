@@ -38,6 +38,12 @@ def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
         margin_rows = db.execute(
             "SELECT * FROM paper_derivative_margin WHERE tenant_id=?", (tenant,)
         ).fetchall()
+        from quant_ai.operations.paper_identity_transition import TransitionReplay
+        try:
+            transition = TransitionReplay(db, tenant)
+        except ValueError:
+            issue("transition_certificate_invalid")
+            transition = None
     finally:
         db.execute("RELEASE SAVEPOINT paper_reconciliation")
     positions: dict[tuple, dict] = {}
@@ -118,6 +124,13 @@ def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
                     del positions[key]
             else:
                 issue("invalid_side_or_uncovered_sale", order_id)
+            if key in positions:
+                current = positions[key]
+                if transition is not None:
+                    current['instrument_identity'] = transition.after_fill(order_id, fill['symbol'],
+                        current['quantity'], current['average_price'], current['instrument_identity'])
+            elif transition is not None:
+                transition.after_fill(order_id, fill['symbol'], 0, Decimal(0), None)
         for cost in costs:
             amount = number(cost["amount"])
             if cost["order_id"] not in filled_ids:
