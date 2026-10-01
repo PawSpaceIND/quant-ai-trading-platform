@@ -244,16 +244,18 @@ def write_offline(options, *, clock=None):
             locks.enter_context(_lock_store(stores[role]))
         snapshots = _backups(value, stores)
         _check(clock() < _instant(value['expires_at']))
+        window = {'not_before': _instant(value['captured_at']), 'not_after': _instant(value['expires_at']),
+                  'clock': clock}
         if options.action == 'provision-oms':
             _check(_hex(options.reviewed_empty_oms_sha256))
             provision_empty_oms(stores['oms'], paper_only=True,
                 reviewed_empty_sha256=options.reviewed_empty_oms_sha256,
-                reviewed_state_sha256=snapshots['oms'])
+                reviewed_state_sha256=snapshots['oms'], **window)
         else:
             _check(options.action == 'apply' and _hex(options.reviewed_plan_sha256))
             apply_reviewed_transition(stores['ledger'], stores['oms'], **arguments,
                 reviewed_plan_sha256=options.reviewed_plan_sha256,
-                reviewed_store_snapshots={role: snapshots[role] for role in ('ledger', 'oms')})
+                reviewed_store_snapshots={role: snapshots[role] for role in ('ledger', 'oms')}, **window)
     return {'schema': 'pramana.paper_release_operation.v1', 'status': 'completed', 'operation': options.action,
             'forward_only': True, 'quiescence_attested': True, 'process_shutdown_verified': False,
             'activation_authorized': False, 'trading_authorized': False}

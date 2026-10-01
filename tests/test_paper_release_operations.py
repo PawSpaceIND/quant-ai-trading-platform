@@ -242,6 +242,92 @@ def test_race_after_backup_check_refuses_inside_existing_apply_locks(tmp_path, m
         assert db.execute('SELECT instrument_identity FROM paper_positions').fetchone()[0] is None
 
 
+def test_preflight_expiring_after_cli_admission_cannot_commit(tmp_path, monkeypatch):
+    options, preflight, stores, now = fixture(tmp_path, monkeypatch)
+    clock = [now]
+    original = cli.apply_reviewed_transition
+    def delayed(*args, **kwargs):
+        clock[0] = datetime.fromisoformat(preflight['expires_at'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(cli, 'apply_reviewed_transition', delayed)
+    before = snapshots(stores)
+    with pytest.raises(ValueError, match='deadline'):
+        cli.write_offline(options, clock=lambda: clock[0])
+    assert snapshots(stores) == before
+
+
+def fresh_oms_for_provision(tmp_path, options, preflight, stores):
+    from quant_ai.orders.oms import DurableOms
+    stores['oms'].rename(tmp_path / 'original-oms-for-deadline.sqlite')
+    DurableOms(stores['oms']).close()
+    manifest = ops().backup(stores['oms'], tmp_path / 'fresh-oms-deadline-backup.sqlite')
+    preflight['backup_manifests']['oms'] = manifest['backup'] + '.manifest.json'
+    now = datetime.now(timezone.utc)
+    edit(options, preflight, captured_at=now.isoformat(), expires_at=(now + timedelta(minutes=5)).isoformat())
+    options.action = 'provision-oms'
+    return now
+
+
+def test_provision_deadline_expiring_after_cli_admission_cannot_commit(tmp_path, monkeypatch):
+    options, preflight, stores, _ = fixture(tmp_path, monkeypatch)
+    now = fresh_oms_for_provision(tmp_path, options, preflight, stores)
+    clock = [now]
+    original = cli.provision_empty_oms
+    def delayed(*args, **kwargs):
+        clock[0] = datetime.fromisoformat(preflight['expires_at'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(cli, 'provision_empty_oms', delayed)
+    before = snapshots(stores)
+    with pytest.raises(ValueError, match='deadline'):
+        cli.write_offline(options, clock=lambda: clock[0])
+    assert snapshots(stores) == before
+
+
+@pytest.mark.parametrize('operation', ['apply', 'provision-oms'])
+def test_deadline_expiring_after_mutation_rolls_back_all_rows_and_ddl(tmp_path, monkeypatch, operation):
+    from quant_ai.operations import paper_identity_transition as transition
+    options, preflight, stores, now = fixture(tmp_path, monkeypatch)
+    if operation == 'provision-oms':
+        now = fresh_oms_for_provision(tmp_path, options, preflight, stores)
+    clock = [now]
+    before = snapshots(stores)
+    hook = 'uuid4' if operation == 'provision-oms' else 'validate_post_transition'
+    original = getattr(transition, hook)
+    def expires_during_operation(*args, **kwargs):
+        result = original(*args, **kwargs)
+        clock[0] = datetime.fromisoformat(preflight['expires_at'])
+        return result
+    monkeypatch.setattr(transition, hook, expires_during_operation)
+    with pytest.raises(ValueError, match='deadline'):
+        cli.write_offline(options, clock=lambda: clock[0])
+    assert snapshots(stores) == before
+
+
+@pytest.mark.parametrize('operation', ['apply', 'provision-oms'])
+def test_primitive_checks_window_under_write_locks_at_entry_and_precommit(tmp_path, monkeypatch, operation):
+    options, preflight, stores, now = fixture(tmp_path, monkeypatch)
+    if operation == 'provision-oms':
+        now = fresh_oms_for_provision(tmp_path, options, preflight, stores)
+    checks = []
+    def locked_clock():
+        # CLI checks happen outside the primitive. Its two trusted-window checks
+        # must run with both applicable SQLite writer locks already acquired.
+        for role in ({'oms'} if operation == 'provision-oms' else {'ledger', 'oms'}):
+            with sqlite3.connect(stores[role], timeout=0) as contender, pytest.raises(sqlite3.OperationalError):
+                contender.execute('BEGIN IMMEDIATE')
+        checks.append(True)
+        return now
+    arguments = cli._arguments(options)
+    window = {'not_before': now, 'not_after': datetime.fromisoformat(preflight['expires_at']), 'clock': locked_clock}
+    if operation == 'provision-oms':
+        cli.provision_empty_oms(stores['oms'], paper_only=True,
+            reviewed_empty_sha256=options.reviewed_empty_oms_sha256, **window)
+    else:
+        cli.apply_reviewed_transition(stores['ledger'], stores['oms'], **arguments,
+            reviewed_plan_sha256=options.reviewed_plan_sha256, **window)
+    assert checks == [True, True]
+
+
 def test_guarded_idempotent_provision(tmp_path, monkeypatch):
     options, _preflight, stores, now = fixture(tmp_path, monkeypatch)
     options.action = 'provision-oms'

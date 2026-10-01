@@ -106,6 +106,10 @@ expiry again, and supplies full ledger/OMS snapshot hashes to the primitive. Tho
 hashes are checked inside the primitive's existing write transactions, preventing
 a write between backup validation and primitive admission from silently invalidating
 the recovery boundary. No original mutation, replay or inverse semantics change.
+The reviewed time window is also passed into both primitives: it is checked after
+their write locks are acquired and immediately before commit. Expiry during schema
+or conservation validation rolls back UUID/certificate/pin/holding changes; the
+CLI's earlier check alone is not admission for a later commit.
 
 Provisioning creates only the already-reviewed immutable internal OMS UUID. It is
 not a broker credential and does not bind ledger holdings. After provisioning, take
