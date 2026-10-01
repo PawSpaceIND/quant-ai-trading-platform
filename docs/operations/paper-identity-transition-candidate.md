@@ -81,3 +81,20 @@ inside the transaction. A failed check rolls back certificate, pin and holding c
 Tests separately bypass trigger admission on synthetic databases to establish that the
 post-write guard rolls back cash, quantity, historical fill and inserted-cost mutation.
 These caught-exception tests are not hard-process-crash or host power-loss qualification.
+
+## Supported startup-schema preflight
+
+A transition must begin from a fully initialized supported legacy runtime, not just a
+bare broker database. The read-only planner requires the existing pilot_scope schema
+and exact tenant/catalog scope, plus the trusted current runtime DDL for journal,
+valuation, specialist feedback, feed/runtime/manifest and risk-state tables/index/triggers.
+Missing or differently initialized runtime schemas refuse BEFORE apply; the planner does
+not create or migrate them. The trigger allowlist includes the two audited immutable
+specialist-feedback triggers in addition to the four broker triggers.
+
+Synthetic fixtures now initialize via the actual legacy daemon builder before inspection.
+The actual bound daemon builder is then constructed and restarted after transition, with
+its real configure_pilot path, and reconciliation remains matched on both starts. No
+streams, orders, provider requests or runtime flags are activated by this test. An operator
+must separately qualify existing host schema; this preflight is not permission to initialize
+or restart the host. Differing supported historical schema forms require explicit review.

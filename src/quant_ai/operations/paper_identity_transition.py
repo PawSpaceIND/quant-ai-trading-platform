@@ -18,7 +18,15 @@ INSTANCE_TABLE = 'pramana_oms_instance'
 # Generated from the supported fresh DurableOms v1 schema, including constraints
 # and append-only triggers. An arbitrary caller-reviewed hash is not qualification.
 TRUSTED_EMPTY_OMS_SHA256 = 'db97472fc1e35ac56e5ca827bf55ed0940b92c3eaa958669b40ac1ccbf778da9'
+TRUSTED_RUNTIME_SCHEMA_SHA256 = '4ef266017e804319ec946dc5ca9335b4df373057ee3fb2fc0cd042c9eb47fb2d'
+SUPPORTED_RUNTIME_TABLES = frozenset({
+    'paper_decision_journal', 'paper_live_valuations', 'paper_specialist_feedback',
+    'pilot_feed_minutes', 'pilot_runtime', 'pilot_strategy_manifests',
+    'risk_control_state', 'risk_daily_equity',
+})
 TRUSTED_LEDGER_TRIGGERS = {
+    'paper_specialist_feedback_delete_blocked': '31036af5664c200731482715c159e070794483c3288ca9038ea8a0feae9635f0',
+    'paper_specialist_feedback_update_blocked': '3022f74dbc8bcdf2425298a81422cccb0ca4d52d40b20313effbe4b3052a3fae',
     'protective_outbox_delete_blocked': '05afd1c237b74fb08f29ebbc1eaeb30ac33e52754ed4e46d44ba9f9afdc905e3',
     'protective_outbox_update_blocked': 'b20124ae55f5b995939fc055ee0cc45b5d37857adcf86de42930061dda01ad01',
     'shared_broker_witness_delete_blocked': 'a5eb7903e15e5a710fb1452fc020d99444bf1514209d1398600c20358808a343',
@@ -192,7 +200,15 @@ def inspect_transition(ledger_path, oms_path, *, tenant, catalog, account_bindin
                     raise ValueError('transition_existing_pin_requires_review')
         required = ('paper_accounts', 'paper_positions', 'paper_ledger', 'paper_cost_ledger',
                     'paper_decision_evidence', 'paper_protection_evidence', 'paper_protective_fill_outbox',
-                    'paper_idempotency')
+                    'paper_idempotency', 'pilot_scope')
+        if not SUPPORTED_RUNTIME_TABLES <= tables:
+            raise ValueError('transition_runtime_schema_initialization_required')
+        runtime_schema = {r['name']: ' '.join(r['sql'].split()) for r in schema_rows(db)
+                          if r['tbl_name'] in SUPPORTED_RUNTIME_TABLES}
+        if digest(runtime_schema) != TRUSTED_RUNTIME_SCHEMA_SHA256:
+            raise ValueError('transition_runtime_schema_initialization_required')
+        if 'pilot_scope' not in tables:
+            raise ValueError('transition_pilot_schema_initialization_required')
         if not set(required) <= tables:
             raise ValueError('transition_ledger_schema_missing')
         schema = ledger_schema(db)
@@ -208,6 +224,7 @@ def inspect_transition(ledger_path, oms_path, *, tenant, catalog, account_bindin
                     or row['asset_class'] != next(i.asset_class.value for i in instruments if i.symbol == row['symbol'])
                     or row['instrument_identity'] is not None):
                 raise ValueError('transition_held_identity_ambiguous')
+        validate_pilot_scope(db, tenant, identities)
         for row in inventory['paper_ledger']:
             if (row['market'] != 'INDIA' or row['asset_class'] not in ('EQUITY', 'ETF')
                     or row['instrument_identity'] is not None or row['status'] != 'FILLED'):
@@ -487,3 +504,24 @@ def transition_schema_sql():
                 f"CREATE TRIGGER {prefix}_{verb.lower()}_blocked BEFORE {verb} ON {table} "
                 "BEGIN SELECT RAISE(ABORT,'Paper identity transition is immutable'); END")
     return {name: ' '.join(sql.split()) for name, sql in result.items()}
+
+
+def validate_pilot_scope(db, tenant, identities):
+    expected_columns = [('tenant_id', 'TEXT', 0, 1), ('currency', 'TEXT', 1, 0),
+                        ('market', 'TEXT', 1, 0), ('symbols', 'TEXT', 1, 0),
+                        ('instrument_identities', 'TEXT', 0, 0)]
+    columns = [(r['name'], r['type'], r['notnull'], r['pk']) for r in db.execute('PRAGMA table_info(pilot_scope)')]
+    if columns != expected_columns:
+        raise ValueError('transition_pilot_schema_initialization_required')
+    rows = db.execute('SELECT * FROM pilot_scope WHERE tenant_id=?', (tenant,)).fetchall()
+    if len(rows) != 1 or rows[0]['currency'] != 'INR' or rows[0]['market'] != 'INDIA':
+        raise ValueError('transition_pilot_scope_mismatch')
+    try:
+        configured = json.loads(rows[0]['instrument_identities'])
+        symbols = json.loads(rows[0]['symbols'])
+        target = {symbol: json.loads(raw) for symbol, raw in identities.items()}
+        classes = {symbol: value['assetClass'] for symbol, value in target.items()}
+        if configured != target or symbols != classes:
+            raise ValueError('transition_pilot_scope_mismatch')
+    except (TypeError, KeyError, ValueError):
+        raise ValueError('transition_pilot_scope_mismatch') from None

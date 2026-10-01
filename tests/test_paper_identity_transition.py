@@ -14,8 +14,11 @@ def synthetic_transition(tmp_path):
                          'synthetic', tenant_id='pilot', stop_price=Decimal(95))
     broker.submit_with_evidence(legacy,
         {'schema': 'pramana.swarm_fill.v1', 'event_type': 'swarm_fill'}, 'synthetic-legacy')
+    broker.configure_pilot((INSTRUMENT,), 'pilot')
     broker.close()
     path = tmp_path / 'synthetic.db'
+    from test_paper_identity_provisioning import initialize_runtime_schema
+    initialize_runtime_schema(tmp_path, path, (INSTRUMENT,))
     path.chmod(0o600)
     from quant_ai.operations.paper_identity_transition import (
         apply_reviewed_transition,
@@ -249,7 +252,10 @@ def test_same_symbol_cross_class_binding_refuses_and_preserves_original_sell(tmp
     order = OrderIntent('SAME', Market.INDIA, Side.BUY, 2, Decimal(100), 'synthetic',
                         tenant_id='pilot', asset_class=AssetClass(held_class), stop_price=Decimal(95))
     broker.buy(order)
+    broker.configure_pilot((Instrument('SAME', Market.INDIA, AssetClass(held_class), 'INR', 'NSE'),), 'pilot')
     broker.close()
+    from test_paper_identity_provisioning import initialize_runtime_schema
+    initialize_runtime_schema(tmp_path, path, (Instrument('SAME', Market.INDIA, AssetClass(held_class), 'INR', 'NSE'),))
     path.chmod(0o600)
     DurableOms(oms).close()
     provision_empty_oms(oms, paper_only=True, reviewed_empty_sha256=inspect_oms(oms)['empty_schema_sha256'])
@@ -284,7 +290,10 @@ def test_full_holding_key_handles_flat_same_symbol_other_class_history(tmp_path)
             tenant_id='pilot', asset_class=klass, stop_price=Decimal(95))
         broker.buy(order) if side is Side.BUY else broker.sell(order)
     assert broker.reconcile('pilot')['status'] == 'matched'
+    broker.configure_pilot((Instrument('SAME', Market.INDIA, AssetClass.EQUITY, 'INR', 'NSE'),), 'pilot')
     broker.close()
+    from test_paper_identity_provisioning import initialize_runtime_schema
+    initialize_runtime_schema(tmp_path, path, (Instrument('SAME', Market.INDIA, AssetClass.EQUITY, 'INR', 'NSE'),))
     path.chmod(0o600)
     DurableOms(oms).close()
     provision_empty_oms(oms, paper_only=True, reviewed_empty_sha256=inspect_oms(oms)['empty_schema_sha256'])
@@ -297,3 +306,25 @@ def test_full_holding_key_handles_flat_same_symbol_other_class_history(tmp_path)
         assert broker.reconcile('pilot')['status'] == 'matched'
     finally:
         broker.close()
+
+
+def test_actual_bound_daemon_restart_preserves_certified_replay(tmp_path, monkeypatch):
+    from test_runtime_contract_mode import build, close
+    monkeypatch.setenv('PRAMANA_RELEASE_REVISION', 'a'*40)
+    broker = synthetic_transition(tmp_path)
+    broker.close()
+    runner = build(tmp_path, database=tmp_path / 'synthetic.db',
+                   oms_database=tmp_path / 'synthetic-oms.db')
+    try:
+        assert runner.daemon.tracker.broker.reconcile('pilot')['status'] == 'matched'
+        # The actual builder invokes configure_pilot; repeated startup must be safe.
+        runner.daemon.tracker.broker.configure_pilot((INSTRUMENT,), 'pilot')
+        assert runner.daemon.tracker.broker.reconcile('pilot')['status'] == 'matched'
+    finally:
+        close(runner)
+    runner = build(tmp_path, database=tmp_path / 'synthetic.db',
+                   oms_database=tmp_path / 'synthetic-oms.db')
+    try:
+        assert runner.daemon.tracker.broker.reconcile('pilot')['status'] == 'matched'
+    finally:
+        close(runner)

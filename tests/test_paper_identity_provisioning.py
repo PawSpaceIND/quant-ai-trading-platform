@@ -80,7 +80,9 @@ def legacy_plan_fixture(tmp_path):
     broker = PaperBrokerService(ledger, slippage_bps=Decimal(0))
     broker.buy(OrderIntent('INFY', Market.INDIA, Side.BUY, 2, Decimal(100),
                           'synthetic', tenant_id='pilot', stop_price=Decimal(95)))
+    broker.configure_pilot((INSTRUMENT,), 'pilot')
     broker.close()
+    initialize_runtime_schema(tmp_path, ledger, (INSTRUMENT,))
     ledger.chmod(0o600)
     oms = empty(tmp_path)
     initial = inspect_oms(oms)
@@ -239,5 +241,48 @@ def test_post_mutation_guard_rolls_back_even_if_trigger_admission_is_bypassed(tm
     plan = inspect(ledger, oms, **kwargs)
     with pytest.raises(ValueError, match='post_conservation_failed'):
         transition.apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    with sqlite3.connect(ledger) as db:
+        assert tuple(db.iterdump()) == before
+
+
+def test_missing_pilot_schema_refuses_before_apply(tmp_path):
+    from quant_ai.operations.paper_identity_transition import apply_reviewed_transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    plan = inspect(ledger, oms, **kwargs)
+    with sqlite3.connect(ledger) as db:
+        db.execute('DROP TABLE pilot_scope')
+        before = tuple(db.iterdump())
+    with pytest.raises(ValueError, match='pilot_schema_initialization_required'):
+        inspect(ledger, oms, **kwargs)
+    with pytest.raises(ValueError, match='pilot_schema_initialization_required'):
+        apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    with sqlite3.connect(ledger) as db:
+        assert tuple(db.iterdump()) == before
+
+
+def initialize_runtime_schema(tmp_path, ledger, catalog):
+    """Actual synthetic legacy builder initializes schema; no stream start or orders."""
+    from test_runtime_contract_mode import build, close
+
+    from quant_ai.governance.directives import FounderDirectives
+    runner = build(tmp_path, database=ledger, order_identity_mode='legacy_cash', oms_database=None,
+        directives=FounderDirectives(watchlist=tuple(catalog)),
+        zerodha_instrument_tokens=tuple(range(1, len(catalog)+1)),
+        zerodha_symbol_by_token={n: i.symbol for n, i in enumerate(catalog, 1)})
+    close(runner)
+
+
+def test_named_but_incomplete_runtime_table_refuses_before_apply(tmp_path):
+    from quant_ai.operations.paper_identity_transition import apply_reviewed_transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    plan = inspect(ledger, oms, **kwargs)
+    with sqlite3.connect(ledger) as db:
+        db.execute('DROP TABLE pilot_runtime')
+        db.execute('CREATE TABLE pilot_runtime(wrong_column TEXT)')
+        before = tuple(db.iterdump())
+    with pytest.raises(ValueError, match='runtime_schema_initialization_required'):
+        inspect(ledger, oms, **kwargs)
+    with pytest.raises(ValueError, match='runtime_schema_initialization_required'):
+        apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
     with sqlite3.connect(ledger) as db:
         assert tuple(db.iterdump()) == before
