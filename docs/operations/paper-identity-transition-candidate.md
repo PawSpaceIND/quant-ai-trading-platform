@@ -98,3 +98,13 @@ its real configure_pilot path, and reconciliation remains matched on both starts
 streams, orders, provider requests or runtime flags are activated by this test. An operator
 must separately qualify existing host schema; this preflight is not permission to initialize
 or restart the host. Differing supported historical schema forms require explicit review.
+
+The preflight also requires the complete supported broker core schema, not only the
+runtime extension tables. Its trusted logical contract covers every _create_schema table,
+_EXPECTED_COLUMNS field/type/nullability/default/key, indexes/unique constraints, foreign
+keys, autoincrement/check/rowid mode and required immutable triggers. Harmless ALTER column
+ordering is ignored, but the exact observed DDL remains bound to each reviewed plan.
+Missing core triggers, columns or tables and changed holding-key constraints refuse before
+apply. Synthetic regressions demonstrate that normal legacy initialization can repair
+missing objects BEFORE a new plan, after which actual bound startup remains reconciled;
+no planner initialization or real host restart is performed.

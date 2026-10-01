@@ -18,6 +18,14 @@ INSTANCE_TABLE = 'pramana_oms_instance'
 # Generated from the supported fresh DurableOms v1 schema, including constraints
 # and append-only triggers. An arbitrary caller-reviewed hash is not qualification.
 TRUSTED_EMPTY_OMS_SHA256 = 'db97472fc1e35ac56e5ca827bf55ed0940b92c3eaa958669b40ac1ccbf778da9'
+BROKER_CORE_TABLES = frozenset({
+    'paper_accounts', 'paper_positions', 'paper_ledger', 'paper_derivative_margin',
+    'paper_cost_ledger', 'paper_protection_evidence', 'paper_protective_fill_outbox',
+    'paper_decision_evidence', 'paper_idempotency', 'paper_exit_cooldowns', 'sqlite_sequence',
+})
+# Complete _create_schema + _EXPECTED_COLUMNS logical schema, constraints/index
+# definitions and required broker triggers; harmless column ordering is ignored. Missing objects must not be repaired AFTER certification.
+TRUSTED_BROKER_CORE_SHA256 = '6f0c51863ad8f99e051d7092388681d7e5d137c4b17ea7199fdb83fce8385050'
 TRUSTED_RUNTIME_SCHEMA_SHA256 = '4ef266017e804319ec946dc5ca9335b4df373057ee3fb2fc0cd042c9eb47fb2d'
 SUPPORTED_RUNTIME_TABLES = frozenset({
     'paper_decision_journal', 'paper_live_valuations', 'paper_specialist_feedback',
@@ -451,6 +459,8 @@ def ledger_schema(db):
             actual = hashlib.sha256(' '.join(row['sql'].split()).encode()).hexdigest()
             if actual != expected:
                 raise ValueError('transition_unreviewed_ledger_trigger')
+    if digest(broker_core_contract(db)) != TRUSTED_BROKER_CORE_SHA256:
+        raise ValueError('transition_broker_schema_initialization_required')
     return rows
 
 
@@ -525,3 +535,26 @@ def validate_pilot_scope(db, tenant, identities):
             raise ValueError('transition_pilot_scope_mismatch')
     except (TypeError, KeyError, ValueError):
         raise ValueError('transition_pilot_scope_mismatch') from None
+
+
+def broker_core_contract(db):
+    """Logical schema contract independent of harmless ALTER column ordering."""
+    if not BROKER_CORE_TABLES <= _tables(db):
+        return None
+    tables = {}
+    for table in sorted(BROKER_CORE_TABLES):
+        columns = {r['name']: {key: r[key] for key in ('type', 'notnull', 'dflt_value', 'pk')}
+                   for r in db.execute(f'PRAGMA table_info("{table}")')}
+        indexes = []
+        for index in db.execute(f'PRAGMA index_list("{table}")'):
+            name = index['name'].replace('"', '""')
+            indexes.append({'unique': index['unique'], 'origin': index['origin'], 'partial': index['partial'],
+                'columns': [r['name'] for r in db.execute(f'PRAGMA index_info("{name}")')]})
+        sql = db.execute('SELECT sql FROM sqlite_master WHERE type=? AND name=?', ('table', table)).fetchone()[0].upper()
+        tables[table] = {'columns': columns, 'indexes': sorted(indexes, key=canonical),
+            'foreign_keys': [dict(r) for r in db.execute(f'PRAGMA foreign_key_list("{table}")')],
+            'autoincrement': 'AUTOINCREMENT' in sql, 'check_constraints': sql.count('CHECK'),
+            'without_rowid': 'WITHOUT ROWID' in sql, 'strict': sql.rstrip().endswith('STRICT')}
+    triggers = {r['name']: ' '.join(r['sql'].split()) for r in schema_rows(db)
+                if r['type'] == 'trigger' and r['tbl_name'] in BROKER_CORE_TABLES}
+    return {'tables': tables, 'triggers': triggers}

@@ -286,3 +286,50 @@ def test_named_but_incomplete_runtime_table_refuses_before_apply(tmp_path):
         apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
     with sqlite3.connect(ledger) as db:
         assert tuple(db.iterdump()) == before
+
+
+@pytest.mark.parametrize('defect', ['trigger', 'column', 'table'])
+def test_complete_core_schema_refuses_missing_objects_before_apply(tmp_path, defect):
+    from quant_ai.operations.paper_identity_transition import apply_reviewed_transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    plan = inspect(ledger, oms, **kwargs)
+    with sqlite3.connect(ledger) as db:
+        if defect == 'trigger':
+            db.execute('DROP TRIGGER protective_outbox_update_blocked')
+        elif defect == 'column':
+            db.execute('ALTER TABLE paper_accounts DROP COLUMN peak_equity')
+        else:
+            db.execute('DROP TABLE paper_exit_cooldowns')
+        before = tuple(db.iterdump())
+    with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+        inspect(ledger, oms, **kwargs)
+    with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+        apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    with sqlite3.connect(ledger) as db:
+        assert tuple(db.iterdump()) == before
+
+    # Normal legacy startup may repair schema BEFORE planning; never after a transition.
+    initialize_runtime_schema(tmp_path, ledger, kwargs['catalog'])
+    restored = inspect(ledger, oms, **kwargs)
+    apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=restored['sha256'], **kwargs)
+    from test_runtime_contract_mode import build, close
+    runner = build(tmp_path, database=ledger, oms_database=oms)
+    try:
+        assert runner.daemon.tracker.broker.reconcile('pilot')['status'] == 'matched'
+    finally:
+        close(runner)
+
+
+def test_core_primary_key_constraint_is_part_of_supported_contract(tmp_path):
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    with sqlite3.connect(ledger) as db:
+        sql = db.execute("SELECT sql FROM sqlite_master WHERE name='paper_positions'").fetchone()[0]
+        altered = sql.replace('PRIMARY KEY (tenant_id, symbol, market, asset_class)',
+                              'PRIMARY KEY (tenant_id, symbol)')
+        assert altered != sql
+        db.execute('ALTER TABLE paper_positions RENAME TO synthetic_old_positions')
+        db.execute(altered)
+        db.execute('INSERT INTO paper_positions SELECT * FROM synthetic_old_positions')
+        db.execute('DROP TABLE synthetic_old_positions')
+    with pytest.raises(ValueError, match='broker_schema_initialization_required'):
+        inspect(ledger, oms, **kwargs)
