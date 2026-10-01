@@ -233,3 +233,67 @@ def test_protective_outbox_hash_cannot_grant_exemption(tmp_path):
     finally:
         oms.close()
         broker.close()
+
+
+@pytest.mark.parametrize('held_class,catalog_class', [('ETF', 'EQUITY'), ('EQUITY', 'ETF')])
+def test_same_symbol_cross_class_binding_refuses_and_preserves_original_sell(tmp_path, held_class, catalog_class):
+    from quant_ai.domain.models import AssetClass, Instrument
+    from quant_ai.operations.paper_identity_transition import (
+        inspect_oms,
+        inspect_transition,
+        provision_empty_oms,
+    )
+    from quant_ai.orders.oms import DurableOms
+    path, oms = tmp_path / 'mixed.sqlite', tmp_path / 'oms.sqlite'
+    broker = PaperBrokerService(path, slippage_bps=Decimal(0))
+    order = OrderIntent('SAME', Market.INDIA, Side.BUY, 2, Decimal(100), 'synthetic',
+                        tenant_id='pilot', asset_class=AssetClass(held_class), stop_price=Decimal(95))
+    broker.buy(order)
+    broker.close()
+    path.chmod(0o600)
+    DurableOms(oms).close()
+    provision_empty_oms(oms, paper_only=True, reviewed_empty_sha256=inspect_oms(oms)['empty_schema_sha256'])
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match='held_identity_ambiguous'):
+        inspect_transition(path, oms, tenant='pilot',
+            catalog=(Instrument('SAME', Market.INDIA, AssetClass(catalog_class), 'INR', 'NSE'),),
+            account_binding='a'*64, catalog_capture_sha256='b'*64, paper_only=True)
+    assert path.read_bytes() == before
+    broker = PaperBrokerService(path, slippage_bps=Decimal(0))
+    try:
+        from dataclasses import replace
+        assert broker.sell(replace(order, side=Side.SELL)).status == 'FILLED'
+        assert broker.reconcile('pilot')['status'] == 'matched'
+    finally:
+        broker.close()
+
+
+def test_full_holding_key_handles_flat_same_symbol_other_class_history(tmp_path):
+    from quant_ai.domain.models import AssetClass, Instrument
+    from quant_ai.operations.paper_identity_transition import (
+        apply_reviewed_transition,
+        inspect_oms,
+        inspect_transition,
+        provision_empty_oms,
+    )
+    from quant_ai.orders.oms import DurableOms
+    path, oms = tmp_path / 'mixed.sqlite', tmp_path / 'oms.sqlite'
+    broker = PaperBrokerService(path, slippage_bps=Decimal(0))
+    for klass, side in ((AssetClass.EQUITY, Side.BUY), (AssetClass.ETF, Side.BUY), (AssetClass.ETF, Side.SELL)):
+        order = OrderIntent('SAME', Market.INDIA, side, 1, Decimal(100), 'synthetic',
+            tenant_id='pilot', asset_class=klass, stop_price=Decimal(95))
+        broker.buy(order) if side is Side.BUY else broker.sell(order)
+    assert broker.reconcile('pilot')['status'] == 'matched'
+    broker.close()
+    path.chmod(0o600)
+    DurableOms(oms).close()
+    provision_empty_oms(oms, paper_only=True, reviewed_empty_sha256=inspect_oms(oms)['empty_schema_sha256'])
+    kwargs = {'tenant': 'pilot', 'catalog': (Instrument('SAME', Market.INDIA, AssetClass.EQUITY, 'INR', 'NSE'),),
+              'account_binding': 'a'*64, 'catalog_capture_sha256': 'b'*64, 'paper_only': True}
+    plan = inspect_transition(path, oms, **kwargs)
+    apply_reviewed_transition(path, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    broker = PaperBrokerService(path)
+    try:
+        assert broker.reconcile('pilot')['status'] == 'matched'
+    finally:
+        broker.close()

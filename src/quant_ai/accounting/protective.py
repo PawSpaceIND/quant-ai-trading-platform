@@ -231,7 +231,7 @@ class ProtectiveExitAccounting:
                 held += entry.quantity
             else:
                 held -= entry.quantity
-            effective_identity = transition.after_fill(entry.order_id, entry.symbol, held,
+            effective_identity = transition.after_fill(entry.order_id, (entry.symbol, entry.market.value, entry.asset_class.value), held,
                 average if held else D(0), entry.instrument_identity if held else None)
             positions[key] = (held, average if held else D(0), effective_identity, reserved)
             for (order_id, code), cost in fees.items():

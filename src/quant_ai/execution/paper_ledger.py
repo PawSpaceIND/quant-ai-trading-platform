@@ -957,7 +957,7 @@ class PaperBrokerService(BrokerAdapter):
                 held -= prior.quantity
                 if not held:
                     average, identity = Decimal(0), None
-            identity = transition.after_fill(prior.order_id, prior.symbol, held, average, identity)
+            identity = transition.after_fill(prior.order_id, (prior.symbol, prior.market.value, prior.asset_class.value), held, average, identity)
         if qty != held or basis != (average if held else None) or receipt.get("priorInstrumentIdentity") != identity:
             raise ValueError("paper_receipt_prior_ledger_mismatch")
         return PaperSubmissionReceipt(entry, order, qty, basis, payload)

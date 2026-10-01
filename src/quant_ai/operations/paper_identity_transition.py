@@ -15,6 +15,16 @@ from uuid import UUID, uuid4
 OMS_HISTORY = ('oms_orders', 'oms_events', 'oms_fills',
                'oms_broker_evidence_bindings', 'oms_replacements')
 INSTANCE_TABLE = 'pramana_oms_instance'
+# Generated from the supported fresh DurableOms v1 schema, including constraints
+# and append-only triggers. An arbitrary caller-reviewed hash is not qualification.
+TRUSTED_EMPTY_OMS_SHA256 = 'db97472fc1e35ac56e5ca827bf55ed0940b92c3eaa958669b40ac1ccbf778da9'
+TRUSTED_LEDGER_TRIGGERS = {
+    'protective_outbox_delete_blocked': '05afd1c237b74fb08f29ebbc1eaeb30ac33e52754ed4e46d44ba9f9afdc905e3',
+    'protective_outbox_update_blocked': 'b20124ae55f5b995939fc055ee0cc45b5d37857adcf86de42930061dda01ad01',
+    'shared_broker_witness_delete_blocked': 'a5eb7903e15e5a710fb1452fc020d99444bf1514209d1398600c20358808a343',
+    'shared_broker_witness_update_blocked': 'b5603a9bc16dc867b33c9571c0792ccffb03a7933046d0d8027436f1e04e5df6',
+}
+
 
 
 def canonical(value):
@@ -65,11 +75,14 @@ def require_empty_oms(db):
     for table in OMS_HISTORY:
         if db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone():
             raise ValueError('transition_oms_history_not_empty')
+    if _oms_schema_fingerprint(db) != TRUSTED_EMPTY_OMS_SHA256:
+        raise ValueError('transition_oms_supported_schema_required')
 
 
 def oms_instance(db):
     if INSTANCE_TABLE not in _tables(db):
         raise ValueError('transition_oms_instance_missing')
+    validate_instance_schema(db)
     rows = db.execute(f'SELECT singleton,instance_uuid FROM {INSTANCE_TABLE}').fetchall()
     if len(rows) != 1 or rows[0]['singleton'] != 1:
         raise ValueError('transition_oms_instance_invalid')
@@ -118,6 +131,10 @@ def provision_empty_oms(path, *, paper_only, reviewed_empty_sha256):
 
 def empty_oms_fingerprint(db):
     require_empty_oms(db)
+    return _oms_schema_fingerprint(db)
+
+
+def _oms_schema_fingerprint(db):
     # Exclude only this module's identity schema, so re-provisioning is idempotent.
     schema = [dict(r) for r in db.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name")
@@ -178,6 +195,7 @@ def inspect_transition(ledger_path, oms_path, *, tenant, catalog, account_bindin
                     'paper_idempotency')
         if not set(required) <= tables:
             raise ValueError('transition_ledger_schema_missing')
+        schema = ledger_schema(db)
         inventory = {table: sorted((dict(r) for r in db.execute(
             f'SELECT * FROM {table} WHERE tenant_id=?', (tenant,))), key=canonical)
             for table in required}
@@ -187,7 +205,7 @@ def inspect_transition(ledger_path, oms_path, *, tenant, catalog, account_bindin
             if type(row['quantity']) is not int or row['quantity'] <= 0:
                 raise ValueError('transition_physical_zero_or_invalid_position')
             if (row['symbol'] not in identities or row['market'] != 'INDIA'
-                    or row['asset_class'] not in ('EQUITY', 'ETF')
+                    or row['asset_class'] != next(i.asset_class.value for i in instruments if i.symbol == row['symbol'])
                     or row['instrument_identity'] is not None):
                 raise ValueError('transition_held_identity_ambiguous')
         for row in inventory['paper_ledger']:
@@ -195,12 +213,15 @@ def inspect_transition(ledger_path, oms_path, *, tenant, catalog, account_bindin
                     or row['instrument_identity'] is not None or row['status'] != 'FILLED'):
                 raise ValueError('transition_legacy_cohort_ambiguous')
         validate_legacy_evidence(inventory)
+        from quant_ai.execution.protection_state import protection_coverage
+        if protection_coverage(db, tenant)['status'] != 'complete':
+            raise ValueError('transition_legacy_protection_incomplete')
         checked = reconcile_paper(db, tenant)
         if checked['status'] != 'matched':
             raise ValueError('transition_legacy_reconciliation_failed')
         plan = {'schema': 'pramana.paper_identity_transition_plan.v1', 'tenant_id': tenant,
                 'account_binding': account_binding, 'catalog_capture_sha256': catalog_capture_sha256,
-                'instruments': identities, 'legacy_inventory': inventory,
+                'instruments': identities, 'legacy_inventory': inventory, 'ledger_schema': schema,
                 'ledger_path_sha256': path_digest(ledger), 'oms_path_sha256': path_digest(oms),
                 'oms_instance_uuid': instance, 'oms_empty_sha256': empty_oms_fingerprint(odb),
                 'forward_only': True, 'apply_supported': False}
@@ -294,6 +315,7 @@ def apply_reviewed_transition(ledger_path, oms_path, *, reviewed_plan_sha256,
         if inspected['sha256'] != reviewed_plan_sha256:
             raise ValueError('transition_reviewed_plan_changed')
         plan = inspected['plan']
+        before_rows = all_rows(db)
         db.execute('CREATE TABLE IF NOT EXISTS paper_identity_transitions(tenant_id TEXT PRIMARY KEY,payload TEXT NOT NULL,sha256 TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS paper_runtime_order_identity(tenant_id TEXT PRIMARY KEY,payload TEXT NOT NULL,sha256 TEXT NOT NULL)')
         for table, prefix in (('paper_identity_transitions', 'paper_identity_transition'),
@@ -311,6 +333,7 @@ def apply_reviewed_transition(ledger_path, oms_path, *, reviewed_plan_sha256,
                 (plan['instruments'][row['symbol']], tenant, row['symbol'], row['market'], row['asset_class']))
             if changed.rowcount != 1:
                 raise ValueError('transition_position_changed')
+        validate_post_transition(db, plan, before_rows)
         db.commit()
         odb.rollback()  # No OMS writes; release lock only after ledger commit.
         return inspected['sha256']
@@ -345,6 +368,14 @@ class TransitionReplay:
                     or plan['tenant_id'] != tenant or plan['forward_only'] is not True):
                 raise ValueError('transition_certificate_invalid')
             original = plan['legacy_inventory']
+            current_schema = {r['name']: r for r in schema_rows(db)}
+            expected_added = transition_schema_sql()
+            original_names = {r['name'] for r in plan['ledger_schema']}
+            added = {name: ' '.join(row['sql'].split()) for name, row in current_schema.items() if name not in original_names}
+            if added != expected_added:
+                raise ValueError('transition_unreviewed_post_schema')
+            if any(current_schema.get(r['name']) != r for r in plan['ledger_schema']):
+                raise ValueError('transition_ledger_schema_changed')
             account = db.execute('SELECT starting_capital FROM paper_accounts WHERE tenant_id=?', (tenant,)).fetchone()
             if account is None or account['starting_capital'] != original['paper_accounts'][0]['starting_capital']:
                 raise ValueError('transition_original_capital_changed')
@@ -365,16 +396,16 @@ class TransitionReplay:
                                                   for r in current if r['order_id'] not in ids):
                     raise ValueError('transition_unexpected_low_id_fill')
             for fill in sorted(original['paper_ledger'], key=lambda r: r['id']):
-                self.last[fill['symbol']] = fill['order_id']
-            self.positions = {r['symbol']: r for r in original['paper_positions']}
+                self.last[holding_key(fill)] = fill['order_id']
+            self.positions = {holding_key(r): r for r in original['paper_positions']}
             self.plan = plan
         except (KeyError, TypeError, ValueError):
             raise ValueError('transition_certificate_or_cohort_invalid') from None
 
-    def after_fill(self, order_id, symbol, held, average, identity):
-        if self.plan is None or self.last.get(symbol) != order_id:
+    def after_fill(self, order_id, key, held, average, identity):
+        if self.plan is None or self.last.get(key) != order_id:
             return identity
-        expected = self.positions.get(symbol)
+        expected = self.positions.get(key)
         if expected is None:
             if held != 0:
                 raise ValueError('transition_replayed_position_mismatch')
@@ -383,4 +414,76 @@ class TransitionReplay:
         if (held != expected['quantity'] or average != Decimal(expected['average_price'])
                 or identity != expected['instrument_identity']):
             raise ValueError('transition_replayed_position_mismatch')
-        return self.plan['instruments'][symbol]
+        return self.plan['instruments'][key[0]]
+
+
+def holding_key(row):
+    return row['symbol'], row['market'], row['asset_class']
+
+
+def schema_rows(db):
+    return [dict(r) for r in db.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name")]
+
+
+def ledger_schema(db):
+    rows = schema_rows(db)
+    for row in rows:
+        if row['type'] == 'trigger':
+            expected = TRUSTED_LEDGER_TRIGGERS.get(row['name'])
+            actual = hashlib.sha256(' '.join(row['sql'].split()).encode()).hexdigest()
+            if actual != expected:
+                raise ValueError('transition_unreviewed_ledger_trigger')
+    return rows
+
+
+def all_rows(db):
+    return {table: sorted((dict(r) for r in db.execute(f'SELECT * FROM "{table}"')), key=canonical)
+            for table in sorted(_tables(db))}
+
+
+def validate_post_transition(db, plan, before):
+    """Only current holding identity may change; validate inside the write transaction."""
+    from quant_ai.execution.protection_state import protection_coverage
+    from quant_ai.execution.reconciliation import reconcile_paper
+    after = all_rows(db)
+    for table, rows in before.items():
+        expected = rows
+        if table == 'paper_positions':
+            expected = [dict(r) for r in rows]
+            for row in expected:
+                if row['tenant_id'] == plan['tenant_id']:
+                    row['instrument_identity'] = plan['instruments'][row['symbol']]
+            expected.sort(key=canonical)
+        if after.get(table) != expected:
+            raise ValueError('transition_post_conservation_failed')
+    if reconcile_paper(db, plan['tenant_id'])['status'] != 'matched':
+        raise ValueError('transition_post_reconciliation_failed')
+    if protection_coverage(db, plan['tenant_id'])['status'] != 'complete':
+        raise ValueError('transition_post_protection_failed')
+
+
+def validate_instance_schema(db):
+    expected = {
+        INSTANCE_TABLE: f'CREATE TABLE {INSTANCE_TABLE}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),instance_uuid TEXT NOT NULL UNIQUE)',
+    }
+    for verb in ('UPDATE', 'DELETE'):
+        expected[f'oms_instance_{verb.lower()}_blocked'] = (
+            f"CREATE TRIGGER oms_instance_{verb.lower()}_blocked BEFORE {verb} ON {INSTANCE_TABLE} "
+            "BEGIN SELECT RAISE(ABORT,'OMS instance identity is immutable'); END")
+    actual = {row['name']: ' '.join(row['sql'].split()) for row in schema_rows(db)
+              if row['tbl_name'] == INSTANCE_TABLE}
+    if actual != {name: ' '.join(sql.split()) for name, sql in expected.items()}:
+        raise ValueError('transition_oms_instance_schema_invalid')
+
+
+def transition_schema_sql():
+    result = {}
+    for table, prefix in (('paper_identity_transitions', 'paper_identity_transition'),
+                          ('paper_runtime_order_identity', 'runtime_order_identity')):
+        result[table] = f'CREATE TABLE {table}(tenant_id TEXT PRIMARY KEY,payload TEXT NOT NULL,sha256 TEXT NOT NULL)'
+        for verb in ('UPDATE', 'DELETE'):
+            result[f'{prefix}_{verb.lower()}_blocked'] = (
+                f"CREATE TRIGGER {prefix}_{verb.lower()}_blocked BEFORE {verb} ON {table} "
+                "BEGIN SELECT RAISE(ABORT,'Paper identity transition is immutable'); END")
+    return {name: ' '.join(sql.split()) for name, sql in result.items()}

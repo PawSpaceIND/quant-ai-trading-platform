@@ -127,10 +127,10 @@ def reconcile_paper(db: sqlite3.Connection, tenant: str) -> dict:
             if key in positions:
                 current = positions[key]
                 if transition is not None:
-                    current['instrument_identity'] = transition.after_fill(order_id, fill['symbol'],
+                    current['instrument_identity'] = transition.after_fill(order_id, key,
                         current['quantity'], current['average_price'], current['instrument_identity'])
             elif transition is not None:
-                transition.after_fill(order_id, fill['symbol'], 0, Decimal(0), None)
+                transition.after_fill(order_id, key, 0, Decimal(0), None)
         for cost in costs:
             amount = number(cost["amount"])
             if cost["order_id"] not in filled_ids:

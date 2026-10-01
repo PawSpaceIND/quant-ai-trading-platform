@@ -58,3 +58,26 @@ restart/reconciliation, shared protective accounting replay, raw orphan history,
 same-path replaced OMS, low-ID/backdated later fills, and entry-certificate failure with
 independent protective execution. Further independent review/host rehearsal and hosted CI
 are required before an operator-facing migration workflow is published or used.
+
+## Successor review repairs
+
+Holding admission compares symbol, market and asset class against the selected catalog;
+all replay consumers use that complete holding key, including flat other-class history.
+OMS qualification requires the fingerprint of the trusted fresh DurableOms v1 DDL and
+metadata, including keys/constraints and immutable history triggers. Arbitrary schema
+fingerprints are not supported. Provisioned UUID table constraints/triggers are also
+validated exactly. Previously recovered or differently formatted/migrated OMS schemas
+refuse and require separate review; this candidate does not adopt them automatically.
+
+The private plan binds complete original ledger DDL. Unknown or altered ledger triggers
+refuse; the initial allowlist is the four current broker-generated immutable outbox/shared
+witness triggers. Additional legitimate host triggers therefore need review, not bypass.
+Replay also rejects unreviewed post-transition DDL. During apply, all pre-existing tables
+are compared globally before commit, permitting only the reviewed tenant's current holding
+identity changes. Cash, quantities, protection, costs, original claims, history and other
+tenants remain exact. Transition-aware reconciliation and complete protection are checked
+inside the transaction. A failed check rolls back certificate, pin and holding changes.
+
+Tests separately bypass trigger admission on synthetic databases to establish that the
+post-write guard rolls back cash, quantity, historical fill and inserted-cost mutation.
+These caught-exception tests are not hard-process-crash or host power-loss qualification.

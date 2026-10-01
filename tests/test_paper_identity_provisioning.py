@@ -179,3 +179,65 @@ def test_actual_revalidation_refuses_changed_cash_without_identity_write(tmp_pat
         apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
     with sqlite3.connect(ledger) as db:
         assert tuple(db.iterdump()) == before
+
+
+def test_malformed_named_oms_tables_are_not_a_supported_schema(tmp_path):
+    from quant_ai.operations.paper_identity_transition import OMS_HISTORY
+    from quant_ai.orders.oms import SCHEMA_VERSION
+    path = tmp_path / 'malformed.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE oms_meta(id INTEGER,version INTEGER)')
+        db.execute('INSERT INTO oms_meta VALUES(1,?)', (SCHEMA_VERSION,))
+        for table in OMS_HISTORY:
+            db.execute(f'CREATE TABLE {table}(wrong_column TEXT)')
+    path.chmod(0o600)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match='supported_schema_required'):
+        inspect_oms(path)
+    assert path.read_bytes() == before
+
+
+def test_supported_oms_requires_immutable_history_trigger(tmp_path):
+    path = empty(tmp_path)
+    with sqlite3.connect(path) as db:
+        db.execute('DROP TRIGGER oms_events_update_blocked')
+    with pytest.raises(ValueError, match='supported_schema_required'):
+        inspect_oms(path)
+
+
+@pytest.mark.parametrize('mutation', ["UPDATE paper_accounts SET cash_balance='0'",
+                                     'UPDATE paper_positions SET quantity=99',
+                                     "UPDATE paper_cost_ledger SET amount='999'",
+                                     "UPDATE paper_ledger SET fill_price='999'"])
+def test_unreviewed_ledger_triggers_refuse_before_any_write(tmp_path, mutation):
+    from quant_ai.operations.paper_identity_transition import apply_reviewed_transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    plan = inspect(ledger, oms, **kwargs)
+    with sqlite3.connect(ledger) as db:
+        db.execute(f'CREATE TRIGGER synthetic_mutation AFTER UPDATE OF instrument_identity ON paper_positions BEGIN {mutation}; END')
+        before = tuple(db.iterdump())
+    with pytest.raises(ValueError, match='unreviewed_ledger_trigger'):
+        inspect(ledger, oms, **kwargs)
+    with pytest.raises(ValueError, match='unreviewed_ledger_trigger'):
+        apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    with sqlite3.connect(ledger) as db:
+        assert tuple(db.iterdump()) == before
+
+
+@pytest.mark.parametrize('mutation', ["UPDATE paper_accounts SET cash_balance='0'",
+                                     'UPDATE paper_positions SET quantity=99',
+                                     "UPDATE paper_ledger SET fill_price='999'",
+                                     "INSERT INTO paper_cost_ledger(order_id,tenant_id,code,amount,cash_debit,created_at) VALUES('synthetic-orphan','pilot','TEST','999',1,'2026-01-01')"])
+def test_post_mutation_guard_rolls_back_even_if_trigger_admission_is_bypassed(tmp_path, monkeypatch, mutation):
+    import quant_ai.operations.paper_identity_transition as transition
+    ledger, oms, kwargs, inspect = legacy_plan_fixture(tmp_path)
+    # Exercise the separate post-write guard, not just the trigger allowlist.
+    with sqlite3.connect(ledger) as db:
+        db.execute(f'CREATE TRIGGER synthetic_mutation AFTER UPDATE OF instrument_identity ON paper_positions BEGIN {mutation}; END')
+        before = tuple(db.iterdump())
+    monkeypatch.setattr(transition, 'ledger_schema', transition.schema_rows)
+    plan = inspect(ledger, oms, **kwargs)
+    with pytest.raises(ValueError, match='post_conservation_failed'):
+        transition.apply_reviewed_transition(ledger, oms, reviewed_plan_sha256=plan['sha256'], **kwargs)
+    with sqlite3.connect(ledger) as db:
+        assert tuple(db.iterdump()) == before
