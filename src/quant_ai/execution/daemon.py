@@ -889,7 +889,8 @@ class AutonomousTradingDaemon:
 
             self.decision_outcomes = resolve_outcomes(
                 self.tracker.broker, tenant_id=self.tenant_id, now=timestamp,
-                mark_for=self._decision_mark, calendar=self.scheduler.calendar,
+                mark_for=lambda symbol: self._decision_mark(symbol, as_of=timestamp),
+                calendar=self.scheduler.calendar,
                 market=self.instrument.market, trade_evidence=self.trade_evidence,
             )
         except Exception:  # see above: evidence never breaks the cadence
@@ -1309,13 +1310,19 @@ class AutonomousTradingDaemon:
             self._logger.exception("ai_budget_status_failed")
             return None
 
-    def _decision_mark(self, symbol: str) -> Decimal | None:
-        """Current mark for a journaled symbol from the shared feed; None when unknown."""
+    def _decision_mark(self, symbol: str, *, as_of: datetime | None = None) -> Decimal | None:
+        """Fresh observed journal mark; broader portfolio-feed age is insufficient."""
         instrument = next((item for item in self.instruments if item.symbol == symbol), None)
         if instrument is None:
             return None
         try:
-            return positive_level(self.tracker.market_feed.latest_tick(instrument).last_price)
+            tick = self.tracker.market_feed.latest_tick(instrument)
+            cutoff = self.clock() if as_of is None else as_of
+            if (tick.instrument != instrument or tick.timestamp.utcoffset() is None
+                    or cutoff.utcoffset() is None
+                    or not timedelta(0) <= cutoff - tick.timestamp <= timedelta(seconds=60)):
+                return None
+            return positive_level(tick.last_price)
         except (ValueError, RuntimeError, TimeoutError, ConnectionError, OSError,
                 DecimalException, AttributeError, TypeError):
             return None

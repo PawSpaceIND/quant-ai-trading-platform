@@ -119,6 +119,14 @@ is mutable scheduling metadata, separate from the append-only evidence tables.
 
 ## Acceptance
 
+Primary decision-journal marks now also require a qualified aware timestamp no more
+than 60 seconds old at the resolver's fixed cutoff, matching the fresh opportunity
+quote budget. The shared portfolio feed's broader 24-hour allowance is unchanged.
+Missing, future, naive or stale marks leave the existing outcome pending, and a later
+fresh mark can resolve it within the existing cadence window. This is evidence
+qualification, not a change to entry, protection, sizing or cost rules. Existing
+historical labels are not backfilled or claimed to have fresh timestamp proof.
+
 Hermetic tests cover default OFF/no initialization; reviewed freeze/source/cost/time
 and v1/v2 binding; no fabricated IDs; duplicate/restart idempotency; atomic forecast
 receipt rollback; crash/replay of durable endpoint evidence; post-decision horizon
