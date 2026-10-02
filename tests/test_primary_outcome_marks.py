@@ -70,3 +70,15 @@ def test_resolver_cutoff_is_used_instead_of_later_clock():
     daemon,buffer=daemon_mark_fixture(now)
     buffer.put(LiveTick('INFY',Decimal(110),Decimal(10),None,None,now,'zerodha'))
     assert daemon._decision_mark('INFY',as_of=now-timedelta(seconds=1)) is None
+
+
+@pytest.mark.parametrize('prior_age,expected',[(1,Decimal(110)),(61,None)])
+def test_newer_tick_during_analysis_does_not_hide_qualified_cutoff_evidence(prior_age,expected):
+    cutoff=SESSION+timedelta(minutes=60)
+    daemon,buffer=daemon_mark_fixture(cutoff+timedelta(seconds=5))
+    buffer.put(LiveTick('INFY',Decimal(110),Decimal(10),None,None,
+                        cutoff-timedelta(seconds=prior_age),'zerodha'))
+    buffer.put(LiveTick('INFY',Decimal(200),Decimal(10),None,None,
+                        cutoff+timedelta(seconds=5),'zerodha'))
+    assert daemon.tracker.market_feed.latest_tick(INFY).last_price==Decimal(200)
+    assert daemon._decision_mark('INFY',as_of=cutoff)==expected

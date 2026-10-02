@@ -1316,13 +1316,29 @@ class AutonomousTradingDaemon:
         if instrument is None:
             return None
         try:
-            tick = self.tracker.market_feed.latest_tick(instrument)
+            from quant_ai.marketdata.live_feed import LiveTickMarketDataFeed
+            from quant_ai.marketdata.tick_integrity import tick_value_issue
+
             cutoff = self.clock() if as_of is None else as_of
-            if (tick.instrument != instrument or tick.timestamp.utcoffset() is None
-                    or cutoff.utcoffset() is None
-                    or not timedelta(0) <= cutoff - tick.timestamp <= timedelta(seconds=60)):
+            if cutoff.utcoffset() is None:
                 return None
-            return positive_level(tick.last_price)
+            feed = self.tracker.market_feed
+            if type(feed) is LiveTickMarketDataFeed:
+                # Analysis may await while newer ticks arrive. Use accepted evidence
+                # at this resolver's cutoff, rather than discard a qualified older tick.
+                tick = feed.buffer.latest_at_or_before(symbol, cutoff)
+                if tick is None or tick.symbol != symbol or tick_value_issue(tick):
+                    return None
+                observed, price = tick.observed_at, tick.ltp
+            else:
+                tick = feed.latest_tick(instrument)
+                if tick.instrument != instrument:
+                    return None
+                observed, price = tick.timestamp, tick.last_price
+            if (observed.utcoffset() is None
+                    or not timedelta(0) <= cutoff - observed <= timedelta(seconds=60)):
+                return None
+            return positive_level(price)
         except (ValueError, RuntimeError, TimeoutError, ConnectionError, OSError,
                 DecimalException, AttributeError, TypeError):
             return None

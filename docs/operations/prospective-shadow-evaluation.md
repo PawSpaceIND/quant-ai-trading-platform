@@ -126,6 +126,9 @@ Missing, future, naive or stale marks leave the existing outcome pending, and a 
 fresh mark can resolve it within the existing cadence window. This is evidence
 qualification, not a change to entry, protection, sizing or cost rules. Existing
 historical labels are not backfilled or claimed to have fresh timestamp proof.
+The native live feed uses its accepted buffered tick at or before that cutoff;
+a newer tick arriving during analysis cannot hide an otherwise qualified mark.
+Generic feeds still require their returned tick to qualify at the same cutoff.
 
 Hermetic tests cover default OFF/no initialization; reviewed freeze/source/cost/time
 and v1/v2 binding; no fabricated IDs; duplicate/restart idempotency; atomic forecast
