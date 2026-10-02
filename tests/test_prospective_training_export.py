@@ -139,3 +139,45 @@ def test_cli_exports_one_private_plan_and_refuses_overwriting(tmp_path):
     assert summary['trading_authorized'] is False and summary['source_authenticity_verified'] is False
     assert subprocess.run(command,capture_output=True,text=True,check=False,env=env,timeout=30).returncode==2
     assert output.read_bytes()==raw
+
+
+@pytest.mark.parametrize('case', [
+    'dataset_schema', 'dataset_schema:2', 'endpoint_policy', 'prospective_quote_scope',
+    'frozen_cost_policy', 'frozen_cost_policy:2', 'prospective_quote_scope:2',
+    'prospective_quote_scope:3', 'prospective_quote_age', 'endpoint_witness_time',
+    'endpoint_price_cost', 'quote_geometry', 'rounding_changes_label',
+    'endpoint_return_binding', 'v2_candidate_required',
+])
+def test_v2_guard_has_an_explicit_assertion_boundary(case):
+    data=v2_data(); grants=(source_grant(),)
+    if case=='dataset_schema': data=[]
+    elif case=='dataset_schema:2': data['schema']='unknown'
+    elif case=='endpoint_policy': data['maximum_endpoint_age_seconds']=True
+    elif case=='prospective_quote_scope':
+        data['source_ids']=['other']
+        for row in data['rows']: row['source_ids']=['other']
+        grants=(replace(source_grant(),source_id='other'),)
+    elif case=='frozen_cost_policy': data['cost_return']=0.01
+    elif case=='frozen_cost_policy:2': data['cost_policy_sha256']='0'*64
+    elif case=='prospective_quote_scope:2':
+        grants=(replace(source_grant(),categories=frozenset({KnowledgeCategory.FUNDAMENTAL})),)
+    elif case=='prospective_quote_scope:3':
+        data['feature_names']=['signal']
+        for row in data['rows']: row['values']={'signal':'0'}
+    elif case=='prospective_quote_age': data['maximum_feature_age_seconds']=61
+    elif case=='endpoint_witness_time': data['rows'][0]['endpoint_observed_at']=data['rows'][0]['decision_at']
+    elif case=='endpoint_price_cost': data['rows'][0]['cost_fraction']='0.005'
+    elif case=='quote_geometry': data['rows'][0]['values']['market_spread_bps']='-1'
+    elif case=='rounding_changes_label':
+        data['rows'][0].update(reference_price='3',endpoint_price='3.030000000000000000000001',gross_return='0.01')
+    elif case=='endpoint_return_binding': data['rows'][0]['endpoint_price']='105'
+    error=None
+    try:
+        if case=='v2_candidate_required':
+            fitting.export_prospective_plan(fit(),cost_return='0.01',clock=lambda:NOW)
+        else:
+            fitting.fit_candidate(json.dumps(data).encode(),source_grants=grants,
+                run_id='guard-run',candidate_id='guard-candidate',clock=lambda:NOW)
+    except Exception as exc:  # noqa: BLE001 - mutations must fail by assertion, including unexpected errors
+        error=(type(exc),str(exc))
+    assert error==(ValueError,'logistic_fit_'+case.split(':')[0])

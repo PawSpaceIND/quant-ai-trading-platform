@@ -55,6 +55,7 @@ TARGETS = {
  "completion_clock_reversed": "test_completion_clock_cannot_move_back",
  "implementation_changed": "test_changed_implementation_is_not_certified",
 }
+TARGETS.update({key: "tests/test_prospective_training_export.py::test_v2_guard_has_an_explicit_assertion_boundary["+key+"]" for key in ['dataset_schema', 'dataset_schema:2', 'endpoint_policy', 'prospective_quote_scope', 'frozen_cost_policy', 'frozen_cost_policy:2', 'prospective_quote_scope:2', 'prospective_quote_scope:3', 'prospective_quote_age', 'endpoint_witness_time', 'endpoint_price_cost', 'quote_geometry', 'rounding_changes_label', 'endpoint_return_binding', 'v2_candidate_required']})
 
 
 def cases():
@@ -67,7 +68,7 @@ def cases():
         key=reason if seen[reason]==1 else f"{reason}:{seen[reason]}"
         assert key in TARGETS, "A new guard requires an explicit regression target"
         result.append({"id":key,"path":MODULE,"old":ast.get_source_segment(source,call),
-                       "new":"None","test":TEST+TARGETS[key]})
+                       "new":"None","test":TARGETS[key] if TARGETS[key].startswith("tests/") else TEST+TARGETS[key]})
     assert {c["id"] for c in result}==set(TARGETS)
     result.append({"id":"convergence_refusal","path":MODULE,
         "old":'raise ValueError("logistic_fit_not_converged")',
