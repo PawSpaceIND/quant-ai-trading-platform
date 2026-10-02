@@ -117,6 +117,7 @@ class AutonomousTradingDaemon:
         if idle_sleep_seconds <= 0:
             raise ValueError("idle sleep must be positive")
         self.opportunity_selector = opportunity_selector
+        self.prospective_shadow = None
         self.instruments = tuple(instruments) if instruments else (instrument,)
         if not self.instruments:
             raise ValueError("at least one instrument is required")
@@ -701,6 +702,12 @@ class AutonomousTradingDaemon:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        observer = getattr(self, "prospective_shadow", None)
+        if observer is not None:
+            try:
+                observer.close()
+            except Exception:
+                self._logger.exception("prospective_shadow_stop_failed")
         selector = getattr(self, "opportunity_selector", None)
         if selector is not None:
             selector.snapshot_provider.cancel()
@@ -726,6 +733,7 @@ class AutonomousTradingDaemon:
 
     async def run_once(self, now: datetime | None = None) -> FounderExecutionBrief:
         timestamp = now or self.clock()
+        shadow_observer = getattr(self, "prospective_shadow", None)
         if getattr(self, "opportunity_selector", None) is not None and self.telemetry is None:
             raise RuntimeError("opportunity_pilot_monitoring_required")
         self._in_flight = True
@@ -742,6 +750,7 @@ class AutonomousTradingDaemon:
             pre_metrics = self.tracker.metrics(timestamp)
             use_llm = self.scheduler.pipeline.runtime.cio.atlas.llm_client is not None
             briefs: list[FounderExecutionBrief] = []
+            shadow_requests = []
             decision_instruments = self._opportunity_decision_instruments(timestamp)
             for instrument in decision_instruments:
                 before = self.tracker.get_snapshot(timestamp)
@@ -770,9 +779,24 @@ class AutonomousTradingDaemon:
                     )
                 briefs.append(brief)
                 self._journal_decision(instrument, timestamp, llm_available=use_llm)
+                if shadow_observer is not None:
+                    execution = getattr(getattr(self.scheduler, "last_result", None), "execution", None)
+                    proposal = getattr(execution, "proposal", None)
+                    decision_id = getattr(proposal, "decision_id", None)
+                    if proposal is not None:
+                        provenance = getattr(proposal, "provenance", None)
+                        proof_id = getattr(getattr(execution, "trace", None), "decision_id", None)
+                        shadow_requests.append({"decision_id": str(decision_id) if decision_id is not None else None,
+                            "proof_decision_id": str(proof_id) if proof_id is not None else None,
+                            "snapshot": provenance.get("feature_snapshot") if isinstance(provenance, dict) else None})
             if self.telemetry is not None:
                 self._reconcile_pilot()
             self._resolve_decision_outcomes(timestamp)
+            if shadow_observer is not None:
+                try:
+                    shadow_observer.submit(shadow_requests)
+                except Exception:
+                    self._logger.exception("prospective_shadow_capture_failed")
             self.briefs = tuple(briefs)
             brief = self._primary_brief(briefs)
             metrics = self.tracker.metrics(timestamp)

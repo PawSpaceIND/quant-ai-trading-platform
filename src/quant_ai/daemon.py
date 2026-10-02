@@ -559,6 +559,12 @@ class DaemonRunner:
             handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
     async def _stop_streams(self) -> None:
+        observer = getattr(self.daemon, "prospective_shadow", None)
+        if observer is not None:
+            try:
+                observer.close()
+            except Exception:
+                self._logger.exception("prospective_shadow_stop_failed")
         await asyncio.gather(*(_safe_stop(stream) for stream in self.streams), return_exceptions=True)
         self.daemon.tracker.broker.flush()
 
@@ -793,6 +799,14 @@ def build_ghost_runner(
         scan_universe=scan_universe,
         scan_gates={"token": frozenset(mapped), "sector": frozenset(directives.sector_map or {})},
     )
+    # Passive evidence only; invalid optional configuration cannot alter trading.
+    if os.getenv("PRAMANA_PROSPECTIVE_SHADOW_ENABLED", "false") != "false":
+        try:
+            from quant_ai.learning.prospective import observer_from_env
+            daemon.prospective_shadow = observer_from_env(buffer=buffer, tenant_id=tenant_id,
+                                                        paper_only=pilot_mode)
+        except Exception:
+            logging.getLogger("quant_ai.ghost_runner").exception("prospective_shadow_configuration_refused")
     daemon.decision_quality_report_path = _decision_quality_path(database, decision_quality_report)
     buffer.clock = lambda: daemon.clock()
     feed.clock = lambda: daemon.clock()
