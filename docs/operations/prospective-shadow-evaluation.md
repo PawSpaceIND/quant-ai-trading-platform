@@ -108,7 +108,7 @@ provides a constructor-free, WAL-aware read transaction with `query_only=ON` and
 migrations. The worker's `last_report`/`status()` are evidence-only observations.
 
 Endpoint resolution visits at most 64 due pending forecasts per cycle in row-ID
-round-robin order. A durable scheduling cursor advances before each page, so an
+round-robin order. A durable scheduling cursor advances before each attempted row, so an
 unknown endpoint or interrupted page cannot starve later forecasts, including
 after restart. Unresolved rows remain pending and are retried on wrap. This cursor
 is mutable scheduling metadata, separate from the append-only evidence tables.

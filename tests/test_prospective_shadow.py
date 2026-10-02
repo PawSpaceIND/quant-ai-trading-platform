@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
@@ -83,6 +84,34 @@ def test_pending_resolution_is_bounded_fair_and_survives_restart(tmp_path,restar
         # Wrapping preserves unknowns and never duplicates a completed outcome.
         assert item.process([])['resolved']==1
         assert item.process([])['pending']==64
+    finally:
+        item.close()
+
+
+@pytest.mark.parametrize('restart',[False,True])
+def test_persistent_rounding_failure_does_not_starve_small_queue(tmp_path,restart):
+    current=[NOW]
+    item=observer(tmp_path,lambda:current[0])
+    try:
+        assert item.process([capture('bad',subject='BAD'),capture('good')])['pending']==2
+        current[0]=NOW+timedelta(seconds=60)
+        for cycle in range(3):
+            if restart and cycle:
+                item.close()
+                item=observer(tmp_path,lambda:current[0])
+            item.buffer.clock=lambda:current[0]
+            # Valid accepted mark, but too close to the cost threshold to round
+            # without changing its label. Its durable endpoint remains pending.
+            item.buffer.put(LiveTick('BAD',Decimal('100.10000000000000000000000001'),
+                                    Decimal(10),None,None,current[0],'zerodha'))
+            item.buffer.put(LiveTick('INFY',Decimal(101),Decimal(10),None,None,current[0],'zerodha'))
+            with pytest.raises(ValueError,match='rounding_changes_label'):
+                item.process([])
+            with sqlite3.connect(f'file:{item.path}?mode=ro',uri=True) as db:
+                assert db.execute('SELECT COUNT(*) FROM forecast_outcomes').fetchone()[0]==int(cycle>0)
+                if cycle:
+                    assert db.execute('SELECT pair_id FROM probability_forecasts JOIN forecast_outcomes USING(forecast_id)').fetchone()[0]=='good'
+                assert db.execute('SELECT COUNT(*) FROM probability_forecasts LEFT JOIN forecast_outcomes USING(forecast_id) WHERE forecast_outcomes.forecast_id IS NULL').fetchone()[0]==(2 if cycle==0 else 1)
     finally:
         item.close()
 

@@ -223,14 +223,13 @@ class ProspectiveShadowObserver:
             WHERE o.forecast_id IS NULL AND f.resolve_after<=?
             ORDER BY (f.rowid<=?),f.rowid LIMIT 64''',
             (now.isoformat(),cursor)).fetchall()
-        if rows:
-            # Advance durably before attempting this bounded page. A failed/crashed
-            # page is retried on wrap, but cannot monopolize every subsequent cycle.
+        for row in rows:
+            # Advance before EACH attempted row, including when fewer than a full
+            # page remain. Persistent row failures must not pin the wrap order.
             # Unknown outcomes remain pending; scheduling never fabricates labels.
             with db:
                 db.execute('UPDATE prospective_resolution_cursor SET last_rowid=? WHERE singleton=1',
-                           (rows[-1]['traversal_id'],))
-        for row in rows:
+                           (row['traversal_id'],))
             due = _instant(row['resolve_after'])
             existing = db.execute('SELECT payload,sha256 FROM prospective_endpoints WHERE forecast_id=?',
                                   (row['forecast_id'],)).fetchone()
