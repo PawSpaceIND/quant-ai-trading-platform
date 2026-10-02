@@ -71,6 +71,12 @@ services:
       # Per-response allowance only; legacy default and daily spend limits are unchanged.
       PRAMANA_CONSENSUS_MAX_TOKENS: ${PRAMANA_CONSENSUS_MAX_TOKENS:-1200}
       PRAMANA_ASTRA_SHADOW_ENABLED: ${PRAMANA_ASTRA_SHADOW_ENABLED:-false}
+      # Passive local evaluation only; requires a reviewed immutable v2 plan.
+      # Paths are inside the existing private data volume. No model is supplied.
+      PRAMANA_PROSPECTIVE_SHADOW_ENABLED: ${PRAMANA_PROSPECTIVE_SHADOW_ENABLED:-false}
+      PRAMANA_PROSPECTIVE_SHADOW_PLAN: ${PRAMANA_PROSPECTIVE_SHADOW_PLAN:-}
+      PRAMANA_PROSPECTIVE_SHADOW_PLAN_SHA256: ${PRAMANA_PROSPECTIVE_SHADOW_PLAN_SHA256:-}
+      PRAMANA_PROSPECTIVE_SHADOW_DB: ${PRAMANA_PROSPECTIVE_SHADOW_DB:-/data/prospective-shadow.sqlite}
       # Exploration budget (paper): probe entries a day below the conviction floor, their
       # minimum specialist confidence and their size as a fraction of equity. 0 is off.
       # docs and defaults in .env.example; read by the engine and the replay alike.

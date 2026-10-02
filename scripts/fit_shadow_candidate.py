@@ -12,7 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from quant_ai.learning.contracts import AccessPlane, KnowledgeCategory, RightsStatus, SourceGrant
-from quant_ai.learning.fitting import MAX_INPUT_BYTES, FitConfig, fit_candidate
+from quant_ai.learning.fitting import (
+    MAX_INPUT_BYTES,
+    FitConfig,
+    _digest,
+    export_prospective_plan,
+    fit_candidate,
+)
 from quant_ai.learning.shadow import MAX_PAYLOAD_BYTES, _canonical, decode
 
 
@@ -92,6 +98,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--candidate-id", required=True)
+    parser.add_argument("--prospective-plan", action="store_true",
+                        help="Export a frozen v2 observer plan instead of a bundle; no activation")
     args = parser.parse_args()
     try:
         if os.environ.get("TRADING_LIVE_MONEY_ACTIVE", "false") != "false":
@@ -103,15 +111,20 @@ def main():
         grants = load_grants(read_private_bytes(args.grants, MAX_PAYLOAD_BYTES))
         result = fit_candidate(raw, source_grants=grants, run_id=args.run_id,
                                candidate_id=args.candidate_id, config=FitConfig())
-        publish_new_bundle(args.output, _canonical(result.bundle.payload()).encode())
+        output = (export_prospective_plan(result, cost_return=json.loads(raw)["cost_return"])
+                  if args.prospective_plan else _canonical(result.bundle.payload()).encode())
+        publish_new_bundle(args.output, output)
         report = result.diagnostics
-        print(json.dumps({"schema": report["schema"], "mode": "TRAINING_ONLY",
+        summary = {"schema": report["schema"], "mode": "TRAINING_ONLY",
             "rows": report["rows"], "positive_after_cost_rows": report["positive_after_cost_rows"],
             "iterations": report["optimization"]["iterations"],
             "converged": report["optimization"]["converged"],
             "training_objective": report["optimization"]["final_objective"],
             "trading_authorized": False, "out_of_sample_evaluated": False,
-            "source_authenticity_verified": False, "calibration_verified": False}, sort_keys=True))
+            "source_authenticity_verified": False, "calibration_verified": False}
+        if args.prospective_plan:
+            summary["prospective_plan_sha256"] = _digest(output)
+        print(json.dumps(summary, sort_keys=True))
         return 0
     except Exception:  # noqa: BLE001 - suppress private input/path/exception text
         print("Offline fitting not confirmed: invalid evidence or unavailable output. Existing outputs are never overwritten; inspect before retrying.", file=sys.stderr)

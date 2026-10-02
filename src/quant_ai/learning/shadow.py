@@ -25,6 +25,8 @@ from quant_ai.learning.training import training_dataset_digest
 
 SCHEMA = "pramana.shadow_forecast.v1"
 MODEL_SCHEMA = "pramana.shadow_logistic.v1"
+MODEL_SCHEMA_V2 = "pramana.shadow_logistic.v2"
+ENDPOINT_POLICY = "frozen_quote_to_last_post_decision_tick_at_horizon.v1"
 INPUT_SCHEMA = "pramana.numeric_features.v1"
 EVENT = "positive_long_return_after_cost"
 MAX_PAYLOAD_BYTES = 65536
@@ -94,8 +96,12 @@ def feature_schema_digest(names):
 
 
 def label_schema_digest(model):
-    return _hash({"event": EVENT, "horizon_seconds": model["horizon_seconds"],
-                  "cost_policy_sha256": model["cost_policy_sha256"]})
+    payload = {"event": EVENT, "horizon_seconds": model["horizon_seconds"],
+               "cost_policy_sha256": model["cost_policy_sha256"]}
+    if model.get("schema") == MODEL_SCHEMA_V2:
+        payload.update(endpoint_policy_id=model["endpoint_policy_id"],
+                       maximum_endpoint_age_seconds=model["maximum_endpoint_age_seconds"])
+    return _hash(payload)
 
 
 def _manifest_payload(manifest):
@@ -128,8 +134,14 @@ class ShadowModelBundle:
                "artifact_binding")
         _check(run.trained_at >= data.cutoff and run.model_family == "decimal_logistic", "training_contract")
         model = decode(self.artifact)
-        _check(isinstance(model, dict) and set(model) == MODEL_FIELDS
-               and model["schema"] == MODEL_SCHEMA and model["event"] == EVENT, "model_schema")
+        _check(isinstance(model, dict), "model_schema")
+        extra = {"endpoint_policy_id", "maximum_endpoint_age_seconds"} if model.get("schema") == MODEL_SCHEMA_V2 else set()
+        _check(set(model) == MODEL_FIELDS | extra
+               and model["schema"] in (MODEL_SCHEMA, MODEL_SCHEMA_V2) and model["event"] == EVENT, "model_schema")
+        if extra:
+            _check(model["endpoint_policy_id"] == ENDPOINT_POLICY
+                   and type(model["maximum_endpoint_age_seconds"]) is int
+                   and 1 <= model["maximum_endpoint_age_seconds"] <= 60, "endpoint_policy")
         names, weights = model["feature_names"], model["coefficients"]
         _check(isinstance(names, list) and 1 <= len(names) <= 64
                and all(isinstance(n, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", n) for n in names)
@@ -267,7 +279,9 @@ class ShadowForecastWriter:
     def __exit__(self, *_args):
         self.journal.close()
 
-    def record(self, bundle, snapshot, *, pair_id):
+    def record(self, bundle, snapshot, *, pair_id, commit_hook=None):
+        """Optional local receipt hook shares this exact forecast transaction."""
+        _check(commit_hook is None or callable(commit_hook), "local_receipt_hook")
         _identifier(pair_id)
         _check(type(bundle) is ShadowModelBundle, "typed_bundle_required")
         _check(_private_existing(self.path) == self._file_identity, "journal_path_replaced")
@@ -306,6 +320,8 @@ class ShadowForecastWriter:
             self.journal._insert_forecast(item)
             db.execute("INSERT OR IGNORE INTO shadow_forecast_inputs VALUES(?,?,?,?,?)",
                        (forecast_id, candidate, raw_input, _hash(input_payload), moment.isoformat()))
+            if commit_hook is not None:
+                commit_hook(db, item)
             return item
 
 
