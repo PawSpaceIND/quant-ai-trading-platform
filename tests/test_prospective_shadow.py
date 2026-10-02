@@ -7,10 +7,12 @@ import sqlite3
 from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from test_pilot_closure import runner_for
 from test_shadow_forecast_lineage import NOW, bundle
 
@@ -112,6 +114,45 @@ def test_persistent_rounding_failure_does_not_starve_small_queue(tmp_path,restar
                 if cycle:
                     assert db.execute('SELECT pair_id FROM probability_forecasts JOIN forecast_outcomes USING(forecast_id)').fetchone()[0]=='good'
                 assert db.execute('SELECT COUNT(*) FROM probability_forecasts LEFT JOIN forecast_outcomes USING(forecast_id) WHERE forecast_outcomes.forecast_id IS NULL').fetchone()[0]==(2 if cycle==0 else 1)
+    finally:
+        item.close()
+
+
+def test_compose_forwarding_remains_off_and_private_without_new_volume(tmp_path,monkeypatch):
+    root=Path(__file__).resolve().parents[1]
+    services=yaml.safe_load((root/'deploy/docker-compose.yml').read_text())['services']
+    env=services['pramana-ghost']['environment']
+    defaults={'PRAMANA_PROSPECTIVE_SHADOW_ENABLED':'false',
+              'PRAMANA_PROSPECTIVE_SHADOW_PLAN':'',
+              'PRAMANA_PROSPECTIVE_SHADOW_PLAN_SHA256':'',
+              'PRAMANA_PROSPECTIVE_SHADOW_DB':'/data/prospective-shadow.sqlite'}
+    for name,value in defaults.items():
+        assert env[name]=='${'+name+':-'+value+'}'
+        assert all(name not in settings['environment'] for service,settings in services.items()
+                   if service!='pramana-ghost' and 'environment' in settings)
+        assert name+'='+value in (root/'.env.example').read_text().splitlines()
+    assert 'pramana-data:/data' in services['pramana-ghost']['volumes']
+    assert services['pramana-ghost']['environment']['TRADING_LIVE_MONEY_ACTIVE']=='false'
+    monkeypatch.setattr(prospective,'ProspectiveShadowObserver',lambda *a,**k:pytest.fail('off constructor'))
+    assert prospective.observer_from_env(buffer=None,tenant_id='pilot',paper_only=True,environ=defaults) is None
+    assert not list(tmp_path.iterdir())
+
+
+def test_explicit_private_reviewed_plan_can_construct_without_creating_journal(tmp_path):
+    plan=candidate_plan()
+    path=tmp_path/'reviewed-plan.json'
+    path.write_bytes(shadow._canonical(plan).encode())
+    path.chmod(0o600)
+    journal=tmp_path/'dedicated.sqlite'
+    item=prospective.observer_from_env(buffer=TickBuffer(),tenant_id='pilot',paper_only=True,
+        environ={'PRAMANA_PROSPECTIVE_SHADOW_ENABLED':'true',
+                 'PRAMANA_PROSPECTIVE_SHADOW_PLAN':str(path),
+                 'PRAMANA_PROSPECTIVE_SHADOW_PLAN_SHA256':shadow._hash(plan),
+                 'PRAMANA_PROSPECTIVE_SHADOW_DB':str(journal),
+                 'TRADING_LIVE_MONEY_ACTIVE':'false'})
+    try:
+        assert item.status()['enabled'] is True
+        assert not journal.exists()
     finally:
         item.close()
 

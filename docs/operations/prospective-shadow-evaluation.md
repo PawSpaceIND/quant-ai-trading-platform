@@ -57,8 +57,12 @@ private shadow DB:
 - `PRAMANA_PROSPECTIVE_SHADOW_PLAN_SHA256`;
 - `PRAMANA_PROSPECTIVE_SHADOW_DB`.
 
-These are **not forwarded by Compose in this patch**. No runtime configuration,
-mount, provider permission, identity transition or activation is performed. Invalid
+Compose forwards these optional settings only to the PAPER ghost service, with
+enable=false, empty plan/hash and a dedicated `/data/prospective-shadow.sqlite`
+default inside the existing private data volume. No new volume or host mount is
+added. The example environment also keeps enable=false; setting it true is a
+separate reviewed activation decision, not a consequence of this deployment.
+No runtime configuration, provider permission, identity transition or activation is performed. Invalid
 optional configuration is logged/refused and does not prevent the original trading
 runtime from starting. Never point the shadow DB at the ledger/OMS/budget stores;
 existing non-shadow or populated offline journals are not silently adopted.
