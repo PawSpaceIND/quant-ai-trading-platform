@@ -52,6 +52,41 @@ def capture(pair='decision-one', **changes):
     return value
 
 
+@pytest.mark.parametrize('restart',[False,True])
+@pytest.mark.parametrize('interrupted',[False,True])
+def test_pending_resolution_is_bounded_fair_and_survives_restart(tmp_path,restart,interrupted,monkeypatch):
+    current=[NOW]
+    item=observer(tmp_path,lambda:current[0])
+    requests=[capture('pending-'+str(i),subject='UNKNOWN'+str(i)) for i in range(64)]
+    requests.append(capture('qualified'))
+    try:
+        item.process(requests[:50])
+        assert item.process(requests[50:])['pending']==65
+        current[0]=NOW+timedelta(seconds=60)
+        # The first bounded page contains only unknown endpoints.
+        if interrupted:
+            with monkeypatch.context() as patch:
+                def fail(*args):
+                    raise RuntimeError('interrupted endpoint lookup')
+                patch.setattr(item.buffer,'latest_at_or_before',fail)
+                with pytest.raises(RuntimeError,match='interrupted endpoint lookup'):
+                    item.process([])
+        else:
+            assert item.process([])['resolved']==0
+        if restart:
+            item.close()
+            item=observer(tmp_path,lambda:current[0])
+        item.buffer.clock=lambda:current[0]
+        assert item.buffer.put(LiveTick('INFY',Decimal(101),Decimal(10),None,None,current[0],'zerodha'))
+        report=item.process([])
+        assert report['resolved']==1 and report['pending']==64
+        # Wrapping preserves unknowns and never duplicates a completed outcome.
+        assert item.process([])['resolved']==1
+        assert item.process([])['pending']==64
+    finally:
+        item.close()
+
+
 def test_default_off_never_reads_plan_creates_store_or_constructs_worker(monkeypatch):
     monkeypatch.setattr(prospective,'ProspectiveShadowObserver',lambda *a,**k:pytest.fail('off constructor'))
     assert prospective.observer_from_env(buffer=None,tenant_id='pilot',paper_only=False,

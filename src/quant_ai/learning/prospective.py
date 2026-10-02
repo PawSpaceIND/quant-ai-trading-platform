@@ -163,6 +163,9 @@ class ProspectiveShadowObserver:
                 db.execute('CREATE TABLE IF NOT EXISTS prospective_captures(pair_id TEXT PRIMARY KEY,input_sha256 TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,forecast_id TEXT,reference_price TEXT,recorded_at TEXT NOT NULL,proof_decision_id TEXT,opportunity_key TEXT)')
                 db.execute('CREATE TABLE IF NOT EXISTS prospective_unlinked_refusals(input_sha256 TEXT PRIMARY KEY,reason TEXT NOT NULL)')
                 db.execute('CREATE TABLE IF NOT EXISTS prospective_endpoints(forecast_id TEXT PRIMARY KEY,payload TEXT NOT NULL,sha256 TEXT NOT NULL)')
+                # Mutable scheduling metadata, separate from append-only evidence.
+                db.execute('CREATE TABLE IF NOT EXISTS prospective_resolution_cursor(singleton INTEGER PRIMARY KEY CHECK(singleton=1),last_rowid INTEGER NOT NULL)')
+                db.execute('INSERT OR IGNORE INTO prospective_resolution_cursor VALUES(1,0)')
                 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS prospective_unique_opportunity ON prospective_captures(opportunity_key) WHERE status='recorded'")
                 for table in ('prospective_plan','prospective_captures','prospective_endpoints','prospective_unlinked_refusals'):
                     for verb in ('UPDATE','DELETE'):
@@ -213,11 +216,20 @@ class ProspectiveShadowObserver:
 
     def _resolve(self, writer):
         db, now = writer.journal.db, _instant(self.clock())
-        rows = db.execute('''SELECT f.*,c.reference_price FROM probability_forecasts f
+        cursor = db.execute('SELECT last_rowid FROM prospective_resolution_cursor WHERE singleton=1').fetchone()[0]
+        rows = db.execute('''SELECT f.*,f.rowid AS traversal_id,c.reference_price FROM probability_forecasts f
             JOIN prospective_captures c USING(forecast_id)
             LEFT JOIN forecast_outcomes o USING(forecast_id)
-            WHERE o.forecast_id IS NULL AND f.resolve_after<=? ORDER BY f.resolve_after LIMIT 64''',
-            (now.isoformat(),)).fetchall()
+            WHERE o.forecast_id IS NULL AND f.resolve_after<=?
+            ORDER BY (f.rowid<=?),f.rowid LIMIT 64''',
+            (now.isoformat(),cursor)).fetchall()
+        if rows:
+            # Advance durably before attempting this bounded page. A failed/crashed
+            # page is retried on wrap, but cannot monopolize every subsequent cycle.
+            # Unknown outcomes remain pending; scheduling never fabricates labels.
+            with db:
+                db.execute('UPDATE prospective_resolution_cursor SET last_rowid=? WHERE singleton=1',
+                           (rows[-1]['traversal_id'],))
         for row in rows:
             due = _instant(row['resolve_after'])
             existing = db.execute('SELECT payload,sha256 FROM prospective_endpoints WHERE forecast_id=?',
