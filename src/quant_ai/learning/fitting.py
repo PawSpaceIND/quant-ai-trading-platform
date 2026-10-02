@@ -15,13 +15,16 @@ from pathlib import Path
 
 from quant_ai.learning.contracts import (
     AccessPlane,
+    KnowledgeCategory,
     RightsStatus,
     SourceGrant,
     TrainingDatasetManifest,
 )
 from quant_ai.learning.shadow import (
+    ENDPOINT_POLICY,
     EVENT,
     MODEL_SCHEMA,
+    MODEL_SCHEMA_V2,
     SHA,
     ShadowModelBundle,
     _canonical,
@@ -35,6 +38,7 @@ from quant_ai.learning.shadow import (
 from quant_ai.learning.training import execute_training
 
 SCHEMA = "pramana.logistic_training_data.v1"
+SCHEMA_V2 = "pramana.logistic_training_data.v2"
 FIT_SCHEMA = "pramana.logistic_fit.v1"
 MAX_INPUT_BYTES = 2_000_000
 MIN_ROWS = 30
@@ -48,6 +52,9 @@ FIELDS = {"schema", "partition", "dataset_id", "cutoff", "source_ids", "feature_
 ROW_FIELDS = {"row_id", "subject", "decision_at", "observed_at", "available_at",
               "resolve_after", "outcome_available_at", "source_ids", "values",
               "gross_return", "cost_fraction"}
+V2_FIELDS = {"endpoint_policy_id", "maximum_endpoint_age_seconds", "cost_return"}
+V2_ROW_FIELDS = {"reference_price", "endpoint_price", "endpoint_observed_at", "endpoint_available_at"}
+QUOTE_FEATURES = {"market_last_price", "market_volume", "market_bid", "market_ask", "market_spread_bps"}
 
 
 def _require(condition, reason):
@@ -112,7 +119,10 @@ def _read_dataset(raw, grants, config, now):
     data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique,
                       parse_constant=lambda _: (_ for _ in ()).throw(
                           ValueError("logistic_fit_nonfinite_json")))
-    _require(type(data) is dict and set(data) == FIELDS and data["schema"] == SCHEMA,
+    _require(type(data) is dict, "dataset_schema")
+    v2 = data.get("schema") == SCHEMA_V2
+    _require(set(data) == FIELDS | (V2_FIELDS if v2 else set())
+             and data["schema"] in (SCHEMA, SCHEMA_V2),
              "dataset_schema")
     _require(data["partition"] == "training", "training_partition_required")
     for key in ("dataset_id", "cost_policy_id", "adjustment_policy_id"):
@@ -122,6 +132,16 @@ def _read_dataset(raw, grants, config, now):
     cutoff = _instant(data["cutoff"])
     _require(cutoff <= now, "future_dataset")
     sources = _sources(data["source_ids"])
+    if v2:
+        _require(data["endpoint_policy_id"] == ENDPOINT_POLICY
+                 and type(data["maximum_endpoint_age_seconds"]) is int
+                 and 1 <= data["maximum_endpoint_age_seconds"] <= 60, "endpoint_policy")
+        _require(sources == ("zerodha",), "prospective_quote_scope")
+        _require(type(data["cost_return"]) is str, "frozen_cost_policy")
+        frozen_cost = _number(data["cost_return"])
+        _require(0 <= frozen_cost <= 1 and data["cost_policy_id"] == "fixed_shadow_round_trip.v1"
+                 and data["cost_policy_sha256"] == _digest(_canonical({"id":data["cost_policy_id"],
+                     "cost_return":data["cost_return"]}).encode()), "frozen_cost_policy")
     _require(type(grants) in (tuple, list) and 1 <= len(grants) <= 64
              and all(type(g) is SourceGrant for g in grants),
              "typed_source_grants_required")
@@ -133,21 +153,27 @@ def _read_dataset(raw, grants, config, now):
         _require(AccessPlane.TRAINING in grant.planes and grant.point_in_time
                  and grant.rights_status in (RightsStatus.INTERNAL, RightsStatus.VERIFIED),
                  "training_source_not_permitted")
+        if v2:
+            _require(KnowledgeCategory.MARKET in grant.categories, "prospective_quote_scope")
     names = data["feature_names"]
     _require(type(names) is list and 1 <= len(names) <= MAX_FEATURES
              and all(type(n) is str for n in names) and len(set(names)) == len(names),
              "feature_schema")
     _require(all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", n) for n in names),
              "feature_schema")
+    if v2:
+        _require(set(names) <= QUOTE_FEATURES, "prospective_quote_scope")
     for key in ("horizon_seconds", "maximum_feature_age_seconds"):
         _require(type(data[key]) is int and 1 <= data[key] <= 86400, "time_budget")
+    if v2:
+        _require(data["maximum_feature_age_seconds"] <= 60, "prospective_quote_age")
     records = data["rows"]
     _require(type(records) is list and MIN_ROWS <= len(records) <= MAX_ROWS, "row_count")
     _require(len(records) * len(names) * config.maximum_iterations <= MAX_WORK, "work_budget")
     rows, labels, seen, pairs, windows, used_sources = [], [], set(), set(), {}, set()
     previous = None
     for row in records:
-        _require(type(row) is dict and set(row) == ROW_FIELDS, "row_schema")
+        _require(type(row) is dict and set(row) == ROW_FIELDS | (V2_ROW_FIELDS if v2 else set()), "row_schema")
         row_id, subject = _identifier(row["row_id"]), _identifier(row["subject"])
         moment = _instant(row["decision_at"])
         observed, available = _instant(row["observed_at"]), _instant(row["available_at"])
@@ -171,6 +197,22 @@ def _read_dataset(raw, grants, config, now):
         gross, costs = _number(row["gross_return"]), _number(row["cost_fraction"])
         _require(Decimal(-1) <= gross <= 10 and 0 <= costs <= 1 and gross - costs >= -1,
                  "return_or_cost_bound")
+        if v2:
+            endpoint, received = _instant(row["endpoint_observed_at"]), _instant(row["endpoint_available_at"])
+            _require(moment < endpoint <= resolved and endpoint <= received <= known
+                     and resolved-endpoint <= timedelta(seconds=data["maximum_endpoint_age_seconds"]),
+                     "endpoint_witness_time")
+            reference, price = _number(row["reference_price"]), _number(row["endpoint_price"])
+            _require(reference > 0 and price > 0 and costs == frozen_cost, "endpoint_price_cost")
+            _require(all(value >= 0 for value in vector)
+                     and ("market_last_price" not in values or _number(values["market_last_price"]) == reference)
+                     and (not {"market_bid", "market_ask"} <= values.keys()
+                          or _number(values["market_bid"]) <= _number(values["market_ask"])), "quote_geometry")
+            with localcontext(Context(prec=96, rounding=ROUND_HALF_EVEN)):
+                delta = price-reference
+                derived = (delta/reference).quantize(Decimal("1e-24"))
+                _require((delta-reference*costs > 0) == (derived-costs > 0), "rounding_changes_label")
+                _require(gross == derived, "endpoint_return_binding")
         rows.append(vector)
         labels.append(Decimal(int(gross - costs > 0)))
         seen.add(row_id)
@@ -183,6 +225,9 @@ def _read_dataset(raw, grants, config, now):
     model = {key: data[key] for key in ("feature_names", "horizon_seconds",
         "maximum_feature_age_seconds", "cost_policy_id", "cost_policy_sha256")}
     model.update(schema=MODEL_SCHEMA, event=EVENT)
+    if v2:
+        model.update(schema=MODEL_SCHEMA_V2, endpoint_policy_id=data["endpoint_policy_id"],
+                     maximum_endpoint_age_seconds=data["maximum_endpoint_age_seconds"])
     dataset = TrainingDatasetManifest(data["dataset_id"], cutoff, len(rows), sources,
         _digest(raw), feature_schema_digest(names), label_schema_digest(model),
         data["cost_policy_id"], data["adjustment_policy_id"])
@@ -284,3 +329,18 @@ def fit_candidate(raw, *, source_grants, run_id, candidate_id, config=None, cloc
                 "Non-overlapping rows per subject may still be dependent across subjects and time.",
                 "One fit does not record a cumulative research trial count; governed evaluation and registration remain required."]}
         return FittedCandidate(bundle, _canonical(report))
+
+
+def export_prospective_plan(result, *, cost_return, clock=None):
+    """Export a new frozen v2 plan only; no v1 relabeling, promotion or activation."""
+    from quant_ai.learning.prospective import SCHEMA as PLAN_SCHEMA
+    from quant_ai.learning.prospective import validate_plan
+
+    _require(type(result) is FittedCandidate and result.bundle.validate()["schema"] == MODEL_SCHEMA_V2,
+             "v2_candidate_required")
+    frozen = _instant((clock or (lambda: datetime.now(timezone.utc)))())
+    plan = {"schema":PLAN_SCHEMA,"frozen_at":frozen.isoformat(),
+            "bundle":result.bundle.payload(),"cost_return":cost_return}
+    raw = _canonical(plan).encode()
+    validate_plan(raw, _digest(raw))
+    return raw

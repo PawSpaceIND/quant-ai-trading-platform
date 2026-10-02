@@ -117,6 +117,33 @@ unknown endpoint or interrupted page cannot starve later forecasts, including
 after restart. Unresolved rows remain pending and are retried on wrap. This cursor
 is mutable scheduling metadata, separate from the append-only evidence tables.
 
+## Offline v2 fitting and export
+
+The existing fitter accepts explicit `pramana.logistic_training_data.v2` input;
+the v1 dataset and bundle path remain unchanged. V2 requires authorized point-in-time
+Zerodha MARKET/TRAINING source grants, quote-only features no older than 60 seconds,
+and the frozen endpoint policy above. Each row adds positive `reference_price` and
+`endpoint_price`, plus actual `endpoint_observed_at` and `endpoint_available_at`.
+The endpoint must be strictly after the decision, at/before its declared horizon,
+within the declared 1–60 second endpoint age, and available before the outcome was
+known. Gross return must equal the price-witness return; each row's cost must match
+the frozen `cost_return` and its canonical `fixed_shadow_round_trip.v1` hash.
+
+Use the existing private-file CLI with `--prospective-plan` to fit and export one
+new private frozen plan instead of a bundle. Existing `--input`, `--grants`,
+`--output`, `--run-id` and `--candidate-id` arguments still apply. Outputs cannot
+overwrite existing files. Export validates the v2 bundle, freeze time and cost
+binding and prints only sanitized diagnostics and the plan SHA256. It does not
+activate the observer or grant trading authority.
+
+No genuine qualified training dataset or learned artifact accompanies this change.
+Synthetic tests exercise contracts only. Real input needs authorized numeric
+observations with authentic availability receipts, matching horizon witnesses,
+reviewed cost/source permissions and a subsequent independent evaluation. The
+existing v1 feature-package assembler is not automatically converted: neither
+retrospective timestamps nor v1 labels may be relabeled as v2 evidence. The minimum
+30 rows is an admission threshold, not predictive-quality evidence.
+
 ## Acceptance
 
 Primary decision-journal marks now also require a qualified aware timestamp no more
